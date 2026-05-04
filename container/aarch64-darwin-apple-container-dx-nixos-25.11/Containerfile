@@ -1,0 +1,10 @@
+FROM nixpkgs/nix-flakes:nixos-25.11-aarch64-linux
+
+# Create the workspace directory
+RUN mkdir -p /workspace && chmod 1777 /workspace
+
+# Copy the guest bootstrap files
+COPY . /guest-bootstrap/
+
+# Default command
+CMD ["/guest-bootstrap/bootstrap.sh", "serve"]

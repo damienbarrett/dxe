@@ -1,0 +1,31 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+if [ ! -f "$DX_SSH_KEY" ]; then
+    echo "Error: SSH key file not found at $DX_SSH_KEY"
+    exit 1
+fi
+
+echo "Connecting to DX guest via SSH..."
+
+# Ensure TERM is compatible with the guest
+export TERM=${TERM:-xterm-256color}
+
+# Use a bash array for SSH options to handle quoting correctly
+SSH_OPTS=(
+    "-i" "$DX_SSH_KEY"
+    "-p" "$DX_SSH_PORT"
+    "-o" "StrictHostKeyChecking=no"
+    "-o" "UserKnownHostsFile=/dev/null"
+)
+
+if [ $# -eq 0 ]; then
+    # No arguments: interactive login to tmux
+    ssh -t "${SSH_OPTS[@]}" dx@localhost "export TERM=xterm-256color; tmux attach -t dx || tmux new-session -s dx"
+else
+    # Arguments provided: run them as a command
+    ssh "${SSH_OPTS[@]}" dx@localhost "export TERM=xterm-256color; $(printf "%q " "$@")"
+fi

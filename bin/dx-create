@@ -1,0 +1,23 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+# Check if container already exists
+if container_exists "$DX_CONTAINER_NAME"; then
+    echo "Container $DX_CONTAINER_NAME already exists. Skipping create."
+    exit 0
+fi
+
+echo "Creating DX container: $DX_CONTAINER_NAME from image $DX_IMAGE"
+
+# Check if public key exists
+if [ -f "$DX_SSH_KEY_PUB" ]; then
+    DX_PUB_KEY=$(cat "$DX_SSH_KEY_PUB")
+    # Publish SSH port to localhost, pass public key as env var
+    container create --name "$DX_CONTAINER_NAME" -m 4G -c 4 -p "127.0.0.1:$DX_SSH_PORT:2222" -e "DX_PUB_KEY=$DX_PUB_KEY" "$DX_IMAGE"
+else
+    echo "Warning: $DX_SSH_KEY_PUB not found. SSH access may not be configured."
+    container create --name "$DX_CONTAINER_NAME" -m 4G -c 4 -p "127.0.0.1:$DX_SSH_PORT:2222" "$DX_IMAGE"
+fi

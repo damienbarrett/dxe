@@ -1,0 +1,44 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+SOURCE="${1:-}"
+DEST="${2:-/workspace/inbox/}"
+
+if [ -z "$SOURCE" ]; then
+    echo "Usage: dx-put <source_path> [destination_path]"
+    exit 1
+fi
+
+if [ ! -e "$SOURCE" ]; then
+    echo "Error: Source path '$SOURCE' does not exist."
+    exit 1
+fi
+
+echo "Copying $SOURCE to $DX_CONTAINER_NAME:$DEST"
+
+# Handle destination directory logic in a more robust way
+if [[ "$DEST" == */ ]]; then
+    # Create the directory first
+    container exec "$DX_CONTAINER_NAME" bash -c "[ -d \"\$1\" ] || (mkdir -p \"\$1\" && chown dx:dx \"\$1\")" -- "$DEST"
+    # Destination path for the file/dir itself
+    FINAL_DEST="${DEST%/}/$(basename "$SOURCE")"
+else
+    FINAL_DEST="$DEST"
+fi
+
+# Ensure parent directory exists
+PARENT_DIR=$(dirname "$FINAL_DEST")
+container exec "$DX_CONTAINER_NAME" bash -c "[ -d \"\$1\" ] || (mkdir -p \"\$1\" && chown dx:dx \"\$1\")" -- "$PARENT_DIR"
+
+if [ -d "$SOURCE" ]; then
+    # For directory, we'll tar it
+    tar -C "$(dirname "$SOURCE")" -cf - "$(basename "$SOURCE")" | container exec -i "$DX_CONTAINER_NAME" tar -xf - -C "$PARENT_DIR"
+    container exec "$DX_CONTAINER_NAME" chown -R dx:dx "$FINAL_DEST"
+else
+    # For file, we'll just cat it
+    container exec -i "$DX_CONTAINER_NAME" bash -c "cat > \"\$1\"" -- "$FINAL_DEST" < "$SOURCE"
+    container exec "$DX_CONTAINER_NAME" chown dx:dx "$FINAL_DEST"
+fi

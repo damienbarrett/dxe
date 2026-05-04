@@ -1,0 +1,127 @@
+# /nix on a dedicated, dedup/compression-optimised volume
+
+Goal: move /nix off the container rootfs onto a named Apple `container` volume
+formatted btrfs (zstd:3) with Nix auto-optimise-store, so re-creating the
+container preserves the store and identical files are deduplicated then
+compressed at the FS layer.
+
+Constraint: single writer at a time (btrfs cannot be concurrently mounted).
+
+## §1 Host: bin/dx-create
+
+- [ ] Idempotently ensure the named volume exists before creating the container:
+        container volume inspect dx-nix >/dev/null 2>&1 \
+          || container volume create dx-nix --size 64G
+      (Drop --size if Apple `container volume create` does not yet support it.)
+- [ ] Add `--volume "dx-nix:/var/lib/dx-nix-raw:rw"` to the `container create`
+      invocation. Mount at a raw staging path (NOT /nix) so the guest can
+      format-then-mount with our chosen compression options.
+
+## §2 Guest: container/.../bootstrap.sh
+
+- [ ] Add a new `setup_nix_volume` function and call it BEFORE the existing
+      "Install full DX toolset via Nix" step. Calling it after means Nix
+      populates the rootfs and the volume is wasted.
+- [ ] Inside setup_nix_volume, detect whether Apple `container` exposes the
+      named volume as a block device or as a directory-style mount.
+        - Directory-style: back the FS with a sparse image file at
+          /var/lib/dx-nix-raw/nix-store.btrfs (truncate -s 64G; mkfs.btrfs
+          -L dx-nix -m single -d single).
+        - Block device: resolve via `blkid -L dx-nix`; on first boot (no
+          label yet) discover the device backing the raw mount and run
+          `mkfs.btrfs -L dx-nix -m single -d single` on it.
+- [ ] Make mkfs idempotent: skip if `blkid -L dx-nix` already resolves, or if
+      the sparse image file already exists.
+- [ ] Mount the volume at /nix with:
+        -t btrfs -o compress=zstd:3,noatime,space_cache=v2,discard=async
+- [ ] Append a fstab entry (only if absent) so the mount persists:
+        LABEL=dx-nix /nix btrfs compress=zstd:3,noatime,space_cache=v2,discard=async 0 0
+
+## §3 Nix daemon configuration
+
+- [ ] Add to /etc/nix/nix.conf (or whatever the flake / installer generates):
+        auto-optimise-store = true
+        min-free = 1073741824        # 1 GiB
+        max-free = 5368709120        # 5 GiB
+      auto-optimise-store hardlinks identical files into /nix/store/.links as
+      they are added; min-free/max-free trigger automatic GC under churn.
+
+## §4 Periodic GC + optimise
+
+- [ ] Install /etc/systemd/system/nix-gc.service with two ExecStart lines:
+        nix-collect-garbage --delete-older-than 14d
+        nix-store --optimise
+      (--optimise back-fills hardlinks for paths that pre-date
+      auto-optimise-store being enabled — important when the volume is reused
+      by a future container.)
+- [ ] Install /etc/systemd/system/nix-gc.timer firing OnCalendar=weekly with
+      Persistent=true; enable it.
+- [ ] If the guest does not run systemd, install the equivalent as a weekly
+      cron entry instead.
+
+## §5 Documentation
+
+- [ ] Add a short "Storage" section to README.md covering:
+        - volume name (dx-nix)
+        - recreate-survival behaviour (the store persists across `dx-create`)
+        - single-writer constraint (only one running container may mount the
+          volume at a time; second container needs its own volume name or
+          must wait for the first to stop)
+
+## §6 Verification
+
+- [ ] First boot: `./bin/dx-create && ./bin/dx-start && ./bin/dx-ssh`
+- [ ] In the guest, confirm mount options:
+        findmnt /nix
+      Expect type=btrfs and options including
+      compress=zstd:3,noatime,space_cache=v2.
+- [ ] Confirm Nix is functional: `nix --version` and `/nix/store` is non-empty.
+- [ ] Compression ratio: `nix-shell -p compsize --run 'compsize /nix/store'`.
+      Expect 1.5–2.5x.
+- [ ] Hardlink dedup active:
+        nix-store --optimise
+        du -sh /nix/store/.links
+      .links should be non-empty.
+- [ ] Recreate-survival test:
+        ./bin/dx-stop && container delete <name>
+        ./bin/dx-create && ./bin/dx-start && ./bin/dx-ssh
+      Second bootstrap must NOT call mkfs (idempotency holds), must mount
+      the existing FS in milliseconds, and `nix build` of a previously-built
+      derivation must be near-instant.
+- [ ] zstd actually engaged — fill test:
+        dd if=/dev/zero of=/nix/store/.zeros bs=1M count=1024 conv=fdatasync
+        # host-side volume usage should barely grow
+        rm /nix/store/.zeros
+        dd if=/dev/urandom of=/nix/store/.rand bs=1M count=1024 conv=fdatasync
+        # host-side volume usage should grow ~1 GiB (random doesn't compress)
+        rm /nix/store/.rand
+
+## Critical files touched
+
+- bin/dx-create — §1
+- container/aarch64-darwin-apple-container-dx-nixos-25.11/bootstrap.sh —
+  §2 (setup_nix_volume) and §4 (systemd units installation)
+- container/aarch64-darwin-apple-container-dx-nixos-25.11/flake.nix or the
+  generated /etc/nix/nix.conf — §3
+- README.md — §5
+
+## §7 Architectural Improvements
+
+- [x] Add `home-manager` to `flake.nix` inputs.
+- [x] Configure a `homeConfigurations.dx` output in `flake.nix` mapping to our desired `.bashrc` and `.tmux.conf` configurations.
+- [x] Remove the imperative generation of `/home/dx/.bashrc` and `/home/dx/.tmux.conf` from `bootstrap.sh`.
+- [x] Remove the temporary `fix_nix_permissions` function (which applied `chmod 777` to the Nix DB) from `bootstrap.sh`.
+- [x] Add `chown -R dx:dx /nix` to `bootstrap.sh` after the initial root-level tool installation to grant exclusive single-user ownership to the `dx` user.
+- [ ] Add a command in `bootstrap.sh` to execute `home-manager switch --flake .#dx` as the `dx` user to apply the declarative dotfiles.
+- [x] Test the container bootstrap to ensure successful execution without errors.
+- [x] Open Neovim within the container and verify that `nil_ls` no longer throws Nix evaluation permission errors.
+
+## §8 AI Tools Integration
+
+- [x] Add Claude Code CLI
+- [x] Add OpenAI Codex CLI
+- [x] Add OpenCode CLI
+- [x] Add Gemini CLI
+- [x] Add Starship prompt
+- [x] Add Fish and Nushell support
+- [x] Configure Tmux passthrough for Yazi image support
