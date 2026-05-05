@@ -1,7 +1,8 @@
-{ pkgs }:
+{ pkgs, ... }:
 {
-  extraPlugins = with pkgs.vimPlugins; [
-    # Add plugins not available as NixVim modules or needing specific versions
+  plugins.undotree.enable = false;
+
+  extraPlugins = [
     (pkgs.vimUtils.buildVimPlugin {
       name = "undotree-lua";
       src = pkgs.fetchFromGitHub {
@@ -11,17 +12,6 @@
         hash = "sha256-nr7CC7KW9crVdmI8jvZm86z0x4ugRtg0khpJ5Oh5nL8=";
       };
     })
-    (pkgs.vimUtils.buildVimPlugin {
-      name = "outline-nvim";
-      doCheck = false;
-      src = pkgs.fetchFromGitHub {
-        owner = "hedyhli";
-        repo = "outline.nvim";
-        rev = "c293eb56db880a0539bf9d85b4a27816960b863e";
-        hash = "sha256-xKu05IgOpgtt2W+WqXuTUjX66ffDrU8BDi8z7M6M1q4=";
-      };
-    })
-    nvim-ts-context-commentstring
   ];
 
   extraConfigLua = ''
@@ -42,14 +32,9 @@
         ['q'] = "quit",
       },
     })
-
-    require("outline").setup({})
-
-    require('ts_context_commentstring').setup({
-      enable_autocmd = false,
-    })
-    require('Comment').setup({
-      pre_hook = require('ts_context_commentstring.integrations.comment_nvim').create_pre_hook(),
-    })
   '';
+
+  keymaps = [
+    { mode = "n"; key = "<leader>uu"; action = "<cmd>UndotreeToggle<CR>"; options.desc = "[U]ndo Toggle [U]ndo Tree"; }
+  ];
 }

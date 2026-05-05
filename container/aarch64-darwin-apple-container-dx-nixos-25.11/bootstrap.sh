@@ -7,9 +7,104 @@ install_essentials() {
     if ! command -v useradd >/dev/null 2>&1; then
         echo "Installing essential tools..."
         # Install tools needed for the bootstrap itself into the root profile
-        nix profile install nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps --extra-experimental-features "nix-command flakes"
+        # util-linux and btrfs-progs added for Nix volume management (§2)
+        nix profile install nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs nixpkgs#e2fsprogs --extra-experimental-features "nix-command flakes"
     fi
     export PATH="/root/.nix-profile/bin:$PATH"
+}
+
+# §2: Setup dedicated Nix volume
+setup_nix_volume() {
+    echo "Setting up dedicated Nix volume..."
+    local raw_path="/var/lib/dx-nix-raw"
+    local dev=""
+    local fs_type="btrfs"
+    local mount_opts="compress=zstd:3,noatime,space_cache=v2,discard=async"
+
+    # Check kernel support for btrfs
+    if ! grep -q "btrfs" /proc/filesystems; then
+        echo "Warning: Kernel does not support btrfs. Falling back to ext4."
+        fs_type="ext4"
+        mount_opts="noatime,errors=remount-ro"
+    fi
+
+    # Check if /nix is already mounted with the desired filesystem
+    if findmnt -n -o TARGET,FSTYPE /nix | grep -q "$fs_type"; then
+        echo "/nix is already a $fs_type mount. Skipping setup."
+        return 0
+    fi
+
+    if [ ! -d "$raw_path" ]; then
+        echo "Warning: $raw_path not found. Skipping dedicated volume setup."
+        return 0
+    fi
+
+    # Detect whether it's a block device or directory
+    local backing_dev=$(findmnt -n -o SOURCE "$raw_path" || true)
+    
+    if [ -b "$backing_dev" ]; then
+        echo "Detected block device backing $raw_path: $backing_dev"
+        dev="$backing_dev"
+        # mkfs idempotent: skip if blkid -L dx-nix already resolves
+        if ! blkid -L dx-nix >/dev/null 2>&1; then
+            echo "Formatting $dev with $fs_type..."
+            umount "$raw_path" || true
+            if [ "$fs_type" == "btrfs" ]; then
+                mkfs.btrfs -f -L dx-nix -m single -d single "$dev"
+            else
+                mkfs.ext4 -F -L dx-nix "$dev"
+            fi
+        fi
+    else
+        echo "Detected directory-style mount at $raw_path. Using sparse image file."
+        dev="$raw_path/nix-store.$fs_type"
+        if [ ! -f "$dev" ]; then
+            echo "Creating 64G sparse image file at $dev..."
+            truncate -s 64G "$dev"
+            if [ "$fs_type" == "btrfs" ]; then
+                mkfs.btrfs -f -L dx-nix -m single -d single "$dev"
+            else
+                mkfs.ext4 -F -L dx-nix "$dev"
+            fi
+        fi
+    fi
+
+    # Mount the volume
+    echo "Mounting $dev to /nix..."
+    mkdir -p /mnt/tmp-nix
+    mount -t "$fs_type" -o "$mount_opts" "$dev" /mnt/tmp-nix
+    
+    # Move existing /nix content to volume if volume is new (no store)
+    if [ ! -d /mnt/tmp-nix/store ]; then
+        echo "Initializing Nix volume with existing /nix content..."
+        # Use cp -a to preserve permissions and links
+        cp -a /nix/. /mnt/tmp-nix/
+    fi
+    
+    umount /mnt/tmp-nix
+    mount -t "$fs_type" -o "$mount_opts" "$dev" /nix
+
+    # Append a fstab entry (only if absent) so the mount persists
+    if ! grep -q "/nix $fs_type" /etc/fstab 2>/dev/null; then
+        echo "Adding /nix to /etc/fstab..."
+        if blkid -L dx-nix >/dev/null 2>&1; then
+            echo "LABEL=dx-nix /nix $fs_type $mount_opts 0 0" >> /etc/fstab
+        else
+            echo "$dev /nix $fs_type $mount_opts 0 0" >> /etc/fstab
+        fi
+    fi
+}
+
+# §3: Nix daemon configuration
+configure_nix_daemon() {
+    echo "Configuring Nix daemon..."
+    mkdir -p /etc/nix
+    cat > /etc/nix/nix.conf <<EOF
+auto-optimise-store = true
+min-free = 1073741824
+max-free = 5368709120
+experimental-features = nix-command flakes
+EOF
 }
 
 # 2. Create non-root guest user (Section 3)
@@ -64,10 +159,12 @@ configure_ssh() {
     fi
 
     mkdir -p /var/run/sshd
+    mkdir -p /var/log
+    touch /var/log/lastlog
     mkdir -p /var/empty
     chmod 755 /var/empty
 
-    if [ ! -f /etc/ssh/sshd_config ]; then
+    if [ ! -f /etc/ssh/sshd_config ] || ! grep -q "Port 2222" /etc/ssh/sshd_config; then
         cat > /etc/ssh/sshd_config <<EOF
 Port 2222
 ListenAddress 0.0.0.0
@@ -86,62 +183,74 @@ EOF
     if ! id -u sshd >/dev/null 2>&1; then
         useradd -r -M -s /bin/false sshd
     fi
-
-    if ! pgrep -x sshd >/dev/null; then
-        echo "Starting sshd..."
-        $(command -v sshd)
-    fi
 }
 
 # 4. Bootstrap guest tools (Section 6)
-install_tools() {
-    # Check if tools are already installed (idempotency check)
-    if [ ! -f /home/dx/.nix-profile/bin/nvim ]; then
-        echo "Installing DX tools..."
-        mkdir -p /home/dx/.config/nix
-        echo "experimental-features = nix-command flakes" > /home/dx/.config/nix/nix.conf
 
-        mkdir -p /home/dx/.local/share/nvim
-        mkdir -p /home/dx/.cache/nvim
 
-        # Install tools into dx user profile (as root initially)
-        nix profile install --profile /home/dx/.nix-profile /guest-bootstrap#default --extra-experimental-features "nix-command flakes" --accept-flake-config
-    else
-        echo "DX tools already installed. Skipping initial install."
-    fi
+# Helper to run commands as dx user using setpriv
+run_as_dx() {
+    local cmd="$1"
+    # setpriv --reuid=dx --regid=dx --init-groups bash -l -c "$cmd"
+    # Note: bash -l is needed to pick up the profile
+    setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx PATH="/home/dx/.nix-profile/bin:$PATH" bash -l -c "$cmd"
 }
 
 # 5. Configure Shell & Tmux (Section 3/6)
 configure_guest() {
     echo "Configuring guest environment with Home Manager..."
     
-    # Hand over Nix ownership to dx for true single-user operation
-    echo "Granting Nix ownership to dx..."
-    chown -R dx:dx /nix
+    # Hand over Nix ownership to dx for true single-user operation (§7)
+    # Sentinel on the persistent volume — skip if already done on this store.
+    if [ ! -f /nix/.dx-owner-set ]; then
+        echo "Granting Nix ownership to dx..."
+        chown -R dx:dx /nix
+        touch /nix/.dx-owner-set
+    else
+        echo "Nix ownership already set. Skipping chown."
+    fi
     chown -R dx:dx /home/dx
+    chown -R dx:dx /guest-bootstrap
 
     # Use Home Manager to manage dotfiles and user profile
-    # We use 'nix run' to avoid needing home-manager pre-installed in the root profile
-    sudo -u dx bash -l -c "nix run --extra-experimental-features 'nix-command flakes' /guest-bootstrap#homeConfigurations.dx.activationPackage"
+    run_as_dx "nix run --extra-experimental-features 'nix-command flakes' /guest-bootstrap#homeConfigurations.dx.activationPackage"
 
-    # Add a test image for Yazi/Ghostty validation
-    if [ ! -f /home/dx/test-image.png ]; then
-       echo "Adding test image..."
-       curl -sSL https://raw.githubusercontent.com/NixOS/nixos-artwork/master/logo/nix-snowflake.png -o /home/dx/test-image.png
-       chown dx:dx /home/dx/test-image.png
+    # Set nushell as default shell
+    NU_PATH="/home/dx/.nix-profile/bin/nu"
+    if [ -f "$NU_PATH" ]; then
+        echo "Setting nushell as the default shell..."
+        touch /etc/shells
+        if ! grep -q "$NU_PATH" /etc/shells; then
+            echo "$NU_PATH" >> /etc/shells
+        fi
+        usermod -s "$NU_PATH" dx
+    fi
+}
+
+verify_guest_tools() {
+    echo "Verifying guest tools..."
+    if ! run_as_dx 'command -v nvim >/dev/null && command -v tmux >/dev/null && command -v nix >/dev/null && command -v yazi >/dev/null'; then
+        echo "Error: DX guest tools are not available in the dx login shell." >&2
+        exit 1
+    fi
+}
+
+start_ssh() {
+    if ! pgrep -x sshd >/dev/null; then
+        echo "Starting sshd..."
+        "$(command -v sshd)"
     fi
 }
 
 # Main
 install_essentials
+setup_nix_volume   # §2: Call BEFORE install_tools
+configure_nix_daemon # §3
 create_user
 configure_ssh
-install_tools
 configure_guest
+verify_guest_tools
 
-echo "Guest bootstrap complete. SSH listening on 2222."
-
-# 6. Serve (Section 3)
-if [ "${1:-}" == "serve" ]; then
-    tail -f /dev/null
-fi
+echo "Guest bootstrap complete. Starting sshd in foreground..."
+SSHD_BIN=$(command -v sshd)
+exec "$SSHD_BIN" -D -e -p 2222

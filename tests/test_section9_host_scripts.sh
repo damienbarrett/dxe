@@ -74,6 +74,20 @@ else
     test_fail "dx-ssh checks if SSH key file exists"
 fi
 
+# Test: dx-ssh checks tmux availability before interactive attach
+if grep -q "command -v tmux" "$DX_SSH" && grep -q "tmux is not available yet" "$DX_SSH"; then
+    test_pass "dx-ssh checks tmux before attaching"
+else
+    test_fail "dx-ssh checks tmux before attaching"
+fi
+
+# Test: dx-ssh exposes the guest Nix profile path for non-interactive SSH commands
+if grep -q '\.nix-profile/bin' "$DX_SSH"; then
+    test_pass "dx-ssh adds guest Nix profile to PATH"
+else
+    test_fail "dx-ssh adds guest Nix profile to PATH"
+fi
+
 # Test: dx-put handles missing arguments
 DX_PUT="$BIN_DIR/dx-put"
 if grep -q "if.*-z.*SOURCE\|if.*!\$.*1" "$DX_PUT"; then

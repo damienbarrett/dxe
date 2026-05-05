@@ -9,20 +9,20 @@ Constraint: single writer at a time (btrfs cannot be concurrently mounted).
 
 ## §1 Host: bin/dx-create
 
-- [ ] Idempotently ensure the named volume exists before creating the container:
+- [x] Idempotently ensure the named volume exists before creating the container:
         container volume inspect dx-nix >/dev/null 2>&1 \
           || container volume create dx-nix --size 64G
       (Drop --size if Apple `container volume create` does not yet support it.)
-- [ ] Add `--volume "dx-nix:/var/lib/dx-nix-raw:rw"` to the `container create`
+- [x] Add `--volume "dx-nix:/var/lib/dx-nix-raw:rw"` to the `container create`
       invocation. Mount at a raw staging path (NOT /nix) so the guest can
       format-then-mount with our chosen compression options.
 
 ## §2 Guest: container/.../bootstrap.sh
 
-- [ ] Add a new `setup_nix_volume` function and call it BEFORE the existing
+- [x] Add a new `setup_nix_volume` function and call it BEFORE the existing
       "Install full DX toolset via Nix" step. Calling it after means Nix
       populates the rootfs and the volume is wasted.
-- [ ] Inside setup_nix_volume, detect whether Apple `container` exposes the
+- [x] Inside setup_nix_volume, detect whether Apple `container` exposes the
       named volume as a block device or as a directory-style mount.
         - Directory-style: back the FS with a sparse image file at
           /var/lib/dx-nix-raw/nix-store.btrfs (truncate -s 64G; mkfs.btrfs
@@ -30,16 +30,16 @@ Constraint: single writer at a time (btrfs cannot be concurrently mounted).
         - Block device: resolve via `blkid -L dx-nix`; on first boot (no
           label yet) discover the device backing the raw mount and run
           `mkfs.btrfs -L dx-nix -m single -d single` on it.
-- [ ] Make mkfs idempotent: skip if `blkid -L dx-nix` already resolves, or if
+- [x] Make mkfs idempotent: skip if `blkid -L dx-nix` already resolves, or if
       the sparse image file already exists.
-- [ ] Mount the volume at /nix with:
+- [x] Mount the volume at /nix with:
         -t btrfs -o compress=zstd:3,noatime,space_cache=v2,discard=async
-- [ ] Append a fstab entry (only if absent) so the mount persists:
+- [x] Append a fstab entry (only if absent) so the mount persists:
         LABEL=dx-nix /nix btrfs compress=zstd:3,noatime,space_cache=v2,discard=async 0 0
 
 ## §3 Nix daemon configuration
 
-- [ ] Add to /etc/nix/nix.conf (or whatever the flake / installer generates):
+- [x] Add to /etc/nix/nix.conf (or whatever the flake / installer generates):
         auto-optimise-store = true
         min-free = 1073741824        # 1 GiB
         max-free = 5368709120        # 5 GiB
@@ -47,21 +47,23 @@ Constraint: single writer at a time (btrfs cannot be concurrently mounted).
       they are added; min-free/max-free trigger automatic GC under churn.
 
 ## §4 Periodic GC + optimise
+- [x] Replaced automation with standalone host script bin/dx-gc
 
-- [ ] Install /etc/systemd/system/nix-gc.service with two ExecStart lines:
+
+- [ ] (REMOVED) Install /etc/systemd/system/nix-gc.service with two ExecStart lines:
         nix-collect-garbage --delete-older-than 14d
         nix-store --optimise
       (--optimise back-fills hardlinks for paths that pre-date
       auto-optimise-store being enabled — important when the volume is reused
       by a future container.)
-- [ ] Install /etc/systemd/system/nix-gc.timer firing OnCalendar=weekly with
+- [ ] (REMOVED) Install /etc/systemd/system/nix-gc.timer firing OnCalendar=weekly with
       Persistent=true; enable it.
-- [ ] If the guest does not run systemd, install the equivalent as a weekly
+- [ ] (REMOVED) If the guest does not run systemd, install the equivalent as a weekly
       cron entry instead.
 
 ## §5 Documentation
 
-- [ ] Add a short "Storage" section to README.md covering:
+- [x] Add a short "Storage" section to README.md covering:
         - volume name (dx-nix)
         - recreate-survival behaviour (the store persists across `dx-create`)
         - single-writer constraint (only one running container may mount the
@@ -69,6 +71,8 @@ Constraint: single writer at a time (btrfs cannot be concurrently mounted).
           must wait for the first to stop)
 
 ## §6 Verification
+- [x] Created bin/dx-destroy and bin/dx-recreate for validation cycles
+
 
 - [ ] First boot: `./bin/dx-create && ./bin/dx-start && ./bin/dx-ssh`
 - [ ] In the guest, confirm mount options:
@@ -125,3 +129,43 @@ Constraint: single writer at a time (btrfs cannot be concurrently mounted).
 - [x] Add Starship prompt
 - [x] Add Fish and Nushell support
 - [x] Configure Tmux passthrough for Yazi image support
+
+## Damien Changes
+
+- [x] Please have a separate nix file for each individual nixvim plugin. The should be separate folders for native nixvim plugins vrsus those that aren't
+- [x] key bindings should all have the desc field set using the [O]pen [P]lugin convention used in the majority of existing key mappings
+- [x] Key bindings should reside in the relevant plugin file (if plugin keybindings) not separated into a separate keymap file.
+- [x] Ensure all plugin keymaps are correctly merged and active (fixed via `imports` refactor).
+
+
+
+## §9 Persistent Nix Store Volume (plan.md)
+
+- [ ] Verify Apple `container` CLI flag syntax for mounting a disk image
+  - [ ] Run `container create --help` to confirm `--volume` vs `--disk` flag
+  - [ ] Confirm whether a raw image file or block device is expected
+  - [ ] Confirm the guest-side filesystem type constraint (ext4 vs btrfs)
+- [x] Add nix disk variables to `bin/dx-lib.sh`
+  - [ ] Add `DX_NIX_DISK` (default: `$HOME/.dx-cache/nix-store.img`)
+  - [ ] Add `DX_NIX_DISK_SIZE` (default: `20G`)
+- [x] Create `bin/dx-nix-disk` (one-time setup script)
+  - [ ] Create `~/.dx-cache/` directory if absent
+  - [ ] Create a sparse raw disk image at `$DX_NIX_DISK`
+  - [ ] Format the image with ext4 via a throwaway container
+  - [ ] Guard: skip entirely if the image file already exists (idempotent)
+  - [ ] Make script executable (`chmod +x`)
+- [ ] Modify `bin/dx-create`
+  - [ ] Add pre-flight guard: exit with instructions if `$DX_NIX_DISK` does not exist
+  - [ ] Add `--volume "$DX_NIX_DISK:/nix"` to the `container create` invocation
+- [x] Add `.gitignore` entries to prevent committing disk images
+  - [ ] `*.img`
+  - [ ] `*.raw`
+- [ ] Validate the full rebuild cycle
+  - [ ] First run: `dx-nix-disk` → `dx-build` → `dx-create` → `dx-start`; confirm `/nix/store` populates
+  - [ ] Stop and delete the container (not the disk)
+  - [ ] `dx-build` → `dx-create` → `dx-start`; confirm bootstrap skips already-downloaded packages
+  - [ ] Confirm a previously-built Nix derivation resolves near-instantly from the store
+- [ ] Update README.md with a short "Storage" section
+  - [ ] Document `~/.dx-cache/nix-store.img` location and purpose
+  - [ ] Document the rebuild-survival behaviour
+  - [ ] Note the single-writer constraint (one container at a time)

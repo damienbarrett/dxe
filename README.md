@@ -60,3 +60,39 @@ sudo /guest-bootstrap/bootstrap.sh
 ## NixVim Configuration
 
 The editor configuration is managed via NixVim in `container/.../flake.nix`. This is the canonical path for all editor settings, plugins, and keymaps. Standalone `lazy.nvim` configurations are not supported.
+
+## Storage
+
+- **Volume Name:** dx-nix
+- **Recreate-Survival:** The Nix store (/nix) is stored on a dedicated Apple container volume. This means your downloaded packages and Nix configuration persist even if you delete and recreate the container using dx-create.
+- **Single-Writer Constraint:** Only one running container may mount the dx-nix volume at a time. If you need a second concurrent container, it will need its own volume name or you must wait for the first container to stop.
+- **Optimization:** The filesystem is formatted with btrfs and zstd:3 compression. Nix's auto-optimise-store is enabled to deduplicate identical files at the hardlink level, further saving space.
+
+## Troubleshooting
+
+### Resetting the Environment (Stale Dependencies)
+
+If the guest bootstrap fails due to stale dependencies or a corrupted Nix store in the persistent volume, you can perform a "hard reset" to clear the cache and start fresh:
+
+1. **Destroy the container:**
+   ```bash
+   ./bin/dx-destroy
+   ```
+2. **Delete and recreate the persistent Nix volume:**
+   ```bash
+   container volume delete dx-nix
+   container volume create dx-nix
+   ```
+3. **Rebuild and restart:**
+   ```bash
+   ./bin/dx-build
+   ./bin/dx-create
+   ./bin/dx-start
+   ```
+   *Note: This will trigger a full download of all Nix packages during the next bootstrap.*
+
+### Checking Bootstrap Logs
+If you cannot connect via SSH, monitor the bootstrap progress on the host:
+```bash
+container logs dx-host -f
+```

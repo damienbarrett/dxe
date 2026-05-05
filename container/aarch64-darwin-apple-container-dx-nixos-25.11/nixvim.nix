@@ -1,17 +1,31 @@
 { pkgs, nixvim, system }:
 
-let
-  lib = pkgs.lib;
-  options = import ./nvim/options.nix;
-  plugins = import ./nvim/plugins.nix;
-  keymaps = import ./nvim/keymaps.nix { inherit lib; };
-  extra = import ./nvim/extra.nix { inherit pkgs; };
-in
-nixvim.legacyPackages.${system}.makeNixvim (
-  lib.foldl' lib.recursiveUpdate {} [
-    options
-    plugins
-    keymaps
-    extra
-  ]
-)
+nixvim.legacyPackages.${system}.makeNixvim {
+  viAlias = true;
+  vimAlias = true;
+  imports = [
+    ./nvim/options.nix
+    ./nvim/keymaps.nix
+    ./nvim/plugins/cmp.nix
+    ./nvim/plugins/comment.nix
+    ./nvim/plugins/dashboard.nix
+    ./nvim/plugins/harpoon.nix
+    ./nvim/plugins/lazygit.nix
+    ./nvim/plugins/lsp.nix
+    ./nvim/plugins/lualine.nix
+    ./nvim/plugins/luasnip.nix
+    ./nvim/plugins/oil.nix
+    ./nvim/plugins/project-nvim.nix
+    ./nvim/plugins/rose-pine.nix
+    ./nvim/plugins/telescope.nix
+    ./nvim/plugins/todo-comments.nix
+    ./nvim/plugins/treesitter.nix
+    ./nvim/plugins/trouble.nix
+    ./nvim/plugins/web-devicons.nix
+    ./nvim/plugins/which-key.nix
+    ./nvim/plugins/yazi.nix
+    ./nvim/extra_plugins/outline.nix
+    ./nvim/extra_plugins/ts-context-commentstring.nix
+    ./nvim/extra_plugins/undotree.nix
+  ];
+}

@@ -1,0 +1,19 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+if [ -f "$DX_NIX_DISK" ]; then
+    echo "Nix disk image already exists at $DX_NIX_DISK. Skipping."
+    exit 0
+fi
+
+echo "Creating Nix disk image: $DX_NIX_DISK ($DX_NIX_DISK_SIZE)"
+mkdir -p "$(dirname "$DX_NIX_DISK")"
+truncate -s "$DX_NIX_DISK_SIZE" "$DX_NIX_DISK"
+
+# Format with ext4 as requested in §9
+# Note: We rely on the guest to handle btrfs if preferred, 
+# but §9 specifically asked for ext4 here.
+# For now, we just prepare the sparse file.

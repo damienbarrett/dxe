@@ -1,0 +1,10 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "Starting full recreation cycle..."
+"$SCRIPT_DIR/dx-destroy"
+"$SCRIPT_DIR/dx-create"
+"$SCRIPT_DIR/dx-start"
+echo "Recreation complete."

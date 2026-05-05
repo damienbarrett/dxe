@@ -19,13 +19,21 @@ SSH_OPTS=(
     "-i" "$DX_SSH_KEY"
     "-p" "$DX_SSH_PORT"
     "-o" "StrictHostKeyChecking=no"
-    "-o" "UserKnownHostsFile=/dev/null"
+    "-o" "UserKnownHostsFile=/dev/null"\
+    "-o" "IdentitiesOnly=yes"
 )
+
+# Baseline path to ensure Nix tools are found
+GUEST_PATH="/home/dx/.nix-profile/bin:/home/dx/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 if [ $# -eq 0 ]; then
     # No arguments: interactive login to tmux
-    ssh -t "${SSH_OPTS[@]}" dx@localhost "export TERM=xterm-256color; tmux attach -t dx || tmux new-session -s dx"
+    # We explicitly invoke bash for the environment setup check to handle POSIX syntax (e.g. 2>&1)
+    # regardless of the user's default login shell (nushell/fish).
+    # We also pass the PATH and a safe TERM via env to ensure bash/tmux can find everything.
+    REMOTE_COMMAND="env PATH=\"$GUEST_PATH\" TERM=xterm-256color bash -l -c 'if ! command -v tmux >/dev/null 2>&1; then echo \"DX guest tools are still bootstrapping; tmux is not available yet.\" >&2; exit 127; fi; tmux attach -t dx || tmux new-session -s dx'"
+    ssh -t "${SSH_OPTS[@]}" dx@127.0.0.1 "$REMOTE_COMMAND"
 else
-    # Arguments provided: run them as a command
-    ssh "${SSH_OPTS[@]}" dx@localhost "export TERM=xterm-256color; $(printf "%q " "$@")"
+    # Arguments provided: run them via 'env' to ensure PATH and TERM are set.
+    ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "env PATH=\"$GUEST_PATH\" TERM=xterm-256color" "$@"
 fi

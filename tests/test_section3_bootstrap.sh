@@ -28,12 +28,12 @@ fi
 # Test: bootstrap.sh checks if dx user exists before creating
 assert_file_contains "$BOOTSTRAP" "id -u dx" "bootstrap.sh checks if dx user exists"
 
-# Test: bootstrap.sh prevents duplicate .bashrc lines
-# Look for pattern that checks before appending
-if grep -q "grep.*bashrc\|!.*grep.*bashrc" "$BOOTSTRAP"; then
-    test_pass "bootstrap.sh prevents duplicate .bashrc lines"
+# Test: bootstrap.sh prevents duplicate shell config
+# Home Manager-managed shell files are idempotent; direct .bashrc appends must be guarded.
+if grep -q "home-manager\|homeConfigurations" "$BOOTSTRAP" || grep -q "grep.*bashrc\|!.*grep.*bashrc" "$BOOTSTRAP"; then
+    test_pass "bootstrap.sh prevents duplicate shell config"
 else
-    test_fail "bootstrap.sh prevents duplicate .bashrc lines"
+    test_fail "bootstrap.sh prevents duplicate shell config"
 fi
 
 # Test: bootstrap.sh checks if sshd is running before starting
@@ -49,6 +49,17 @@ assert_file_contains "$BOOTSTRAP" "dx ALL=(ALL) NOPASSWD:ALL" "bootstrap.sh keep
 # Test: bootstrap.sh is idempotent for user creation
 # Check that user creation is conditional
 assert_file_contains "$BOOTSTRAP" "if.*id -u dx" "bootstrap.sh conditionally creates dx user"
+
+# Test: sshd starts only after guest tools are installed and verified
+INSTALL_CALL=$(grep -n "^install_tools$" "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")
+VERIFY_CALL=$(grep -n "^verify_guest_tools$" "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")
+START_SSH_CALL=$(grep -n "^start_ssh$" "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")
+if [ -n "$INSTALL_CALL" ] && [ -n "$VERIFY_CALL" ] && [ -n "$START_SSH_CALL" ] &&
+    [ "$INSTALL_CALL" -lt "$VERIFY_CALL" ] && [ "$VERIFY_CALL" -lt "$START_SSH_CALL" ]; then
+    test_pass "bootstrap.sh starts sshd after guest tools are verified"
+else
+    test_fail "bootstrap.sh starts sshd after guest tools are verified"
+fi
 
 # Test: bash syntax check
 if bash -n "$BOOTSTRAP" 2>/dev/null; then

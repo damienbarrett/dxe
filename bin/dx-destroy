@@ -1,0 +1,24 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+if ! container_exists "$DX_CONTAINER_NAME"; then
+    echo "Container $DX_CONTAINER_NAME does not exist. Nothing to destroy."
+    exit 0
+fi
+
+echo "Stopping DX container: $DX_CONTAINER_NAME..."
+container stop "$DX_CONTAINER_NAME" 2>/dev/null || true
+
+# Wait for container to stop
+while container_is_running "$DX_CONTAINER_NAME"; do
+    echo "Waiting for container to stop..."
+    sleep 1
+done
+
+echo "Removing DX container: $DX_CONTAINER_NAME..."
+container delete "$DX_CONTAINER_NAME"
+
+echo "Container destroyed. Persistent volumes and images remain intact."

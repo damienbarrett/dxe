@@ -1,0 +1,18 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+if ! container_is_running "$DX_CONTAINER_NAME"; then
+    echo "Error: Container $DX_CONTAINER_NAME is not running."
+    exit 1
+fi
+
+echo "Running Nix garbage collection in guest..."
+container exec "$DX_CONTAINER_NAME" nix-collect-garbage --delete-older-than 14d
+
+echo "Running Nix store optimization in guest..."
+container exec "$DX_CONTAINER_NAME" nix-store --optimise
+
+echo "Nix maintenance complete."

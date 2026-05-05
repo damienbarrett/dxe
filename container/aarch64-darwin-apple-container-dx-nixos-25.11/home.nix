@@ -1,32 +1,39 @@
-{ config, pkgs, ... }:
+{ config, pkgs, testImage, ... }:
 
-let
-  # Generic AI tools often installed via npm
-  aiTools = with pkgs; [
-    nodejs
-    # We could add more here if they were in nixpkgs, 
-    # otherwise we install them via home.activation or shell aliases.
-  ];
-in
 {
   home.username = "dx";
   home.homeDirectory = "/home/dx";
   home.stateVersion = "25.11";
+home.packages = with pkgs; [
+  starship
+  fish
+  nushell
+  nodejs # Still keep nodejs for other tasks if needed
+];
 
-  home.packages = with pkgs; [
-    starship
-    fish
-    nushell
-    # Other tools
-  ] ++ aiTools;
+
+  # Declaratively ensure Neovim directories exist
+  xdg.enable = true;
+  xdg.dataFile."nvim/.keep".text = "";
+  xdg.stateFile."nvim/.keep".text = "";
+  xdg.cacheFile."nvim/.keep".text = "";
+
+  # Declaratively place the test image in the home directory
+  home.file."test-image.png".source = testImage;
 
   # Shell configurations
   programs.bash = {
     enable = true;
-    initExtra = ''
+    profileExtra = ''
       export PATH=$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH
-      eval "$(direnv hook bash)"
-      eval "$(starship init bash)"
+    '';
+    initExtra = ''
+      if command -v direnv >/dev/null 2>&1; then
+        eval "$(direnv hook bash)"
+      fi
+      if command -v starship >/dev/null 2>&1; then
+        eval "$(starship init bash)"
+      fi
     '';
   };
 
@@ -34,8 +41,12 @@ in
     enable = true;
     interactiveShellInit = ''
       set -g fish_greeting
-      starship init fish | source
-      direnv hook fish | source
+      if type -q starship
+        starship init fish | source
+      end
+      if type -q direnv
+        direnv hook fish | source
+      end
     '';
   };
 
@@ -48,21 +59,24 @@ in
     '';
     envFile.text = ''
       $env.PATH = ($env.PATH | split row (char esep) | append '($home)/.nix-profile/bin')
+      $env.EDITOR = "nvim"
+      $env.VISUAL = "nvim"
     '';
   };
 
   programs.starship = {
     enable = true;
-    # Custom settings can go here
   };
 
   programs.tmux = {
     enable = true;
+    shortcut = "space";
     extraConfig = ''
       set -g default-terminal "tmux-256color"
       set -as terminal-features ",xterm-256color:RGB"
       set -ga terminal-overrides ",xterm-256color:Tc"
       set -s escape-time 0
+      set -g repeat-time 1000
       set -g mouse on
       set -g history-limit 50000
       
@@ -70,38 +84,29 @@ in
       set -g allow-passthrough on
       set -ga update-environment TERM
       set -ga update-environment TERM_PROGRAM
+
+      # Swap split-window mappings
+      bind % split-window -v
+      bind '"' split-window -h
+
+      # Vim-style pane switching
+      bind h select-pane -L
+      bind j select-pane -D
+      bind k select-pane -U
+      bind l select-pane -R
+
+      # Vim-style pane resizing
+      bind -r H resize-pane -L 5
+      bind -r J resize-pane -D 5
+      bind -r K resize-pane -U 5
+      bind -r L resize-pane -R 5
     '';
   };
 
-  # Activation script to install AI tools via npm if not already present
-  home.activation = {
-    installAiTools = config.lib.dag.entryAfter ["writeBoundary"] ''
-      export PATH="${pkgs.nodejs}/bin:$PATH"
-      # Claude Code
-      if ! command -v claude >/dev/null 2>&1; then
-        echo "Installing Claude Code..."
-        ${pkgs.nodejs}/bin/npm install -g @anthropic-ai/claude-code --prefix $HOME/.local
-      fi
-      # Gemini CLI
-      if ! command -v gemini >/dev/null 2>&1; then
-        echo "Installing Gemini CLI..."
-        ${pkgs.nodejs}/bin/npm install -g @google/gemini-cli --prefix $HOME/.local
-      fi
-      # OpenAI Codex (using common alternative if official is generic)
-      if ! command -v codex >/dev/null 2>&1; then
-         echo "Installing OpenAI Codex CLI..."
-         ${pkgs.nodejs}/bin/npm install -g @openai/codex --prefix $HOME/.local
-      fi
-      # OpenCode
-      if ! command -v opencode >/dev/null 2>&1; then
-         echo "Installing OpenCode CLI..."
-         ${pkgs.nodejs}/bin/npm install -g opencode-ai --prefix $HOME/.local
-      fi
-    '';
-  };
-
-  # Ensure .local/bin is in PATH for npm -g --prefix
+  # Ensure .local/bin is in PATH (though AI tools are now in nix-profile)
   home.sessionVariables = {
-    PATH = "$HOME/.local/bin:$PATH";
+    PATH = "$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH";
+    EDITOR = "nvim";
+    VISUAL = "nvim";
   };
 }

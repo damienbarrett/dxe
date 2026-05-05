@@ -22,6 +22,9 @@ export DX_SSH_PORT="${DX_SSH_PORT:-2222}"
 export DX_SSH_KEY="${DX_SSH_KEY:-$DX_PROJECT_ROOT/dx_key}"
 export DX_SSH_KEY_PUB="${DX_SSH_KEY_PUB:-$DX_PROJECT_ROOT/dx_key.pub}"
 export DX_CONTEXT_DIR="${DX_CONTEXT_DIR:-$DX_PROJECT_ROOT/container/aarch64-darwin-apple-container-dx-nixos-25.11}"
+export DX_NIX_DISK="${DX_NIX_DISK:-$HOME/.dx-cache/nix-store.img}"
+export DX_NIX_DISK_SIZE="${DX_NIX_DISK_SIZE:-20G}"
+
 
 # Helper function to check if a container exists (exact match)
 container_exists() {

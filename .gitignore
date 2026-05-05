@@ -4,3 +4,5 @@ dx_key.pub
 *.swp
 dx-host-export*.tar
 .env
+*.img
+*.raw

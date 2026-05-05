@@ -9,6 +9,8 @@ source "$SCRIPT_DIR/test_helpers.sh"
 
 test_section "Section 6: Improve Guest Tooling"
 
+HOME_NIX="$CONTAINER_DIR/home.nix"
+
 # Test: flake.nix exists
 assert_file_exists "$FLAKE_NIX" "flake.nix exists"
 
@@ -53,6 +55,7 @@ fi
 
 # Test: existing tools preserved - use regex to match with or without pkgs. prefix
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?git" "git preserved in flake.nix"
+assert_grep_in_file "$FLAKE_NIX" "^[[:space:]]*(pkgs\.)?nix[[:space:]]*$" "nix preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?openssh" "openssh preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?tmux" "tmux preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "nixvim" "nixvim preserved in flake.nix"
@@ -64,7 +67,13 @@ assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?direnv" "direnv preserved in flake.ni
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?nix-direnv" "nix-direnv preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?just" "just preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?go-task" "go-task preserved in flake.nix"
+assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?yazi" "yazi preserved in flake.nix"
+
+# Test: shell startup guards optional prompt/environment hooks
+assert_file_contains "$HOME_NIX" "command -v direnv" "bash direnv hook is guarded"
+assert_file_contains "$HOME_NIX" "command -v starship" "bash starship hook is guarded"
+assert_file_contains "$HOME_NIX" "type -q direnv" "fish direnv hook is guarded"
+assert_file_contains "$HOME_NIX" "type -q starship" "fish starship hook is guarded"
 
 print_summary
-exit_with_code
 exit_with_code
