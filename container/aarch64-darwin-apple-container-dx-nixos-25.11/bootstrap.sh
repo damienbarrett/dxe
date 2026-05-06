@@ -7,6 +7,13 @@ export NIX_SSL_CERT_FILE=${NIX_SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}
 
 # 1. Bootstrapping dependencies (Section 2/3)
 install_essentials() {
+    # Restore root profile from persistent volume if it exists
+    if [ ! -L /root/.nix-profile ] && [ -d /nix/var/nix/profiles/per-user/root ]; then
+        echo "Restoring root Nix profile from persistent volume..."
+        mkdir -p /root
+        ln -sf /nix/var/nix/profiles/per-user/root/profile /root/.nix-profile
+    fi
+
     # Only install if shadow tools (like useradd) aren't available
     if ! command -v useradd >/dev/null 2>&1; then
         echo "Installing essential tools..."
@@ -215,6 +222,17 @@ configure_guest() {
     fi
     chown -R dx:dx /home/dx
     chown -R dx:dx /guest-bootstrap
+
+    # Create persistent Nix cache dir on volume to speed up evaluations
+    mkdir -p /nix/cache/nix
+    chown -R dx:dx /nix/cache
+    run_as_dx "mkdir -p ~/.cache && ln -sf /nix/cache/nix ~/.cache/nix"
+
+    # Restore dx profile from persistent volume if it exists
+    if [ ! -L /home/dx/.nix-profile ] && [ -d /nix/var/nix/profiles/per-user/dx/profile ]; then
+        echo "Restoring dx Nix profile from persistent volume..."
+        ln -sf /nix/var/nix/profiles/per-user/dx/profile /home/dx/.nix-profile
+    fi
 
     # Use Home Manager to manage dotfiles and user profile
     run_as_dx "nix run --extra-experimental-features 'nix-command flakes' /guest-bootstrap#homeConfigurations.dx.activationPackage"
