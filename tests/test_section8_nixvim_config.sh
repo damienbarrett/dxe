@@ -16,7 +16,8 @@ assert_file_exists "$NIXVIM_NIX" "nixvim.nix exists"
 
 # Combined content for easier checking
 # Including nvim directory for decomposed config
-COMBINED_NIX=$(cat "$FLAKE_NIX" "$NIXVIM_NIX" "$CONTAINER_DIR"/nvim/*.nix)
+COMBINED_NIX=$(find "$CONTAINER_DIR"/nvim -name "*.nix" -print0 | xargs -0 cat)
+COMBINED_NIX="$(cat "$FLAKE_NIX" "$NIXVIM_NIX")${COMBINED_NIX}"
 
 # Test: undotree not configured both as NixVim module and manually
 UNDO_NIXVIM=$(echo "$COMBINED_NIX" | grep "undotree.enable = true" | wc -l | xargs)

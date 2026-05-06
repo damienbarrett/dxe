@@ -2,7 +2,7 @@
   plugins.lualine = {
     enable = true;
     settings.options = {
-      theme = "rose-pine";
+      theme = "tinted";
       component_separators = "|";
       section_separators = "";
       icons_enabled = true;

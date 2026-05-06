@@ -61,6 +61,52 @@ sudo /guest-bootstrap/bootstrap.sh
 
 The editor configuration is managed via NixVim in `container/.../flake.nix`. This is the canonical path for all editor settings, plugins, and keymaps. Standalone `lazy.nvim` configurations are not supported.
 
+## Theming
+
+Tinty theming is wired as an experimental, guest-driven runtime path. It does not edit host terminal configuration.
+
+Available guest commands:
+```bash
+dx-theme dark
+dx-theme light
+dx-theme rose-pine
+dx-theme rose-pine-moon
+dx-theme rose-pine-dawn
+dx-theme list
+dx-theme current
+dx-theme test
+```
+
+The first theme apply may run `tinty install` to clone Tinty runtime repositories under Tinty's data directory. The pinned Tinty package is installed through Nix, but the template repositories are runtime-managed by Tinty for this experiment.
+
+Current integrations:
+- Shell ANSI/OSC colors through `tinted-shell`, cached from `TINTY_THEME_FILE_PATH`.
+- tmux status colors through `tinted-tmux`.
+- Neovim through `tinted-nvim`, which reads `tinty current` on fresh startup.
+- lazygit through `tinted-lazygit` and `LG_CONFIG_FILE`.
+- btop through a generated `dx-tinty` theme.
+- Yazi through a generated `theme.toml`.
+- Starship through a generated palette-aware `starship.toml`.
+
+`dx-theme` refreshes generated tool themes from `tinty info` after every apply, so reapplying the current scheme also repairs stale btop, Yazi, and Starship theme files.
+
+Rose Pine is available as a DXE-wide Tinty theme family, not just a Neovim colorscheme. The Neovim Rose Pine plugin remains packaged only as a manual fallback.
+
+On a fresh activation, DXE initializes the current Tinty scheme to the dark default (`base16-mocha`) if no previous theme has been selected. After that, `dx-theme` preserves the user's last selected theme, and activation only refreshes generated side files.
+
+On login, `dx-ssh` and shell startup run `dx-theme-restore` to re-emit the selected Tinty terminal palette and foreground/background without changing the selected theme. This is needed because host terminal OSC colors are session state, not durable guest files.
+
+OSC foreground/background switching is implemented with Tinty hook palette variables:
+- Outside tmux: emits OSC 10/11 directly.
+- Inside tmux: emits tmux passthrough-wrapped OSC 10/11.
+
+Manual validation still matters because host terminals vary. To test without tmux, run a non-interactive SSH command such as:
+```bash
+./bin/dx-ssh 'printf "\033]10;#f8f8f2\033\\\\"; printf "\033]11;#1e1e2e\033\\\\"'
+```
+
+Then connect normally with `./bin/dx-ssh`, run `dx-theme dark` and `dx-theme light`, and confirm the host terminal foreground/background visibly changes inside the default tmux session. If OSC 10/11 does not work in the host terminal or through tmux, Tinty remains useful for tool-level theming but does not satisfy the must-have DXE terminal-background requirement.
+
 ## Storage
 
 - **Volume Name:** dx-nix

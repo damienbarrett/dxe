@@ -51,9 +51,9 @@ assert_file_contains "$BOOTSTRAP" "dx ALL=(ALL) NOPASSWD:ALL" "bootstrap.sh keep
 assert_file_contains "$BOOTSTRAP" "if.*id -u dx" "bootstrap.sh conditionally creates dx user"
 
 # Test: sshd starts only after guest tools are installed and verified
-INSTALL_CALL=$(grep -n "^install_tools$" "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")
+INSTALL_CALL=$(grep -n "^configure_guest$" "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")
 VERIFY_CALL=$(grep -n "^verify_guest_tools$" "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")
-START_SSH_CALL=$(grep -n "^start_ssh$" "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")
+START_SSH_CALL=$(grep -n "^exec \\\"\$SSHD_BIN\\\"" "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")
 if [ -n "$INSTALL_CALL" ] && [ -n "$VERIFY_CALL" ] && [ -n "$START_SSH_CALL" ] &&
     [ "$INSTALL_CALL" -lt "$VERIFY_CALL" ] && [ "$VERIFY_CALL" -lt "$START_SSH_CALL" ]; then
     test_pass "bootstrap.sh starts sshd after guest tools are verified"

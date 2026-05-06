@@ -149,6 +149,21 @@ requires_container() {
 # Global failure tracker
 GLOBAL_FAILED=0
 
+# Wait for SSH to be available on localhost:2222
+wait_for_ssh() {
+    local timeout="${1:-180}"
+    echo "  Waiting for guest bootstrap (up to ${timeout}s)..."
+    for i in $(seq 1 "$timeout"); do
+        if nc -z localhost 2222 2>/dev/null; then
+            echo "  Guest bootstrap complete (SSH port is open)."
+            return 0
+        fi
+        sleep 1
+    done
+    echo "  Timeout waiting for SSH."
+    return 1
+}
+
 # Summary
 print_summary() {
     echo ""

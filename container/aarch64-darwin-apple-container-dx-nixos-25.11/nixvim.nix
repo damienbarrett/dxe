@@ -18,6 +18,7 @@ nixvim.legacyPackages.${system}.makeNixvim {
     ./nvim/plugins/project-nvim.nix
     ./nvim/plugins/rose-pine.nix
     ./nvim/plugins/telescope.nix
+    ./nvim/plugins/tinted-nvim.nix
     ./nvim/plugins/todo-comments.nix
     ./nvim/plugins/treesitter.nix
     ./nvim/plugins/trouble.nix

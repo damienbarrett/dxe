@@ -44,6 +44,7 @@
         nix
         openssh
         tmux
+        tinty
         ncurses
         bash-completion
         which
@@ -56,6 +57,7 @@
         nix-direnv
         just
         go-task
+        lazygit
         yazi
         btop
         ghostty.terminfo

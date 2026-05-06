@@ -81,11 +81,25 @@ else
     test_fail "dx-ssh checks tmux before attaching"
 fi
 
+# Test: dx-ssh restores the selected Tinty theme before interactive tmux attach
+if grep -q "dx-theme-restore" "$DX_SSH"; then
+    test_pass "dx-ssh restores theme before tmux attach"
+else
+    test_fail "dx-ssh restores theme before tmux attach"
+fi
+
 # Test: dx-ssh exposes the guest Nix profile path for non-interactive SSH commands
 if grep -q '\.nix-profile/bin' "$DX_SSH"; then
     test_pass "dx-ssh adds guest Nix profile to PATH"
 else
     test_fail "dx-ssh adds guest Nix profile to PATH"
+fi
+
+# Test: dx-ssh forces non-interactive commands through bash even when the guest login shell differs
+if grep -q "base64 -d | bash -l" "$DX_SSH"; then
+    test_pass "dx-ssh wraps non-interactive commands for bash"
+else
+    test_fail "dx-ssh wraps non-interactive commands for bash"
 fi
 
 # Test: dx-put handles missing arguments

@@ -1,0 +1,68 @@
+{ config, pkgs, ... }:
+
+{
+  programs.bash = {
+    enable = true;
+    profileExtra = ''
+      export PATH=$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH
+    '';
+    initExtra = ''
+      if command -v direnv >/dev/null 2>&1; then
+        eval "$(direnv hook bash)"
+      fi
+      if command -v starship >/dev/null 2>&1; then
+        eval "$(starship init bash)"
+      fi
+      if [ -f "$HOME/.cache/dx/tinty/shell.sh" ]; then
+        # shellcheck disable=SC1090
+        . "$HOME/.cache/dx/tinty/shell.sh"
+      fi
+      if [ -x "$HOME/.local/bin/dx-theme-restore" ]; then
+        "$HOME/.local/bin/dx-theme-restore" 2>/dev/null || true
+      fi
+    '';
+  };
+
+  programs.fish = {
+    enable = true;
+    interactiveShellInit = ''
+      set -g fish_greeting
+      if type -q starship
+        starship init fish | source
+      end
+      if type -q direnv
+        direnv hook fish | source
+      end
+      if test -f "$HOME/.cache/dx/tinty/shell.sh"
+        sh "$HOME/.cache/dx/tinty/shell.sh"
+      end
+      if test -x "$HOME/.local/bin/dx-theme-restore"
+        "$HOME/.local/bin/dx-theme-restore" 2>/dev/null
+      end
+    '';
+  };
+
+  programs.nushell = {
+    enable = true;
+    configFile.text = ''
+      # Nushell Tinted-shell startup support is intentionally not enabled.
+      # It has not been proven for the selected Tinty template version.
+      $env.config = {
+        show_banner: false
+      }
+      try { ^/home/dx/.local/bin/dx-theme-restore }
+    '';
+    envFile.text = ''
+      $env.PATH = ($env.PATH | split row (char esep) | append '($home)/.nix-profile/bin')
+      $env.EDITOR = "nvim"
+      $env.VISUAL = "nvim"
+    '';
+  };
+
+  home.sessionVariables = {
+    PATH = "$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH";
+    EDITOR = "nvim";
+    VISUAL = "nvim";
+    LG_CONFIG_FILE = "$HOME/.config/lazygit/config.yml,$HOME/.cache/dx/tinty/lazygit.yml";
+  };
+}

@@ -1,16 +1,16 @@
-{ config, pkgs, testImage, ... }:
+{ config, lib, pkgs, testImage, ... }:
 
 {
+  imports = [ ./home/shell.nix ./home/tools.nix ];
   home.username = "dx";
   home.homeDirectory = "/home/dx";
   home.stateVersion = "25.11";
-home.packages = with pkgs; [
-  starship
-  fish
-  nushell
-  nodejs # Still keep nodejs for other tasks if needed
-];
-
+  home.packages = with pkgs; [
+    starship
+    fish
+    nushell
+    nodejs # Still keep nodejs for other tasks if needed
+  ];
 
   # Declaratively ensure Neovim directories exist
   xdg.enable = true;
@@ -18,95 +18,84 @@ home.packages = with pkgs; [
   xdg.stateFile."nvim/.keep".text = "";
   xdg.cacheFile."nvim/.keep".text = "";
 
+  xdg.configFile."tinted-theming/tinty/config.toml".text = ''
+    # DXE Tinty experiment.
+    # Verified against Tinty 0.29.0 from the pinned nixpkgs input:
+    # - preferred-schemes is supported.
+    # - hooks receive TINTY_THEME_FILE_PATH and TINTY_SCHEME_PALETTE_*.
+    # - runtime templates are managed by `tinty install` / `tinty sync`.
+    shell = "bash -c '{}'"
+    default-scheme = "base16-mocha"
+    preferred-schemes = [
+      "base16-mocha",
+      "base16-gruvbox-light-medium",
+      "base16-rose-pine",
+      "base16-rose-pine-moon",
+      "base16-rose-pine-dawn",
+    ]
+    hooks = ["dx-theme-osc-hook"]
+
+    [[items]]
+    name = "tinted-shell"
+    path = "https://github.com/tinted-theming/tinted-shell"
+    themes-dir = "scripts"
+    supported-systems = ["base16", "base24"]
+    hook = "dx-theme-copy-hook shell"
+
+    [[items]]
+    name = "tinted-tmux"
+    path = "https://github.com/tinted-theming/tinted-tmux"
+    themes-dir = "colors"
+    supported-systems = ["base16", "base24"]
+    hook = "dx-theme-copy-hook tmux"
+
+    [[items]]
+    name = "tinted-lazygit"
+    path = "https://github.com/tinted-theming/tinted-lazygit"
+    themes-dir = "themes"
+    supported-systems = ["base16"]
+    hook = "dx-theme-copy-hook lazygit"
+  '';
+
   # Declaratively place the test image in the home directory
   home.file."test-image.png".source = testImage;
 
-  # Shell configurations
-  programs.bash = {
-    enable = true;
-    profileExtra = ''
-      export PATH=$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH
-    '';
-    initExtra = ''
-      if command -v direnv >/dev/null 2>&1; then
-        eval "$(direnv hook bash)"
+  home.file.".local/bin/dx-theme-copy-hook" = {
+    executable = true;
+    source = ./scripts/dx-theme-copy-hook.sh;
+  };
+
+  home.file.".local/bin/dx-theme-write-tool-themes" = {
+    executable = true;
+    source = ./scripts/dx-theme-write-tool-themes.sh;
+  };
+
+  home.file.".local/bin/dx-theme-osc-hook" = {
+    executable = true;
+    source = ./scripts/dx-theme-osc-hook.sh;
+  };
+
+  home.file.".local/bin/dx-theme-restore" = {
+    executable = true;
+    source = ./scripts/dx-theme-restore.sh;
+  };
+
+  home.file.".local/bin/dx-theme" = {
+    executable = true;
+    source = ./scripts/dx-theme.sh;
+  };
+
+  home.activation.tintyDefaultTheme = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+    if [ ! -s "$HOME/.config/dx/theme-current" ] \
+      && [ -x "$HOME/.local/bin/dx-theme" ] \
+      && [ -x "$HOME/.nix-profile/bin/tinty" ]; then
+      "$HOME/.local/bin/dx-theme" dark >/dev/null 2>&1 || true
+    elif [ -x "$HOME/.local/bin/dx-theme-write-tool-themes" ] \
+      && [ -x "$HOME/.nix-profile/bin/tinty" ]; then
+      current="$("$HOME/.nix-profile/bin/tinty" current 2>/dev/null || true)"
+      if [ -n "$current" ]; then
+        "$HOME/.local/bin/dx-theme-write-tool-themes" "$current" >/dev/null 2>&1 || true
       fi
-      if command -v starship >/dev/null 2>&1; then
-        eval "$(starship init bash)"
-      fi
-    '';
-  };
-
-  programs.fish = {
-    enable = true;
-    interactiveShellInit = ''
-      set -g fish_greeting
-      if type -q starship
-        starship init fish | source
-      end
-      if type -q direnv
-        direnv hook fish | source
-      end
-    '';
-  };
-
-  programs.nushell = {
-    enable = true;
-    configFile.text = ''
-      $env.config = {
-        show_banner: false
-      }
-    '';
-    envFile.text = ''
-      $env.PATH = ($env.PATH | split row (char esep) | append '($home)/.nix-profile/bin')
-      $env.EDITOR = "nvim"
-      $env.VISUAL = "nvim"
-    '';
-  };
-
-  programs.starship = {
-    enable = true;
-  };
-
-  programs.tmux = {
-    enable = true;
-    shortcut = "space";
-    extraConfig = ''
-      set -g default-terminal "tmux-256color"
-      set -as terminal-features ",xterm-256color:RGB"
-      set -ga terminal-overrides ",xterm-256color:Tc"
-      set -s escape-time 0
-      set -g repeat-time 1000
-      set -g mouse on
-      set -g history-limit 50000
-      
-      # Yazi image support (Ghostty/Kitty protocol)
-      set -g allow-passthrough on
-      set -ga update-environment TERM
-      set -ga update-environment TERM_PROGRAM
-
-      # Swap split-window mappings
-      bind % split-window -v
-      bind '"' split-window -h
-
-      # Vim-style pane switching
-      bind h select-pane -L
-      bind j select-pane -D
-      bind k select-pane -U
-      bind l select-pane -R
-
-      # Vim-style pane resizing
-      bind -r H resize-pane -L 5
-      bind -r J resize-pane -D 5
-      bind -r K resize-pane -U 5
-      bind -r L resize-pane -R 5
-    '';
-  };
-
-  # Ensure .local/bin is in PATH (though AI tools are now in nix-profile)
-  home.sessionVariables = {
-    PATH = "$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH";
-    EDITOR = "nvim";
-    VISUAL = "nvim";
-  };
+    fi
+  '';
 }

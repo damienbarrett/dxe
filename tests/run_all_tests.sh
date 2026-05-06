@@ -25,13 +25,15 @@ for arg in "$@"; do
             echo "Usage: $0 [--section=N] [--skip-integration]"
             echo ""
             echo "Options:"
-            echo "  --section=N         Run only section N (0-13)"
+            echo "  --section=N         Run only section N (0-14)"
             echo "  --skip-integration  Skip integration tests (sections 11-12)"
             echo "  --help              Show this help message"
             exit 0
             ;;
     esac
 done
+
+export SKIP_INTEGRATION
 
 echo "======================================"
 echo "DX Experience Test Suite"
@@ -84,6 +86,7 @@ fi
 
 # Final review (always run)
 run_test "$SCRIPT_DIR/test_section13_final_review.sh" "13"
+run_test "$SCRIPT_DIR/test_section14_tinty_theming.sh" "14"
 
 echo ""
 echo "======================================"

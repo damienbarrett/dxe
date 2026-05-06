@@ -48,8 +48,7 @@ else
 fi
 
 # Wait for bootstrap
-echo "  Waiting for guest bootstrap (30s)..."
-sleep 30
+wait_for_ssh 180
 
 # Test: dx-status works
 echo "  Running: dx-status"
@@ -83,6 +82,14 @@ sleep 5
 "$BIN_DIR/dx-start" >/dev/null 2>&1
 sleep 10
 if "$BIN_DIR/dx-ssh" "test -f /workspace/persistence_test_file" >/dev/null 2>&1; then
+    test_pass "source files survive dx-stop and dx-start"
+else
+    test_fail "source files survive dx-stop and dx-start"
+fi
+
+print_summary
+exit_with_code
+dx-ssh" "test -f /workspace/persistence_test_file" >/dev/null 2>&1; then
     test_pass "source files survive dx-stop and dx-start"
 else
     test_fail "source files survive dx-stop and dx-start"
