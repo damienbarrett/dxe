@@ -14,6 +14,9 @@ echo "Connecting to DX guest via SSH..."
 # Ensure TERM is compatible with the guest
 export TERM=${TERM:-xterm-256color}
 
+# Revert terminal colors to host defaults upon exit
+trap 'printf "\033]110\033\\\\\033]111\033\\\\\033]104\033\\\\"' EXIT
+
 # Use a bash array for SSH options to handle quoting correctly
 SSH_OPTS=(
     "-i" "$DX_SSH_KEY"
