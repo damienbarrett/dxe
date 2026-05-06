@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
+# Ensure SSL certificates are found
+export SSL_CERT_FILE=${SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}
+export NIX_SSL_CERT_FILE=${NIX_SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}
+
 # 1. Bootstrapping dependencies (Section 2/3)
 install_essentials() {
     # Only install if shadow tools (like useradd) aren't available

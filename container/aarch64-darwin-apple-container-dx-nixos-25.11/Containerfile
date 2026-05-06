@@ -1,5 +1,9 @@
 FROM nixpkgs/nix-flakes:nixos-25.11-aarch64-linux
 
+# Set global SSL certificate environment variables
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt
+ENV NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt
+
 # Create the workspace directory
 RUN mkdir -p /workspace && chmod 1777 /workspace
 
