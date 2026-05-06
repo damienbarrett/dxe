@@ -8,8 +8,9 @@
     # - hooks receive TINTY_THEME_FILE_PATH and TINTY_SCHEME_PALETTE_*.
     # - runtime templates are managed by `tinty install` / `tinty sync`.
     shell = "bash -c '{}'"
-    default-scheme = "base16-mocha"
+    default-scheme = "base16-gruvbox-dark-hard"
     preferred-schemes = [
+      "base16-gruvbox-dark-hard",
       "base16-mocha",
       "base16-gruvbox-light-medium",
       "base16-rose-pine",

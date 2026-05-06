@@ -60,6 +60,7 @@
         lazygit
         yazi
         btop
+        neofetch
         ghostty.terminfo
         gemini-cli
       ]) ++ [

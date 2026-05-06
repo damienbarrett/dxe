@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-DX_THEME_DARK="base16-mocha"
+DX_THEME_DARK="base16-gruvbox-dark-hard"
 DX_THEME_LIGHT="base16-gruvbox-light-medium"
 DX_THEME_ROSE_PINE="base16-rose-pine"
 DX_THEME_ROSE_PINE_MOON="base16-rose-pine-moon"

@@ -56,6 +56,8 @@
       $env.PATH = ($env.PATH | split row (char esep) | append '($home)/.nix-profile/bin')
       $env.EDITOR = "nvim"
       $env.VISUAL = "nvim"
+      $env.SSL_CERT_FILE = '($home)/.nix-profile/etc/ssl/certs/ca-bundle.crt'
+      $env.NIX_SSL_CERT_FILE = '($home)/.nix-profile/etc/ssl/certs/ca-bundle.crt'
     '';
   };
 
@@ -64,5 +66,7 @@
     EDITOR = "nvim";
     VISUAL = "nvim";
     LG_CONFIG_FILE = "$HOME/.config/lazygit/config.yml,$HOME/.cache/dx/tinty/lazygit.yml";
+    SSL_CERT_FILE = "$HOME/.nix-profile/etc/ssl/certs/ca-bundle.crt";
+    NIX_SSL_CERT_FILE = "$HOME/.nix-profile/etc/ssl/certs/ca-bundle.crt";
   };
 }
