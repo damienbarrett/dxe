@@ -4,10 +4,6 @@ FROM nixpkgs/nix-flakes:nixos-25.11-aarch64-linux
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt
 ENV NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt
 
-# Pre-install essential tools to speed up guest bootstrap.
-# These will be copied to the persistent volume on first boot.
-RUN nix profile install nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs nixpkgs#e2fsprogs --extra-experimental-features "nix-command flakes"
-
 # Create the workspace directory
 RUN mkdir -p /workspace && chmod 1777 /workspace
 
