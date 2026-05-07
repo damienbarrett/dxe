@@ -135,6 +135,15 @@ create_user() {
     fi
 }
 
+# Hand /workspace (mounted from the dx-workspace named volume) to dx.
+# Top-level only — recursive chown on a populated workspace is wasteful.
+setup_workspace() {
+    if [ -d /workspace ]; then
+        chown dx:dx /workspace
+        chmod 0755 /workspace
+    fi
+}
+
 # 3. Configure SSH (Section 4)
 configure_ssh() {
     echo "Configuring SSH..."
@@ -256,6 +265,7 @@ install_essentials
 setup_nix_volume   # §2: Call BEFORE install_tools
 configure_nix_daemon # §3
 create_user
+setup_workspace
 configure_ssh
 configure_guest
 verify_guest_tools

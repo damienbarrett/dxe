@@ -58,6 +58,7 @@
       $env.VISUAL = "nvim"
       $env.SSL_CERT_FILE = $"($nu.home-path)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
       $env.NIX_SSL_CERT_FILE = $"($nu.home-path)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
+      $env.WORKSPACE = "/workspace"
     '';
   };
 
@@ -68,5 +69,6 @@
     LG_CONFIG_FILE = "$HOME/.config/lazygit/config.yml,$HOME/.cache/dx/tinty/lazygit.yml";
     SSL_CERT_FILE = "$HOME/.nix-profile/etc/ssl/certs/ca-bundle.crt";
     NIX_SSL_CERT_FILE = "$HOME/.nix-profile/etc/ssl/certs/ca-bundle.crt";
+    WORKSPACE = "/workspace";
   };
 }

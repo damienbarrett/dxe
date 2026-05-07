@@ -24,6 +24,8 @@ export DX_SSH_KEY_PUB="${DX_SSH_KEY_PUB:-$DX_PROJECT_ROOT/dx_key.pub}"
 export DX_CONTEXT_DIR="${DX_CONTEXT_DIR:-$DX_PROJECT_ROOT/container/aarch64-darwin-apple-container-dx-nixos-25.11}"
 export DX_NIX_DISK="${DX_NIX_DISK:-$HOME/.dx-cache/nix-store.img}"
 export DX_NIX_DISK_SIZE="${DX_NIX_DISK_SIZE:-20G}"
+export DX_WORKSPACE_VOLUME="${DX_WORKSPACE_VOLUME:-dx-workspace}"
+export DX_WORKSPACE_PATH="${DX_WORKSPACE_PATH:-/workspace}"
 
 
 # Helper function to check if a container exists (exact match)
@@ -44,4 +46,13 @@ container_is_running() {
 container_image_exists() {
     local name="$1"
     container image list | awk '{print $1}' | grep -x -q "$name"
+}
+
+# Idempotently create a named volume.
+container_ensure_volume() {
+    local name="$1"
+    if container volume inspect "$name" >/dev/null 2>&1; then
+        return 0
+    fi
+    container volume create "$name"
 }
