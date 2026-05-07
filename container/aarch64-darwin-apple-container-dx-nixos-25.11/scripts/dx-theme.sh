@@ -1,23 +1,19 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-DX_THEME_DARK="base16-gruvbox-dark-hard"
-DX_THEME_LIGHT="base16-gruvbox-light-medium"
-DX_THEME_ROSE_PINE="base16-rose-pine"
-DX_THEME_ROSE_PINE_MOON="base16-rose-pine-moon"
-DX_THEME_ROSE_PINE_DAWN="base16-rose-pine-dawn"
+# Single source of truth for theme aliases is ~/.config/dx/themes.json,
+# which is generated declaratively from home/theme.nix. Adding or renaming
+# an alias is a one-place edit in Nix; this script never hardcodes them.
+themes_json="$HOME/.config/dx/themes.json"
+themes_default_file="$HOME/.config/dx/themes-default"
 
 usage() {
   cat <<'EOF'
 Usage: dx-theme <command>
 
 Commands:
-  dark                         Apply base16-mocha
-  light                        Apply base16-gruvbox-light-medium
-  rose-pine                    Apply base16-rose-pine
-  rose-pine-moon               Apply base16-rose-pine-moon
-  rose-pine-dawn               Apply base16-rose-pine-dawn
-  apply <alias-or-scheme-id>   Apply a configured alias or raw Tinty scheme id
+  <alias>                      Apply an alias defined in the registry (see `list`)
+  apply <alias-or-scheme-id>   Apply an alias or raw Tinty scheme id
   list                         List configured aliases
   current                      Print Tinty's current scheme
   test                         Print current theme values and ANSI swatches
@@ -34,10 +30,31 @@ have_scheme() {
   tinty list 2>/dev/null | grep -qx "$1"
 }
 
+# Read the alias registry; tolerate missing/broken JSON without aborting.
+themes_jq() {
+  if [ -f "$themes_json" ]; then
+    jq "$@" "$themes_json" 2>/dev/null
+  else
+    return 1
+  fi
+}
+
+default_alias() {
+  if [ -s "$themes_default_file" ]; then
+    cat "$themes_default_file"
+  else
+    echo dark
+  fi
+}
+
+default_scheme() {
+  resolve_scheme "$(default_alias)"
+}
+
 ensure_tinty_data() {
   dir="$(data_dir)"
   dir="${dir%/}"
-  if have_scheme "$DX_THEME_DARK" \
+  if have_scheme "$(default_scheme)" \
     && [ -d "$dir/repos/tinted-shell" ] \
     && [ -d "$dir/repos/tinted-tmux" ] \
     && [ -d "$dir/repos/tinted-lazygit" ]; then
@@ -48,16 +65,16 @@ ensure_tinty_data() {
   tinty install || tinty sync
 }
 
+# Resolve an alias to a scheme id. Unknown keys pass through unchanged so
+# `apply <raw-scheme-id>` still works.
 resolve_scheme() {
   value="$1"
-  case "$value" in
-    dark) echo "$DX_THEME_DARK" ;;
-    light) echo "$DX_THEME_LIGHT" ;;
-    rose-pine) echo "$DX_THEME_ROSE_PINE" ;;
-    rose-pine-moon) echo "$DX_THEME_ROSE_PINE_MOON" ;;
-    rose-pine-dawn) echo "$DX_THEME_ROSE_PINE_DAWN" ;;
-    *) echo "$value" ;;
-  esac
+  resolved="$(themes_jq -r --arg k "$value" '.[$k] // $k')" || resolved="$value"
+  echo "$resolved"
+}
+
+is_alias() {
+  themes_jq -e --arg k "$1" 'has($k)' >/dev/null
 }
 
 refresh_tool_themes() {
@@ -86,20 +103,19 @@ print_current() {
 }
 
 print_list() {
-  cat <<EOF
-dark            $DX_THEME_DARK
-light           $DX_THEME_LIGHT
-rose-pine       $DX_THEME_ROSE_PINE
-rose-pine-moon  $DX_THEME_ROSE_PINE_MOON
-rose-pine-dawn  $DX_THEME_ROSE_PINE_DAWN
-EOF
+  if rendered="$(themes_jq -r 'to_entries|sort_by(.key)|.[]|"\(.key)\t\(.value)"')" && [ -n "$rendered" ]; then
+    printf '%s\n' "$rendered" | column -t -s "$(printf '\t')"
+  else
+    echo "No theme registry found at $themes_json" >&2
+    return 1
+  fi
 }
 
 print_test() {
   ensure_tinty_data
   current="$(print_current)"
   if [ -z "$current" ]; then
-    current="$DX_THEME_DARK"
+    current="$(default_scheme)"
   fi
 
   variant="$(tinty current variant 2>/dev/null || true)"
@@ -122,9 +138,6 @@ if [ $# -gt 0 ]; then
 fi
 
 case "$command_name" in
-  dark|light|rose-pine|rose-pine-moon|rose-pine-dawn)
-    apply_scheme "$command_name"
-    ;;
   apply)
     if [ $# -ne 1 ]; then
       usage
@@ -148,7 +161,11 @@ case "$command_name" in
     usage
     ;;
   *)
-    usage
-    exit 2
+    if is_alias "$command_name"; then
+      apply_scheme "$command_name"
+    else
+      usage
+      exit 2
+    fi
     ;;
 esac

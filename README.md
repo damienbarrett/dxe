@@ -65,17 +65,26 @@ The editor configuration is managed via NixVim in `container/.../flake.nix`. Thi
 
 Tinty theming is wired as an experimental, guest-driven runtime path. It does not edit host terminal configuration.
 
-Available guest commands:
+Aliases are declared in `home/theme.nix` (`dxThemes`) and rendered to
+`~/.config/dx/themes.json` at activation time. `dx-theme list` shows the
+full set. A representative subset:
+
 ```bash
-dx-theme dark
-dx-theme light
-dx-theme rose-pine
-dx-theme rose-pine-moon
-dx-theme rose-pine-dawn
-dx-theme list
-dx-theme current
-dx-theme test
+dx-theme dark                  # base16-gruvbox-dark-hard
+dx-theme light                 # base16-gruvbox-light-medium
+dx-theme rose-pine             # plus rose-pine-moon, rose-pine-dawn
+dx-theme everforest-dark       # plus everforest-light
+dx-theme catppuccin            # = catppuccin-mocha; latte/frappe/macchiato/mocha also available
+dx-theme solarized-dark        # plus solarized-light
+dx-theme list                  # show every alias and its base16 scheme
+dx-theme current               # what tinty has applied right now
+dx-theme test                  # palette swatch + base00/base05 readout
+dx-theme apply <scheme-id>     # bypass aliases for any tinty scheme
 ```
+
+Adding a new theme family is a one-line edit to `dxThemes` in
+`home/theme.nix` — `dx-theme.sh` reads aliases dynamically via `jq`, so
+no script changes are needed.
 
 The first theme apply may run `tinty install` to clone Tinty runtime repositories under Tinty's data directory. The pinned Tinty package is installed through Nix, but the template repositories are runtime-managed by Tinty for this experiment.
 
@@ -92,7 +101,7 @@ Current integrations:
 
 Rose Pine is available as a DXE-wide Tinty theme family, not just a Neovim colorscheme. The Neovim Rose Pine plugin remains packaged only as a manual fallback.
 
-On a fresh activation, DXE initializes the current Tinty scheme to the dark default (`base16-mocha`) if no previous theme has been selected. After that, `dx-theme` preserves the user's last selected theme, and activation only refreshes generated side files.
+On a fresh activation, DXE initializes the current Tinty scheme to the dark default (`base16-gruvbox-dark-hard`) if no previous theme has been selected. After that, `dx-theme` preserves the user's last selected theme, and activation only refreshes generated side files.
 
 On login, `dx-ssh` and shell startup run `dx-theme-restore` to re-emit the selected Tinty terminal palette and foreground/background without changing the selected theme. This is needed because host terminal OSC colors are session state, not durable guest files.
 

@@ -40,6 +40,19 @@ assert_file_contains "$HOME_THEME_NIX" "base16-rose-pine" "Tinty config includes
 assert_file_contains "$HOME_THEME_NIX" "base16-rose-pine-moon" "Tinty config includes Rose Pine Moon"
 assert_file_contains "$HOME_THEME_NIX" "base16-rose-pine-dawn" "Tinty config includes Rose Pine Dawn"
 
+# SRP guards: theme aliases live in a single declarative attrset that
+# generates a JSON registry consumed by dx-theme.sh. If anyone ever
+# re-introduces a per-alias bash variable in the script or a parallel
+# alias list in another file, these asserts fire.
+assert_file_contains "$HOME_THEME_NIX" "dxThemes" "theme.nix declares dxThemes alias registry"
+assert_file_contains "$HOME_THEME_NIX" "dx/themes.json" "theme.nix emits dx/themes.json runtime registry"
+assert_file_not_contains "$SCRIPT_DX_THEME" "DX_THEME_DARK=" "dx-theme.sh does not hardcode per-alias variables"
+assert_file_not_contains "$SCRIPT_DX_THEME" "dark|light|rose-pine|rose-pine-moon|rose-pine-dawn" "dx-theme.sh dispatch is not alias-enumerating"
+assert_file_contains "$HOME_THEME_NIX" "base16-catppuccin-mocha" "theme registry includes catppuccin-mocha"
+assert_file_contains "$HOME_THEME_NIX" "base16-everforest-dark-hard" "theme registry includes everforest-dark"
+assert_file_contains "$HOME_THEME_NIX" "base16-solarized-light" "theme registry includes solarized-light"
+assert_file_contains "$HOME_THEME_NIX" "base16-solarized-dark" "theme registry includes solarized-dark"
+
 assert_file_contains "$HOME_THEME_NIX" "dx-theme" "home/theme.nix declares dx-theme"
 assert_file_contains "$HOME_THEME_NIX" "dx-theme-copy-hook" "home.nix declares Tinty copy hook"
 assert_file_contains "$HOME_THEME_NIX" "dx-theme-osc-hook" "home.nix declares Tinty OSC hook"
@@ -78,7 +91,7 @@ assert_file_contains "$LUALINE_NIX" 'theme = "tinted"' "lualine uses tinted them
 assert_file_not_contains "$LUALINE_NIX" 'theme = "rose-pine"' "lualine no longer hard-codes rose-pine"
 assert_file_contains "$ROSE_PINE_NIX" "pkgs.vimPlugins.rose-pine" "Rose Pine remains packaged as fallback"
 
-assert_file_contains "$RUNNER" "0-14" "test runner help includes section 14"
+assert_file_contains "$RUNNER" "0-16" "test runner help advertises current section range"
 assert_file_contains "$RUNNER" 'run_test "$SCRIPT_DIR/test_section14_tinty_theming.sh" "14"' "test runner explicitly runs section 14"
 assert_file_not_contains "$FLAKE_NIX" "stylix" "Stylix dependency was not added"
 
