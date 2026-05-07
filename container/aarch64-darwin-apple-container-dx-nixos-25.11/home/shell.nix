@@ -53,11 +53,11 @@
       try { ^/home/dx/.local/bin/dx-theme-restore }
     '';
     envFile.text = ''
-      $env.PATH = ($env.PATH | split row (char esep) | append '($home)/.nix-profile/bin')
+      $env.PATH = ($env.PATH | split row (char esep) | append $"($nu.home-path)/.nix-profile/bin")
       $env.EDITOR = "nvim"
       $env.VISUAL = "nvim"
-      $env.SSL_CERT_FILE = '($home)/.nix-profile/etc/ssl/certs/ca-bundle.crt'
-      $env.NIX_SSL_CERT_FILE = '($home)/.nix-profile/etc/ssl/certs/ca-bundle.crt'
+      $env.SSL_CERT_FILE = $"($nu.home-path)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
+      $env.NIX_SSL_CERT_FILE = $"($nu.home-path)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
     '';
   };
 

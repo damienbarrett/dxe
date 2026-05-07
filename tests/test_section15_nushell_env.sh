@@ -1,0 +1,112 @@
+#!/bin/bash
+# Section 15: Nushell Environment Configuration
+# Verifies the nushell envFile (home/shell.nix) uses proper string
+# interpolation rather than single-quoted literals like '($home)/...'.
+# Single-quoted nushell strings are literal — they don't expand $home,
+# so SSL_CERT_FILE ends up as a non-existent path and git/curl fail with
+# "unable to get local issuer certificate".
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/test_helpers.sh"
+
+SHELL_NIX="$CONTAINER_DIR/home/shell.nix"
+
+test_section "Section 15: Nushell Environment"
+
+# ---------- Static checks (no container needed) ----------
+
+assert_file_exists "$SHELL_NIX" "home/shell.nix exists"
+
+# Negative: any nushell-style single-quoted ($home) literal in SSL/PATH lines is a bug.
+if grep -E "(SSL_CERT_FILE|NIX_SSL_CERT_FILE|env\.PATH).*'\(\\\$home\)" "$SHELL_NIX" >/dev/null 2>&1; then
+    test_fail "shell.nix uses literal '(\$home) in nushell envFile (no interpolation)"
+else
+    test_pass "shell.nix avoids literal '(\$home) in nushell envFile"
+fi
+
+# Positive: SSL paths use $"($nu.home-path)/..." interpolation.
+if grep -E '\$env\.SSL_CERT_FILE.*\$"\(\$nu\.home-path\)' "$SHELL_NIX" >/dev/null 2>&1; then
+    test_pass "shell.nix SSL_CERT_FILE uses \$\"(\$nu.home-path)/...\" interpolation"
+else
+    test_fail "shell.nix SSL_CERT_FILE uses \$\"(\$nu.home-path)/...\" interpolation"
+fi
+if grep -E '\$env\.NIX_SSL_CERT_FILE.*\$"\(\$nu\.home-path\)' "$SHELL_NIX" >/dev/null 2>&1; then
+    test_pass "shell.nix NIX_SSL_CERT_FILE uses \$\"(\$nu.home-path)/...\" interpolation"
+else
+    test_fail "shell.nix NIX_SSL_CERT_FILE uses \$\"(\$nu.home-path)/...\" interpolation"
+fi
+
+# ---------- Runtime checks (require running container) ----------
+
+if ! requires_container; then
+    print_summary
+    exit_with_code
+fi
+
+if ! wait_for_ssh 60; then
+    test_fail "SSH not reachable on localhost:$DX_SSH_PORT"
+    print_summary
+    exit_with_code
+fi
+
+SSH_COMMON_OPTS=(
+    "-i" "$DX_SSH_KEY"
+    "-o" "StrictHostKeyChecking=no"
+    "-o" "UserKnownHostsFile=/dev/null"
+    "-o" "IdentitiesOnly=yes"
+    "-o" "BatchMode=yes"
+    "-o" "ConnectTimeout=5"
+)
+# ssh uses -p for port; scp uses -P. Keep them separate.
+SSH_OPTS=("${SSH_COMMON_OPTS[@]}" "-p" "$DX_SSH_PORT")
+SCP_OPTS=("${SSH_COMMON_OPTS[@]}" "-P" "$DX_SSH_PORT")
+
+# Run a nushell script inside the guest. We scp the script over rather than
+# trying to embed it in an ssh command — quoting through ssh + bash + nu
+# eats nushell's $"..." interpolation syntax.
+run_nu() {
+    local script="$1"
+    local local_tmp remote_path
+    local_tmp=$(mktemp -t dx_nu_probe.XXXXXX)
+    remote_path="/tmp/$(basename "$local_tmp").nu"
+    printf '%s\n' "$script" > "$local_tmp"
+    scp "${SCP_OPTS[@]}" "$local_tmp" "dx@127.0.0.1:$remote_path" >/dev/null 2>&1
+    local rc=$?
+    rm -f "$local_tmp"
+    [ $rc -eq 0 ] || return $rc
+    ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "bash -lc 'nu $remote_path; rc=\$?; rm -f $remote_path; exit \$rc'"
+}
+
+# Probe: source env.nu (this is what an interactive nushell session does on
+# startup) and confirm the cert vars resolve to real files.
+# Use a single-quoted bash string rather than a heredoc — bash 3.2 (the
+# default on macOS) strips $"..." (locale translation) from quoted heredocs,
+# which mangles nushell's interpolation syntax.
+PROBE='source ~/.config/nushell/env.nu
+let s = ($env.SSL_CERT_FILE? | default "")
+let n = ($env.NIX_SSL_CERT_FILE? | default "")
+print $"SSL=($s)"
+print $"NIX=($n)"
+print $"SSL_EXISTS=($s | path exists)"
+print $"NIX_EXISTS=($n | path exists)"'
+
+PROBE_OUT=$(run_nu "$PROBE" 2>&1 || true)
+
+if echo "$PROBE_OUT" | grep -q "^SSL_EXISTS=true$"; then
+    test_pass "nushell SSL_CERT_FILE resolves to an existing file after sourcing env.nu"
+else
+    line=$(echo "$PROBE_OUT" | grep -E "^SSL=" | head -1)
+    test_fail "nushell SSL_CERT_FILE does not resolve to an existing file (${line:-no output})"
+fi
+
+if echo "$PROBE_OUT" | grep -q "^NIX_EXISTS=true$"; then
+    test_pass "nushell NIX_SSL_CERT_FILE resolves to an existing file after sourcing env.nu"
+else
+    line=$(echo "$PROBE_OUT" | grep -E "^NIX=" | head -1)
+    test_fail "nushell NIX_SSL_CERT_FILE does not resolve to an existing file (${line:-no output})"
+fi
+
+print_summary
+exit_with_code
