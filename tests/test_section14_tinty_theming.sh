@@ -133,6 +133,34 @@ else
     else
         test_fail "light and Rose Pine dx-theme commands work"
     fi
+
+    # Each new alias resolves to its expected base16 scheme. The pairs
+    # below mirror dxThemes in home/theme.nix; if that registry changes,
+    # update this list.
+    new_alias_pairs='catppuccin=base16-catppuccin-mocha
+catppuccin-latte=base16-catppuccin-latte
+catppuccin-frappe=base16-catppuccin-frappe
+catppuccin-macchiato=base16-catppuccin-macchiato
+catppuccin-mocha=base16-catppuccin-mocha
+everforest-dark=base16-everforest-dark-hard
+everforest-light=base16-everforest-light-medium
+solarized-dark=base16-solarized-dark
+solarized-light=base16-solarized-light'
+    if container exec -u dx dx-host bash -lc "
+        set -e
+        printf '%s\n' '$new_alias_pairs' | while IFS='=' read -r alias scheme; do
+            dx-theme \"\$alias\" >/dev/null
+            actual=\"\$(tinty current)\"
+            if [ \"\$actual\" != \"\$scheme\" ]; then
+                echo \"FAIL: dx-theme \$alias -> \$actual (expected \$scheme)\" >&2
+                exit 1
+            fi
+        done
+    "; then
+        test_pass "new theme aliases (catppuccin/everforest/solarized) apply correctly"
+    else
+        test_fail "new theme aliases (catppuccin/everforest/solarized) apply correctly"
+    fi
 fi
 
 print_summary

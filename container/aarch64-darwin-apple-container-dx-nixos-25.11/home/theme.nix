@@ -38,44 +38,46 @@ let
   extraPreferredSchemes = [ "base16-mocha" ];
 
   preferredSchemes = lib.unique (lib.attrValues dxThemes ++ extraPreferredSchemes);
-  preferredSchemesRendered =
-    lib.concatMapStringsSep ",\n      " (s: ''"${s}"'') preferredSchemes;
+
+  # Tinty TOML config rendered from a pure Nix attrset via nixpkgs' TOML
+  # formatter. Verified against Tinty 0.29.0 from the pinned nixpkgs input:
+  # - preferred-schemes is supported.
+  # - hooks receive TINTY_THEME_FILE_PATH and TINTY_SCHEME_PALETTE_*.
+  # - runtime templates are managed by `tinty install` / `tinty sync`.
+  tomlFormat = pkgs.formats.toml { };
+  tintyConfig = {
+    shell = "bash -c '{}'";
+    default-scheme = dxThemes.${dxDefault};
+    preferred-schemes = preferredSchemes;
+    hooks = [ "dx-theme-osc-hook" ];
+    items = [
+      {
+        name = "tinted-shell";
+        path = "https://github.com/tinted-theming/tinted-shell";
+        themes-dir = "scripts";
+        supported-systems = [ "base16" "base24" ];
+        hook = "dx-theme-copy-hook shell";
+      }
+      {
+        name = "tinted-tmux";
+        path = "https://github.com/tinted-theming/tinted-tmux";
+        themes-dir = "colors";
+        supported-systems = [ "base16" "base24" ];
+        hook = "dx-theme-copy-hook tmux";
+      }
+      {
+        name = "tinted-lazygit";
+        path = "https://github.com/tinted-theming/tinted-lazygit";
+        themes-dir = "themes";
+        supported-systems = [ "base16" ];
+        hook = "dx-theme-copy-hook lazygit";
+      }
+    ];
+  };
 in
 {
-  xdg.configFile."tinted-theming/tinty/config.toml".text = ''
-    # DXE Tinty experiment.
-    # Verified against Tinty 0.29.0 from the pinned nixpkgs input:
-    # - preferred-schemes is supported.
-    # - hooks receive TINTY_THEME_FILE_PATH and TINTY_SCHEME_PALETTE_*.
-    # - runtime templates are managed by `tinty install` / `tinty sync`.
-    shell = "bash -c '{}'"
-    default-scheme = "${dxThemes.${dxDefault}}"
-    preferred-schemes = [
-      ${preferredSchemesRendered},
-    ]
-    hooks = ["dx-theme-osc-hook"]
-
-    [[items]]
-    name = "tinted-shell"
-    path = "https://github.com/tinted-theming/tinted-shell"
-    themes-dir = "scripts"
-    supported-systems = ["base16", "base24"]
-    hook = "dx-theme-copy-hook shell"
-
-    [[items]]
-    name = "tinted-tmux"
-    path = "https://github.com/tinted-theming/tinted-tmux"
-    themes-dir = "colors"
-    supported-systems = ["base16", "base24"]
-    hook = "dx-theme-copy-hook tmux"
-
-    [[items]]
-    name = "tinted-lazygit"
-    path = "https://github.com/tinted-theming/tinted-lazygit"
-    themes-dir = "themes"
-    supported-systems = ["base16"]
-    hook = "dx-theme-copy-hook lazygit"
-  '';
+  xdg.configFile."tinted-theming/tinty/config.toml".source =
+    tomlFormat.generate "tinty-config.toml" tintyConfig;
 
   # JSON registry consumed by dx-theme.sh.
   xdg.configFile."dx/themes.json".text = builtins.toJSON dxThemes;
