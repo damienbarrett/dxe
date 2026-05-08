@@ -79,6 +79,8 @@ The editor configuration is managed via NixVim in `container/.../flake.nix`. Thi
 
 ## Theming
 
+**Note on Terminal Compatibility:** Dynamic terminal theming relies on standard ANSI escape sequences (`OSC 4`, `OSC 10`, `OSC 11`) to change the 16-color palette, foreground, and background colors on the fly. **Apple's built-in `Terminal.app` explicitly does not support these sequences and will ignore them.** To use dynamic theming with `dx-theme`, you must use a modern terminal emulator that supports `OSC 4/10/11`, such as **Ghostty**, **iTerm2**, **Kitty**, or **Alacritty**.
+
 Tinty theming is wired as an experimental, guest-driven runtime path. It does not edit host terminal configuration.
 
 Aliases are declared in `home/theme.nix` (`dxThemes`) and rendered to

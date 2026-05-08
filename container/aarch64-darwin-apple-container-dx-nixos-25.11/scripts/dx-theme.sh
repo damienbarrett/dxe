@@ -96,6 +96,10 @@ apply_scheme() {
   refresh_tool_themes "$scheme"
   mkdir -p "$HOME/.config/dx"
   printf '%s\n' "$scheme" > "$HOME/.config/dx/theme-current"
+
+  if [ -x "$HOME/.local/bin/dx-theme-restore" ]; then
+    "$HOME/.local/bin/dx-theme-restore" || true
+  fi
 }
 
 print_current() {
