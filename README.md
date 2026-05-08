@@ -63,15 +63,17 @@ Codex, Gemini, and Claude are intentionally not installed by default. This keeps
 the standard DX environment free of AI CLIs, so they are not available in secure,
 restricted, or work environments unless you explicitly opt in.
 
-If AI tooling is approved for your environment, install the optional AI tools
-bundle inside the guest:
+If AI tooling is approved for your environment, install or update the optional
+AI tools bundle inside the guest:
 
 ```bash
-nix profile install /guest-bootstrap#ai-tools
+dx-ai
 ```
 
-This installs the `codex`, `gemini`, and `claude` commands into the guest user's
-Nix profile.
+This updates `nixpkgs-unstable` in `/guest-bootstrap`, then installs or upgrades
+the `codex`, `gemini`, and `claude` commands in the guest user's Nix profile.
+The `dx-ai` helper is installed into `~/.local/bin` by Home Manager, the same
+way `dx-theme` is installed.
 
 ## NixVim Configuration
 

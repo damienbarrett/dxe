@@ -65,10 +65,10 @@
       ];
 
       # Optional AI CLI tools kept out of the default install.
-      aiPackages = [
-        pkgs.gemini-cli
-        unstable.claude-code
-        unstable.codex
+      aiPackages = with unstable; [
+        gemini-cli
+        claude-code
+        codex
       ];
 
       # Imported NixVim configuration

@@ -38,6 +38,12 @@ else
     test_fail "shell.nix NIX_SSL_CERT_FILE uses \$\"(\$nu.home-path)/...\" interpolation"
 fi
 
+if grep -E '\$env\.PATH.*\$"\(\$nu\.home-path\)/\.local/bin"' "$SHELL_NIX" >/dev/null 2>&1; then
+    test_pass "shell.nix adds ~/.local/bin to nushell PATH"
+else
+    test_fail "shell.nix adds ~/.local/bin to nushell PATH"
+fi
+
 # ---------- Runtime checks (require running container) ----------
 
 if ! requires_container; then

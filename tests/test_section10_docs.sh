@@ -41,6 +41,7 @@ assert_file_contains "$README" "[Ss][Ss][Hh]\|dx-ssh" "README documents ssh work
 assert_file_contains "$README" "[Ss]tatus\|dx-status" "README documents status workflow"
 assert_file_contains "$README" "[Pp]ut\|dx-put" "README documents put workflow"
 assert_file_contains "$README" "[Ss]top\|dx-stop" "README documents stop workflow"
+assert_file_contains "$README" "dx-ai" "README documents optional AI tool workflow"
 
 # Test: README documents rerunning guest bootstrap
 assert_file_contains "$README" "[Rr]erun\|[Rr]e-run\|[Rr]ebootstrap\|[Rr]e-bootstrap" "README documents rerunning guest bootstrap"

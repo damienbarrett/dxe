@@ -57,4 +57,9 @@
       update_ms = 2000
     '';
   };
+
+  home.file.".local/bin/dx-ai" = {
+    executable = true;
+    source = ../scripts/dx-ai.sh;
+  };
 }

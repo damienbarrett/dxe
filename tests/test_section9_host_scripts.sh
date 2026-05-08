@@ -102,6 +102,9 @@ else
     test_fail "dx-ssh wraps non-interactive commands for bash"
 fi
 
+# Test: dx-ai is a guest command installed through Home Manager, not a host wrapper
+assert_file_not_exists "$BIN_DIR/dx-ai" "dx-ai is not installed as a host script"
+
 # Test: dx-put handles missing arguments
 DX_PUT="$BIN_DIR/dx-put"
 if grep -q "if.*-z.*SOURCE\|if.*!\$.*1" "$DX_PUT"; then

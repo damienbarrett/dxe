@@ -10,6 +10,8 @@ source "$SCRIPT_DIR/test_helpers.sh"
 test_section "Section 6: Improve Guest Tooling"
 
 SHELL_NIX="$CONTAINER_DIR/home/shell.nix"
+TOOLS_NIX="$CONTAINER_DIR/home/tools.nix"
+DX_AI_SCRIPT="$CONTAINER_DIR/scripts/dx-ai.sh"
 
 # Test: flake.nix exists
 assert_file_exists "$FLAKE_NIX" "flake.nix exists"
@@ -92,6 +94,26 @@ AI_PACKAGES_BLOCK="$(awk '
 assert_file_contains "$FLAKE_NIX" "aiPackages =" "aiPackages list exists"
 assert_file_contains "$FLAKE_NIX" '"ai-tools"' "ai-tools package output exists"
 assert_grep_in_file "$FLAKE_NIX" "paths = aiPackages;" "ai-tools package uses aiPackages"
+assert_grep_in_file "$FLAKE_NIX" "aiPackages = with unstable;" "aiPackages use unstable package set"
+assert_file_exists "$DX_AI_SCRIPT" "guest dx-ai script exists"
+if git -C "$BASE_DIR" ls-files --error-unmatch "container/aarch64-darwin-apple-container-dx-nixos-25.11/scripts/dx-ai.sh" >/dev/null 2>&1; then
+    test_pass "guest dx-ai script is tracked for flake source inclusion"
+else
+    test_fail "guest dx-ai script is tracked for flake source inclusion"
+fi
+assert_file_contains "$TOOLS_NIX" ".local/bin/dx-ai" "guest dx-ai command is installed by Home Manager"
+
+if bash -n "$DX_AI_SCRIPT" 2>/dev/null; then
+    test_pass "guest dx-ai script passes bash syntax check"
+else
+    test_fail "guest dx-ai script passes bash syntax check"
+fi
+
+if grep -q "nix flake update" "$DX_AI_SCRIPT" && grep -q "nixpkgs-unstable" "$DX_AI_SCRIPT"; then
+    test_pass "guest dx-ai updates nixpkgs-unstable"
+else
+    test_fail "guest dx-ai updates nixpkgs-unstable"
+fi
 
 if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "codex"; then
     test_pass "codex is in aiPackages"

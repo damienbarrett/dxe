@@ -62,9 +62,9 @@ else
 fi
 
 # Test: Nix tools install through flake
-echo "  Testing: nix profile install from flake"
+echo "  Testing: nix profile add from flake"
 rm -rf /tmp/test-dx-profile /tmp/test-dx-ai-profile
-if nix profile install --profile /tmp/test-dx-profile "$FLAKE_DIR#default" \
+if nix profile add --profile /tmp/test-dx-profile "$FLAKE_DIR#default" \
     --extra-experimental-features "nix-command flakes" --accept-flake-config >/dev/null 2>&1; then
     test_pass "Nix tools install through flake"
 else
@@ -77,8 +77,8 @@ assert_profile_command_absent /tmp/test-dx-profile gemini "gemini absent from de
 assert_profile_command_absent /tmp/test-dx-profile claude "claude absent from default profile"
 
 # Test: AI CLI tools install through the opt-in package output
-echo "  Testing: nix profile install from ai-tools output"
-if nix profile install --profile /tmp/test-dx-ai-profile "$FLAKE_DIR#ai-tools" \
+echo "  Testing: nix profile add from ai-tools output"
+if nix profile add --profile /tmp/test-dx-ai-profile "$FLAKE_DIR#ai-tools" \
     --extra-experimental-features "nix-command flakes" --accept-flake-config >/dev/null 2>&1; then
     test_pass "Nix AI tools install through flake"
 else
