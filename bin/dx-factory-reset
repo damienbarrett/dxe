@@ -1,0 +1,23 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+echo "Starting factory reset..."
+
+# Destroy the container
+"$SCRIPT_DIR/dx-destroy"
+
+# Remove the volumes
+echo "Removing volume: dx-nix..."
+container volume rm dx-nix 2>/dev/null || echo "Volume dx-nix not found or already removed."
+
+echo "Removing volume: $DX_WORKSPACE_VOLUME..."
+container volume rm "$DX_WORKSPACE_VOLUME" 2>/dev/null || echo "Volume $DX_WORKSPACE_VOLUME not found or already removed."
+
+# Remove SSH keys
+echo "Removing generated SSH keys..."
+rm -f "$DX_SSH_KEY" "$DX_SSH_KEY_PUB"
+
+echo "Factory reset complete. A completely clean slate has been restored."
