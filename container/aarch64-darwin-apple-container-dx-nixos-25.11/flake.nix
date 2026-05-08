@@ -27,8 +27,8 @@
         config.allowUnfree = true;
       };
 
-      # Shared package list for devShell and tools profile
-      dxPackages = (with pkgs; [
+      # Shared package list for devShell and default tools profile
+      dxPackages = with pkgs; [
         coreutils
         gnused
         gnugrep
@@ -62,8 +62,11 @@
         btop
         neofetch
         ghostty.terminfo
-        gemini-cli
-      ]) ++ [
+      ];
+
+      # Optional AI CLI tools kept out of the default install.
+      aiPackages = [
+        pkgs.gemini-cli
         unstable.claude-code
         unstable.codex
       ];
@@ -82,9 +85,16 @@
         buildInputs = dxPackages ++ [ nvim ];
       };
 
-      packages.${system}.default = pkgs.buildEnv {
-        name = "dx-tools";
-        paths = dxPackages ++ [ nvim ];
+      packages.${system} = {
+        default = pkgs.buildEnv {
+          name = "dx-tools";
+          paths = dxPackages ++ [ nvim ];
+        };
+
+        "ai-tools" = pkgs.buildEnv {
+          name = "dx-ai-tools";
+          paths = aiPackages;
+        };
       };
 
       homeConfigurations.dx = home-manager.lib.homeManagerConfiguration {

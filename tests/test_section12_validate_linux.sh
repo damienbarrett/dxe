@@ -14,6 +14,32 @@ FLAKE_DIR="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11"
 
 test_section "Section 12: Validate Host-Agnostic Guest Bootstrap"
 
+assert_profile_command_present() {
+    local profile_dir="$1"
+    local command_name="$2"
+    local message="${3:-$command_name exists in $profile_dir}"
+
+    if [ -x "$profile_dir/bin/$command_name" ]; then
+        test_pass "$message"
+    else
+        test_fail "$message"
+    fi
+    return 0
+}
+
+assert_profile_command_absent() {
+    local profile_dir="$1"
+    local command_name="$2"
+    local message="${3:-$command_name is absent from $profile_dir}"
+
+    if [ ! -e "$profile_dir/bin/$command_name" ]; then
+        test_pass "$message"
+    else
+        test_fail "$message"
+    fi
+    return 0
+}
+
 # Check if we're running on Linux
 if [ "$(uname -s)" != "Linux" ]; then
     test_skip "Not running on Linux, skipping Section 12 tests"
@@ -37,12 +63,31 @@ fi
 
 # Test: Nix tools install through flake
 echo "  Testing: nix profile install from flake"
+rm -rf /tmp/test-dx-profile /tmp/test-dx-ai-profile
 if nix profile install --profile /tmp/test-dx-profile "$FLAKE_DIR#default" \
     --extra-experimental-features "nix-command flakes" --accept-flake-config >/dev/null 2>&1; then
     test_pass "Nix tools install through flake"
 else
     test_fail "Nix tools install through flake"
 fi
+
+# Test: AI CLI tools are not installed in the default profile
+assert_profile_command_absent /tmp/test-dx-profile codex "codex absent from default profile"
+assert_profile_command_absent /tmp/test-dx-profile gemini "gemini absent from default profile"
+assert_profile_command_absent /tmp/test-dx-profile claude "claude absent from default profile"
+
+# Test: AI CLI tools install through the opt-in package output
+echo "  Testing: nix profile install from ai-tools output"
+if nix profile install --profile /tmp/test-dx-ai-profile "$FLAKE_DIR#ai-tools" \
+    --extra-experimental-features "nix-command flakes" --accept-flake-config >/dev/null 2>&1; then
+    test_pass "Nix AI tools install through flake"
+else
+    test_fail "Nix AI tools install through flake"
+fi
+
+assert_profile_command_present /tmp/test-dx-ai-profile codex "codex present in ai-tools profile"
+assert_profile_command_present /tmp/test-dx-ai-profile gemini "gemini present in ai-tools profile"
+assert_profile_command_present /tmp/test-dx-ai-profile claude "claude present in ai-tools profile"
 
 # Test: NixVim launches
 echo "  Testing: nvim --headless +q"
@@ -67,7 +112,7 @@ else
 fi
 
 # Cleanup
-rm -rf /tmp/test-dx-profile
+rm -rf /tmp/test-dx-profile /tmp/test-dx-ai-profile
 
 print_summary
 exit_with_code

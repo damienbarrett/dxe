@@ -9,7 +9,7 @@ source "$SCRIPT_DIR/test_helpers.sh"
 
 test_section "Section 6: Improve Guest Tooling"
 
-HOME_NIX="$CONTAINER_DIR/home.nix"
+SHELL_NIX="$CONTAINER_DIR/home/shell.nix"
 
 # Test: flake.nix exists
 assert_file_exists "$FLAKE_NIX" "flake.nix exists"
@@ -69,11 +69,53 @@ assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?just" "just preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?go-task" "go-task preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?yazi" "yazi preserved in flake.nix"
 
+# Test: AI CLI tools are excluded from the default dxPackages list
+DX_PACKAGES_BLOCK="$(awk '
+    /dxPackages =/ { in_block = 1 }
+    in_block { print }
+    in_block && /^[[:space:]]*\];[[:space:]]*$/ { exit }
+' "$FLAKE_NIX")"
+
+if printf '%s\n' "$DX_PACKAGES_BLOCK" | grep -Eq "codex|gemini-cli|claude-code"; then
+    test_fail "AI CLI tools excluded from default dxPackages"
+else
+    test_pass "AI CLI tools excluded from default dxPackages"
+fi
+
+# Test: AI CLI tools are available through an opt-in package output
+AI_PACKAGES_BLOCK="$(awk '
+    /aiPackages =/ { in_block = 1 }
+    in_block { print }
+    in_block && /^[[:space:]]*\];[[:space:]]*$/ { exit }
+' "$FLAKE_NIX")"
+
+assert_file_contains "$FLAKE_NIX" "aiPackages =" "aiPackages list exists"
+assert_file_contains "$FLAKE_NIX" '"ai-tools"' "ai-tools package output exists"
+assert_grep_in_file "$FLAKE_NIX" "paths = aiPackages;" "ai-tools package uses aiPackages"
+
+if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "codex"; then
+    test_pass "codex is in aiPackages"
+else
+    test_fail "codex is in aiPackages"
+fi
+
+if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "gemini-cli"; then
+    test_pass "gemini-cli is in aiPackages"
+else
+    test_fail "gemini-cli is in aiPackages"
+fi
+
+if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "claude-code"; then
+    test_pass "claude-code is in aiPackages"
+else
+    test_fail "claude-code is in aiPackages"
+fi
+
 # Test: shell startup guards optional prompt/environment hooks
-assert_file_contains "$HOME_NIX" "command -v direnv" "bash direnv hook is guarded"
-assert_file_contains "$HOME_NIX" "command -v starship" "bash starship hook is guarded"
-assert_file_contains "$HOME_NIX" "type -q direnv" "fish direnv hook is guarded"
-assert_file_contains "$HOME_NIX" "type -q starship" "fish starship hook is guarded"
+assert_file_contains "$SHELL_NIX" "command -v direnv" "bash direnv hook is guarded"
+assert_file_contains "$SHELL_NIX" "command -v starship" "bash starship hook is guarded"
+assert_file_contains "$SHELL_NIX" "type -q direnv" "fish direnv hook is guarded"
+assert_file_contains "$SHELL_NIX" "type -q starship" "fish starship hook is guarded"
 
 print_summary
 exit_with_code

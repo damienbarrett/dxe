@@ -57,6 +57,22 @@ To rerun the bootstrap manually inside the guest:
 sudo /guest-bootstrap/bootstrap.sh
 ```
 
+## Optional AI Tools
+
+Codex, Gemini, and Claude are intentionally not installed by default. This keeps
+the standard DX environment free of AI CLIs, so they are not available in secure,
+restricted, or work environments unless you explicitly opt in.
+
+If AI tooling is approved for your environment, install the optional AI tools
+bundle inside the guest:
+
+```bash
+nix profile install /guest-bootstrap#ai-tools
+```
+
+This installs the `codex`, `gemini`, and `claude` commands into the guest user's
+Nix profile.
+
 ## NixVim Configuration
 
 The editor configuration is managed via NixVim in `container/.../flake.nix`. This is the canonical path for all editor settings, plugins, and keymaps. Standalone `lazy.nvim` configurations are not supported.
