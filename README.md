@@ -47,6 +47,49 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
 - **Stop Environment:** `./bin/dx-stop`
 - **Restart Environment:** `./bin/dx-start` followed by `./bin/dx-ssh`
 
+## Lifecycle Phases
+
+The unified `./bin/dx` command runs phases 0 through 5 as needed. The other
+scripts expose individual lifecycle steps for direct use, maintenance, or
+reset workflows.
+
+| Phase | Description |
+| --- | --- |
+| Phase 0: SSH Keys | Ensures the host has an SSH keypair for connecting to the guest. |
+| Phase 1: Build Image | Builds the Apple container image used by the DX environment. |
+| Phase 2: Create Container | Creates persistent volumes and the container definition. |
+| Phase 3: Start + Sync Bootstrap | Starts the container and syncs the local bootstrap payload into the guest. |
+| Guest Bootstrap | Runs inside the guest to configure `/nix`, the `dx` user, SSH, Home Manager, shell, tmux, and tools. |
+| Phase 4: SSH Readiness | Waits until the guest is reachable over SSH. |
+| Phase 5: Connect | Enters the developer environment over SSH, usually into tmux. |
+| Runtime Operations | Handles day-to-day inspection, file transfer, direct shell access, and maintenance. |
+| Stop | Stops the running container without deleting it. |
+| Destroy | Deletes the container while preserving images and persistent volumes. |
+| Recreate | Replaces the container while keeping persistent volumes. |
+| Factory Reset | Deletes the container, persistent volumes, and generated SSH keys. |
+| Export | Archives the current container state. |
+| Storage Prep | Prepares auxiliary storage used by the Nix store. |
+
+| Script | Maps To | Description |
+| --- | --- | --- |
+| [`bin/dx`](bin/dx) | Phases 0-5 | Unified entrypoint. Generates keys, builds, creates, starts, waits for SSH, then connects. |
+| [`bin/dx-build`](bin/dx-build) | Phase 1: Build Image | Runs `container build` for the DX image. |
+| [`bin/dx-create`](bin/dx-create) | Phase 2: Create Container | Ensures Nix, workspace, and bootstrap volumes exist, then creates the container. |
+| [`bin/dx-start`](bin/dx-start) | Phase 3: Start + Sync Bootstrap | Starts the container and invokes bootstrap sync. |
+| [`bin/dx-sync-bootstrap`](bin/dx-sync-bootstrap) | Phase 3 / Guest Bootstrap handoff | Copies the local bootstrap payload into `/guest-bootstrap` and marks it ready. |
+| [`container/.../bootstrap.sh`](container/aarch64-darwin-apple-container-dx-nixos-25.11/bootstrap.sh) | Guest Bootstrap | Configures the guest system, installs tools, verifies them, and starts `sshd`. |
+| [`bin/dx-ssh`](bin/dx-ssh) | Phase 5: Connect | Connects to the guest over SSH; opens or attaches to the `dx` tmux session by default. |
+| [`bin/dx-status`](bin/dx-status) | Runtime Operations | Reports image, container, SSH, guest tool, workspace, and tmux status. |
+| [`bin/dx-put`](bin/dx-put) | Runtime Operations | Copies host files or directories into the guest. |
+| [`bin/dx-enter`](bin/dx-enter) | Runtime Operations | Enters the container directly with `container exec`, bypassing SSH. |
+| [`bin/dx-gc`](bin/dx-gc) | Runtime Operations / Maintenance | Runs Nix garbage collection and store optimization inside the guest. |
+| [`bin/dx-stop`](bin/dx-stop) | Stop | Stops the container. |
+| [`bin/dx-destroy`](bin/dx-destroy) | Destroy | Stops and deletes the container, preserving persistent volumes and images. |
+| [`bin/dx-recreate`](bin/dx-recreate) | Recreate | Runs destroy, create, then start. |
+| [`bin/dx-factory-reset`](bin/dx-factory-reset) | Factory Reset | Removes the container, persistent volumes, and generated SSH keys. |
+| [`bin/dx-export`](bin/dx-export) | Export | Exports the container to a tar archive. |
+| [`bin/dx-nix-disk`](bin/dx-nix-disk) | Storage Prep | Creates a sparse Nix disk image; lifecycle-adjacent rather than part of the main `bin/dx` flow. |
+
 ## Configuration Variables
 
 All variables have defaults, so a normal single-container setup does not need to
