@@ -66,6 +66,14 @@ else
     test_fail "dx-ssh works with nvim"
 fi
 
+# Test: dx-ssh exposes lazygit in the guest runtime
+echo "  Running: dx-ssh 'command -v lazygit && lazygit --version'"
+if "$BIN_DIR/dx-ssh" "command -v lazygit >/dev/null && lazygit --version" >/dev/null 2>&1; then
+    test_pass "dx-ssh exposes lazygit in the guest runtime"
+else
+    test_fail "dx-ssh exposes lazygit in the guest runtime"
+fi
+
 # Test: tmux session can be created
 echo "  Running: dx-ssh tmux new-session test"
 if "$BIN_DIR/dx-ssh" "tmux new-session -d -s smoke true || true" >/dev/null 2>&1; then
@@ -82,14 +90,6 @@ sleep 5
 "$BIN_DIR/dx-start" >/dev/null 2>&1
 sleep 10
 if "$BIN_DIR/dx-ssh" "test -f /workspace/persistence_test_file" >/dev/null 2>&1; then
-    test_pass "source files survive dx-stop and dx-start"
-else
-    test_fail "source files survive dx-stop and dx-start"
-fi
-
-print_summary
-exit_with_code
-dx-ssh" "test -f /workspace/persistence_test_file" >/dev/null 2>&1; then
     test_pass "source files survive dx-stop and dx-start"
 else
     test_fail "source files survive dx-stop and dx-start"

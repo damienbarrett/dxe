@@ -44,6 +44,12 @@ else
     test_fail "shell.nix adds ~/.local/bin to nushell PATH"
 fi
 
+if grep -Eq 'LG_CONFIG_FILE.*path exists|path exists.*LG_CONFIG_FILE' "$SHELL_NIX"; then
+    test_pass "shell.nix configures lazygit config conditionally"
+else
+    test_fail "shell.nix configures lazygit config conditionally"
+fi
+
 # ---------- Runtime checks (require running container) ----------
 
 if ! requires_container; then
@@ -112,6 +118,22 @@ if echo "$PROBE_OUT" | grep -q "^NIX_EXISTS=true$"; then
 else
     line=$(echo "$PROBE_OUT" | grep -E "^NIX=" | head -1)
     test_fail "nushell NIX_SSL_CERT_FILE does not resolve to an existing file (${line:-no output})"
+fi
+
+LAZYGIT_PROBE='source ~/.config/nushell/env.nu
+let repo = (mktemp -d)
+cd $repo
+^git init -q
+let result = (^timeout 3 lazygit | complete)
+print $"LG_EXIT=($result.exit_code)"
+print $"LG_STDERR=($result.stderr)"'
+
+LAZYGIT_PROBE_OUT=$(run_nu "$LAZYGIT_PROBE" 2>&1 || true)
+
+if echo "$LAZYGIT_PROBE_OUT" | grep -q "stat /home/dx/.cache/dx/tinty/lazygit.yml"; then
+    test_fail "nushell still points lazygit at a missing tinted theme file"
+else
+    test_pass "nushell can launch lazygit without the missing tinted theme file"
 fi
 
 print_summary
