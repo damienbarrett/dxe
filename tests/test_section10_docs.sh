@@ -17,6 +17,8 @@ assert_file_exists "$README" "README.md exists"
 
 # Test: README explains lightweight Containerfile rule
 assert_file_contains "$README" "[Ll]ightweight\|[Cc]ontainerfile" "README explains lightweight Containerfile rule"
+assert_file_contains "$README" "[Cc]lean-image host-push bootstrap" "README documents clean-image host-push bootstrap principle"
+assert_file_contains "$README" "insufficient guest tools" "README limits host-push bootstrap to clean images"
 
 # Test: README documents guest bootstrap owns installation
 assert_file_contains "$README" "[Bb]ootstrap\|[Gg]uest.*install\|[Gg]uest.*config" "README documents guest bootstrap responsibility"
@@ -42,6 +44,15 @@ assert_file_contains "$README" "[Ss]tatus\|dx-status" "README documents status w
 assert_file_contains "$README" "[Pp]ut\|dx-put" "README documents put workflow"
 assert_file_contains "$README" "[Ss]top\|dx-stop" "README documents stop workflow"
 assert_file_contains "$README" "dx-ai" "README documents optional AI tool workflow"
+
+# Test: README documents host configuration variables and defaults
+assert_file_contains "$README" "Configuration Variables" "README documents configuration variables"
+assert_file_contains "$README" "All variables have defaults" "README states variables have defaults"
+assert_file_contains "$README" "DX_CONTAINER_NAME.*dx-host" "README documents DX_CONTAINER_NAME default"
+assert_file_contains "$README" "DX_IMAGE.*dx-nixos-25.11" "README documents DX_IMAGE default"
+assert_file_contains "$README" "DX_NIX_VOLUME.*dx-nix" "README documents DX_NIX_VOLUME default"
+assert_file_contains "$README" "DX_BOOTSTRAP_VOLUME.*dx-bootstrap" "README documents DX_BOOTSTRAP_VOLUME default"
+assert_file_contains "$README" "DX_BOOTSTRAP_SOURCE.*DX_CONTEXT_DIR" "README documents DX_BOOTSTRAP_SOURCE default"
 
 # Test: README documents rerunning guest bootstrap
 assert_file_contains "$README" "[Rr]erun\|[Rr]e-run\|[Rr]ebootstrap\|[Rr]e-bootstrap" "README documents rerunning guest bootstrap"

@@ -4,8 +4,9 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
 
 ## Principles
 
-- **Lightweight Host:** The `Containerfile` is kept minimal. It does NOT install development tools or configuration.
-- **Guest-Driven:** All tool downloads, installation, and configuration happen inside the guest via Nix flakes during the bootstrap phase.
+- **Lightweight Host:** The `Containerfile` only selects the base image. It does NOT copy files, install tools, or define runtime configuration.
+- **Guest-Driven:** All tool downloads, installation, and configuration happen inside the guest via Nix flakes during the bootstrap phase. The bootstrap payload is synced after container creation, so flake or script changes do not require an image rebuild.
+- **Clean-image host-push bootstrap:** A host may push the minimal bootstrap payload into a brand-new clean guest when the guest has insufficient guest tools, credentials, or configuration to pull the repository itself. This exception is limited to first contact with a clean image; after that, the DXE should behave as a guest-owned environment.
 - **Reproducible:** Nix flakes and pinned inputs ensure the environment is identical across different machines.
 - **Secure by Default:** SSH is configured for public-key authentication only. Root login and password login are disabled.
 - **Convenient:** Passwordless `sudo` is enabled for the `dx` user inside the guest to facilitate development.
@@ -30,6 +31,8 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
    ```bash
    ./bin/dx-start
    ```
+   This syncs the local bootstrap payload into the guest before the guest
+   bootstrap runs.
 6. **Connect:**
    ```bash
    ./bin/dx-ssh
@@ -44,6 +47,45 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
 - **Stop Environment:** `./bin/dx-stop`
 - **Restart Environment:** `./bin/dx-start` followed by `./bin/dx-ssh`
 
+## Configuration Variables
+
+All variables have defaults, so a normal single-container setup does not need to
+set any of these explicitly. Override them when running isolated lifecycle
+tests, parallel experiments, or multiple containers on the same host.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DX_CONTAINER_NAME` | `dx-host` | Apple container name. Change this to create a separate container without touching the default DXE instance. |
+| `DX_IMAGE` | `dx-nixos-25.11` | Image name used by `dx-build` and `dx-create`. |
+| `DX_SSH_PORT` | `2222` | Host port forwarded to guest SSH port `2222`. Use a different port for a second running container. |
+| `DX_SSH_KEY` | `$DX_PROJECT_ROOT/dx_key` | Host private key used for SSH into the guest. |
+| `DX_SSH_KEY_PUB` | `$DX_PROJECT_ROOT/dx_key.pub` | Host public key provisioned into the guest on create. |
+| `DX_CONTEXT_DIR` | `container/aarch64-darwin-apple-container-dx-nixos-25.11` | Directory used as the image build context and default bootstrap source. |
+| `DX_BOOTSTRAP_SOURCE` | `$DX_CONTEXT_DIR` | Host directory pushed into the clean guest bootstrap volume. Override this to test a different bootstrap checkout without rebuilding the image. |
+| `DX_BOOTSTRAP_VOLUME` | `dx-bootstrap` | Named volume mounted at `/guest-bootstrap` by default. It stores the pushed bootstrap payload outside the image layer. |
+| `DX_BOOTSTRAP_PATH` | `/guest-bootstrap` | Guest path where the bootstrap payload is mounted and executed. |
+| `DX_NIX_VOLUME` | `dx-nix` | Named volume used as the backing store for `/nix`. Override this for isolated test containers or parallel experiments so they do not share the default writable Nix store. |
+| `DX_WORKSPACE_VOLUME` | `dx-workspace` | Named volume mounted as the guest workspace. |
+| `DX_WORKSPACE_PATH` | `/workspace` | Guest path for the workspace volume. |
+
+`DX_NIX_VOLUME` exists because the Nix store is large, persistent, and mounted
+as a writable guest filesystem. The default `dx-nix` volume preserves downloads
+and activation state across container recreation, but only one running container
+should use that writable volume at a time. For a clean lifecycle test, use a
+separate Nix volume so the test cannot corrupt or lock the default environment.
+
+Example isolated lifecycle create:
+
+```bash
+DX_IMAGE=dx-lifecycle \
+DX_CONTAINER_NAME=dx-lifecycle \
+DX_SSH_PORT=2299 \
+DX_NIX_VOLUME=dx-lifecycle-nix \
+DX_WORKSPACE_VOLUME=dx-lifecycle-workspace \
+DX_BOOTSTRAP_VOLUME=dx-lifecycle-bootstrap \
+./bin/dx-create
+```
+
 ## Guest Bootstrap
 
 The bootstrap script (`container/.../bootstrap.sh`) is responsible for:
@@ -56,6 +98,13 @@ To rerun the bootstrap manually inside the guest:
 ```bash
 sudo /guest-bootstrap/bootstrap.sh
 ```
+
+The image does not contain the bootstrap repository. `dx-create` mounts a
+dedicated `dx-bootstrap` volume at `/guest-bootstrap`, and `dx-start` runs
+`dx-sync-bootstrap` to copy the local container configuration into that volume.
+After editing `container/.../flake.nix`, `bootstrap.sh`, or related guest
+configuration, rerun `./bin/dx-sync-bootstrap` against a running container rather
+than rebuilding the image.
 
 ## Optional AI Tools
 
@@ -139,10 +188,13 @@ Then connect normally with `./bin/dx-ssh`, run `dx-theme dark` and `dx-theme lig
 
 ## Storage
 
-- **Volume Name:** dx-nix
+- **Nix Volume Name:** `dx-nix` by default, configurable with `DX_NIX_VOLUME`.
 - **Recreate-Survival:** The Nix store (/nix) is stored on a dedicated Apple container volume. This means your downloaded packages and Nix configuration persist even if you delete and recreate the container using dx-create.
 - **Single-Writer Constraint:** Only one running container may mount the dx-nix volume at a time. If you need a second concurrent container, it will need its own volume name or you must wait for the first container to stop.
 - **Optimization:** The filesystem is formatted with btrfs and zstd:3 compression. Nix's auto-optimise-store is enabled to deduplicate identical files at the hardlink level, further saving space.
+- **Bootstrap Payload:** `/guest-bootstrap` is backed by the `dx-bootstrap`
+  volume and populated from the local checkout at start time, keeping repository
+  changes out of the image layer.
 
 ## Troubleshooting
 

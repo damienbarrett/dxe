@@ -32,6 +32,9 @@ assert_grep_in_file "$LIB_SH" \
 assert_grep_in_file "$LIB_SH" \
     "DX_WORKSPACE_PATH=.*/workspace" \
     "dx-lib.sh declares DX_WORKSPACE_PATH (default /workspace)"
+assert_grep_in_file "$LIB_SH" \
+    "DX_NIX_VOLUME=.*dx-nix" \
+    "dx-lib.sh declares DX_NIX_VOLUME (default dx-nix)"
 
 assert_grep_in_file "$DX_CREATE" \
     "DX_WORKSPACE_VOLUME" \
@@ -43,8 +46,26 @@ assert_grep_in_file "$DX_CREATE" \
     "container volume create.*DX_WORKSPACE_VOLUME|ensure_volume.*DX_WORKSPACE_VOLUME|container_ensure_volume.*DX_WORKSPACE_VOLUME" \
     "dx-create ensures the workspace volume exists"
 assert_grep_in_file "$DX_CREATE" \
+    "DX_NIX_VOLUME" \
+    "dx-create references DX_NIX_VOLUME"
+assert_grep_in_file "$DX_CREATE" \
+    "container volume create.*DX_NIX_VOLUME|ensure_volume.*DX_NIX_VOLUME|container_ensure_volume.*DX_NIX_VOLUME" \
+    "dx-create ensures the nix volume exists"
+assert_grep_in_file "$DX_CREATE" \
+    "[-]-volume[= ].*DX_NIX_VOLUME" \
+    "dx-create mounts the nix volume"
+assert_grep_in_file "$DX_CREATE" \
     "[-]-volume[= ].*DX_WORKSPACE_VOLUME" \
     "dx-create mounts the workspace volume"
+assert_grep_in_file "$LIB_SH" \
+    "DX_BOOTSTRAP_VOLUME=.*dx-bootstrap" \
+    "dx-lib.sh declares DX_BOOTSTRAP_VOLUME (default dx-bootstrap)"
+assert_grep_in_file "$DX_CREATE" \
+    "DX_BOOTSTRAP_VOLUME" \
+    "dx-create references DX_BOOTSTRAP_VOLUME"
+assert_grep_in_file "$DX_CREATE" \
+    "[-]-volume[= ].*DX_BOOTSTRAP_VOLUME" \
+    "dx-create mounts the bootstrap volume"
 
 assert_grep_in_file "$SHELL_NIX" \
     "home\.sessionVariables.*=" \

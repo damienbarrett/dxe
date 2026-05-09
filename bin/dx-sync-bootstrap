@@ -1,0 +1,79 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+if ! container_exists "$DX_CONTAINER_NAME"; then
+    echo "Error: container $DX_CONTAINER_NAME does not exist. Run ./bin/dx-create first." >&2
+    exit 1
+fi
+
+for _ in {1..30}; do
+    if container_is_running "$DX_CONTAINER_NAME"; then
+        break
+    fi
+    sleep 1
+done
+
+if ! container_is_running "$DX_CONTAINER_NAME"; then
+    echo "Error: container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start first." >&2
+    exit 1
+fi
+
+if [ -z "$DX_BOOTSTRAP_PATH" ] || [ "$DX_BOOTSTRAP_PATH" = "/" ]; then
+    echo "Error: unsafe DX_BOOTSTRAP_PATH: $DX_BOOTSTRAP_PATH" >&2
+    exit 1
+fi
+
+if [ "${DX_BOOTSTRAP_WAIT_FOR_GUEST:-0}" = "1" ]; then
+    guest_is_waiting=0
+    for _ in {1..30}; do
+        if container exec "$DX_CONTAINER_NAME" sh -c 'test -f "$1"' -- "$DX_BOOTSTRAP_PATH/.dx-bootstrap-waiting" >/dev/null 2>&1; then
+            guest_is_waiting=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$guest_is_waiting" != "1" ]; then
+        echo "Error: container did not enter bootstrap wait state. Rebuild the image and recreate the container." >&2
+        exit 1
+    fi
+fi
+
+if [ ! -f "$DX_BOOTSTRAP_SOURCE/bootstrap.sh" ]; then
+    echo "Error: bootstrap source $DX_BOOTSTRAP_SOURCE/bootstrap.sh does not exist." >&2
+    exit 1
+fi
+
+tar_create_args=()
+if tar --no-xattrs -C "$DX_BOOTSTRAP_SOURCE" -cf /dev/null . >/dev/null 2>&1; then
+    tar_create_args+=(--no-xattrs)
+fi
+if tar --no-mac-metadata -C "$DX_BOOTSTRAP_SOURCE" -cf /dev/null . >/dev/null 2>&1; then
+    tar_create_args+=(--no-mac-metadata)
+fi
+
+echo "Syncing bootstrap payload from $DX_BOOTSTRAP_SOURCE to $DX_CONTAINER_NAME:$DX_BOOTSTRAP_PATH"
+
+container exec "$DX_CONTAINER_NAME" sh -c '
+set -eu
+dest="$1"
+mkdir -p "$dest"
+rm -rf "$dest"/* "$dest"/.[!.]* "$dest"/..?* 2>/dev/null || true
+' -- "$DX_BOOTSTRAP_PATH"
+
+COPYFILE_DISABLE=1 tar "${tar_create_args[@]}" -C "$DX_BOOTSTRAP_SOURCE" -cf - . | container exec -i "$DX_CONTAINER_NAME" tar -xf - -C "$DX_BOOTSTRAP_PATH"
+
+container exec "$DX_CONTAINER_NAME" sh -c '
+set -eu
+dest="$1"
+chmod -R a+rX "$dest"
+if id -u dx >/dev/null 2>&1; then
+    chown -R dx:dx "$dest"
+fi
+chmod +x "$dest/bootstrap.sh"
+touch "$dest/.dx-bootstrap-ready"
+' -- "$DX_BOOTSTRAP_PATH"
+
+echo "Bootstrap payload is ready."

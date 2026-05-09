@@ -32,12 +32,16 @@ if container_exists "$DX_CONTAINER_NAME"; then
     exit_with_code 1 "Assert failed: container $DX_CONTAINER_NAME still exists"
 fi
 
-if container volume inspect dx-nix >/dev/null 2>&1; then
-    exit_with_code 1 "Assert failed: volume dx-nix still exists"
+if container volume inspect "$DX_NIX_VOLUME" >/dev/null 2>&1; then
+    exit_with_code 1 "Assert failed: volume $DX_NIX_VOLUME still exists"
 fi
 
 if container volume inspect "$DX_WORKSPACE_VOLUME" >/dev/null 2>&1; then
     exit_with_code 1 "Assert failed: volume $DX_WORKSPACE_VOLUME still exists"
+fi
+
+if container volume inspect "$DX_BOOTSTRAP_VOLUME" >/dev/null 2>&1; then
+    exit_with_code 1 "Assert failed: volume $DX_BOOTSTRAP_VOLUME still exists"
 fi
 
 if [ -f "$DX_SSH_KEY" ]; then

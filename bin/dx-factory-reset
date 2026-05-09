@@ -10,11 +10,14 @@ echo "Starting factory reset..."
 "$SCRIPT_DIR/dx-destroy"
 
 # Remove the volumes
-echo "Removing volume: dx-nix..."
-container volume rm dx-nix 2>/dev/null || echo "Volume dx-nix not found or already removed."
+echo "Removing volume: $DX_NIX_VOLUME..."
+container volume rm "$DX_NIX_VOLUME" 2>/dev/null || echo "Volume $DX_NIX_VOLUME not found or already removed."
 
 echo "Removing volume: $DX_WORKSPACE_VOLUME..."
 container volume rm "$DX_WORKSPACE_VOLUME" 2>/dev/null || echo "Volume $DX_WORKSPACE_VOLUME not found or already removed."
+
+echo "Removing volume: $DX_BOOTSTRAP_VOLUME..."
+container volume rm "$DX_BOOTSTRAP_VOLUME" 2>/dev/null || echo "Volume $DX_BOOTSTRAP_VOLUME not found or already removed."
 
 # Remove SSH keys
 echo "Removing generated SSH keys..."

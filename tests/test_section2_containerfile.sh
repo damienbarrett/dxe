@@ -17,6 +17,7 @@ assert_file_exists "$CONTAINERFILE" "Containerfile exists"
 
 # Test: Containerfile does not have RUN nix profile install
 assert_file_not_contains "$CONTAINERFILE" "RUN nix profile install" "Containerfile does not install tools via nix profile"
+assert_file_not_contains "$CONTAINERFILE" "^RUN " "Containerfile does not run build-time commands"
 
 # Test: Containerfile does not install git
 assert_file_not_contains "$CONTAINERFILE" "nixpkgs#git" "Containerfile does not install git"
@@ -38,15 +39,19 @@ assert_file_not_contains "$CONTAINERFILE" "nixpkgs#gzip" "Containerfile does not
 
 # Test: Containerfile has FROM statement
 assert_file_contains "$CONTAINERFILE" "^FROM " "Containerfile has base image"
+assert_file_not_contains "$CONTAINERFILE" "^ENV " "Containerfile does not configure runtime environment"
 
-# Test: Containerfile copies bootstrap files
-assert_file_contains "$CONTAINERFILE" "COPY . /guest-bootstrap/" "Containerfile copies bootstrap files"
+# Test: Containerfile does not bake bootstrap files into the image
+assert_file_not_contains "$CONTAINERFILE" "^COPY " "Containerfile does not copy repo files"
+assert_file_not_contains "$CONTAINERFILE" "^CMD " "Containerfile does not define runtime bootstrap command"
+assert_file_not_contains "$CONTAINERFILE" ".dx-bootstrap-ready" "Containerfile does not contain bootstrap sync logic"
 
-# Test: Containerfile has CMD
-assert_file_contains "$CONTAINERFILE" "^CMD " "Containerfile has default command"
-
-# Test: Containerfile creates /workspace
-assert_file_contains "$CONTAINERFILE" "mkdir -p /workspace" "Containerfile creates /workspace"
+# Test: Containerfile is only the base image selection
+if [ "$(grep -cve '^[[:space:]]*$' "$CONTAINERFILE")" -eq 1 ]; then
+    test_pass "Containerfile only selects the base image"
+else
+    test_fail "Containerfile only selects the base image"
+fi
 
 print_summary
 exit_with_code

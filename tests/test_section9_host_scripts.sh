@@ -113,5 +113,36 @@ else
     test_fail "dx-put handles missing arguments"
 fi
 
+# Test: dx-sync-bootstrap copies the bootstrap payload after container creation
+DX_SYNC_BOOTSTRAP="$BIN_DIR/dx-sync-bootstrap"
+assert_file_exists "$DX_SYNC_BOOTSTRAP" "dx-sync-bootstrap exists"
+assert_file_contains "$DX_SYNC_BOOTSTRAP" "DX_BOOTSTRAP_SOURCE" "dx-sync-bootstrap reads from configurable source"
+assert_file_contains "$DX_SYNC_BOOTSTRAP" "DX_BOOTSTRAP_PATH" "dx-sync-bootstrap writes to configurable guest path"
+assert_file_contains "$DX_SYNC_BOOTSTRAP" ".dx-bootstrap-ready" "dx-sync-bootstrap marks payload ready after copy"
+assert_file_contains "$DX_SYNC_BOOTSTRAP" "unsafe DX_BOOTSTRAP_PATH" "dx-sync-bootstrap rejects unsafe guest paths"
+assert_file_contains "$DX_SYNC_BOOTSTRAP" ".dx-bootstrap-waiting" "dx-sync-bootstrap can wait for guest readiness marker"
+assert_file_not_contains "$DX_SYNC_BOOTSTRAP" "find \"\$dest\"" "dx-sync-bootstrap avoids nonessential guest dependencies"
+assert_file_contains "$DX_SYNC_BOOTSTRAP" "COPYFILE_DISABLE=1" "dx-sync-bootstrap suppresses macOS tar metadata"
+assert_file_contains "$DX_SYNC_BOOTSTRAP" "no-xattrs" "dx-sync-bootstrap omits tar xattrs"
+assert_file_contains "$DX_SYNC_BOOTSTRAP" "tar_create_args" "dx-sync-bootstrap probes optional tar flags"
+assert_file_contains "$DX_SYNC_BOOTSTRAP" "chmod -R a+rX" "dx-sync-bootstrap normalizes payload permissions"
+assert_file_contains "$DX_SYNC_BOOTSTRAP" "id -u dx" "dx-sync-bootstrap chowns payload when dx exists"
+
+# Test: dx-start syncs bootstrap payload after starting the container
+DX_START="$BIN_DIR/dx-start"
+assert_file_contains "$DX_START" "dx-sync-bootstrap" "dx-start syncs bootstrap payload after start"
+assert_file_contains "$DX_START" "already running.*syncing bootstrap payload" "dx-start syncs bootstrap payload when already running"
+
+# Test: dx entrypoint syncs bootstrap payload even when the container is already running
+DX="$BIN_DIR/dx"
+assert_file_contains "$DX" "dx-sync-bootstrap" "dx syncs bootstrap payload for already-running containers"
+
+# Test: dx-create owns the runtime bootstrap launcher, keeping Containerfile minimal
+assert_file_contains "$DX_CREATE" "entrypoint sh" "dx-create sets a shell entrypoint"
+assert_file_contains "$DX_CREATE" "dx_bootstrap_launch_command" "dx-create uses shared bootstrap launch command"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "dx_bootstrap_launch_command" "dx-lib owns bootstrap launch command"
+assert_file_contains "$BIN_DIR/dx-lib.sh" ".dx-bootstrap-waiting" "dx-lib installs bootstrap wait command"
+assert_file_contains "$BIN_DIR/dx-lib.sh" ".dx-bootstrap-ready" "dx-lib waits for bootstrap ready marker"
+
 print_summary
 exit_with_code

@@ -6,9 +6,11 @@ source "$SCRIPT_DIR/dx-lib.sh"
 
 # §1: Ensure the named volumes exist
 echo "Ensuring nix volume exists..."
-container_ensure_volume dx-nix
+container_ensure_volume "$DX_NIX_VOLUME"
 echo "Ensuring workspace volume exists..."
 container_ensure_volume "$DX_WORKSPACE_VOLUME"
+echo "Ensuring bootstrap volume exists..."
+container_ensure_volume "$DX_BOOTSTRAP_VOLUME"
 
 
 # Check if container already exists
@@ -19,12 +21,17 @@ fi
 
 echo "Creating DX container: $DX_CONTAINER_NAME from image $DX_IMAGE"
 
-# Common create flags. Volume mounts: dx-nix → /var/lib/dx-nix-raw (the
-# bootstrap formats and remounts this at /nix); dx-workspace → /workspace.
+BOOTSTRAP_LAUNCH_CMD="$(dx_bootstrap_launch_command)"
+
+# Common create flags. Volume mounts: DX_NIX_VOLUME -> /var/lib/dx-nix-raw (the
+# bootstrap formats and remounts this at /nix); dx-workspace -> /workspace;
+# dx-bootstrap -> /guest-bootstrap.
 CREATE_FLAGS=(
     --name "$DX_CONTAINER_NAME"
-    --volume "dx-nix:/var/lib/dx-nix-raw:rw"
+    --entrypoint sh
+    --volume "$DX_NIX_VOLUME:/var/lib/dx-nix-raw:rw"
     --volume "$DX_WORKSPACE_VOLUME:$DX_WORKSPACE_PATH:rw"
+    --volume "$DX_BOOTSTRAP_VOLUME:$DX_BOOTSTRAP_PATH:rw"
     -m 4G -c 4
     -p "127.0.0.1:$DX_SSH_PORT:2222"
 )
@@ -32,8 +39,8 @@ CREATE_FLAGS=(
 # Check if public key exists
 if [ -f "$DX_SSH_KEY_PUB" ]; then
     DX_PUB_KEY=$(cat "$DX_SSH_KEY_PUB")
-    container create "${CREATE_FLAGS[@]}" -e "DX_PUB_KEY=$DX_PUB_KEY" "$DX_IMAGE"
+    container create "${CREATE_FLAGS[@]}" -e "DX_PUB_KEY=$DX_PUB_KEY" "$DX_IMAGE" -c "$BOOTSTRAP_LAUNCH_CMD"
 else
     echo "Warning: $DX_SSH_KEY_PUB not found. SSH access may not be configured."
-    container create "${CREATE_FLAGS[@]}" "$DX_IMAGE"
+    container create "${CREATE_FLAGS[@]}" "$DX_IMAGE" -c "$BOOTSTRAP_LAUNCH_CMD"
 fi

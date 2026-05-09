@@ -22,6 +22,10 @@ export DX_SSH_PORT="${DX_SSH_PORT:-2222}"
 export DX_SSH_KEY="${DX_SSH_KEY:-$DX_PROJECT_ROOT/dx_key}"
 export DX_SSH_KEY_PUB="${DX_SSH_KEY_PUB:-$DX_PROJECT_ROOT/dx_key.pub}"
 export DX_CONTEXT_DIR="${DX_CONTEXT_DIR:-$DX_PROJECT_ROOT/container/aarch64-darwin-apple-container-dx-nixos-25.11}"
+export DX_BOOTSTRAP_SOURCE="${DX_BOOTSTRAP_SOURCE:-$DX_CONTEXT_DIR}"
+export DX_BOOTSTRAP_VOLUME="${DX_BOOTSTRAP_VOLUME:-dx-bootstrap}"
+export DX_BOOTSTRAP_PATH="${DX_BOOTSTRAP_PATH:-/guest-bootstrap}"
+export DX_NIX_VOLUME="${DX_NIX_VOLUME:-dx-nix}"
 export DX_NIX_DISK="${DX_NIX_DISK:-$HOME/.dx-cache/nix-store.img}"
 export DX_NIX_DISK_SIZE="${DX_NIX_DISK_SIZE:-20G}"
 export DX_WORKSPACE_VOLUME="${DX_WORKSPACE_VOLUME:-dx-workspace}"
@@ -55,4 +59,8 @@ container_ensure_volume() {
         return 0
     fi
     container volume create "$name"
+}
+
+dx_bootstrap_launch_command() {
+    printf '%s\n' "set -eu; mkdir -p \"$DX_WORKSPACE_PATH\" \"$DX_BOOTSTRAP_PATH\"; rm -f \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-ready\"; touch \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-waiting\"; echo 'Waiting for bootstrap payload in $DX_BOOTSTRAP_PATH...'; while [ ! -f \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-ready\" ]; do sleep 1; done; rm -f \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-waiting\"; exec \"$DX_BOOTSTRAP_PATH/bootstrap.sh\" serve"
 }

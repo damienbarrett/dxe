@@ -40,6 +40,8 @@ if ! container_is_running "$DX_CONTAINER_NAME"; then
     "$SCRIPT_DIR/dx-start"
 else
     echo "Phase 3: Container $DX_CONTAINER_NAME is already running."
+    echo "Phase 3: Syncing bootstrap payload..."
+    "$SCRIPT_DIR/dx-sync-bootstrap"
 fi
 
 # Phase 4: Wait for SSH Readiness
