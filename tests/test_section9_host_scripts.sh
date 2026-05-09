@@ -137,6 +137,9 @@ assert_file_contains "$DX_START" "already running.*syncing bootstrap payload" "d
 DX="$BIN_DIR/dx"
 assert_file_contains "$DX" "dx-sync-bootstrap" "dx syncs bootstrap payload for already-running containers"
 
+# Test: dx entrypoint checks for Apple Container installation
+assert_file_contains "$DX" "command -v container" "dx checks for Apple Container installation"
+
 # Test: dx-create owns the runtime bootstrap launcher, keeping Containerfile minimal
 assert_file_contains "$DX_CREATE" "entrypoint sh" "dx-create sets a shell entrypoint"
 assert_file_contains "$DX_CREATE" "dx_bootstrap_launch_command" "dx-create uses shared bootstrap launch command"
