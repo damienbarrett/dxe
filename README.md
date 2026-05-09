@@ -96,6 +96,7 @@ dx-theme rose-pine             # plus rose-pine-moon, rose-pine-dawn
 dx-theme everforest-dark       # plus everforest-light
 dx-theme catppuccin            # = catppuccin-mocha; latte/frappe/macchiato/mocha also available
 dx-theme solarized-dark        # plus solarized-light
+dx-theme shades-of-purple      # Base16 Shades of Purple
 dx-theme list                  # show every alias and its base16 scheme
 dx-theme current               # what tinty has applied right now
 dx-theme test                  # palette swatch + base00/base05 readout

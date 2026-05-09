@@ -24,6 +24,18 @@ RUNNER="$SCRIPT_DIR/run_all_tests.sh"
 
 test_section "Section 14: Tinty Theming"
 
+assert_file_contains_literal() {
+    local file="$1"
+    local literal="$2"
+    local message="${3:-File $file contains literal '$literal'}"
+    if grep -Fq "$literal" "$file" 2>/dev/null; then
+        test_pass "$message"
+    else
+        test_fail "$message"
+    fi
+    return 0
+}
+
 assert_file_exists "$FLAKE_NIX" "flake.nix exists"
 assert_file_exists "$HOME_NIX" "home.nix exists"
 assert_file_exists "$NIXVIM_PLUGIN" "tinted-nvim plugin module exists"
@@ -52,6 +64,7 @@ assert_file_contains "$HOME_THEME_NIX" "base16-catppuccin-mocha" "theme registry
 assert_file_contains "$HOME_THEME_NIX" "base16-everforest-dark-hard" "theme registry includes everforest-dark"
 assert_file_contains "$HOME_THEME_NIX" "base16-solarized-light" "theme registry includes solarized-light"
 assert_file_contains "$HOME_THEME_NIX" "base16-solarized-dark" "theme registry includes solarized-dark"
+assert_file_contains "$HOME_THEME_NIX" "base16-shades-of-purple" "theme registry includes Shades of Purple"
 
 assert_file_contains "$HOME_THEME_NIX" "dx-theme" "home/theme.nix declares dx-theme"
 assert_file_contains "$HOME_THEME_NIX" "dx-theme-copy-hook" "home.nix declares Tinty copy hook"
@@ -82,6 +95,28 @@ assert_file_contains "$HOME_THEME_NIX" 'dx-theme-write-tool-themes" "$current"' 
 assert_file_contains "$SCRIPT_DX_THEME_RESTORE" 'emit_osc 10 "$base05"' "login restore emits foreground OSC"
 assert_file_contains "$SCRIPT_DX_THEME_RESTORE" 'emit_osc 11 "$base00"' "login restore emits background OSC"
 assert_file_contains "$HOME_SHELL_NIX" 'try { ^/home/dx/.local/bin/dx-theme-restore }' "Nushell runs Tinty login restore"
+
+TOOL_THEME_TEST_HOME="$(mktemp -d)"
+trap 'rm -rf "$TOOL_THEME_TEST_HOME"' EXIT
+if HOME="$TOOL_THEME_TEST_HOME" bash "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" \
+    000000 111111 222222 333333 444444 555555 666666 777777 \
+    aa0000 bb6600 ccaa00 00aa66 00aaaa 5599ff cc66ff 663300; then
+    test_pass "tool theme writer accepts a direct Base16 palette"
+else
+    test_fail "tool theme writer accepts a direct Base16 palette"
+fi
+assert_file_contains_literal \
+    "$TOOL_THEME_TEST_HOME/.config/btop/themes/dx-tinty.theme" \
+    'theme[title]="#cc66ff"' \
+    "btop generated theme uses purple title accent"
+assert_file_contains_literal \
+    "$TOOL_THEME_TEST_HOME/.config/yazi/theme.toml" \
+    'normal_main = { fg = "#000000", bg = "#cc66ff", bold = true }' \
+    "Yazi generated theme uses purple normal-mode accent"
+assert_file_contains_literal \
+    "$TOOL_THEME_TEST_HOME/.config/starship.toml" \
+    'success_symbol = "[>](bold fg:base0E)"' \
+    "Starship generated theme uses purple success prompt"
 
 assert_file_contains "$NIXVIM_NIX" "tinted-nvim.nix" "nixvim imports tinted-nvim plugin"
 assert_file_contains "$NIXVIM_PLUGIN" "pkgs.vimPlugins.tinted-nvim" "Neovim uses packaged tinted-nvim first"
@@ -145,7 +180,8 @@ catppuccin-mocha=base16-catppuccin-mocha
 everforest-dark=base16-everforest-dark-hard
 everforest-light=base16-everforest-light-medium
 solarized-dark=base16-solarized-dark
-solarized-light=base16-solarized-light'
+solarized-light=base16-solarized-light
+shades-of-purple=base16-shades-of-purple'
     if container exec -u dx dx-host bash -lc "
         set -e
         printf '%s\n' '$new_alias_pairs' | while IFS='=' read -r alias scheme; do
@@ -157,9 +193,9 @@ solarized-light=base16-solarized-light'
             fi
         done
     "; then
-        test_pass "new theme aliases (catppuccin/everforest/solarized) apply correctly"
+        test_pass "new theme aliases (catppuccin/everforest/solarized/shades-of-purple) apply correctly"
     else
-        test_fail "new theme aliases (catppuccin/everforest/solarized) apply correctly"
+        test_fail "new theme aliases (catppuccin/everforest/solarized/shades-of-purple) apply correctly"
     fi
 fi
 

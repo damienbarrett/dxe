@@ -27,6 +27,9 @@ let
     # Solarized — explicit light/dark, matches upstream naming.
     solarized-light      = "base16-solarized-light";
     solarized-dark       = "base16-solarized-dark";
+
+    # Shades of Purple — matches the Tinted/Base16 scheme name.
+    shades-of-purple     = "base16-shades-of-purple";
   };
 
   # Alias used at fresh-init when the user has no recorded theme yet.
