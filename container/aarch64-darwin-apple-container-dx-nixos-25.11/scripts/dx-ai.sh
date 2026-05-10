@@ -51,6 +51,14 @@ else
     nix profile add "${NIX_FLAGS[@]}" .#ai-tools
 fi
 
+echo "Setting up AI credentials persistence..."
+mkdir -p /workspace/home/dx/.gemini /workspace/home/dx/.claude /workspace/home/dx/.codex
+touch /workspace/home/dx/.claude.json
+ln -sfn /workspace/home/dx/.gemini ~/.gemini
+ln -sfn /workspace/home/dx/.claude ~/.claude
+ln -sfn /workspace/home/dx/.claude.json ~/.claude.json
+ln -sfn /workspace/home/dx/.codex ~/.codex
+
 echo "AI tools installed:"
 for tool in codex gemini claude; do
     printf "  %s -> " "$tool"
