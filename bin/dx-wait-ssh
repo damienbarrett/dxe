@@ -1,0 +1,32 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+echo "Phase 4: Waiting for guest environment to be ready (this may take a minute on first boot)..."
+MAX_RETRIES=120
+RETRY_COUNT=0
+
+# Use a simple SSH command to check if the guest is actually ready to accept logins
+SSH_CHECK_OPTS=(
+    "-i" "$DX_SSH_KEY"
+    "-p" "$DX_SSH_PORT"
+    "-o" "StrictHostKeyChecking=no"
+    "-o" "UserKnownHostsFile=/dev/null"
+    "-o" "IdentitiesOnly=yes"
+    "-o" "ConnectTimeout=2"
+    "-o" "BatchMode=yes"
+)
+
+while ! ssh "${SSH_CHECK_OPTS[@]}" dx@127.0.0.1 "true" 2>/dev/null; do
+    if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+        echo "Error: Timed out waiting for guest SSH service to become responsive."
+        exit 1
+    fi
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    # Provide a visual indicator
+    printf "."
+    sleep 5
+done
+printf "\nGuest is ready!\n"

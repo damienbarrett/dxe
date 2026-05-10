@@ -7,6 +7,8 @@
       export PATH=$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH
     '';
     initExtra = ''
+      set -o vi
+      
       if command -v direnv >/dev/null 2>&1; then
         eval "$(direnv hook bash)"
       fi
@@ -32,6 +34,8 @@
     enable = true;
     interactiveShellInit = ''
       set -g fish_greeting
+      fish_vi_key_bindings
+      
       if type -q starship
         starship init fish | source
       end
@@ -59,6 +63,7 @@
       # It has not been proven for the selected Tinty template version.
       $env.config = {
         show_banner: false
+        edit_mode: "vi"
       }
       try { ^/home/dx/.local/bin/dx-theme-restore }
     '';

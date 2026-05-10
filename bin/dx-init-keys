@@ -1,0 +1,12 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+if [ ! -f "$DX_SSH_KEY" ]; then
+    echo "Phase 0: Generating SSH keys..."
+    ssh-keygen -t ed25519 -f "$DX_SSH_KEY" -N ""
+else
+    echo "Phase 0: SSH keys already exist."
+fi

@@ -31,6 +31,12 @@ export DX_NIX_DISK_SIZE="${DX_NIX_DISK_SIZE:-20G}"
 export DX_WORKSPACE_VOLUME="${DX_WORKSPACE_VOLUME:-dx-workspace}"
 export DX_WORKSPACE_PATH="${DX_WORKSPACE_PATH:-/workspace}"
 
+# Check for Apple Container installation
+if ! command -v container &> /dev/null; then
+    echo "Error: Apple 'container' tool not found. Please ensure it is installed on your macOS host."
+    echo "Visit https://github.com/apple/container for installation instructions."
+    exit 1
+fi
 
 # Helper function to check if a container exists (exact match)
 container_exists() {

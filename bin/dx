@@ -3,81 +3,18 @@ set -euo pipefail
 
 # dx
 # Unified entry point for the DX Experience.
-# Orchestrates build, create, and start phases as needed.
+# Orchestrates build, create, and start phases.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
-# Check for Apple Container installation
-if ! command -v container &> /dev/null; then
-    echo "Error: Apple 'container' tool not found. Please ensure it is installed on your macOS host."
-    echo "Visit https://github.com/apple/container for installation instructions."
-    exit 1
-fi
-
 echo "Checking DX environment phases..."
 
-# Phase 0: SSH Keys
-if [ ! -f "$DX_SSH_KEY" ]; then
-    echo "Phase 0: Generating SSH keys..."
-    ssh-keygen -t ed25519 -f "$DX_SSH_KEY" -N ""
-else
-    echo "Phase 0: SSH keys already exist."
-fi
+"$SCRIPT_DIR/dx-init-keys"
+"$SCRIPT_DIR/dx-build"
+"$SCRIPT_DIR/dx-create"
+"$SCRIPT_DIR/dx-start"
+"$SCRIPT_DIR/dx-wait-ssh"
 
-# Phase 1: Build Image
-if ! container_image_exists "$DX_IMAGE"; then
-    echo "Phase 1: Building image $DX_IMAGE..."
-    "$SCRIPT_DIR/dx-build"
-else
-    echo "Phase 1: Image $DX_IMAGE already exists."
-fi
-
-# Phase 2: Create Container
-if ! container_exists "$DX_CONTAINER_NAME"; then
-    echo "Phase 2: Creating container $DX_CONTAINER_NAME..."
-    "$SCRIPT_DIR/dx-create"
-else
-    echo "Phase 2: Container $DX_CONTAINER_NAME already exists."
-fi
-
-# Phase 3: Start Container
-if ! container_is_running "$DX_CONTAINER_NAME"; then
-    echo "Phase 3: Starting container $DX_CONTAINER_NAME..."
-    "$SCRIPT_DIR/dx-start"
-else
-    echo "Phase 3: Container $DX_CONTAINER_NAME is already running."
-    echo "Phase 3: Syncing bootstrap payload..."
-    "$SCRIPT_DIR/dx-sync-bootstrap"
-fi
-
-# Phase 4: Wait for SSH Readiness
-echo "Phase 4: Waiting for guest environment to be ready (this may take a minute on first boot)..."
-MAX_RETRIES=120
-RETRY_COUNT=0
-# Use a simple SSH command to check if the guest is actually ready to accept logins
-SSH_CHECK_OPTS=(
-    "-i" "$DX_SSH_KEY"
-    "-p" "$DX_SSH_PORT"
-    "-o" "StrictHostKeyChecking=no"
-    "-o" "UserKnownHostsFile=/dev/null"
-    "-o" "IdentitiesOnly=yes"
-    "-o" "ConnectTimeout=2"
-    "-o" "BatchMode=yes"
-)
-
-while ! ssh "${SSH_CHECK_OPTS[@]}" dx@127.0.0.1 "true" 2>/dev/null; do
-    if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-        echo "Error: Timed out waiting for guest SSH service to become responsive."
-        exit 1
-    fi
-    RETRY_COUNT=$((RETRY_COUNT + 1))
-    # Provide a visual indicator
-    printf "."
-    sleep 5
-done
-printf "\nGuest is ready!\n"
-
-# Phase 5: SSH Connection
 echo "Phase 5: Entering developer environment..."
 exec "$SCRIPT_DIR/dx-ssh" "$@"
