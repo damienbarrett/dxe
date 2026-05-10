@@ -231,13 +231,13 @@ configure_guest() {
     run_as_dx "mkdir -p ~/.cache && ln -sf /nix/cache/nix ~/.cache/nix"
 
     # Persist AI CLI tool credentials/configuration across container rebuilds
-    mkdir -p /nix/persist/home/.gemini /nix/persist/home/.claude /nix/persist/home/.codex
-    touch /nix/persist/home/.claude.json
-    chown -R dx:dx /nix/persist
-    run_as_dx "ln -sfn /nix/persist/home/.gemini ~/.gemini"
-    run_as_dx "ln -sfn /nix/persist/home/.claude ~/.claude"
-    run_as_dx "ln -sfn /nix/persist/home/.claude.json ~/.claude.json"
-    run_as_dx "ln -sfn /nix/persist/home/.codex ~/.codex"
+    mkdir -p /workspace/home/dx/.gemini /workspace/home/dx/.claude /workspace/home/dx/.codex
+    touch /workspace/home/dx/.claude.json
+    chown -R dx:dx /workspace/home/dx
+    run_as_dx "ln -sfn /workspace/home/dx/.gemini ~/.gemini"
+    run_as_dx "ln -sfn /workspace/home/dx/.claude ~/.claude"
+    run_as_dx "ln -sfn /workspace/home/dx/.claude.json ~/.claude.json"
+    run_as_dx "ln -sfn /workspace/home/dx/.codex ~/.codex"
 
     # Use Home Manager to manage dotfiles and user profile
     run_as_dx "nix run --extra-experimental-features 'nix-command flakes' /guest-bootstrap#homeConfigurations.dx.activationPackage"
