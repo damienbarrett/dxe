@@ -95,6 +95,8 @@ else
     test_fail "dx-ssh adds guest Nix profile to PATH"
 fi
 
+assert_file_contains "$DX_SSH" "LogLevel=ERROR" "dx-ssh suppresses noisy known-host warnings"
+
 # Test: dx-ssh forces non-interactive commands through bash even when the guest login shell differs
 if grep -q "base64 -d | bash -l" "$DX_SSH"; then
     test_pass "dx-ssh wraps non-interactive commands for bash"
@@ -132,10 +134,56 @@ assert_file_contains "$DX_SYNC_BOOTSTRAP" "id -u dx" "dx-sync-bootstrap chowns p
 DX_START="$BIN_DIR/dx-start"
 assert_file_contains "$DX_START" "dx-sync-bootstrap" "dx-start syncs bootstrap payload after start"
 assert_file_contains "$DX_START" "already running.*syncing bootstrap payload" "dx-start syncs bootstrap payload when already running"
+assert_file_contains "$DX_START" "Starting DX container: .*\\.\\.\\." "dx-start feedback ends with ellipsis"
 
-# Test: dx entrypoint calls standard lifecycle scripts
+# Test: dx-wait-ssh checks readiness through bash, regardless of login shell
+DX_WAIT_SSH="$BIN_DIR/dx-wait-ssh"
+assert_file_contains "$DX_WAIT_SSH" "bash -lc 'true'" "dx-wait-ssh avoids nushell printing boolean true"
+assert_file_contains "$DX_WAIT_SSH" "Phase 4: Waiting for guest environment to be ready\\.\\.\\." "dx-wait-ssh prints phase 4 with ellipsis"
+assert_file_contains "$DX_WAIT_SSH" "Guest is ready\\.\\.\\." "dx-wait-ssh readiness feedback ends with ellipsis"
+
+# Test: stop/destroy lifecycle commands are bounded and have a force fallback
+DX_STOP="$BIN_DIR/dx-stop"
+DX_DESTROY="$BIN_DIR/dx-destroy"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_STOP_COMMAND_TIMEOUT" "dx-lib exposes stop command timeout"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "container_stop_bounded" "dx-lib provides bounded container stop helper"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "container kill" "dx-lib escalates stuck stops through container kill"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "container_runtime_pids" "dx-lib can find the host runtime process for one container"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "container_kill_runtime_process" "dx-lib has a targeted runtime-process fallback"
+assert_file_contains "$DX_STOP" "container_stop_bounded" "dx-stop uses bounded stop helper"
+assert_file_contains "$DX_DESTROY" "container_stop_bounded" "dx-destroy uses bounded stop helper"
+assert_file_contains "$DX_DESTROY" "container delete --force" "dx-destroy force deletes when stop cannot complete"
+
+# Test: dx entrypoint is state-driven but never builds images
 DX="$BIN_DIR/dx"
+DX_INIT_KEYS="$BIN_DIR/dx-init-keys"
 assert_file_contains "$DX" "dx-start" "dx calls dx-start"
+assert_file_contains "$DX" "container_is_running" "dx handles already-running containers"
+assert_file_contains "$DX" "container_exists" "dx handles stopped existing containers"
+assert_file_contains "$DX" "container_image_exists" "dx checks for a prebuilt image before creating a missing container"
+assert_file_not_contains "$DX" "dx-build" "dx never builds the image"
+assert_file_contains "$DX" "dx-sync-bootstrap" "dx syncs bootstrap directly for already-running containers"
+assert_file_contains "$DX" "Run ./bin/dx-recreate" "dx tells the user how to build a missing image"
+assert_file_contains "$DX_INIT_KEYS" "Phase 0: SSH keys already exist\\.\\.\\." "dx-init-keys prints phase 0 with ellipsis"
+assert_file_contains "$DX" "Phase 1: Checking prebuilt image" "dx prints phase 1 feedback"
+assert_file_contains "$DX" "Phase 1: Checking prebuilt image .*\\.\\.\\." "dx phase 1 feedback ends with ellipsis"
+assert_file_contains "$DX" "Phase 2: Resolving container .*\\.\\.\\." "dx phase 2 feedback ends with ellipsis"
+assert_file_contains "$DX" "Phase 3: Preparing running container\\.\\.\\." "dx phase 3 feedback ends with ellipsis"
+assert_file_contains "$DX" "Phase 5: Entering developer environment\\.\\.\\." "dx phase 5 feedback ends with ellipsis"
+
+# Test: bootstrap sync feedback follows lifecycle output style
+assert_file_contains "$DX_SYNC_BOOTSTRAP" "Syncing bootstrap payload .*\\.\\.\\." "dx-sync-bootstrap sync feedback ends with ellipsis"
+assert_file_contains "$DX_SYNC_BOOTSTRAP" "Bootstrap payload is ready\\.\\.\\." "dx-sync-bootstrap ready feedback ends with ellipsis"
+
+# Test: dx-recreate rebuilds the image before replacing the container
+DX_RECREATE="$BIN_DIR/dx-recreate"
+assert_file_not_contains "$DX_RECREATE" 'exec "$SCRIPT_DIR/dx"' "dx-recreate does not delegate to full dx entrypoint"
+assert_file_contains "$DX_RECREATE" "dx-build" "dx-recreate rebuilds the image from current configuration"
+assert_file_not_contains "$DX_RECREATE" "container_image_exists" "dx-recreate does not skip image builds"
+assert_file_contains "$DX_RECREATE" "dx-create" "dx-recreate creates the replacement container"
+assert_file_contains "$DX_RECREATE" "dx-start" "dx-recreate starts the replacement container"
+assert_file_contains "$DX_RECREATE" "dx-wait-ssh" "dx-recreate waits for SSH after replacement"
+assert_file_contains "$DX_RECREATE" "dx-ssh" "dx-recreate connects after replacement"
 
 # Test: dx-lib checks for Apple Container installation
 assert_file_contains "$BIN_DIR/dx-lib.sh" "command -v container" "dx-lib checks for Apple Container installation"

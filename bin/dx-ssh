@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
 if [ ! -f "$DX_SSH_KEY" ]; then
-    echo "Error: SSH key file not found at $DX_SSH_KEY"
+    echo "Error: SSH key file not found at $DX_SSH_KEY..."
     exit 1
 fi
 
@@ -22,8 +22,9 @@ SSH_OPTS=(
     "-i" "$DX_SSH_KEY"
     "-p" "$DX_SSH_PORT"
     "-o" "StrictHostKeyChecking=no"
-    "-o" "UserKnownHostsFile=/dev/null"\
+    "-o" "UserKnownHostsFile=/dev/null"
     "-o" "IdentitiesOnly=yes"
+    "-o" "LogLevel=ERROR"
 )
 
 # Baseline path and SSL certs to ensure Nix tools are found and work

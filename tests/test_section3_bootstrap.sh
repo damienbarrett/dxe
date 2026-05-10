@@ -46,6 +46,10 @@ fi
 # Test: bootstrap.sh preserves passwordless sudo
 assert_file_contains "$BOOTSTRAP" "dx ALL=(ALL) NOPASSWD:ALL" "bootstrap.sh keeps passwordless sudo for dx"
 
+# Test: bootstrap initializes persisted Claude config as valid JSON
+assert_file_not_contains "$BOOTSTRAP" "touch /workspace/home/dx/.claude.json" "bootstrap does not create empty Claude JSON config"
+assert_file_contains "$BOOTSTRAP" "printf '%s\\\\n' '{}' > /workspace/home/dx/.claude.json" "bootstrap initializes empty Claude config as JSON"
+
 # Test: bootstrap.sh is idempotent for user creation
 # Check that user creation is conditional
 assert_file_contains "$BOOTSTRAP" "if.*id -u dx" "bootstrap.sh conditionally creates dx user"

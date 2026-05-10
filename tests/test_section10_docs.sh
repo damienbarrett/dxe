@@ -37,6 +37,9 @@ assert_file_contains "$README" "[Nn]ix[Vv]im\|[Ee]ditor.*[Cc]onfig.*[Nn]ix[Vv]im
 
 # Test: README documents build/create/start/ssh/status/put/stop workflow
 assert_file_contains "$README" "[Bb]uild\|dx-build" "README documents build workflow"
+assert_file_contains "$README" "[Ss]tate-driven" "README documents state-driven dx entrypoint"
+assert_file_contains "$README" "dx.*does not build images\|does not build images.*dx" "README documents dx does not build images"
+assert_file_contains "$README" "dx-recreate.*rebuilds\|rebuilds.*dx-recreate" "README documents dx-recreate rebuilds images"
 assert_file_contains "$README" "[Cc]reate\|dx-create" "README documents create workflow"
 assert_file_contains "$README" "[Ss]tart\|dx-start" "README documents start workflow"
 assert_file_contains "$README" "[Ss][Ss][Hh]\|dx-ssh" "README documents ssh workflow"
@@ -53,6 +56,7 @@ assert_file_contains "$README" "DX_IMAGE.*dx-nixos-25.11" "README documents DX_I
 assert_file_contains "$README" "DX_NIX_VOLUME.*dx-nix" "README documents DX_NIX_VOLUME default"
 assert_file_contains "$README" "DX_BOOTSTRAP_VOLUME.*dx-bootstrap" "README documents DX_BOOTSTRAP_VOLUME default"
 assert_file_contains "$README" "DX_BOOTSTRAP_SOURCE.*DX_CONTEXT_DIR" "README documents DX_BOOTSTRAP_SOURCE default"
+assert_file_contains "$README" "DX_STOP_COMMAND_TIMEOUT.*15" "README documents stop command timeout"
 
 # Test: README documents rerunning guest bootstrap
 assert_file_contains "$README" "[Rr]erun\|[Rr]e-run\|[Rr]ebootstrap\|[Rr]e-bootstrap" "README documents rerunning guest bootstrap"

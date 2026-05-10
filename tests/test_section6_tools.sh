@@ -72,6 +72,15 @@ assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?go-task" "go-task preserved in flake.
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?lazygit" "lazygit preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?yazi" "yazi preserved in flake.nix"
 
+# Test: Yazi cwd helpers are configured for interactive container shells
+assert_file_contains "$SHELL_NIX" "function y()" "bash yazi cwd helper is configured"
+assert_file_contains "$SHELL_NIX" "command yazi \"\$@\" --cwd-file=\"\$tmp\"" "bash yazi cwd helper writes cwd file"
+assert_file_contains "$SHELL_NIX" "function y" "fish yazi cwd helper is configured"
+assert_file_contains "$SHELL_NIX" "command yazi \$argv --cwd-file=\"\$tmp\"" "fish yazi cwd helper writes cwd file"
+assert_file_contains "$SHELL_NIX" "def --env y" "nushell yazi cwd helper is configured"
+assert_file_contains "$SHELL_NIX" '\^yazi ...$args --cwd-file $tmp' "nushell yazi cwd helper writes cwd file"
+assert_file_contains "$SHELL_NIX" 'str replace --all (char nul) ""' "nushell yazi cwd helper strips cwd file NUL terminator"
+
 # Test: AI CLI tools are excluded from the default dxPackages list
 DX_PACKAGES_BLOCK="$(awk '
     /dxPackages =/ { in_block = 1 }
@@ -115,6 +124,9 @@ if grep -q "nix flake update" "$DX_AI_SCRIPT" && grep -q "nixpkgs-unstable" "$DX
 else
     test_fail "guest dx-ai updates nixpkgs-unstable"
 fi
+
+assert_file_not_contains "$DX_AI_SCRIPT" "touch /workspace/home/dx/.claude.json" "guest dx-ai does not create empty Claude JSON config"
+assert_file_contains "$DX_AI_SCRIPT" "printf '%s\\\\n' '{}' > /workspace/home/dx/.claude.json" "guest dx-ai initializes empty Claude config as JSON"
 
 if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "codex"; then
     test_pass "codex is in aiPackages"

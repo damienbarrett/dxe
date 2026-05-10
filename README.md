@@ -49,14 +49,18 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
 
 ## Lifecycle Phases
 
-The unified `./bin/dx` command runs phases 0 through 5 as needed. The other
-scripts expose individual lifecycle steps for direct use, maintenance, or
-reset workflows.
+The unified `./bin/dx` command connects to an already-built DX environment. It
+is state-driven: an already-running container is synced and entered, a stopped
+container is started, and a missing container is created from the existing
+image. `dx` does not build images. `dx-recreate` rebuilds the image from the
+current configuration and replaces the container while
+preserving the `/nix` and `/workspace` volumes. The other scripts expose
+individual lifecycle steps for direct use, maintenance, or reset workflows.
 
 | Phase | Description |
 | --- | --- |
 | Phase 0: SSH Keys | Ensures the host has an SSH keypair for connecting to the guest. |
-| Phase 1: Build Image | Builds the Apple container image used by the DX environment. |
+| Phase 1: Build Image | Builds the Apple container image used by the DX environment. This is explicit through `dx-build` or `dx-recreate`; `dx` does not build images. |
 | Phase 2: Create Container | Creates persistent volumes and the container definition. |
 | Phase 3: Start + Sync Bootstrap | Starts the container and syncs the local bootstrap payload into the guest. |
 | Guest Bootstrap | Runs inside the guest to configure `/nix`, the `dx` user, SSH, Home Manager, shell, tmux, and tools. |
@@ -65,14 +69,14 @@ reset workflows.
 | Runtime Operations | Handles day-to-day inspection, file transfer, direct shell access, and maintenance. |
 | Stop | Stops the running container without deleting it. |
 | Destroy | Deletes the container while preserving images and persistent volumes. |
-| Recreate | Replaces the container while keeping persistent volumes. |
+| Recreate | Rebuilds the image from current configuration, then replaces the container while keeping persistent `/nix` and `/workspace` volumes. |
 | Factory Reset | Deletes the container, persistent volumes, and generated SSH keys. |
 | Export | Archives the current container state. |
 | Storage Prep | Prepares auxiliary storage used by the Nix store. |
 
 | Script | Maps To | Description |
 | --- | --- | --- |
-| [`bin/dx`](bin/dx) | Phases 0-5 | Unified entrypoint. Generates keys, builds, creates, starts, waits for SSH, then connects. |
+| [`bin/dx`](bin/dx) | Connect / Start / Create | Unified state-driven entrypoint. Generates keys, reuses running/stopped containers when possible, creates from an existing image when needed, waits for SSH, then connects. It does not build images. |
 | [`bin/dx-build`](bin/dx-build) | Phase 1: Build Image | Runs `container build` for the DX image. |
 | [`bin/dx-create`](bin/dx-create) | Phase 2: Create Container | Ensures Nix, workspace, and bootstrap volumes exist, then creates the container. |
 | [`bin/dx-start`](bin/dx-start) | Phase 3: Start + Sync Bootstrap | Starts the container and invokes bootstrap sync. |
@@ -85,7 +89,7 @@ reset workflows.
 | [`bin/dx-gc`](bin/dx-gc) | Runtime Operations / Maintenance | Runs Nix garbage collection and store optimization inside the guest. |
 | [`bin/dx-stop`](bin/dx-stop) | Stop | Stops the container. |
 | [`bin/dx-destroy`](bin/dx-destroy) | Destroy | Stops and deletes the container, preserving persistent volumes and images. |
-| [`bin/dx-recreate`](bin/dx-recreate) | Recreate | Runs destroy, create, then start. |
+| [`bin/dx-recreate`](bin/dx-recreate) | Recreate | Rebuilds the image from current configuration, replaces the container, starts it, waits for SSH, then connects. Persistent `/nix` and `/workspace` volumes are preserved. |
 | [`bin/dx-factory-reset`](bin/dx-factory-reset) | Factory Reset | Removes the container, persistent volumes, and generated SSH keys. |
 | [`bin/dx-export`](bin/dx-export) | Export | Exports the container to a tar archive. |
 | [`bin/dx-nix-disk`](bin/dx-nix-disk) | Storage Prep | Creates a sparse Nix disk image; lifecycle-adjacent rather than part of the main `bin/dx` flow. |
@@ -110,6 +114,10 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_NIX_VOLUME` | `dx-nix` | Named volume used as the backing store for `/nix`. Override this for isolated test containers or parallel experiments so they do not share the default writable Nix store. |
 | `DX_WORKSPACE_VOLUME` | `dx-workspace` | Named volume mounted as the guest workspace. |
 | `DX_WORKSPACE_PATH` | `/workspace` | Guest path for the workspace volume. |
+| `DX_STOP_GRACE_SECONDS` | `5` | Seconds passed to `container stop --time` before the container CLI escalates. |
+| `DX_STOP_COMMAND_TIMEOUT` | `15` | Host-side timeout for a `container stop` or `container kill` CLI command that hangs. |
+| `DX_STOP_WAIT_TIMEOUT` | `5` | Seconds to wait for the container state to become stopped after each stop attempt. |
+| `DX_DELETE_COMMAND_TIMEOUT` | `15` | Host-side timeout for a `container delete` CLI command that hangs. |
 
 `DX_NIX_VOLUME` exists because the Nix store is large, persistent, and mounted
 as a writable guest filesystem. The default `dx-nix` volume preserves downloads

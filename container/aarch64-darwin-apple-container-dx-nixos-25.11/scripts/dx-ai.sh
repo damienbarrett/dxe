@@ -53,7 +53,9 @@ fi
 
 echo "Setting up AI credentials persistence..."
 mkdir -p /workspace/home/dx/.gemini /workspace/home/dx/.claude /workspace/home/dx/.codex
-touch /workspace/home/dx/.claude.json
+if [ ! -s /workspace/home/dx/.claude.json ]; then
+    printf '%s\n' '{}' > /workspace/home/dx/.claude.json
+fi
 ln -sfn /workspace/home/dx/.gemini ~/.gemini
 ln -sfn /workspace/home/dx/.claude ~/.claude
 ln -sfn /workspace/home/dx/.claude.json ~/.claude.json

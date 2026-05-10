@@ -36,13 +36,13 @@ if [ "${DX_BOOTSTRAP_WAIT_FOR_GUEST:-0}" = "1" ]; then
         sleep 1
     done
     if [ "$guest_is_waiting" != "1" ]; then
-        echo "Error: container did not enter bootstrap wait state. Rebuild the image and recreate the container." >&2
+        echo "Error: Container did not enter bootstrap wait state. Rebuild the image and recreate the container..." >&2
         exit 1
     fi
 fi
 
 if [ ! -f "$DX_BOOTSTRAP_SOURCE/bootstrap.sh" ]; then
-    echo "Error: bootstrap source $DX_BOOTSTRAP_SOURCE/bootstrap.sh does not exist." >&2
+    echo "Error: Bootstrap source $DX_BOOTSTRAP_SOURCE/bootstrap.sh does not exist..." >&2
     exit 1
 fi
 
@@ -54,7 +54,7 @@ if tar --no-mac-metadata -C "$DX_BOOTSTRAP_SOURCE" -cf /dev/null . >/dev/null 2>
     tar_create_args+=(--no-mac-metadata)
 fi
 
-echo "Syncing bootstrap payload from $DX_BOOTSTRAP_SOURCE to $DX_CONTAINER_NAME:$DX_BOOTSTRAP_PATH"
+echo "Syncing bootstrap payload from $DX_BOOTSTRAP_SOURCE to $DX_CONTAINER_NAME:$DX_BOOTSTRAP_PATH..."
 
 container exec "$DX_CONTAINER_NAME" sh -c '
 set -eu
@@ -76,4 +76,4 @@ chmod +x "$dest/bootstrap.sh"
 touch "$dest/.dx-bootstrap-ready"
 ' -- "$DX_BOOTSTRAP_PATH"
 
-echo "Bootstrap payload is ready."
+echo "Bootstrap payload is ready..."

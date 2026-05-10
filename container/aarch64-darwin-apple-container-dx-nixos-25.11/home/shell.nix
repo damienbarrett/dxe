@@ -8,7 +8,15 @@
     '';
     initExtra = ''
       set -o vi
-      
+
+      function y() {
+        local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
+        command yazi "$@" --cwd-file="$tmp"
+        IFS= read -r -d "" cwd < "$tmp"
+        [ "$cwd" != "$PWD" ] && [ -d "$cwd" ] && builtin cd -- "$cwd"
+        command rm -f -- "$tmp"
+      }
+
       if command -v direnv >/dev/null 2>&1; then
         eval "$(direnv hook bash)"
       fi
@@ -35,7 +43,16 @@
     interactiveShellInit = ''
       set -g fish_greeting
       fish_vi_key_bindings
-      
+
+      function y
+        set tmp (mktemp -t "yazi-cwd.XXXXXX")
+        command yazi $argv --cwd-file="$tmp"
+        if read -z cwd < "$tmp"; and [ "$cwd" != "$PWD" ]; and test -d "$cwd"
+          builtin cd -- "$cwd"
+        end
+        command rm -f -- "$tmp"
+      end
+
       if type -q starship
         starship init fish | source
       end
@@ -65,6 +82,17 @@
         show_banner: false
         edit_mode: "vi"
       }
+
+      def --env y [...args] {
+        let tmp = (mktemp -t "yazi-cwd.XXXXXX")
+        ^yazi ...$args --cwd-file $tmp
+        let cwd = (open $tmp | str replace --all (char nul) "")
+        if $cwd != $env.PWD and ($cwd | path exists) {
+          cd $cwd
+        }
+        rm -fp $tmp
+      }
+
       try { ^/home/dx/.local/bin/dx-theme-restore }
     '';
     envFile.text = ''

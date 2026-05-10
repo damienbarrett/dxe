@@ -6,11 +6,11 @@ source "$SCRIPT_DIR/dx-lib.sh"
 
 # Check if container is already running
 if container_is_running "$DX_CONTAINER_NAME"; then
-    echo "Container $DX_CONTAINER_NAME is already running; syncing bootstrap payload."
+    echo "Container $DX_CONTAINER_NAME is already running; syncing bootstrap payload..."
     "$SCRIPT_DIR/dx-sync-bootstrap"
     exit 0
 fi
 
-echo "Starting DX container: $DX_CONTAINER_NAME"
+echo "Starting DX container: $DX_CONTAINER_NAME..."
 container start "$DX_CONTAINER_NAME"
 DX_BOOTSTRAP_WAIT_FOR_GUEST=1 "$SCRIPT_DIR/dx-sync-bootstrap"

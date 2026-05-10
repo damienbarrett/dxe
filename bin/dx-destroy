@@ -9,16 +9,16 @@ if ! container_exists "$DX_CONTAINER_NAME"; then
     exit 0
 fi
 
-echo "Stopping DX container: $DX_CONTAINER_NAME..."
-container stop "$DX_CONTAINER_NAME" 2>/dev/null || true
-
-# Wait for container to stop
-while container_is_running "$DX_CONTAINER_NAME"; do
-    echo "Waiting for container to stop..."
-    sleep 1
-done
+if container_is_running "$DX_CONTAINER_NAME"; then
+    if ! container_stop_bounded "$DX_CONTAINER_NAME"; then
+        echo "Container $DX_CONTAINER_NAME did not stop. Force deleting it..."
+        run_with_timeout "$DX_DELETE_COMMAND_TIMEOUT" container delete --force "$DX_CONTAINER_NAME"
+        echo "Container force deleted. Persistent volumes and images remain intact."
+        exit 0
+    fi
+fi
 
 echo "Removing DX container: $DX_CONTAINER_NAME..."
-container delete "$DX_CONTAINER_NAME"
+run_with_timeout "$DX_DELETE_COMMAND_TIMEOUT" container delete "$DX_CONTAINER_NAME"
 
 echo "Container destroyed. Persistent volumes and images remain intact."

@@ -234,7 +234,9 @@ configure_guest() {
     # Only restore these links if the user has opted into the AI tools
     if run_as_dx "nix profile list" | grep -q "dx-ai-tools"; then
         mkdir -p /workspace/home/dx/.gemini /workspace/home/dx/.claude /workspace/home/dx/.codex
-        touch /workspace/home/dx/.claude.json
+        if [ ! -s /workspace/home/dx/.claude.json ]; then
+            printf '%s\n' '{}' > /workspace/home/dx/.claude.json
+        fi
         chown -R dx:dx /workspace/home/dx
         run_as_dx "ln -sfn /workspace/home/dx/.gemini ~/.gemini"
         run_as_dx "ln -sfn /workspace/home/dx/.claude ~/.claude"

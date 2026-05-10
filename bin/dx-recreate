@@ -2,7 +2,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
 
 echo "Starting full recreation cycle..."
+"$SCRIPT_DIR/dx-init-keys"
+"$SCRIPT_DIR/dx-build"
 "$SCRIPT_DIR/dx-destroy"
-exec "$SCRIPT_DIR/dx" "$@"
+
+"$SCRIPT_DIR/dx-create"
+"$SCRIPT_DIR/dx-start"
+"$SCRIPT_DIR/dx-wait-ssh"
+
+echo "Phase 5: Entering developer environment..."
+exec "$SCRIPT_DIR/dx-ssh" "$@"
