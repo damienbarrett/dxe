@@ -5,12 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
 echo "Starting full recreation cycle..."
-"$SCRIPT_DIR/dx-init-keys"
-"$SCRIPT_DIR/dx-build"
-"$SCRIPT_DIR/dx-destroy"
+"$SCRIPT_DIR/dx-create-keys"
+"$SCRIPT_DIR/dx-create-image"
+"$SCRIPT_DIR/dx-destroy-container"
 
-"$SCRIPT_DIR/dx-create"
-"$SCRIPT_DIR/dx-start"
+"$SCRIPT_DIR/dx-create-container"
+"$SCRIPT_DIR/dx-start-container"
+"$SCRIPT_DIR/dx-sync-bootstrap"
 "$SCRIPT_DIR/dx-wait-ssh"
 
 echo "Phase 5: Entering developer environment..."

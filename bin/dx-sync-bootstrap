@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
 if ! container_exists "$DX_CONTAINER_NAME"; then
-    echo "Error: container $DX_CONTAINER_NAME does not exist. Run ./bin/dx-create first." >&2
+    echo "Error: Container $DX_CONTAINER_NAME does not exist. Run ./bin/dx-create-container first." >&2
     exit 1
 fi
 
@@ -17,29 +17,29 @@ for _ in {1..30}; do
 done
 
 if ! container_is_running "$DX_CONTAINER_NAME"; then
-    echo "Error: container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start first." >&2
+    echo "Error: Container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start-container first." >&2
     exit 1
 fi
 
 if [ -z "$DX_BOOTSTRAP_PATH" ] || [ "$DX_BOOTSTRAP_PATH" = "/" ]; then
-    echo "Error: unsafe DX_BOOTSTRAP_PATH: $DX_BOOTSTRAP_PATH" >&2
+    echo "Error: Unsafe DX_BOOTSTRAP_PATH: $DX_BOOTSTRAP_PATH" >&2
     exit 1
 fi
 
-if [ "${DX_BOOTSTRAP_WAIT_FOR_GUEST:-0}" = "1" ]; then
-    guest_is_waiting=0
-    for _ in {1..30}; do
-        if container exec "$DX_CONTAINER_NAME" sh -c 'test -f "$1"' -- "$DX_BOOTSTRAP_PATH/.dx-bootstrap-waiting" >/dev/null 2>&1; then
-            guest_is_waiting=1
-            break
-        fi
-        sleep 1
-    done
-    if [ "$guest_is_waiting" != "1" ]; then
-        echo "Error: Container did not enter bootstrap wait state. Rebuild the image and recreate the container..." >&2
-        exit 1
+# Self-detect bootstrap state. A freshly-started container needs a moment to
+# enter its "waiting for payload" state before the payload can be pushed. An
+# already-warm container that has already received a payload will have the
+# .dx-bootstrap-ready marker present. Wait up to 30s for either marker before
+# proceeding so the script works whether called right after start or against a
+# long-running container, with no env-var coordination required.
+for _ in {1..30}; do
+    if container exec "$DX_CONTAINER_NAME" sh -c \
+        'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready"' \
+        -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1; then
+        break
     fi
-fi
+    sleep 1
+done
 
 if [ ! -f "$DX_BOOTSTRAP_SOURCE/bootstrap.sh" ]; then
     echo "Error: Bootstrap source $DX_BOOTSTRAP_SOURCE/bootstrap.sh does not exist..." >&2

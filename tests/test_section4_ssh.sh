@@ -44,9 +44,9 @@ else
     fi
 fi
 
-# Test: dx-create keeps host publishing limited to 127.0.0.1
-DX_CREATE="$BASE_DIR/bin/dx-create"
-assert_file_contains "$DX_CREATE" "127.0.0.1:\$DX_SSH_PORT:2222" "dx-create limits SSH to localhost"
+# Test: dx-create-container keeps host publishing limited to 127.0.0.1
+DX_CREATE="$BASE_DIR/bin/dx-create-container"
+assert_file_contains "$DX_CREATE" "127.0.0.1:\$DX_SSH_PORT:2222" "dx-create-container limits SSH to localhost"
 
 # Test: passwordless sudo is preserved
 assert_file_contains "$BOOTSTRAP" "dx ALL=(ALL) NOPASSWD:ALL" "passwordless sudo preserved for dx"

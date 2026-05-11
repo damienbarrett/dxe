@@ -19,32 +19,32 @@ if ! command -v container >/dev/null 2>&1; then
     exit 0
 fi
 
-# Test: dx-build works
-echo "  Running: dx-build"
-if "$BIN_DIR/dx-build" >/dev/null 2>&1; then
-    test_pass "dx-build completes successfully"
+# Test: dx-create-container-image works
+echo "  Running: dx-create-container-image"
+if "$BIN_DIR/dx-create-container-image" >/dev/null 2>&1; then
+    test_pass "dx-create-container-image completes successfully"
 else
-    test_fail "dx-build completes successfully"
+    test_fail "dx-create-container-image completes successfully"
 fi
 
-# Test: dx-create works (or container already exists)
-echo "  Running: dx-create"
+# Test: dx-create-container works (or container already exists)
+echo "  Running: dx-create-container"
 if container ls | grep -qw "dx-host"; then
     test_pass "dx-host container exists"
 else
-    if "$BIN_DIR/dx-create" >/dev/null 2>&1; then
-        test_pass "dx-create completes successfully"
+    if "$BIN_DIR/dx-create-container" >/dev/null 2>&1; then
+        test_pass "dx-create-container completes successfully"
     else
-        test_fail "dx-create completes successfully"
+        test_fail "dx-create-container completes successfully"
     fi
 fi
 
-# Test: dx-start works
-echo "  Running: dx-start"
-if "$BIN_DIR/dx-start" >/dev/null 2>&1; then
-    test_pass "dx-start completes successfully"
+# Test: dx-start-container works
+echo "  Running: dx-start-container"
+if "$BIN_DIR/dx-start-container" >/dev/null 2>&1; then
+    test_pass "dx-start-container completes successfully"
 else
-    test_fail "dx-start completes successfully"
+    test_fail "dx-start-container completes successfully"
 fi
 
 # Wait for bootstrap
@@ -85,14 +85,14 @@ fi
 # Test: source files survive stop/start
 echo "  Testing persistence: creating file, stopping, starting, checking"
 "$BIN_DIR/dx-ssh" "touch /workspace/persistence_test_file" >/dev/null 2>&1
-"$BIN_DIR/dx-stop" >/dev/null 2>&1
+"$BIN_DIR/dx-stop-container" >/dev/null 2>&1
 sleep 5
-"$BIN_DIR/dx-start" >/dev/null 2>&1
+"$BIN_DIR/dx-start-container" >/dev/null 2>&1
 sleep 10
 if "$BIN_DIR/dx-ssh" "test -f /workspace/persistence_test_file" >/dev/null 2>&1; then
-    test_pass "source files survive dx-stop and dx-start"
+    test_pass "source files survive dx-stop-container and dx-start-container"
 else
-    test_fail "source files survive dx-stop and dx-start"
+    test_fail "source files survive dx-stop-container and dx-start-container"
 fi
 
 print_summary

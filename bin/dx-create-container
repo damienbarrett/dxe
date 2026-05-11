@@ -4,28 +4,23 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
-# §1: Ensure the named volumes exist
-echo "Ensuring nix volume exists..."
-container_ensure_volume "$DX_NIX_VOLUME"
-echo "Ensuring workspace volume exists..."
-container_ensure_volume "$DX_WORKSPACE_VOLUME"
-echo "Ensuring bootstrap volume exists..."
-container_ensure_volume "$DX_BOOTSTRAP_VOLUME"
-
-
-# Check if container already exists
 if container_exists "$DX_CONTAINER_NAME"; then
-    echo "Container $DX_CONTAINER_NAME already exists. Skipping create."
+    echo "Container $DX_CONTAINER_NAME already exists; skipping create."
     exit 0
 fi
 
-echo "Creating DX container: $DX_CONTAINER_NAME from image $DX_IMAGE"
+if ! container_image_exists "$DX_IMAGE"; then
+    echo "Error: Image $DX_IMAGE does not exist. Run ./bin/dx-create-image first (or ./bin/dx, which builds it if missing)." >&2
+    exit 1
+fi
+
+echo "Creating container $DX_CONTAINER_NAME from image $DX_IMAGE..."
 
 BOOTSTRAP_LAUNCH_CMD="$(dx_bootstrap_launch_command)"
 
-# Common create flags. Volume mounts: DX_NIX_VOLUME -> /var/lib/dx-nix-raw (the
-# bootstrap formats and remounts this at /nix); dx-workspace -> /workspace;
-# dx-bootstrap -> /guest-bootstrap.
+# Volume mounts: DX_NIX_VOLUME -> /var/lib/dx-nix-raw (the bootstrap formats
+# and remounts this at /nix); dx-workspace -> /workspace; dx-bootstrap ->
+# /guest-bootstrap.
 CREATE_FLAGS=(
     --name "$DX_CONTAINER_NAME"
     --entrypoint sh
@@ -36,7 +31,6 @@ CREATE_FLAGS=(
     -p "127.0.0.1:$DX_SSH_PORT:2222"
 )
 
-# Check if public key exists
 if [ -f "$DX_SSH_KEY_PUB" ]; then
     DX_PUB_KEY=$(cat "$DX_SSH_KEY_PUB")
     container create "${CREATE_FLAGS[@]}" -e "DX_PUB_KEY=$DX_PUB_KEY" "$DX_IMAGE" -c "$BOOTSTRAP_LAUNCH_CMD"

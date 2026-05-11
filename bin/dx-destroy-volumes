@@ -1,0 +1,64 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+force=0
+for arg in "$@"; do
+    case "$arg" in
+        --force|-f) force=1 ;;
+        *)
+            echo "Error: Unknown argument: $arg (only --force / -f is accepted)" >&2
+            exit 2
+            ;;
+    esac
+done
+
+VOLUMES=("$DX_NIX_VOLUME" "$DX_WORKSPACE_VOLUME" "$DX_BOOTSTRAP_VOLUME")
+
+# Filter to volumes that actually exist so we don't prompt about nothing.
+existing=()
+for vol in "${VOLUMES[@]}"; do
+    if container volume inspect "$vol" >/dev/null 2>&1; then
+        existing+=("$vol")
+    fi
+done
+
+if [ "${#existing[@]}" -eq 0 ]; then
+    echo "No DX volumes exist; nothing to destroy."
+    exit 0
+fi
+
+if [ "$force" -ne 1 ]; then
+    if [ ! -t 0 ]; then
+        echo "Error: Refusing to destroy volumes without --force when stdin is not a tty." >&2
+        echo "Pass --force to confirm non-interactively, or run from a terminal." >&2
+        exit 1
+    fi
+
+    echo "About to destroy the following persistent volumes:"
+    for vol in "${existing[@]}"; do
+        case "$vol" in
+            "$DX_NIX_VOLUME")       echo "  $vol  (Nix store — re-download takes hours)" ;;
+            "$DX_WORKSPACE_VOLUME") echo "  $vol  (Your work in $DX_WORKSPACE_PATH — IRREVERSIBLE)" ;;
+            "$DX_BOOTSTRAP_VOLUME") echo "  $vol  (Bootstrap payload — auto-rebuilt on next start)" ;;
+            *)                      echo "  $vol" ;;
+        esac
+    done
+    echo
+    printf 'Type "destroy" to confirm: '
+    read -r reply
+    if [ "$reply" != "destroy" ]; then
+        echo "Confirmation not received; aborting." >&2
+        exit 1
+    fi
+fi
+
+for vol in "${existing[@]}"; do
+    echo "Removing volume $vol..."
+    if ! container volume rm "$vol"; then
+        echo "Error: Failed to remove volume $vol. A container may still reference it; destroy the container first." >&2
+        exit 1
+    fi
+done

@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/dx-lib.sh"
 echo "Starting factory reset..."
 
 # Destroy the container
-"$SCRIPT_DIR/dx-destroy"
+"$SCRIPT_DIR/dx-destroy-container"
 
 # Remove the volumes
 echo "Removing volume: $DX_NIX_VOLUME..."

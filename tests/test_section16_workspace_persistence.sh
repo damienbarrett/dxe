@@ -1,13 +1,13 @@
 #!/bin/bash
 # Section 16: Workspace Persistence Across Destroy
 # /workspace lives on its own named volume (dx-workspace) so files survive
-# dx-destroy + dx-create. Volume name and mount path are declared in
-# dx-lib.sh; mount is wired in dx-create; $WORKSPACE env var is declared
+# dx-destroy-container + dx-create-container. Volume name and mount path are declared in
+# dx-lib.sh; mount is wired in dx-create-container; $WORKSPACE env var is declared
 # in home/shell.nix for both POSIX shells (home.sessionVariables) and
 # nushell (envFile).
 #
 # Set DX_TEST_DESTRUCTIVE=1 to enable the end-to-end persistence test that
-# actually runs dx-destroy and dx-create.
+# actually runs dx-destroy-container and dx-create-container.
 
 set -uo pipefail
 
@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
 LIB_SH="$BASE_DIR/bin/dx-lib.sh"
-DX_CREATE="$BASE_DIR/bin/dx-create"
+DX_CREATE="$BASE_DIR/bin/dx-create-container"
 SHELL_NIX="$CONTAINER_DIR/home/shell.nix"
 
 test_section "Section 16: Workspace Persistence"
@@ -23,7 +23,7 @@ test_section "Section 16: Workspace Persistence"
 # ---------- Static checks ----------
 
 assert_file_exists "$LIB_SH" "bin/dx-lib.sh exists"
-assert_file_exists "$DX_CREATE" "bin/dx-create exists"
+assert_file_exists "$DX_CREATE" "bin/dx-create-container exists"
 assert_file_exists "$SHELL_NIX" "home/shell.nix exists"
 
 assert_grep_in_file "$LIB_SH" \
@@ -38,34 +38,34 @@ assert_grep_in_file "$LIB_SH" \
 
 assert_grep_in_file "$DX_CREATE" \
     "DX_WORKSPACE_VOLUME" \
-    "dx-create references DX_WORKSPACE_VOLUME"
+    "dx-create-container references DX_WORKSPACE_VOLUME"
 assert_grep_in_file "$DX_CREATE" \
     "DX_WORKSPACE_PATH" \
-    "dx-create references DX_WORKSPACE_PATH"
+    "dx-create-container references DX_WORKSPACE_PATH"
 assert_grep_in_file "$DX_CREATE" \
     "container volume create.*DX_WORKSPACE_VOLUME|ensure_volume.*DX_WORKSPACE_VOLUME|container_ensure_volume.*DX_WORKSPACE_VOLUME" \
-    "dx-create ensures the workspace volume exists"
+    "dx-create-container ensures the workspace volume exists"
 assert_grep_in_file "$DX_CREATE" \
     "DX_NIX_VOLUME" \
-    "dx-create references DX_NIX_VOLUME"
+    "dx-create-container references DX_NIX_VOLUME"
 assert_grep_in_file "$DX_CREATE" \
     "container volume create.*DX_NIX_VOLUME|ensure_volume.*DX_NIX_VOLUME|container_ensure_volume.*DX_NIX_VOLUME" \
-    "dx-create ensures the nix volume exists"
+    "dx-create-container ensures the nix volume exists"
 assert_grep_in_file "$DX_CREATE" \
     "[-]-volume[= ].*DX_NIX_VOLUME" \
-    "dx-create mounts the nix volume"
+    "dx-create-container mounts the nix volume"
 assert_grep_in_file "$DX_CREATE" \
     "[-]-volume[= ].*DX_WORKSPACE_VOLUME" \
-    "dx-create mounts the workspace volume"
+    "dx-create-container mounts the workspace volume"
 assert_grep_in_file "$LIB_SH" \
     "DX_BOOTSTRAP_VOLUME=.*dx-bootstrap" \
     "dx-lib.sh declares DX_BOOTSTRAP_VOLUME (default dx-bootstrap)"
 assert_grep_in_file "$DX_CREATE" \
     "DX_BOOTSTRAP_VOLUME" \
-    "dx-create references DX_BOOTSTRAP_VOLUME"
+    "dx-create-container references DX_BOOTSTRAP_VOLUME"
 assert_grep_in_file "$DX_CREATE" \
     "[-]-volume[= ].*DX_BOOTSTRAP_VOLUME" \
-    "dx-create mounts the bootstrap volume"
+    "dx-create-container mounts the bootstrap volume"
 
 assert_grep_in_file "$SHELL_NIX" \
     "home\.sessionVariables.*=" \
@@ -162,12 +162,12 @@ fi
 
 MARKER="/workspace/.dxe-persistence-test-$$"
 guest "bash -lc 'echo persisted > $MARKER && cat $MARKER'" >/dev/null 2>&1
-echo "  Running dx-destroy..."
-"$BASE_DIR/bin/dx-destroy" >/dev/null 2>&1
-echo "  Running dx-create..."
-"$BASE_DIR/bin/dx-create" >/dev/null 2>&1
-echo "  Running dx-start..."
-"$BASE_DIR/bin/dx-start" >/dev/null 2>&1
+echo "  Running dx-destroy-container..."
+"$BASE_DIR/bin/dx-destroy-container" >/dev/null 2>&1
+echo "  Running dx-create-container..."
+"$BASE_DIR/bin/dx-create-container" >/dev/null 2>&1
+echo "  Running dx-start-container..."
+"$BASE_DIR/bin/dx-start-container" >/dev/null 2>&1
 wait_for_ssh 180 >/dev/null
 # Need to wait a bit longer for sshd to be reachable
 for _ in $(seq 1 30); do
@@ -178,10 +178,10 @@ for _ in $(seq 1 30); do
 done
 
 if guest "bash -lc 'test -f $MARKER && grep -qx persisted $MARKER'" 2>/dev/null; then
-    test_pass "/workspace contents survive dx-destroy + dx-create + dx-start"
+    test_pass "/workspace contents survive dx-destroy-container + dx-create-container + dx-start-container"
     guest "bash -lc 'rm -f $MARKER'" >/dev/null 2>&1
 else
-    test_fail "/workspace contents survive dx-destroy + dx-create + dx-start"
+    test_fail "/workspace contents survive dx-destroy-container + dx-create-container + dx-start-container"
 fi
 
 print_summary

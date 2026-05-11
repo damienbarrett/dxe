@@ -10,7 +10,7 @@ source "$SCRIPT_DIR/dx-lib.sh"
 
 echo "Checking DX environment phases..."
 
-"$SCRIPT_DIR/dx-init-keys"
+"$SCRIPT_DIR/dx-create-keys"
 
 echo "Phase 1: Checking prebuilt image $DX_IMAGE..."
 if ! container_image_exists "$DX_IMAGE"; then
@@ -28,12 +28,14 @@ if container_is_running "$DX_CONTAINER_NAME"; then
 elif container_exists "$DX_CONTAINER_NAME"; then
     echo "Container $DX_CONTAINER_NAME exists but is stopped; starting it..."
     echo "Phase 3: Preparing running container..."
-    "$SCRIPT_DIR/dx-start"
+    "$SCRIPT_DIR/dx-start-container"
+    "$SCRIPT_DIR/dx-sync-bootstrap"
 else
     echo "Container $DX_CONTAINER_NAME does not exist; creating it from image $DX_IMAGE..."
-    "$SCRIPT_DIR/dx-create"
+    "$SCRIPT_DIR/dx-create-container"
     echo "Phase 3: Preparing running container..."
-    "$SCRIPT_DIR/dx-start"
+    "$SCRIPT_DIR/dx-start-container"
+    "$SCRIPT_DIR/dx-sync-bootstrap"
 fi
 
 "$SCRIPT_DIR/dx-wait-ssh"

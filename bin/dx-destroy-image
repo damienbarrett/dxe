@@ -1,0 +1,13 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+if ! container_image_exists "$DX_IMAGE"; then
+    echo "Image $DX_IMAGE does not exist; nothing to destroy."
+    exit 0
+fi
+
+echo "Removing image $DX_IMAGE..."
+container image rm "$DX_IMAGE" >/dev/null

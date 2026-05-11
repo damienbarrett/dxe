@@ -1,0 +1,13 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+if [ ! -f "$DX_SSH_KEY" ] && [ ! -f "$DX_SSH_KEY_PUB" ]; then
+    echo "SSH keypair already absent; nothing to destroy."
+    exit 0
+fi
+
+echo "Removing SSH keypair ($DX_SSH_KEY, $DX_SSH_KEY_PUB)..."
+rm -f "$DX_SSH_KEY" "$DX_SSH_KEY_PUB"
