@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
-echo "Phase 4: Waiting for guest environment to be ready..."
+echo "Waiting for guest SSH to become responsive..."
 MAX_RETRIES=120
 RETRY_COUNT=0
 
@@ -21,7 +21,7 @@ SSH_CHECK_OPTS=(
 
 while ! ssh "${SSH_CHECK_OPTS[@]}" dx@127.0.0.1 "bash -lc 'true'" 2>/dev/null; do
     if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-        echo "Error: Timed out waiting for guest SSH service to become responsive..."
+        echo "Error: Timed out waiting for guest SSH service to become responsive." >&2
         exit 1
     fi
     RETRY_COUNT=$((RETRY_COUNT + 1))
@@ -29,4 +29,4 @@ while ! ssh "${SSH_CHECK_OPTS[@]}" dx@127.0.0.1 "bash -lc 'true'" 2>/dev/null; d
     printf "."
     sleep 5
 done
-printf "\nGuest is ready...\n"
+printf "\nGuest is ready.\n"

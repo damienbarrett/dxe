@@ -2,43 +2,20 @@
 set -euo pipefail
 
 # dx
-# Unified entry point for the DX Experience.
-# Orchestrates create/start/connect phases for an already-built image.
+# Unified entry point for the DX Experience. Every lifecycle script it calls
+# is idempotent toward its end state, so this is safe to run from any starting
+# state: first run brings up the full environment, later runs reconnect.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/dx-lib.sh"
 
-echo "Checking DX environment phases..."
+echo "Bringing up DX environment..."
 
 "$SCRIPT_DIR/dx-create-keys"
-
-echo "Phase 1: Checking prebuilt image $DX_IMAGE..."
-if ! container_image_exists "$DX_IMAGE"; then
-    echo "Error: Image $DX_IMAGE does not exist..." >&2
-    echo "Run ./bin/dx-recreate to build the image and create the container..." >&2
-    exit 1
-fi
-
-echo "Phase 2: Resolving container $DX_CONTAINER_NAME..."
-if container_is_running "$DX_CONTAINER_NAME"; then
-    echo "Container $DX_CONTAINER_NAME already exists and is running..."
-    echo "Phase 3: Preparing running container..."
-    echo "Container $DX_CONTAINER_NAME is already running; syncing bootstrap payload..."
-    "$SCRIPT_DIR/dx-sync-bootstrap"
-elif container_exists "$DX_CONTAINER_NAME"; then
-    echo "Container $DX_CONTAINER_NAME exists but is stopped; starting it..."
-    echo "Phase 3: Preparing running container..."
-    "$SCRIPT_DIR/dx-start-container"
-    "$SCRIPT_DIR/dx-sync-bootstrap"
-else
-    echo "Container $DX_CONTAINER_NAME does not exist; creating it from image $DX_IMAGE..."
-    "$SCRIPT_DIR/dx-create-container"
-    echo "Phase 3: Preparing running container..."
-    "$SCRIPT_DIR/dx-start-container"
-    "$SCRIPT_DIR/dx-sync-bootstrap"
-fi
-
+"$SCRIPT_DIR/dx-create-image"
+"$SCRIPT_DIR/dx-create-volumes"
+"$SCRIPT_DIR/dx-create-container"
+"$SCRIPT_DIR/dx-start-container"
+"$SCRIPT_DIR/dx-sync-bootstrap"
 "$SCRIPT_DIR/dx-wait-ssh"
 
-echo "Phase 5: Entering developer environment..."
 exec "$SCRIPT_DIR/dx-ssh" "$@"

@@ -1,18 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
+# dx-recreate
+# Tears down the rebuildable host-side state and re-runs dx. Persistent volumes
+# (/nix and /workspace) and the SSH keypair are preserved.
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/dx-lib.sh"
 
-echo "Starting full recreation cycle..."
-"$SCRIPT_DIR/dx-create-keys"
-"$SCRIPT_DIR/dx-create-image"
-"$SCRIPT_DIR/dx-destroy-container"
+echo "Recreating DX environment (preserves /nix and /workspace)..."
 
-"$SCRIPT_DIR/dx-create-container"
-"$SCRIPT_DIR/dx-start-container"
-"$SCRIPT_DIR/dx-sync-bootstrap"
-"$SCRIPT_DIR/dx-wait-ssh"
-
-echo "Phase 5: Entering developer environment..."
-exec "$SCRIPT_DIR/dx-ssh" "$@"
+"$SCRIPT_DIR/dx-destroy"
+exec "$SCRIPT_DIR/dx" "$@"

@@ -1,0 +1,14 @@
+#!/bin/bash
+set -euo pipefail
+
+# dx-destroy
+# Umbrella: tears down the rebuildable host-side state (container + image)
+# while preserving persistent volumes and the SSH keypair. Use dx-factory-reset
+# to remove everything.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "Destroying DX container and image (volumes and keys preserved)..."
+
+"$SCRIPT_DIR/dx-destroy-container"
+"$SCRIPT_DIR/dx-destroy-image"

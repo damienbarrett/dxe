@@ -42,7 +42,7 @@ for _ in {1..30}; do
 done
 
 if [ ! -f "$DX_BOOTSTRAP_SOURCE/bootstrap.sh" ]; then
-    echo "Error: Bootstrap source $DX_BOOTSTRAP_SOURCE/bootstrap.sh does not exist..." >&2
+    echo "Error: Bootstrap source $DX_BOOTSTRAP_SOURCE/bootstrap.sh does not exist." >&2
     exit 1
 fi
 
@@ -76,4 +76,4 @@ chmod +x "$dest/bootstrap.sh"
 touch "$dest/.dx-bootstrap-ready"
 ' -- "$DX_BOOTSTRAP_PATH"
 
-echo "Bootstrap payload is ready..."
+echo "Bootstrap payload is ready."

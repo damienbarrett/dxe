@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
 if [ ! -f "$DX_SSH_KEY" ]; then
-    echo "Error: SSH key file not found at $DX_SSH_KEY..."
+    echo "Error: SSH key file not found at $DX_SSH_KEY." >&2
     exit 1
 fi
 
