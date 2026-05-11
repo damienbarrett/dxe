@@ -106,6 +106,7 @@ or perform maintenance operations.
 | Script | Role |
 | --- | --- |
 | [`bin/dx-lib.sh`](bin/dx-lib.sh) | Shared library (env vars, container helpers). Sourced by every script; not executable on its own. |
+| [`bin/dx-profile`](bin/dx-profile) | Loads a named profile of env-var overrides from `tests/profiles/<name>.env`, then execs the rest of the command. Opt-in; defaults apply when not used. |
 | [`bin/dx-wait-ssh`](bin/dx-wait-ssh) | Blocks until guest SSH responds. Gates the SSH connection layer. |
 | [`bin/dx-status`](bin/dx-status) | Reports image, container, SSH, tool, workspace, and tmux status. |
 | [`bin/dx-put`](bin/dx-put) | Copies host files into the guest. |
@@ -168,6 +169,36 @@ DX_WORKSPACE_VOLUME=dx-lifecycle-workspace \
 DX_BOOTSTRAP_VOLUME=dx-lifecycle-bootstrap \
 ./bin/dx
 ```
+
+### Profiles
+
+Bundling those eight overrides into a one-line invocation is what
+`tests/profiles/` and `bin/dx-profile` are for. A profile is a small shell
+file that `export`s the variables you want to override; running anything
+through `dx-profile <name>` sources the file and then execs the rest of the
+command:
+
+```bash
+./bin/dx-profile dx-test ./bin/dx
+./bin/dx-profile dx-test ./bin/dx-destroy
+./bin/dx-profile dx-test ./bin/dx-recreate
+```
+
+Profiles are purely opt-in. Running any script without `dx-profile` (or
+without manually sourcing a profile) leaves every variable unset, so the
+defaults in `bin/dx-lib.sh` apply exactly as they would on a fresh shell —
+`dx-host` on port `2222`, default volumes, default keys. Defaults are the
+rule; profiles are the exception.
+
+Shipped profiles:
+
+- `tests/profiles/default.env` — documentation of the default values. Sourcing
+  this file is a no-op; it exists as a template to copy when authoring a new
+  profile.
+- `tests/profiles/dx-test.env` — fully isolated `dx-test` environment. Test
+  container, image, volumes, and SSH key all live in a `dx-test*` namespace
+  alongside the primary `dx-host` resources, on port `2299` so both can run
+  simultaneously.
 
 ## Guest Bootstrap
 

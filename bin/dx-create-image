@@ -9,6 +9,5 @@ if container_image_exists "$DX_IMAGE"; then
     exit 0
 fi
 
-CONTEXT_DIR="$DX_PROJECT_ROOT/container/aarch64-darwin-apple-container-dx-nixos-25.11"
-echo "Building image $DX_IMAGE from $CONTEXT_DIR..."
-container build -t "$DX_IMAGE" "$CONTEXT_DIR"
+echo "Building image $DX_IMAGE from $DX_CONTEXT_DIR..."
+container build -t "$DX_IMAGE" "$DX_CONTEXT_DIR"

@@ -1,0 +1,51 @@
+#!/bin/bash
+set -euo pipefail
+
+# dx-profile
+# Load a named profile of DX environment variables and exec the rest of the
+# command line. A profile is a shell-sourceable file under
+# $DX_PROFILES_DIR (default: $DX_PROJECT_ROOT/tests/profiles) named
+# <profile>.env, containing `export DX_*=...` lines.
+#
+# Usage:
+#   ./bin/dx-profile <profile> <command...>
+#
+# Examples:
+#   ./bin/dx-profile dx-test ./bin/dx
+#   ./bin/dx-profile dx-test ./bin/dx-destroy
+#   ./bin/dx-profile dx-test ./bin/dx-recreate
+#
+# Profiles are purely opt-in: any script run without dx-profile sees the
+# defaults in bin/dx-lib.sh.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DX_PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROFILES_DIR="${DX_PROFILES_DIR:-$DX_PROJECT_ROOT/tests/profiles}"
+
+if [ $# -lt 2 ]; then
+    echo "Usage: $(basename "$0") <profile> <command...>" >&2
+    echo "Available profiles:" >&2
+    if [ -d "$PROFILES_DIR" ]; then
+        for f in "$PROFILES_DIR"/*.env; do
+            [ -f "$f" ] && echo "  $(basename "$f" .env)" >&2
+        done
+    fi
+    exit 2
+fi
+
+profile="$1"
+shift
+
+profile_file="$PROFILES_DIR/$profile.env"
+if [ ! -f "$profile_file" ]; then
+    echo "Error: Profile not found: $profile_file" >&2
+    exit 1
+fi
+
+# Expose DX_PROJECT_ROOT so profiles can reference it.
+export DX_PROJECT_ROOT
+
+# shellcheck disable=SC1090
+source "$profile_file"
+
+exec "$@"
