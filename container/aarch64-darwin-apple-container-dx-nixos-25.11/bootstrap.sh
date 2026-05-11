@@ -10,14 +10,21 @@ install_essentials() {
     # Only install if shadow tools (like useradd) aren't available
     if ! command -v useradd >/dev/null 2>&1; then
         echo "Installing essential tools..."
-        # Install tools needed for the bootstrap itself into the root profile
-        # util-linux and btrfs-progs added for Nix volume management (§2)
+        # Install tools needed for the bootstrap itself into the root profile.
+        # util-linux/btrfs-progs/e2fsprogs provide mount/umount/mkfs for the
+        # dedicated /nix volume managed in setup_nix_volume (§2).
         nix profile install nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs nixpkgs#e2fsprogs --extra-experimental-features "nix-command flakes"
     fi
     export PATH="/root/.nix-profile/bin:$PATH"
 }
 
-# §2: Setup dedicated Nix volume
+# §2: Setup dedicated Nix volume.
+#
+# Apple Container mounts the dx-nix named volume at /var/lib/dx-nix-raw with
+# its own (small, runtime-managed) filesystem. We re-format that backing
+# block device with btrfs/ext4 and mount it at /nix so the Nix store has
+# room to grow and survives container rebuilds. This requires CAP_SYS_ADMIN
+# inside the guest, which dx-create-container grants via --cap-add.
 setup_nix_volume() {
     echo "Setting up dedicated Nix volume..."
     local raw_path="/var/lib/dx-nix-raw"
@@ -45,14 +52,17 @@ setup_nix_volume() {
 
     # Detect whether it's a block device or directory
     local backing_dev=$(findmnt -n -o SOURCE "$raw_path" || true)
-    
+
     if [ -b "$backing_dev" ]; then
         echo "Detected block device backing $raw_path: $backing_dev"
         dev="$backing_dev"
         # mkfs idempotent: skip if blkid -L dx-nix already resolves
         if ! blkid -L dx-nix >/dev/null 2>&1; then
             echo "Formatting $dev with $fs_type..."
-            umount "$raw_path" || true
+            if ! umount "$raw_path" 2>/dev/null; then
+                echo "Error: failed to umount $raw_path. The container is missing CAP_SYS_ADMIN; re-create it with ./bin/dx-destroy && ./bin/dx (dx-create-container adds the capability)." >&2
+                exit 1
+            fi
             if [ "$fs_type" == "btrfs" ]; then
                 mkfs.btrfs -f -L dx-nix -m single -d single "$dev"
             else
@@ -77,14 +87,14 @@ setup_nix_volume() {
     echo "Mounting $dev to /nix..."
     mkdir -p /mnt/tmp-nix
     mount -t "$fs_type" -o "$mount_opts" "$dev" /mnt/tmp-nix
-    
+
     # Move existing /nix content to volume if volume is new (no store)
     if [ ! -d /mnt/tmp-nix/store ]; then
         echo "Initializing Nix volume with existing /nix content..."
         # Use cp -a to preserve permissions and links
         cp -a /nix/. /mnt/tmp-nix/
     fi
-    
+
     umount /mnt/tmp-nix
     mount -t "$fs_type" -o "$mount_opts" "$dev" /nix
 

@@ -144,7 +144,7 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_BOOTSTRAP_SOURCE` | `$DX_CONTEXT_DIR` | Host directory pushed into the clean guest bootstrap volume. Override this to test a different bootstrap checkout without rebuilding the image. |
 | `DX_BOOTSTRAP_VOLUME` | `dx-bootstrap` | Named volume mounted at `/guest-bootstrap` by default. It stores the pushed bootstrap payload outside the image layer. |
 | `DX_BOOTSTRAP_PATH` | `/guest-bootstrap` | Guest path where the bootstrap payload is mounted and executed. |
-| `DX_NIX_VOLUME` | `dx-nix` | Named volume used as the backing store for `/nix`. Override this for isolated test containers or parallel experiments so they do not share the default writable Nix store. |
+| `DX_NIX_VOLUME` | `dx-nix` | Named volume that backs the persistent Nix store. Apple Container surfaces it inside the guest at `/var/lib/dx-nix-raw`; the bootstrap reformats it as btrfs (or ext4 as a fallback) and remounts it at `/nix`. Override this for isolated test containers or parallel experiments so they do not share the default writable Nix store. |
 | `DX_WORKSPACE_VOLUME` | `dx-workspace` | Named volume mounted as the guest workspace. |
 | `DX_WORKSPACE_PATH` | `/workspace` | Guest path for the workspace volume. |
 | `DX_STOP_GRACE_SECONDS` | `5` | Seconds passed to `container stop --time` before the container CLI escalates. |
@@ -152,11 +152,16 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_STOP_WAIT_TIMEOUT` | `5` | Seconds to wait for the container state to become stopped after each stop attempt. |
 | `DX_DELETE_COMMAND_TIMEOUT` | `15` | Host-side timeout for a `container delete` CLI command that hangs. |
 
-`DX_NIX_VOLUME` exists because the Nix store is large, persistent, and mounted
-as a writable guest filesystem. The default `dx-nix` volume preserves downloads
-and activation state across container recreation, but only one running container
-should use that writable volume at a time. For a clean lifecycle test, use a
-separate Nix volume so the test cannot corrupt or lock the default environment.
+`DX_NIX_VOLUME` exists because the Nix store is large, persistent, and lives on
+its own writable filesystem. Apple Container creates and mounts the volume at
+`/var/lib/dx-nix-raw`; the guest bootstrap then formats the backing block
+device as btrfs (or ext4 if the kernel lacks btrfs) and remounts it at `/nix`,
+which requires `CAP_SYS_ADMIN` inside the guest (granted by
+`bin/dx-create-container`). The default `dx-nix` volume preserves downloads
+and activation state across container recreation, but only one running
+container should use that writable volume at a time. For a clean lifecycle
+test, use a separate Nix volume so the test cannot corrupt or lock the default
+environment.
 
 Example isolated lifecycle create:
 

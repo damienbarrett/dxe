@@ -15,6 +15,11 @@ fi
 echo -e "\n--- Container ($DX_CONTAINER_NAME) ---"
 if container_exists "$DX_CONTAINER_NAME"; then
     container list -a | grep "^$DX_CONTAINER_NAME[[:space:]]"
+    if ! container_is_running "$DX_CONTAINER_NAME"; then
+        echo
+        echo "Container is not running. Last 40 log lines:"
+        container logs -n 40 "$DX_CONTAINER_NAME" 2>&1 | sed 's/^/  /'
+    fi
 else
     echo "Not found"
 fi

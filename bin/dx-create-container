@@ -21,9 +21,14 @@ BOOTSTRAP_LAUNCH_CMD="$(dx_bootstrap_launch_command)"
 # Volume mounts: DX_NIX_VOLUME -> /var/lib/dx-nix-raw (the bootstrap formats
 # and remounts this at /nix); dx-workspace -> /workspace; dx-bootstrap ->
 # /guest-bootstrap.
+#
+# CAP_SYS_ADMIN is required so the guest bootstrap can umount the
+# runtime-provided mount at /var/lib/dx-nix-raw, mkfs it as btrfs/ext4, and
+# remount it at /nix. Without it, bootstrap exits before sshd starts.
 CREATE_FLAGS=(
     --name "$DX_CONTAINER_NAME"
     --entrypoint sh
+    --cap-add CAP_SYS_ADMIN
     --volume "$DX_NIX_VOLUME:/var/lib/dx-nix-raw:rw"
     --volume "$DX_WORKSPACE_VOLUME:$DX_WORKSPACE_PATH:rw"
     --volume "$DX_BOOTSTRAP_VOLUME:$DX_BOOTSTRAP_PATH:rw"
