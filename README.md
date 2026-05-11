@@ -14,85 +14,117 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
 ## Getting Started
 
 1. **Prerequisites:** Ensure Apple `container` is installed on your macOS host.
-2. **Build the Image:**
+2. **Bring up the environment:**
    ```bash
-   ./bin/dx-build
+   ./bin/dx
    ```
-3. **Generate SSH Key:** (If you don't have one)
-   ```bash
-   ssh-keygen -t ed25519 -f ./dx_key -N ""
-   ```
-4. **Create the Container:**
-   ```bash
-   ./bin/dx-create
-   ```
-   *Note: This script automatically detects `./dx_key.pub` and provisions it in the guest.*
-5. **Start the Environment:**
-   ```bash
-   ./bin/dx-start
-   ```
-   This syncs the local bootstrap payload into the guest before the guest
-   bootstrap runs.
-6. **Connect:**
-   ```bash
-   ./bin/dx-ssh
-   ```
-   This will drop you into a persistent `tmux` session with NixVim and other tools ready.
+   `dx` is a state-driven entrypoint: on first run it generates the SSH
+   keypair, builds the image, creates persistent volumes, creates and starts
+   the container, syncs the bootstrap payload, waits for SSH, and connects.
+   On every later run it skips whatever already exists and reconnects. Each
+   underlying lifecycle script is idempotent toward its end state, so `dx`
+   is safe to run from any starting state.
+
+   The first run takes a few minutes for the image build; later runs reconnect
+   in seconds.
 
 ## Normal Workflow
 
+- **Connect (or first-time setup):** `./bin/dx`
 - **Check Status:** `./bin/dx-status`
 - **Work with Code:** Use `/workspace` inside the guest.
 - **Transfer Files:** `./bin/dx-put <host_path> [guest_path]`
-- **Stop Environment:** `./bin/dx-stop`
-- **Restart Environment:** `./bin/dx-start` followed by `./bin/dx-ssh`
+- **Stop the Container:** `./bin/dx-stop-container`
+- **Push edited bootstrap payload to a running guest:** `./bin/dx-sync-bootstrap`
 
-## Lifecycle Phases
+## Lifecycle Layers
 
-The unified `./bin/dx` command connects to an already-built DX environment. It
-is state-driven: an already-running container is synced and entered, a stopped
-container is started, and a missing container is created from the existing
-image. `dx` does not build images. `dx-recreate` rebuilds the image from the
-current configuration and replaces the container while
-preserving the `/nix` and `/workspace` volumes. The other scripts expose
-individual lifecycle steps for direct use, maintenance, or reset workflows.
+The DX environment is built from independent **layers** of state, ordered from
+most persistent (slowest to rebuild) to most ephemeral. Each layer has a
+dedicated `dx-create-X` and `dx-destroy-X` script. Every create script skips
+its work if the layer is already present; every destroy script no-ops if the
+layer is absent. A small set of wrappers (`dx`, `dx-destroy`, `dx-recreate`,
+`dx-factory-reset`) compose these layer scripts in fixed orders for the common
+operations.
 
-| Phase | Description |
+### Lifecycle Principles
+
+1. **One concern per script.** Each lifecycle script owns exactly one layer
+   (keypair, image, container, runtime state, bootstrap payload, etc.).
+2. **Idempotence toward end state.** Every create script no-ops if its layer
+   exists. Every destroy script no-ops if its layer is absent.
+3. **Symmetric pairs.** Each layer has a `create-X` and `destroy-X` script
+   that read as antonyms. The script name tells you which layer it operates on.
+4. **Wrappers only orchestrate.** `dx`, `dx-destroy`, `dx-recreate`, and
+   `dx-factory-reset` are short sequences of lifecycle calls with no unique
+   logic. New phases land in one place.
+5. **Forcing a rebuild is explicit.** Idempotent build means "skip if present."
+   To force a rebuild at any layer, destroy that layer first.
+6. **Persistent volumes are protected by construction.** `/nix` and `/workspace`
+   survive everything except `dx-factory-reset` (or an explicit
+   `dx-destroy-volumes`).
+7. **The bootstrap payload is part of every start.** `dx` always runs
+   `dx-sync-bootstrap` after starting the container, so edits to
+   `home/*.nix` or `bootstrap.sh` land on the next `dx` without an image
+   rebuild.
+8. **Layer cost informs default behaviour.** Volumes (hours to rebuild) are
+   never touched implicitly. Image (minutes) is rebuilt only by `dx-recreate`
+   or explicit destroy. Container and runtime state (seconds) are freely
+   rebuilt.
+
+### Layered lifecycle scripts
+
+| # | Layer | Create | Destroy |
+| --- | --- | --- | --- |
+| 1 | Host SSH keypair | [`bin/dx-create-keys`](bin/dx-create-keys) | [`bin/dx-destroy-keys`](bin/dx-destroy-keys) |
+| 2 | Persistent volumes | [`bin/dx-create-volumes`](bin/dx-create-volumes) | [`bin/dx-destroy-volumes`](bin/dx-destroy-volumes) |
+| 3 | Image | [`bin/dx-create-image`](bin/dx-create-image) | [`bin/dx-destroy-image`](bin/dx-destroy-image) |
+| 4 | Container | [`bin/dx-create-container`](bin/dx-create-container) | [`bin/dx-destroy-container`](bin/dx-destroy-container) |
+| 5 | Runtime state | [`bin/dx-start-container`](bin/dx-start-container) | [`bin/dx-stop-container`](bin/dx-stop-container) |
+| 6 | Bootstrap payload | [`bin/dx-sync-bootstrap`](bin/dx-sync-bootstrap) | *(replaced on next sync)* |
+| 7 | SSH connection | [`bin/dx-ssh`](bin/dx-ssh) | *(user exits)* |
+
+`dx-destroy-volumes` is the only interactive lifecycle script: it lists the
+volumes it is about to remove, requires the user to type `destroy` to confirm,
+and refuses to run non-interactively without `--force`. Every other script is
+fire-and-forget.
+
+### Wrappers
+
+| Wrapper | Composition |
 | --- | --- |
-| Phase 0: SSH Keys | Ensures the host has an SSH keypair for connecting to the guest. |
-| Phase 1: Build Image | Builds the Apple container image used by the DX environment. This is explicit through `dx-build` or `dx-recreate`; `dx` does not build images. |
-| Phase 2: Create Container | Creates persistent volumes and the container definition. |
-| Phase 3: Start + Sync Bootstrap | Starts the container and syncs the local bootstrap payload into the guest. |
-| Guest Bootstrap | Runs inside the guest to configure `/nix`, the `dx` user, SSH, Home Manager, shell, tmux, and tools. |
-| Phase 4: SSH Readiness | Waits until the guest is reachable over SSH. |
-| Phase 5: Connect | Enters the developer environment over SSH, usually into tmux. |
-| Runtime Operations | Handles day-to-day inspection, file transfer, direct shell access, and maintenance. |
-| Stop | Stops the running container without deleting it. |
-| Destroy | Deletes the container while preserving images and persistent volumes. |
-| Recreate | Rebuilds the image from current configuration, then replaces the container while keeping persistent `/nix` and `/workspace` volumes. |
-| Factory Reset | Deletes the container, persistent volumes, and generated SSH keys. |
-| Export | Archives the current container state. |
-| Storage Prep | Prepares auxiliary storage used by the Nix store. |
+| [`bin/dx`](bin/dx) | `create-keys → create-image → create-volumes → create-container → start-container → sync-bootstrap → wait-ssh → ssh` |
+| [`bin/dx-destroy`](bin/dx-destroy) | `destroy-container → destroy-image` (preserves volumes and keys) |
+| [`bin/dx-recreate`](bin/dx-recreate) | `dx-destroy → exec dx` (preserves volumes and keys) |
+| [`bin/dx-factory-reset`](bin/dx-factory-reset) | prompts once, then `destroy-container → destroy-image → destroy-volumes --force → destroy-keys` |
 
-| Script | Maps To | Description |
+### Helpers and runtime utilities
+
+These do not belong to the layer model — they observe state, transfer files,
+or perform maintenance operations.
+
+| Script | Role |
+| --- | --- |
+| [`bin/dx-lib.sh`](bin/dx-lib.sh) | Shared library (env vars, container helpers). Sourced by every script; not executable on its own. |
+| [`bin/dx-wait-ssh`](bin/dx-wait-ssh) | Blocks until guest SSH responds. Gates the SSH connection layer. |
+| [`bin/dx-status`](bin/dx-status) | Reports image, container, SSH, tool, workspace, and tmux status. |
+| [`bin/dx-put`](bin/dx-put) | Copies host files into the guest. |
+| [`bin/dx-enter`](bin/dx-enter) | Direct `container exec` shell, bypassing SSH. |
+| [`bin/dx-gc`](bin/dx-gc) | Runs Nix garbage collection and store optimization inside the guest. |
+| [`bin/dx-export`](bin/dx-export) | Archives the container to a tar file. |
+| [`bin/dx-nix-disk`](bin/dx-nix-disk) | Prepares a sparse Nix disk image; lifecycle-adjacent storage prep. |
+| [`container/.../bootstrap.sh`](container/aarch64-darwin-apple-container-dx-nixos-25.11/bootstrap.sh) | Runs inside the guest from the synced payload; configures `/nix`, the `dx` user, SSH, Home Manager, shell, tmux, and tools. |
+
+### Migration from earlier versions
+
+| Old name | New name | Notes |
 | --- | --- | --- |
-| [`bin/dx`](bin/dx) | Connect / Start / Create | Unified state-driven entrypoint. Generates keys, reuses running/stopped containers when possible, creates from an existing image when needed, waits for SSH, then connects. It does not build images. |
-| [`bin/dx-build`](bin/dx-build) | Phase 1: Build Image | Runs `container build` for the DX image. |
-| [`bin/dx-create`](bin/dx-create) | Phase 2: Create Container | Ensures Nix, workspace, and bootstrap volumes exist, then creates the container. |
-| [`bin/dx-start`](bin/dx-start) | Phase 3: Start + Sync Bootstrap | Starts the container and invokes bootstrap sync. |
-| [`bin/dx-sync-bootstrap`](bin/dx-sync-bootstrap) | Phase 3 / Guest Bootstrap handoff | Copies the local bootstrap payload into `/guest-bootstrap` and marks it ready. |
-| [`container/.../bootstrap.sh`](container/aarch64-darwin-apple-container-dx-nixos-25.11/bootstrap.sh) | Guest Bootstrap | Configures the guest system, installs tools, verifies them, and starts `sshd`. |
-| [`bin/dx-ssh`](bin/dx-ssh) | Phase 5: Connect | Connects to the guest over SSH; opens or attaches to the `dx` tmux session by default. |
-| [`bin/dx-status`](bin/dx-status) | Runtime Operations | Reports image, container, SSH, guest tool, workspace, and tmux status. |
-| [`bin/dx-put`](bin/dx-put) | Runtime Operations | Copies host files or directories into the guest. |
-| [`bin/dx-enter`](bin/dx-enter) | Runtime Operations | Enters the container directly with `container exec`, bypassing SSH. |
-| [`bin/dx-gc`](bin/dx-gc) | Runtime Operations / Maintenance | Runs Nix garbage collection and store optimization inside the guest. |
-| [`bin/dx-stop`](bin/dx-stop) | Stop | Stops the container. |
-| [`bin/dx-destroy`](bin/dx-destroy) | Destroy | Stops and deletes the container, preserving persistent volumes and images. |
-| [`bin/dx-recreate`](bin/dx-recreate) | Recreate | Rebuilds the image from current configuration, replaces the container, starts it, waits for SSH, then connects. Persistent `/nix` and `/workspace` volumes are preserved. |
-| [`bin/dx-factory-reset`](bin/dx-factory-reset) | Factory Reset | Removes the container, persistent volumes, and generated SSH keys. |
-| [`bin/dx-export`](bin/dx-export) | Export | Exports the container to a tar archive. |
-| [`bin/dx-nix-disk`](bin/dx-nix-disk) | Storage Prep | Creates a sparse Nix disk image; lifecycle-adjacent rather than part of the main `bin/dx` flow. |
+| `dx-init-keys` | `dx-create-keys` | |
+| `dx-build` | `dx-create-image` | Now idempotent: skips when the image already exists. |
+| `dx-create` | `dx-create-container` | |
+| `dx-destroy` | `dx-destroy-container` | The old name now refers to an umbrella that destroys image AND container — see the Wrappers table. |
+| `dx-start` | `dx-start-container` | Bootstrap-payload sync moved out of `dx-start-container`; callers must run `dx-sync-bootstrap` explicitly (or just use `dx`). |
+| `dx-stop` | `dx-stop-container` | |
 
 ## Configuration Variables
 
@@ -103,7 +135,7 @@ tests, parallel experiments, or multiple containers on the same host.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DX_CONTAINER_NAME` | `dx-host` | Apple container name. Change this to create a separate container without touching the default DXE instance. |
-| `DX_IMAGE` | `dx-nixos-25.11` | Image name used by `dx-build` and `dx-create`. |
+| `DX_IMAGE` | `dx-nixos-25.11` | Image name used by `dx-create-image` and `dx-create-container`. |
 | `DX_SSH_PORT` | `2222` | Host port forwarded to guest SSH port `2222`. Use a different port for a second running container. |
 | `DX_SSH_KEY` | `$DX_PROJECT_ROOT/dx_key` | Host private key used for SSH into the guest. |
 | `DX_SSH_KEY_PUB` | `$DX_PROJECT_ROOT/dx_key.pub` | Host public key provisioned into the guest on create. |
@@ -134,7 +166,7 @@ DX_SSH_PORT=2299 \
 DX_NIX_VOLUME=dx-lifecycle-nix \
 DX_WORKSPACE_VOLUME=dx-lifecycle-workspace \
 DX_BOOTSTRAP_VOLUME=dx-lifecycle-bootstrap \
-./bin/dx-create
+./bin/dx
 ```
 
 ## Guest Bootstrap
@@ -150,12 +182,12 @@ To rerun the bootstrap manually inside the guest:
 sudo /guest-bootstrap/bootstrap.sh
 ```
 
-The image does not contain the bootstrap repository. `dx-create` mounts a
-dedicated `dx-bootstrap` volume at `/guest-bootstrap`, and `dx-start` runs
-`dx-sync-bootstrap` to copy the local container configuration into that volume.
-After editing `container/.../flake.nix`, `bootstrap.sh`, or related guest
-configuration, rerun `./bin/dx-sync-bootstrap` against a running container rather
-than rebuilding the image.
+The image does not contain the bootstrap repository. `dx-create-container`
+mounts a dedicated `dx-bootstrap` volume at `/guest-bootstrap`, and `dx` (or a
+direct `./bin/dx-sync-bootstrap`) copies the local container configuration into
+that volume at start time. After editing `container/.../flake.nix`,
+`bootstrap.sh`, or related guest configuration, rerun `./bin/dx-sync-bootstrap`
+against a running container rather than rebuilding the image.
 
 ## Optional AI Tools
 
@@ -240,7 +272,7 @@ Then connect normally with `./bin/dx-ssh`, run `dx-theme dark` and `dx-theme lig
 ## Storage
 
 - **Nix Volume Name:** `dx-nix` by default, configurable with `DX_NIX_VOLUME`.
-- **Recreate-Survival:** The Nix store (/nix) is stored on a dedicated Apple container volume. This means your downloaded packages and Nix configuration persist even if you delete and recreate the container using dx-create.
+- **Recreate-Survival:** The Nix store (`/nix`) is stored on a dedicated Apple container volume. This means your downloaded packages and Nix configuration persist even if you delete and recreate the container with `dx-recreate` (or any manual sequence of `dx-destroy-container` and `dx-create-container`).
 - **Single-Writer Constraint:** Only one running container may mount the dx-nix volume at a time. If you need a second concurrent container, it will need its own volume name or you must wait for the first container to stop.
 - **Optimization:** The filesystem is formatted with btrfs and zstd:3 compression. Nix's auto-optimise-store is enabled to deduplicate identical files at the hardlink level, further saving space.
 - **Bootstrap Payload:** `/guest-bootstrap` is backed by the `dx-bootstrap`
@@ -251,9 +283,11 @@ Then connect normally with `./bin/dx-ssh`, run `dx-theme dark` and `dx-theme lig
 
 ### Resetting the Environment (Stale Dependencies)
 
-If the guest bootstrap fails due to stale dependencies or a corrupted Nix store in the persistent volume, you can perform a "hard reset" to clear the cache and start fresh:
+If the guest bootstrap fails due to stale dependencies or a corrupted Nix store
+in the persistent volume, you can perform a "hard reset" to clear the cache and
+start fresh:
 
-1. **Destroy the container:**
+1. **Tear down the container and image (volumes preserved):**
    ```bash
    ./bin/dx-destroy
    ```
@@ -262,13 +296,14 @@ If the guest bootstrap fails due to stale dependencies or a corrupted Nix store 
    container volume delete dx-nix
    container volume create dx-nix
    ```
-3. **Rebuild and restart:**
+3. **Bring everything back up:**
    ```bash
-   ./bin/dx-build
-   ./bin/dx-create
-   ./bin/dx-start
+   ./bin/dx
    ```
    *Note: This will trigger a full download of all Nix packages during the next bootstrap.*
+
+For a complete wipe (including `/workspace` contents and SSH keys), use
+`./bin/dx-factory-reset` — it prompts for confirmation before removing anything.
 
 ### Checking Bootstrap Logs
 If you cannot connect via SSH, monitor the bootstrap progress on the host:

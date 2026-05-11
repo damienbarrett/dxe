@@ -35,18 +35,27 @@ assert_file_contains "$README" "[Pp]assword.*[Ll]ogin.*disable\|[Rr]oot.*[Ll]ogi
 # Test: README documents NixVim as only editor config path
 assert_file_contains "$README" "[Nn]ix[Vv]im\|[Ee]ditor.*[Cc]onfig.*[Nn]ix[Vv]im" "README documents NixVim as editor config"
 
-# Test: README documents build/create/start/ssh/status/put/stop workflow
-assert_file_contains "$README" "[Bb]uild\|dx-build" "README documents build workflow"
+# Test: README documents the layered lifecycle model
+assert_file_contains "$README" "Lifecycle Layers" "README documents the lifecycle layer model"
 assert_file_contains "$README" "[Ss]tate-driven" "README documents state-driven dx entrypoint"
-assert_file_contains "$README" "dx.*does not build images\|does not build images.*dx" "README documents dx does not build images"
-assert_file_contains "$README" "dx-recreate.*rebuilds\|rebuilds.*dx-recreate" "README documents dx-recreate rebuilds images"
-assert_file_contains "$README" "[Cc]reate\|dx-create" "README documents create workflow"
-assert_file_contains "$README" "[Ss]tart\|dx-start" "README documents start workflow"
+assert_file_contains "$README" "[Ii]dempoten" "README documents idempotence as a principle"
+assert_file_contains "$README" "dx-create-image" "README documents dx-create-image"
+assert_file_contains "$README" "dx-destroy-image" "README documents dx-destroy-image"
+assert_file_contains "$README" "dx-create-container" "README documents dx-create-container"
+assert_file_contains "$README" "dx-destroy-container" "README documents dx-destroy-container"
+assert_file_contains "$README" "dx-create-volumes" "README documents dx-create-volumes"
+assert_file_contains "$README" "dx-destroy-volumes" "README documents dx-destroy-volumes"
+assert_file_contains "$README" "dx-create-keys" "README documents dx-create-keys"
+assert_file_contains "$README" "dx-destroy-keys" "README documents dx-destroy-keys"
+assert_file_contains "$README" "dx-start-container" "README documents dx-start-container"
+assert_file_contains "$README" "dx-stop-container" "README documents dx-stop-container"
 assert_file_contains "$README" "[Ss][Ss][Hh]\|dx-ssh" "README documents ssh workflow"
 assert_file_contains "$README" "[Ss]tatus\|dx-status" "README documents status workflow"
 assert_file_contains "$README" "[Pp]ut\|dx-put" "README documents put workflow"
-assert_file_contains "$README" "[Ss]top\|dx-stop" "README documents stop workflow"
+assert_file_contains "$README" "dx-recreate" "README documents dx-recreate"
+assert_file_contains "$README" "dx-factory-reset" "README documents dx-factory-reset"
 assert_file_contains "$README" "dx-ai" "README documents optional AI tool workflow"
+assert_file_contains "$README" "Migration" "README documents migration from prior script names"
 
 # Test: README documents host configuration variables and defaults
 assert_file_contains "$README" "Configuration Variables" "README documents configuration variables"

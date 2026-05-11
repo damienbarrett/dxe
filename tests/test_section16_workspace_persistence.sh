@@ -16,6 +16,7 @@ source "$SCRIPT_DIR/test_helpers.sh"
 
 LIB_SH="$BASE_DIR/bin/dx-lib.sh"
 DX_CREATE="$BASE_DIR/bin/dx-create-container"
+DX_CREATE_VOLUMES="$BASE_DIR/bin/dx-create-volumes"
 SHELL_NIX="$CONTAINER_DIR/home/shell.nix"
 
 test_section "Section 16: Workspace Persistence"
@@ -42,15 +43,16 @@ assert_grep_in_file "$DX_CREATE" \
 assert_grep_in_file "$DX_CREATE" \
     "DX_WORKSPACE_PATH" \
     "dx-create-container references DX_WORKSPACE_PATH"
-assert_grep_in_file "$DX_CREATE" \
-    "container volume create.*DX_WORKSPACE_VOLUME|ensure_volume.*DX_WORKSPACE_VOLUME|container_ensure_volume.*DX_WORKSPACE_VOLUME" \
-    "dx-create-container ensures the workspace volume exists"
+assert_file_exists "$DX_CREATE_VOLUMES" "bin/dx-create-volumes exists"
+assert_grep_in_file "$DX_CREATE_VOLUMES" \
+    "container_ensure_volume.*DX_WORKSPACE_VOLUME" \
+    "dx-create-volumes ensures the workspace volume exists"
 assert_grep_in_file "$DX_CREATE" \
     "DX_NIX_VOLUME" \
     "dx-create-container references DX_NIX_VOLUME"
-assert_grep_in_file "$DX_CREATE" \
-    "container volume create.*DX_NIX_VOLUME|ensure_volume.*DX_NIX_VOLUME|container_ensure_volume.*DX_NIX_VOLUME" \
-    "dx-create-container ensures the nix volume exists"
+assert_grep_in_file "$DX_CREATE_VOLUMES" \
+    "container_ensure_volume.*DX_NIX_VOLUME" \
+    "dx-create-volumes ensures the nix volume exists"
 assert_grep_in_file "$DX_CREATE" \
     "[-]-volume[= ].*DX_NIX_VOLUME" \
     "dx-create-container mounts the nix volume"

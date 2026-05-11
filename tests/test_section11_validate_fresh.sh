@@ -19,12 +19,12 @@ if ! command -v container >/dev/null 2>&1; then
     exit 0
 fi
 
-# Test: dx-create-container-image works
-echo "  Running: dx-create-container-image"
-if "$BIN_DIR/dx-create-container-image" >/dev/null 2>&1; then
-    test_pass "dx-create-container-image completes successfully"
+# Test: dx-create-image works
+echo "  Running: dx-create-image"
+if "$BIN_DIR/dx-create-image" >/dev/null 2>&1; then
+    test_pass "dx-create-image completes successfully"
 else
-    test_fail "dx-create-container-image completes successfully"
+    test_fail "dx-create-image completes successfully"
 fi
 
 # Test: dx-create-container works (or container already exists)
