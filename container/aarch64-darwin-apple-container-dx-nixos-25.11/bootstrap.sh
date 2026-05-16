@@ -319,6 +319,9 @@ configure_guest() {
     chown -R dx:dx /nix/cache
     run_as_dx "mkdir -p ~/.cache && ln -sf /nix/cache/nix ~/.cache/nix"
 
+    # Expose persistent /workspace volume at a stable path inside $HOME.
+    run_as_dx "ln -sfnT /workspace /home/dx/workspace"
+
     # Persist GitHub CLI credentials/configuration across container rebuilds.
     setup_gh_persistence
 
