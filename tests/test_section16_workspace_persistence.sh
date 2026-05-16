@@ -137,6 +137,13 @@ else
     test_fail "dx user can write to /workspace"
 fi
 
+# GitHub CLI config/auth should live on the persistent workspace volume.
+if guest 'bash -lc "test -L ~/.config/gh && test \"$(readlink ~/.config/gh)\" = /workspace/home/dx/.config/gh && test -d /workspace/home/dx/.config/gh"' 2>/dev/null; then
+    test_pass "GitHub CLI config is linked to persistent workspace storage"
+else
+    test_fail "GitHub CLI config is linked to persistent workspace storage"
+fi
+
 # $WORKSPACE env var is set in nushell after sourcing env.nu
 NU_PROBE='source ~/.config/nushell/env.nu
 let w = ($env.WORKSPACE? | default "")
@@ -163,7 +170,9 @@ if [ "${DX_TEST_DESTRUCTIVE:-0}" != "1" ]; then
 fi
 
 MARKER="/workspace/.dxe-persistence-test-$$"
+GH_MARKER="/home/dx/.config/gh/.dxe-gh-persistence-test-$$"
 guest "bash -lc 'echo persisted > $MARKER && cat $MARKER'" >/dev/null 2>&1
+guest "bash -lc 'echo persisted > $GH_MARKER && cat $GH_MARKER'" >/dev/null 2>&1
 echo "  Running dx-destroy-container..."
 "$BASE_DIR/bin/dx-destroy-container" >/dev/null 2>&1
 echo "  Running dx-create-container..."
@@ -184,6 +193,13 @@ if guest "bash -lc 'test -f $MARKER && grep -qx persisted $MARKER'" 2>/dev/null;
     guest "bash -lc 'rm -f $MARKER'" >/dev/null 2>&1
 else
     test_fail "/workspace contents survive dx-destroy-container + dx-create-container + dx-start-container"
+fi
+
+if guest "bash -lc 'test -L ~/.config/gh && test -f $GH_MARKER && grep -qx persisted $GH_MARKER'" 2>/dev/null; then
+    test_pass "GitHub CLI config survives dx-destroy-container + dx-create-container + dx-start-container"
+    guest "bash -lc 'rm -f $GH_MARKER'" >/dev/null 2>&1
+else
+    test_fail "GitHub CLI config survives dx-destroy-container + dx-create-container + dx-start-container"
 fi
 
 print_summary

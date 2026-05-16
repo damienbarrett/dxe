@@ -225,6 +225,21 @@ that volume at start time. After editing `container/.../flake.nix`,
 `bootstrap.sh`, or related guest configuration, rerun `./bin/dx-sync-bootstrap`
 against a running container rather than rebuilding the image.
 
+## GitHub CLI Auth Persistence
+
+The GitHub CLI (`gh`) is installed in the default DX toolset. Authenticate
+inside the guest with:
+
+```bash
+gh auth login
+```
+
+`gh` uses `~/.config/gh` by default. The bootstrap links that path to
+`/workspace/home/dx/.config/gh`, so GitHub CLI configuration and auth state
+survive `dx-recreate` and container rebuilds through the persistent workspace
+volume. This state is removed only by `dx-factory-reset`, `dx-destroy-volumes`,
+or manually deleting the workspace volume/path.
+
 ## Optional AI Tools
 
 Codex, Gemini, and Claude are intentionally not installed by default. This keeps

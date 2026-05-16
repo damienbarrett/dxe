@@ -219,6 +219,45 @@ run_as_dx() {
     setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx PATH="/home/dx/.nix-profile/bin:$PATH" bash -l -c "$cmd"
 }
 
+setup_gh_persistence() {
+    local persistent_config_dir="/workspace/home/dx/.config"
+    local persistent_gh="/workspace/home/dx/.config/gh"
+    local home_config_dir="/home/dx/.config"
+    local home_gh="/home/dx/.config/gh"
+    local timestamp=""
+    local backup_path=""
+
+    mkdir -p "$persistent_config_dir" "$home_config_dir"
+
+    if [ -e "$persistent_gh" ] && [ ! -d "$persistent_gh" ]; then
+        timestamp="$(date +%Y%m%d%H%M%S)"
+        backup_path="$persistent_config_dir/gh.non-directory-backup.$timestamp"
+        mv "$persistent_gh" "$backup_path"
+        echo "Moved non-directory GitHub CLI config target to $backup_path"
+    fi
+
+    if [ -L "$home_gh" ]; then
+        rm -f "$home_gh"
+    elif [ -e "$home_gh" ]; then
+        if [ ! -e "$persistent_gh" ]; then
+            mv "$home_gh" "$persistent_gh"
+        elif [ -d "$persistent_gh" ] && [ -z "$(ls -A "$persistent_gh" 2>/dev/null)" ]; then
+            rmdir "$persistent_gh"
+            mv "$home_gh" "$persistent_gh"
+        else
+            timestamp="$(date +%Y%m%d%H%M%S)"
+            backup_path="$persistent_config_dir/gh.ephemeral-backup.$timestamp"
+            mv "$home_gh" "$backup_path"
+            echo "Moved ephemeral GitHub CLI config to $backup_path"
+        fi
+    fi
+
+    mkdir -p "$persistent_gh"
+    chown -R dx:dx /workspace/home/dx "$home_config_dir"
+    chmod 700 "$persistent_gh"
+    run_as_dx "ln -sfnT /workspace/home/dx/.config/gh /home/dx/.config/gh"
+}
+
 # 5. Configure Shell & Tmux (Section 3/6)
 configure_guest() {
     echo "Configuring guest environment with Home Manager..."
@@ -239,6 +278,9 @@ configure_guest() {
     mkdir -p /nix/cache/nix
     chown -R dx:dx /nix/cache
     run_as_dx "mkdir -p ~/.cache && ln -sf /nix/cache/nix ~/.cache/nix"
+
+    # Persist GitHub CLI credentials/configuration across container rebuilds.
+    setup_gh_persistence
 
     # Persist AI CLI tool credentials/configuration across container rebuilds
     # Only restore these links if the user has opted into the AI tools

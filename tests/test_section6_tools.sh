@@ -16,6 +16,12 @@ DX_AI_SCRIPT="$CONTAINER_DIR/scripts/dx-ai.sh"
 # Test: flake.nix exists
 assert_file_exists "$FLAKE_NIX" "flake.nix exists"
 
+DX_PACKAGES_BLOCK="$(awk '
+    /dxPackages =/ { in_block = 1 }
+    in_block { print }
+    in_block && /^[[:space:]]*\];[[:space:]]*$/ { exit }
+' "$FLAKE_NIX")"
+
 # Test: coreutils in flake.nix
 assert_file_contains "$FLAKE_NIX" "coreutils" "coreutils in flake.nix"
 
@@ -65,6 +71,11 @@ assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?ripgrep" "ripgrep preserved in flake.
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?fd" "fd preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?curl" "curl preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?jq" "jq preserved in flake.nix"
+if printf '%s\n' "$DX_PACKAGES_BLOCK" | grep -Eq "^[[:space:]]*(pkgs\.)?gh[[:space:]]*$"; then
+    test_pass "GitHub CLI is in default dxPackages"
+else
+    test_fail "GitHub CLI is in default dxPackages"
+fi
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?direnv" "direnv preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?nix-direnv" "nix-direnv preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?just" "just preserved in flake.nix"
@@ -83,12 +94,6 @@ assert_file_contains "$SHELL_NIX" '\^yazi ...$args --cwd-file $tmp' "nushell yaz
 assert_file_contains "$SHELL_NIX" 'str replace --all (char nul) ""' "nushell yazi cwd helper strips cwd file NUL terminator"
 
 # Test: AI CLI tools are excluded from the default dxPackages list
-DX_PACKAGES_BLOCK="$(awk '
-    /dxPackages =/ { in_block = 1 }
-    in_block { print }
-    in_block && /^[[:space:]]*\];[[:space:]]*$/ { exit }
-' "$FLAKE_NIX")"
-
 if printf '%s\n' "$DX_PACKAGES_BLOCK" | grep -Eq "codex|gemini-cli|claude-code"; then
     test_fail "AI CLI tools excluded from default dxPackages"
 else

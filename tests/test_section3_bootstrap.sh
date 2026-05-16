@@ -50,6 +50,17 @@ assert_file_contains "$BOOTSTRAP" "dx ALL=(ALL) NOPASSWD:ALL" "bootstrap.sh keep
 assert_file_not_contains "$BOOTSTRAP" "touch /workspace/home/dx/.claude.json" "bootstrap does not create empty Claude JSON config"
 assert_file_contains "$BOOTSTRAP" "printf '%s\\\\n' '{}' > /workspace/home/dx/.claude.json" "bootstrap initializes empty Claude config as JSON"
 
+# Test: bootstrap persists GitHub CLI auth/config across rebuilds
+assert_file_contains "$BOOTSTRAP" "/workspace/home/dx/.config/gh" "bootstrap persists GitHub CLI config under workspace"
+assert_file_contains "$BOOTSTRAP" "ln -sfnT /workspace/home/dx/.config/gh /home/dx/.config/gh" "bootstrap links GitHub CLI config into home"
+GH_PERSIST_LINE=$(grep -n "^[[:space:]]*setup_gh_persistence$" "$BOOTSTRAP" | head -1 | cut -d: -f1 || echo "")
+AI_GATE_LINE=$(grep -n "dx-ai-tools" "$BOOTSTRAP" | head -1 | cut -d: -f1 || echo "")
+if [ -n "$GH_PERSIST_LINE" ] && { [ -z "$AI_GATE_LINE" ] || [ "$GH_PERSIST_LINE" -lt "$AI_GATE_LINE" ]; }; then
+    test_pass "GitHub CLI persistence is not gated by optional AI tools"
+else
+    test_fail "GitHub CLI persistence is not gated by optional AI tools"
+fi
+
 # Test: bootstrap.sh is idempotent for user creation
 # Check that user creation is conditional
 assert_file_contains "$BOOTSTRAP" "if.*id -u dx" "bootstrap.sh conditionally creates dx user"

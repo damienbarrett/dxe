@@ -55,6 +55,8 @@ assert_file_contains "$README" "[Pp]ut\|dx-put" "README documents put workflow"
 assert_file_contains "$README" "dx-recreate" "README documents dx-recreate"
 assert_file_contains "$README" "dx-factory-reset" "README documents dx-factory-reset"
 assert_file_contains "$README" "dx-ai" "README documents optional AI tool workflow"
+assert_file_contains "$README" "gh auth login" "README documents GitHub CLI auth workflow"
+assert_file_contains "$README" "/workspace/home/dx/.config/gh" "README documents persisted GitHub CLI config path"
 assert_file_contains "$README" "Migration" "README documents migration from prior script names"
 
 # Test: README documents host configuration variables and defaults

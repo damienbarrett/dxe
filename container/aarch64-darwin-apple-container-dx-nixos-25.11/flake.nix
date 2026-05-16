@@ -41,6 +41,7 @@
         man-db
         file
         git
+        gh
         nix
         openssh
         tmux
