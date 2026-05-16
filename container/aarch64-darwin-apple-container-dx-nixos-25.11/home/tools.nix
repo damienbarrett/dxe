@@ -1,6 +1,19 @@
 { config, pkgs, ... }:
 
 {
+  programs.git = {
+    enable = true;
+    userName = "Damien Barrett";
+    userEmail = "damienbarrett@users.noreply.github.com";
+    extraConfig = {
+      init.defaultBranch = "main";
+      pull.rebase = true;
+      push.autoSetupRemote = true;
+      credential."https://github.com".helper = "!gh auth git-credential";
+      credential."https://gist.github.com".helper = "!gh auth git-credential";
+    };
+  };
+
   programs.tmux = {
     enable = true;
     shortcut = "space";
