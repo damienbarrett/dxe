@@ -63,6 +63,7 @@
         btop
         neofetch
         ghostty.terminfo
+        tzdata
       ];
 
       # Optional AI CLI tools kept out of the default install.

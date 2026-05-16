@@ -10,6 +10,7 @@ if [ ! -f "$DX_SSH_KEY" ]; then
 fi
 
 echo "Connecting to DX guest via SSH..."
+HOST_TZ="$(dx_get_host_timezone)"
 
 # Ensure TERM is compatible with the guest
 export TERM=${TERM:-xterm-256color}
@@ -25,6 +26,7 @@ SSH_OPTS=(
     "-o" "UserKnownHostsFile=/dev/null"
     "-o" "IdentitiesOnly=yes"
     "-o" "LogLevel=ERROR"
+    "-o" "ConnectTimeout=$DX_SSH_CONNECT_TIMEOUT"
 )
 
 # Baseline path and SSL certs to ensure Nix tools are found and work
@@ -36,13 +38,13 @@ if [ $# -eq 0 ]; then
     # We explicitly invoke bash for the environment setup check to handle POSIX syntax (e.g. 2>&1)
     # regardless of the user's default login shell (nushell/fish).
     # We also pass the PATH and a safe TERM via env to ensure bash/tmux can find everything.
-    REMOTE_COMMAND="env PATH=\"$GUEST_PATH\" $GUEST_SSL TERM=xterm-256color bash -l -c 'if [ -x /home/dx/.local/bin/dx-theme-restore ]; then /home/dx/.local/bin/dx-theme-restore 2>/dev/null || true; fi; if ! command -v tmux >/dev/null 2>&1; then echo \"DX guest tools are still bootstrapping; tmux is not available yet.\" >&2; exit 127; fi; tmux attach -t dx || tmux new-session -s dx'"
+    REMOTE_COMMAND="env HOST_TZ=\"$HOST_TZ\" PATH=\"$GUEST_PATH\" $GUEST_SSL TERM=xterm-256color bash -l -c 'if [ -x /home/dx/.local/bin/dx-theme-restore ]; then /home/dx/.local/bin/dx-theme-restore 2>/dev/null || true; fi; if ! command -v tmux >/dev/null 2>&1; then echo \"DX guest tools are still bootstrapping; tmux is not available yet.\" >&2; exit 127; fi; tmux attach -t dx || tmux new-session -s dx'"
     ssh -t "${SSH_OPTS[@]}" dx@127.0.0.1 "$REMOTE_COMMAND"
 else
     # Arguments provided: run them through bash so shell syntax is stable even
     # when the user's login shell is fish or nushell.
     USER_COMMAND="$*"
     ENCODED_COMMAND="$(printf '%s' "$USER_COMMAND" | base64 | tr -d '\n')"
-    REMOTE_COMMAND="env PATH=\"$GUEST_PATH\" $GUEST_SSL TERM=xterm-256color bash -lc 'printf %s $ENCODED_COMMAND | base64 -d | bash -l'"
+    REMOTE_COMMAND="env HOST_TZ=\"$HOST_TZ\" PATH=\"$GUEST_PATH\" $GUEST_SSL TERM=xterm-256color bash -lc 'printf %s $ENCODED_COMMAND | base64 -d | bash -l'"
     ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "$REMOTE_COMMAND"
 fi

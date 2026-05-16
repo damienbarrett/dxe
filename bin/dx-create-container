@@ -18,6 +18,9 @@ echo "Creating container $DX_CONTAINER_NAME from image $DX_IMAGE..."
 
 BOOTSTRAP_LAUNCH_CMD="$(dx_bootstrap_launch_command)"
 
+# Extract host timezone from macOS
+HOST_TZ="$(dx_get_host_timezone)"
+
 # Volume mounts: DX_NIX_VOLUME -> /var/lib/dx-nix-raw (the bootstrap formats
 # and remounts this at /nix); dx-workspace -> /workspace; dx-bootstrap ->
 # /guest-bootstrap.
@@ -32,6 +35,7 @@ CREATE_FLAGS=(
     --volume "$DX_NIX_VOLUME:/var/lib/dx-nix-raw:rw"
     --volume "$DX_WORKSPACE_VOLUME:$DX_WORKSPACE_PATH:rw"
     --volume "$DX_BOOTSTRAP_VOLUME:$DX_BOOTSTRAP_PATH:rw"
+    -e "HOST_TZ=$HOST_TZ"
     -m 4G -c 4
     -p "127.0.0.1:$DX_SSH_PORT:2222"
 )

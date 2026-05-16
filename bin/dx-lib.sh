@@ -21,6 +21,7 @@ export DX_IMAGE="${DX_IMAGE:-dx-nixos-25.11}"
 export DX_SSH_PORT="${DX_SSH_PORT:-2222}"
 export DX_SSH_KEY="${DX_SSH_KEY:-$DX_PROJECT_ROOT/dx_key}"
 export DX_SSH_KEY_PUB="${DX_SSH_KEY_PUB:-$DX_PROJECT_ROOT/dx_key.pub}"
+export DX_SSH_CONNECT_TIMEOUT="${DX_SSH_CONNECT_TIMEOUT:-15}"
 export DX_CONTEXT_DIR="${DX_CONTEXT_DIR:-$DX_PROJECT_ROOT/container/aarch64-darwin-apple-container-dx-nixos-25.11}"
 export DX_BOOTSTRAP_SOURCE="${DX_BOOTSTRAP_SOURCE:-$DX_CONTEXT_DIR}"
 export DX_BOOTSTRAP_VOLUME="${DX_BOOTSTRAP_VOLUME:-dx-bootstrap}"
@@ -215,4 +216,8 @@ container_stop_bounded() {
 
 dx_bootstrap_launch_command() {
     printf '%s\n' "set -eu; mkdir -p \"$DX_WORKSPACE_PATH\" \"$DX_BOOTSTRAP_PATH\"; rm -f \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-ready\"; touch \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-waiting\"; echo 'Waiting for bootstrap payload in $DX_BOOTSTRAP_PATH...'; while [ ! -f \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-ready\" ]; do sleep 1; done; rm -f \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-waiting\"; exec \"$DX_BOOTSTRAP_PATH/bootstrap.sh\" serve"
+}
+
+dx_get_host_timezone() {
+    readlink /etc/localtime | sed 's#^.*/zoneinfo/##'
 }

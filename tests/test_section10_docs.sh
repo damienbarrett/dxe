@@ -68,6 +68,7 @@ assert_file_contains "$README" "DX_NIX_VOLUME.*dx-nix" "README documents DX_NIX_
 assert_file_contains "$README" "DX_BOOTSTRAP_VOLUME.*dx-bootstrap" "README documents DX_BOOTSTRAP_VOLUME default"
 assert_file_contains "$README" "DX_BOOTSTRAP_SOURCE.*DX_CONTEXT_DIR" "README documents DX_BOOTSTRAP_SOURCE default"
 assert_file_contains "$README" "DX_STOP_COMMAND_TIMEOUT.*15" "README documents stop command timeout"
+assert_file_contains "$README" "DX_SSH_CONNECT_TIMEOUT.*15" "README documents SSH connect timeout"
 
 # Test: README documents rerunning guest bootstrap
 assert_file_contains "$README" "[Rr]erun\|[Rr]e-run\|[Rr]ebootstrap\|[Rr]e-bootstrap" "README documents rerunning guest bootstrap"

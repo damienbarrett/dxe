@@ -93,6 +93,8 @@ else
 fi
 
 assert_file_contains "$DX_SSH" "LogLevel=ERROR" "dx-ssh suppresses noisy known-host warnings"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_SSH_CONNECT_TIMEOUT=.*15" "dx-lib exposes 15s SSH connect timeout"
+assert_file_contains "$DX_SSH" "ConnectTimeout=\$DX_SSH_CONNECT_TIMEOUT" "dx-ssh uses a bounded connect timeout"
 
 if grep -q "base64 -d | bash -l" "$DX_SSH"; then
     test_pass "dx-ssh wraps non-interactive commands for bash"

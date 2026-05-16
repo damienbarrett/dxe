@@ -30,6 +30,9 @@ assert_file_contains "$BOOTSTRAP" "PubkeyAuthentication yes" "sshd_config has Pu
 # Test: bootstrap.sh keeps SSH on port 2222
 assert_file_contains "$BOOTSTRAP" "Port 2222" "sshd_config has Port 2222"
 
+# Test: bootstrap.sh prepares OpenSSH runtime directories
+assert_file_contains "$BOOTSTRAP" "mkdir -p /run /var/run/sshd" "bootstrap creates sshd runtime directories"
+
 # Test: authorized keys are configurable (not hardcoded personal key)
 # Check for env var or file reference
 if grep -q "AUTHORIZED_KEY\|AUTHORIZED_KEYS\|SSH_PUBLIC_KEY" "$BOOTSTRAP" || \

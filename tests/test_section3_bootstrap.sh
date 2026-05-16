@@ -46,6 +46,11 @@ fi
 # Test: bootstrap.sh preserves passwordless sudo
 assert_file_contains "$BOOTSTRAP" "dx ALL=(ALL) NOPASSWD:ALL" "bootstrap.sh keeps passwordless sudo for dx"
 
+# Test: bootstrap repairs Nix store ownership for older persistent volumes
+assert_file_contains "$BOOTSTRAP" "ensure_nix_ownership" "bootstrap centralizes Nix ownership repair"
+assert_file_contains "$BOOTSTRAP" "stat -c '%u:%g'" "bootstrap verifies Nix ownership marker owner"
+assert_file_contains "$BOOTSTRAP" "chown dx:dx \"\$sentinel\"" "bootstrap marks repaired Nix ownership as dx-owned"
+
 # Test: bootstrap initializes persisted Claude config as valid JSON
 assert_file_not_contains "$BOOTSTRAP" "touch /workspace/home/dx/.claude.json" "bootstrap does not create empty Claude JSON config"
 assert_file_contains "$BOOTSTRAP" "printf '%s\\\\n' '{}' > /workspace/home/dx/.claude.json" "bootstrap initializes empty Claude config as JSON"
@@ -75,6 +80,16 @@ if [ -n "$INSTALL_CALL" ] && [ -n "$VERIFY_CALL" ] && [ -n "$START_SSH_CALL" ] &
 else
     test_fail "bootstrap.sh starts sshd after guest tools are verified"
 fi
+
+# Test: declarative timezone configuration exists
+FLAKE="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11/flake.nix"
+SHELL_NIX="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11/home/shell.nix"
+assert_file_contains "$FLAKE" "tzdata" "flake.nix includes tzdata"
+assert_file_contains "$BOOTSTRAP" "run_as_dx 'printf %s \"\${TZDIR:-}\"'" "bootstrap reads timezone data directory from guest shell env"
+assert_file_contains "$SHELL_NIX" "TZ = \"\$HOST_TZ\"" "shell.nix sets TZ for Bash/Fish"
+assert_file_contains "$SHELL_NIX" "TZDIR = \"\${pkgs.tzdata}/share/zoneinfo\"" "shell.nix sets TZDIR for Bash/Fish"
+assert_file_contains "$SHELL_NIX" "\$env.TZ = \$env.HOST_TZ?" "shell.nix sets TZ for Nushell"
+assert_file_contains "$SHELL_NIX" "\$env.TZDIR = \"\${pkgs.tzdata}/share/zoneinfo\"" "shell.nix sets TZDIR for Nushell"
 
 # Test: bash syntax check
 if bash -n "$BOOTSTRAP" 2>/dev/null; then

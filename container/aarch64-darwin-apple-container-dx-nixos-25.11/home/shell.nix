@@ -102,6 +102,8 @@
       $env.SSL_CERT_FILE = $"($nu.home-path)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
       $env.NIX_SSL_CERT_FILE = $"($nu.home-path)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
       $env.WORKSPACE = "/workspace"
+      $env.TZ = $env.HOST_TZ?
+      $env.TZDIR = "${pkgs.tzdata}/share/zoneinfo"
       let lazygit_config = $"($nu.home-path)/.config/lazygit/config.yml"
       let lazygit_theme = $"($nu.home-path)/.cache/dx/tinty/lazygit.yml"
       $env.LG_CONFIG_FILE = if ($lazygit_theme | path exists) {
@@ -119,5 +121,7 @@
     SSL_CERT_FILE = "$HOME/.nix-profile/etc/ssl/certs/ca-bundle.crt";
     NIX_SSL_CERT_FILE = "$HOME/.nix-profile/etc/ssl/certs/ca-bundle.crt";
     WORKSPACE = "/workspace";
+    TZ = "$HOST_TZ";
+    TZDIR = "${pkgs.tzdata}/share/zoneinfo";
   };
 }

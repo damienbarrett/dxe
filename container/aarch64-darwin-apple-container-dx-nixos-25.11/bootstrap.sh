@@ -121,6 +121,24 @@ experimental-features = nix-command flakes
 EOF
 }
 
+# §4: Configure timezone
+configure_timezone() {
+    if [ -n "${HOST_TZ:-}" ]; then
+        echo "Configuring timezone to $HOST_TZ..."
+        local tz_dir
+        tz_dir="$(run_as_dx 'printf %s "${TZDIR:-}"')"
+        if [ -z "$tz_dir" ]; then
+            tz_dir="/home/dx/.nix-profile/share/zoneinfo"
+        fi
+        local tz_file="$tz_dir/$HOST_TZ"
+        if [ -f "$tz_file" ]; then
+            ln -sf "$tz_file" /etc/localtime
+        else
+            echo "Warning: Timezone file $tz_file not found. Is tzdata in dxPackages?"
+        fi
+    fi
+}
+
 # 2. Create non-root guest user (Section 3)
 create_user() {
     if ! id -u dx >/dev/null 2>&1; then
@@ -181,7 +199,7 @@ configure_ssh() {
         ssh-keygen -A
     fi
 
-    mkdir -p /var/run/sshd
+    mkdir -p /run /var/run/sshd
     mkdir -p /var/log
     touch /var/log/lastlog
     mkdir -p /var/empty
@@ -217,6 +235,35 @@ run_as_dx() {
     # setpriv --reuid=dx --regid=dx --init-groups bash -l -c "$cmd"
     # Note: bash -l is needed to pick up the profile
     setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx PATH="/home/dx/.nix-profile/bin:$PATH" bash -l -c "$cmd"
+}
+
+ensure_nix_ownership() {
+    local sentinel="/nix/.dx-owner-set"
+    local dx_owner
+    local sentinel_owner
+    local needs_chown=0
+
+    dx_owner="$(id -u dx):$(id -g dx)"
+    sentinel_owner="$(stat -c '%u:%g' "$sentinel" 2>/dev/null || true)"
+
+    if [ ! -f "$sentinel" ]; then
+        needs_chown=1
+    elif [ "$sentinel_owner" != "$dx_owner" ]; then
+        echo "Nix ownership marker needs repair."
+        needs_chown=1
+    elif ! run_as_dx "test -w /nix/store && test -w /nix/var/nix"; then
+        echo "Nix store is not writable by dx."
+        needs_chown=1
+    fi
+
+    if [ "$needs_chown" -eq 1 ]; then
+        echo "Granting Nix ownership to dx..."
+        chown -R dx:dx /nix
+        touch "$sentinel"
+        chown dx:dx "$sentinel"
+    else
+        echo "Nix ownership already set. Skipping chown."
+    fi
 }
 
 setup_gh_persistence() {
@@ -263,14 +310,7 @@ configure_guest() {
     echo "Configuring guest environment with Home Manager..."
     
     # Hand over Nix ownership to dx for true single-user operation (§7)
-    # Sentinel on the persistent volume — skip if already done on this store.
-    if [ ! -f /nix/.dx-owner-set ]; then
-        echo "Granting Nix ownership to dx..."
-        chown -R dx:dx /nix
-        touch /nix/.dx-owner-set
-    else
-        echo "Nix ownership already set. Skipping chown."
-    fi
+    ensure_nix_ownership
     chown -R dx:dx /home/dx
     chown -R dx:dx /guest-bootstrap
 
@@ -334,6 +374,7 @@ create_user
 setup_workspace
 configure_ssh
 configure_guest
+configure_timezone   # §4: Run after guest profile is populated
 verify_guest_tools
 
 echo "Guest bootstrap complete. Starting sshd in foreground..."
