@@ -61,6 +61,19 @@ ln -sfn /workspace/home/dx/.claude ~/.claude
 ln -sfn /workspace/home/dx/.claude.json ~/.claude.json
 ln -sfn /workspace/home/dx/.codex ~/.codex
 
+# Seed the dx-claude-statusline hook in Claude's settings.json without
+# clobbering existing keys. Only sets statusLine if it isn't already configured.
+claude_settings=/workspace/home/dx/.claude/settings.json
+if [ ! -s "$claude_settings" ]; then
+    printf '%s\n' '{}' > "$claude_settings"
+fi
+if ! jq -e '.statusLine' "$claude_settings" >/dev/null 2>&1; then
+    tmp="$claude_settings.tmp.$$"
+    jq '. + {statusLine: {type: "command", command: "dx-claude-statusline"}}' \
+        "$claude_settings" > "$tmp"
+    mv "$tmp" "$claude_settings"
+fi
+
 echo "AI tools installed:"
 for tool in codex gemini claude; do
     printf "  %s -> " "$tool"

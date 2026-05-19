@@ -77,4 +77,9 @@
     executable = true;
     source = ../scripts/dx-ai.sh;
   };
+
+  home.file.".local/bin/dx-claude-statusline" = {
+    executable = true;
+    source = ../scripts/dx-claude-statusline.sh;
+  };
 }
