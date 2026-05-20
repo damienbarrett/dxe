@@ -71,6 +71,7 @@
         gemini-cli
         claude-code
         codex
+        antigravity
       ];
 
       # Imported NixVim configuration

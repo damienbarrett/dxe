@@ -6,3 +6,4 @@ dx-host-export*.tar
 .env
 *.img
 *.raw
+.antigravitycli/

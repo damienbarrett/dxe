@@ -23,7 +23,7 @@
       set -ga terminal-overrides ",xterm-256color:Tc"
       set -s escape-time 0
       set -g repeat-time 1000
-      set -g display-panes-time 5000
+      set -g display-panes-time 3000
       set -g mouse on
       set -g history-limit 50000
       setw -g pane-base-index 1

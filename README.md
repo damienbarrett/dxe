@@ -243,7 +243,7 @@ or manually deleting the workspace volume/path.
 
 ## Optional AI Tools
 
-Codex, Gemini, and Claude are intentionally not installed by default. This keeps
+Codex, Gemini, Claude, and Antigravity are intentionally not installed by default. This keeps
 the standard DX environment free of AI CLIs, so they are not available in secure,
 restricted, or work environments unless you explicitly opt in.
 
@@ -255,7 +255,7 @@ dx-ai
 ```
 
 This updates `nixpkgs-unstable` in `/guest-bootstrap`, then installs or upgrades
-the `codex`, `gemini`, and `claude` commands in the guest user's Nix profile.
+the `codex`, `gemini`, `claude`, and `antigravity` commands in the guest user's Nix profile.
 The `dx-ai` helper is installed into `~/.local/bin` by Home Manager, the same
 way `dx-theme` is installed.
 

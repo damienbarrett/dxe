@@ -11,6 +11,7 @@ This updates nixpkgs-unstable in /guest-bootstrap, then installs or upgrades:
   - codex
   - gemini
   - claude
+  - antigravity
 EOF
 }
 
@@ -52,7 +53,7 @@ else
 fi
 
 echo "Setting up AI credentials persistence..."
-mkdir -p /workspace/home/dx/.gemini /workspace/home/dx/.claude /workspace/home/dx/.codex
+mkdir -p /workspace/home/dx/.gemini /workspace/home/dx/.claude /workspace/home/dx/.codex /workspace/home/dx/.antigravity
 if [ ! -s /workspace/home/dx/.claude.json ]; then
     printf '%s\n' '{}' > /workspace/home/dx/.claude.json
 fi
@@ -60,6 +61,7 @@ ln -sfn /workspace/home/dx/.gemini ~/.gemini
 ln -sfn /workspace/home/dx/.claude ~/.claude
 ln -sfn /workspace/home/dx/.claude.json ~/.claude.json
 ln -sfn /workspace/home/dx/.codex ~/.codex
+ln -sfn /workspace/home/dx/.antigravity ~/.antigravity
 
 # Seed the dx-claude-statusline hook in Claude's settings.json without
 # clobbering existing keys. Only sets statusLine if it isn't already configured.
@@ -75,7 +77,7 @@ if ! jq -e '.statusLine' "$claude_settings" >/dev/null 2>&1; then
 fi
 
 echo "AI tools installed:"
-for tool in codex gemini claude; do
+for tool in codex gemini claude antigravity; do
     printf "  %s -> " "$tool"
     command -v "$tool"
 done

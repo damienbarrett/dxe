@@ -94,7 +94,7 @@ assert_file_contains "$SHELL_NIX" '\^yazi ...$args --cwd-file $tmp' "nushell yaz
 assert_file_contains "$SHELL_NIX" 'str replace --all (char nul) ""' "nushell yazi cwd helper strips cwd file NUL terminator"
 
 # Test: AI CLI tools are excluded from the default dxPackages list
-if printf '%s\n' "$DX_PACKAGES_BLOCK" | grep -Eq "codex|gemini-cli|claude-code"; then
+if printf '%s\n' "$DX_PACKAGES_BLOCK" | grep -Eq "codex|gemini-cli|claude-code|antigravity"; then
     test_fail "AI CLI tools excluded from default dxPackages"
 else
     test_pass "AI CLI tools excluded from default dxPackages"
@@ -150,6 +150,12 @@ if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "claude-code"; then
     test_pass "claude-code is in aiPackages"
 else
     test_fail "claude-code is in aiPackages"
+fi
+
+if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "antigravity"; then
+    test_pass "antigravity is in aiPackages"
+else
+    test_fail "antigravity is in aiPackages"
 fi
 
 # Test: shell startup guards optional prompt/environment hooks
