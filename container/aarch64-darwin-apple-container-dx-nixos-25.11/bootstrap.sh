@@ -327,8 +327,8 @@ configure_guest() {
 
     # Persist AI CLI tool credentials/configuration across container rebuilds
     # Only restore these links if the user has opted into the AI tools
-    if run_as_dx "nix profile list" | grep -q "dx-ai-tools"; then
-        mkdir -p /workspace/home/dx/.gemini /workspace/home/dx/.claude /workspace/home/dx/.codex /workspace/home/dx/.antigravity
+    if run_as_dx "nix profile list" | grep -qE "Flake attribute:[[:space:]]+packages\.[^.]+\.ai-tools$"; then
+        mkdir -p /workspace/home/dx/.gemini /workspace/home/dx/.claude /workspace/home/dx/.codex
         if [ ! -s /workspace/home/dx/.claude.json ]; then
             printf '%s\n' '{}' > /workspace/home/dx/.claude.json
         fi
@@ -337,7 +337,6 @@ configure_guest() {
         run_as_dx "ln -sfn /workspace/home/dx/.claude ~/.claude"
         run_as_dx "ln -sfn /workspace/home/dx/.claude.json ~/.claude.json"
         run_as_dx "ln -sfn /workspace/home/dx/.codex ~/.codex"
-        run_as_dx "ln -sfn /workspace/home/dx/.antigravity ~/.antigravity"
     fi
 
     # Use Home Manager to manage dotfiles and user profile

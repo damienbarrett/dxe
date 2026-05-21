@@ -243,9 +243,9 @@ or manually deleting the workspace volume/path.
 
 ## Optional AI Tools
 
-Codex, Gemini, Claude, and Antigravity are intentionally not installed by default. This keeps
-the standard DX environment free of AI CLIs, so they are not available in secure,
-restricted, or work environments unless you explicitly opt in.
+Codex, Gemini, Claude, and `agy` (Antigravity CLI) are intentionally not installed by
+default. This keeps the standard DX environment free of AI CLIs, so they are not
+available in secure, restricted, or work environments unless you explicitly opt in.
 
 If AI tooling is approved for your environment, install or update the optional
 AI tools bundle inside the guest:
@@ -255,9 +255,38 @@ dx-ai
 ```
 
 This updates `nixpkgs-unstable` in `/guest-bootstrap`, then installs or upgrades
-the `codex`, `gemini`, `claude`, and `antigravity` commands in the guest user's Nix profile.
+the `codex`, `gemini`, `claude`, and `agy` commands in the guest user's Nix profile.
 The `dx-ai` helper is installed into `~/.local/bin` by Home Manager, the same
 way `dx-theme` is installed.
+
+### Bumping `agy` (Antigravity CLI)
+
+`agy` is fetched as a pinned tarball from Google's release bucket (see the
+`antigravity-cli` derivation in `container/.../flake.nix`). The binary ships with
+a self-updater, but the Nix store is read-only, so updates have to be re-pinned
+in the flake. To bump:
+
+```bash
+# Linux arm64; substitute linux_amd64 / darwin_arm64 / darwin_amd64 as needed.
+curl -fsSL https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json
+```
+
+The manifest returns `{ "version": ..., "url": ..., "sha512": ... }`. Then:
+
+1. Replace the `version`, `src.url`, and `src.hash` in the `agy` derivation in
+   `flake.nix`. `hash` uses SRI format: `sha512-<base64>`. Convert from the
+   manifest's hex with:
+
+   ```bash
+   printf '%s' "<sha512-hex>" | xxd -r -p | base64 | tr -d '\n'
+   ```
+
+2. Re-sync the bootstrap payload and reinstall:
+
+   ```bash
+   ./bin/dx-sync-bootstrap
+   ./bin/dx-ssh dx-ai
+   ```
 
 ## NixVim Configuration
 

@@ -66,12 +66,47 @@
         tzdata
       ];
 
+      # Antigravity CLI (`agy`) — Google's agentic coding tool. The nixpkgs
+      # `antigravity` package is the Electron editor, which is unusable in a
+      # headless guest; the real CLI is a separate Go binary distributed by
+      # Google. Mirrors what `curl -fsSL https://antigravity.google/cli/install.sh
+      # | bash` would do, but pinned and autoPatchelf'd for NixOS.
+      agy = pkgs.stdenv.mkDerivation rec {
+        pname = "antigravity-cli";
+        version = "1.0.0";
+
+        src = pkgs.fetchurl {
+          url = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.0.0-5288553236791296/linux-arm/cli_linux_arm64.tar.gz";
+          hash = "sha512-l5fHlV0OB/xXYF+B+rFt/S85DUOyUIrzyml7HPpJjjfkOjqaVa2LJusTU9gLvsUi0QjrdaDrDrAOl5y1edbidw==";
+        };
+
+        nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+        buildInputs = [ pkgs.stdenv.cc.cc ];
+
+        unpackPhase = ''
+          runHook preUnpack
+          tar -xzf $src
+          runHook postUnpack
+        '';
+
+        dontConfigure = true;
+        dontBuild = true;
+
+        installPhase = ''
+          runHook preInstall
+          install -Dm755 antigravity $out/bin/agy
+          runHook postInstall
+        '';
+      };
+
       # Optional AI CLI tools kept out of the default install.
+      # `agy` is the locally-defined Antigravity CLI derivation above; let-bound
+      # names take precedence over `with unstable;`, so it resolves correctly.
       aiPackages = with unstable; [
         gemini-cli
         claude-code
         codex
-        antigravity
+        agy
       ];
 
       # Imported NixVim configuration
