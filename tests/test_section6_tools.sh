@@ -164,5 +164,10 @@ assert_file_contains "$SHELL_NIX" "command -v starship" "bash starship hook is g
 assert_file_contains "$SHELL_NIX" "type -q direnv" "fish direnv hook is guarded"
 assert_file_contains "$SHELL_NIX" "type -q starship" "fish starship hook is guarded"
 
+assert_file_contains "$SHELL_NIX" "agy = \\\"agy --dangerously-skip-permissions\\\"" "shell.nix configures agy with --dangerously-skip-permissions"
+assert_file_contains "$SHELL_NIX" "claude = \\\"claude --dangerously-skip-permissions\\\"" "shell.nix configures claude with --dangerously-skip-permissions"
+assert_file_contains "$SHELL_NIX" "codex = \\\"codex --dangerously-bypass-approvals-and-sandbox\\\"" "shell.nix configures codex with --dangerously-bypass-approvals-and-sandbox"
+assert_file_contains "$SHELL_NIX" "gemini = \\\"gemini --yolo\\\"" "shell.nix configures gemini with --yolo"
+
 print_summary
 exit_with_code

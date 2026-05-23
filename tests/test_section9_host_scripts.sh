@@ -251,9 +251,17 @@ assert_file_contains "$DX_WAIT_SSH" "Guest is ready" "dx-wait-ssh announces read
 # -----------------------------------------------------------------------------
 
 assert_file_contains "$BIN_DIR/dx-lib.sh" "command -v container" "dx-lib checks for Apple Container installation"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "Apple 'container' command not found" "dx-lib install error names the missing command clearly"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "github.com/apple/container" "dx-lib install error points to the official install source"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "container_system_is_running" "dx-lib exposes container_system_is_running helper"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "container_system_ensure_started" "dx-lib exposes container_system_ensure_started helper"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "container system status" "dx-lib queries container system status to detect started state"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "container system start" "dx-lib starts the container system when it is not running"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "dx_bootstrap_launch_command" "dx-lib owns bootstrap launch command"
 assert_file_contains "$BIN_DIR/dx-lib.sh" ".dx-bootstrap-waiting" "dx-lib installs bootstrap wait marker"
 assert_file_contains "$BIN_DIR/dx-lib.sh" ".dx-bootstrap-ready" "dx-lib waits for bootstrap ready marker"
+
+assert_file_contains "$DX" "container_system_ensure_started" "dx ensures the container system is started before lifecycle steps"
 
 print_summary
 exit_with_code

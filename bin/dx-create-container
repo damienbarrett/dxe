@@ -36,7 +36,7 @@ CREATE_FLAGS=(
     --volume "$DX_WORKSPACE_VOLUME:$DX_WORKSPACE_PATH:rw"
     --volume "$DX_BOOTSTRAP_VOLUME:$DX_BOOTSTRAP_PATH:rw"
     -e "HOST_TZ=$HOST_TZ"
-    -m 4G -c 4
+    -m 12G -c 4
     -p "127.0.0.1:$DX_SSH_PORT:2222"
 )
 

@@ -38,10 +38,32 @@ export DX_DELETE_COMMAND_TIMEOUT="${DX_DELETE_COMMAND_TIMEOUT:-15}"
 
 # Check for Apple Container installation
 if ! command -v container &> /dev/null; then
-    echo "Error: Apple 'container' tool not found. Please ensure it is installed on your macOS host."
-    echo "Visit https://github.com/apple/container for installation instructions."
+    cat >&2 <<'EOF'
+Error: Apple 'container' command not found on this host.
+
+The DX Experience requires Apple's container runtime for macOS.
+
+Install it from:
+  https://github.com/apple/container/releases
+
+After installing, re-run this command.
+EOF
     exit 1
 fi
+
+# Helper: is the Apple container system (apiserver / launchd services) running?
+container_system_is_running() {
+    container system status >/dev/null 2>&1
+}
+
+# Helper: ensure the Apple container system is running, starting it if needed.
+container_system_ensure_started() {
+    if container_system_is_running; then
+        return 0
+    fi
+    echo "Apple container system is not running; starting it..."
+    container system start
+}
 
 # Helper function to check if a container exists (exact match)
 container_exists() {

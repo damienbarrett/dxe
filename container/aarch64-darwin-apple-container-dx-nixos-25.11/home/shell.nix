@@ -124,4 +124,11 @@
     TZ = "$HOST_TZ";
     TZDIR = "${pkgs.tzdata}/share/zoneinfo";
   };
+
+  home.shellAliases = {
+    agy = "agy --dangerously-skip-permissions";
+    claude = "claude --dangerously-skip-permissions";
+    codex = "codex --dangerously-bypass-approvals-and-sandbox";
+    gemini = "gemini --yolo";
+  };
 }

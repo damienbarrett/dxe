@@ -7,8 +7,11 @@ set -euo pipefail
 # state: first run brings up the full environment, later runs reconnect.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
 
 echo "Bringing up DX environment..."
+
+container_system_ensure_started
 
 "$SCRIPT_DIR/dx-create-keys"
 "$SCRIPT_DIR/dx-create-image"
