@@ -26,6 +26,8 @@
       set -g display-panes-time 3000
       set -g mouse on
       set -g history-limit 50000
+      set -g base-index 1
+      set -g renumber-windows on
       setw -g pane-base-index 1
       
       # Yazi image support (Ghostty/Kitty protocol)

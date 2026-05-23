@@ -83,6 +83,8 @@ assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?go-task" "go-task preserved in flake.
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?lazygit" "lazygit preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?yazi" "yazi preserved in flake.nix"
 assert_file_contains "$TOOLS_NIX" "set -g display-panes-time 3000" "tmux display panes timeout is 3s"
+assert_file_contains "$TOOLS_NIX" "set -g base-index 1" "tmux windows use 1-based indexing"
+assert_file_contains "$TOOLS_NIX" "set -g renumber-windows on" "tmux renumbers windows on close"
 
 # Test: Yazi cwd helpers are configured for interactive container shells
 assert_file_contains "$SHELL_NIX" "function y()" "bash yazi cwd helper is configured"
