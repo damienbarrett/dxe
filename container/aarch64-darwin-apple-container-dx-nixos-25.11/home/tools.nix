@@ -20,10 +20,13 @@
     extraConfig = ''
       set -g default-terminal "tmux-256color"
       set -as terminal-features ",xterm-256color:RGB"
+      set -as terminal-features ",xterm-256color:clipboard"
       set -ga terminal-overrides ",xterm-256color:Tc"
       set -s escape-time 0
+      set -s set-clipboard on
       set -g repeat-time 1000
       set -g display-panes-time 3000
+      set -g focus-events on
       set -g mouse on
       set -g history-limit 50000
       set -g base-index 1
@@ -43,8 +46,17 @@
       if-shell 'test -x ~/.local/bin/dx-theme-write-tool-themes' 'run-shell -b ~/.local/bin/dx-theme-write-tool-themes'
 
       # Swap split-window mappings
-      bind % split-window -v
-      bind '"' split-window -h
+      bind c new-window -c "#{pane_current_path}"
+      bind % split-window -v -c "#{pane_current_path}"
+      bind '"' split-window -h -c "#{pane_current_path}"
+
+      # Vi-style copy mode with OSC52 clipboard support.
+      setw -g mode-keys vi
+      bind -T copy-mode-vi v send-keys -X begin-selection
+      bind -T copy-mode-vi V send-keys -X select-line
+      bind -T copy-mode-vi C-v send-keys -X rectangle-toggle
+      bind -T copy-mode-vi y send-keys -X copy-selection-and-cancel
+      bind -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection-and-cancel
 
       # Vim-style pane switching
       bind h select-pane -L
