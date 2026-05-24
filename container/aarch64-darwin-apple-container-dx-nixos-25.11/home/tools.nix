@@ -28,6 +28,7 @@
       set -g history-limit 50000
       set -g base-index 1
       set -g renumber-windows on
+      set -g status-position top
       setw -g pane-base-index 1
       
       # Yazi image support (Ghostty/Kitty protocol)
@@ -37,6 +38,9 @@
 
       # Tinty status colors are generated at runtime by dx-theme.
       if-shell 'test -f ~/.cache/dx/tinty/tmux.conf' 'source-file ~/.cache/dx/tinty/tmux.conf'
+
+      # Pill-style status bar, rendered from the active Tinty/Base16 palette.
+      if-shell 'test -x ~/.local/bin/dx-theme-write-tool-themes' 'run-shell -b ~/.local/bin/dx-theme-write-tool-themes'
 
       # Swap split-window mappings
       bind % split-window -v

@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-if [ "$#" -eq 1 ]; then
+if [ "$#" -eq 0 ]; then
+  current="$(tinty current 2>/dev/null || true)"
+  if [ -n "$current" ]; then
+    mapfile -t palette < <(tinty info "$current" 2>/dev/null | sed -n 's/.*#\([0-9A-Fa-f]\{6\}\).*/\1/p')
+  fi
+elif [ "$#" -eq 1 ]; then
   mapfile -t palette < <(tinty info "$1" 2>/dev/null | sed -n 's/.*#\([0-9A-Fa-f]\{6\}\).*/\1/p')
 elif [ "$#" -eq 16 ]; then
   palette=( "$@" )
@@ -255,6 +260,30 @@ base0F = "#$base0F"
 EOF
 }
 
+apply_tmux_pills() {
+  if ! command -v tmux >/dev/null 2>&1; then
+    return 0
+  fi
+
+  tmux set-option -gq status on >/dev/null 2>&1 || return 0
+  tmux set-option -gq status-position top
+  tmux set-option -gq status-interval 5
+  tmux set-option -gq status-justify centre
+  tmux set-option -gq status-style "fg=#$base05,bg=#$base00"
+  tmux set-option -gq status-left-style none
+  tmux set-option -gq status-right-style none
+  tmux set-option -gq status-left-length 80
+  tmux set-option -gq status-right-length 120
+  tmux set-option -gq status-left "#[fg=#$base0D,bg=#$base00]#[fg=#$base00,bg=#$base0D,bold] #S #[fg=#$base0D,bg=#$base00,nobold,noitalics,nounderscore]"
+  tmux set-option -gq status-right "#{?client_prefix,#[fg=#$base09,bg=#$base00]#[fg=#$base00,bg=#$base09,bold] PREFIX #[fg=#$base09,bg=#$base00,nobold,noitalics,nounderscore] ,}#[fg=#$base0B,bg=#$base00]#[fg=#$base00,bg=#$base0B,bold] %H:%M #[fg=#$base0B,bg=#$base00,nobold,noitalics,nounderscore] #[fg=#$base0E,bg=#$base00]#[fg=#$base00,bg=#$base0E,bold] %d %b #[fg=#$base0E,bg=#$base00,nobold,noitalics,nounderscore]"
+  tmux set-window-option -gq window-status-style "fg=#$base05,bg=#$base00"
+  tmux set-window-option -gq window-status-current-style "fg=#$base0A,bg=#$base00"
+  tmux set-window-option -gq window-status-separator " "
+  tmux set-window-option -gq window-status-format "#[fg=#$base01,bg=#$base00]#[fg=#$base06,bg=#$base01] #I:#W#{?window_flags,#{window_flags},} #[fg=#$base01,bg=#$base00,nobold,noitalics,nounderscore]"
+  tmux set-window-option -gq window-status-current-format "#[fg=#$base0A,bg=#$base00]#[fg=#$base00,bg=#$base0A,bold] #I:#W#{?window_flags,#{window_flags},} #[fg=#$base0A,bg=#$base00,nobold,noitalics,nounderscore]"
+}
+
 write_btop_theme
 write_yazi_theme
 write_starship_theme
+apply_tmux_pills

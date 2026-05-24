@@ -23,6 +23,9 @@ case "$kind" in
     cp -f "$theme_file" "$home_dir/.cache/dx/tinty/tmux.conf"
     if command -v tmux >/dev/null 2>&1; then
       tmux source-file "$home_dir/.cache/dx/tinty/tmux.conf" >/dev/null 2>&1 || true
+      if [ -x "$home_dir/.local/bin/dx-theme-write-tool-themes" ]; then
+        "$home_dir/.local/bin/dx-theme-write-tool-themes" >/dev/null 2>&1 || true
+      fi
     fi
     ;;
   lazygit)
