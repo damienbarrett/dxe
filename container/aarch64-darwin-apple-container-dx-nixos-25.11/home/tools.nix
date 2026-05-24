@@ -32,7 +32,10 @@
       set -g base-index 1
       set -g renumber-windows on
       set -g status-position top
+      set -g visual-activity off
       setw -g pane-base-index 1
+      setw -g monitor-activity on
+      setw -g monitor-bell on
       
       # Yazi image support (Ghostty/Kitty protocol)
       set -g allow-passthrough on
@@ -49,6 +52,13 @@
       bind c new-window -c "#{pane_current_path}"
       bind % split-window -v -c "#{pane_current_path}"
       bind '"' split-window -h -c "#{pane_current_path}"
+
+      # Workflow helpers.
+      bind S setw synchronize-panes \; display-message "synchronize-panes #{?synchronize-panes,on,off}"
+      bind P display-popup -E -w 80% -h 80% -d "#{pane_current_path}" -T "scratch"
+      bind g if-shell 'command -v lazygit >/dev/null 2>&1' 'display-popup -E -w 90% -h 90% -d "#{pane_current_path}" -T "lazygit" lazygit' 'display-message "lazygit not found"'
+      bind w choose-tree -Zw
+      bind a choose-tree -Zw -f "#{||:#{window_activity_flag},#{window_bell_flag}}"
 
       # Vi-style copy mode with OSC52 clipboard support.
       setw -g mode-keys vi
