@@ -305,6 +305,38 @@ setup_gh_persistence() {
     run_as_dx "ln -sfnT /workspace/home/dx/.config/gh /home/dx/.config/gh"
 }
 
+# Provide a D-Bus session + gnome-keyring secret-service daemon so that
+# agy (Antigravity CLI) can persist OAuth tokens via zalando/go-keyring.
+# The keyring data directory (~/.local/share/keyrings) is symlinked to the
+# persistent /workspace volume so tokens survive container rebuilds.
+setup_keyring_service() {
+    echo "Setting up D-Bus keyring service for credential persistence..."
+
+    # 1. Persist keyring data across container rebuilds
+    local persistent_keyrings="/workspace/home/dx/.local/share/keyrings"
+    mkdir -p "$persistent_keyrings"
+    chown -R dx:dx /workspace/home/dx/.local
+    run_as_dx "mkdir -p ~/.local/share && ln -sfnT '$persistent_keyrings' ~/.local/share/keyrings"
+
+    # 2. Start a D-Bus session bus owned by dx
+    local env_file="/home/dx/.dx-keyring-env"
+    run_as_dx "dbus-daemon --session --fork --print-address > '$env_file.addr'"
+    local bus_addr
+    bus_addr="$(cat "$env_file.addr")"
+    rm -f "$env_file.addr"
+
+    # 3. Start gnome-keyring-daemon (secret-service component) with an empty
+    #    unlock password so it is immediately usable in this headless guest.
+    local gk_out
+    gk_out="$(run_as_dx "DBUS_SESSION_BUS_ADDRESS='$bus_addr' echo -n '' | gnome-keyring-daemon --unlock --start --components=secrets 2>/dev/null" || true)"
+
+    # 4. Write a sourceable env file so SSH sessions inherit the bus address
+    cat > "$env_file" <<ENVEOF
+export DBUS_SESSION_BUS_ADDRESS='$bus_addr'
+ENVEOF
+    chown dx:dx "$env_file"
+}
+
 # 5. Configure Shell & Tmux (Section 3/6)
 configure_guest() {
     echo "Configuring guest environment with Home Manager..."
@@ -337,6 +369,9 @@ configure_guest() {
         run_as_dx "ln -sfn /workspace/home/dx/.claude ~/.claude"
         run_as_dx "ln -sfn /workspace/home/dx/.claude.json ~/.claude.json"
         run_as_dx "ln -sfn /workspace/home/dx/.codex ~/.codex"
+
+        # Start D-Bus + gnome-keyring so agy can persist OAuth tokens
+        setup_keyring_service
     fi
 
     # Use Home Manager to manage dotfiles and user profile

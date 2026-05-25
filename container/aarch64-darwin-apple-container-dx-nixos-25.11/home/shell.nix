@@ -5,6 +5,10 @@
     enable = true;
     profileExtra = ''
       export PATH=$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH
+      # Source D-Bus keyring env so agy can persist OAuth tokens
+      if [ -f "$HOME/.dx-keyring-env" ]; then
+        . "$HOME/.dx-keyring-env"
+      fi
     '';
     initExtra = ''
       set -o vi
@@ -41,6 +45,15 @@
   programs.fish = {
     enable = true;
     interactiveShellInit = ''
+      # Source D-Bus keyring env so agy can persist OAuth tokens
+      if test -f "$HOME/.dx-keyring-env"
+        for line in (grep '^export ' "$HOME/.dx-keyring-env")
+          set -l kv (string replace 'export ' '' -- $line)
+          set -l key (string replace -r '=.*' '' -- $kv)
+          set -l val (string replace -r '^[^=]+=' '' -- $kv | string trim --chars="'")
+          set -gx $key $val
+        end
+      end
       set -g fish_greeting
       fish_vi_key_bindings
 
@@ -96,6 +109,15 @@
       try { ^/home/dx/.local/bin/dx-theme-restore }
     '';
     envFile.text = ''
+      # Source D-Bus keyring env so agy can persist OAuth tokens
+      let keyring_env = $"($nu.home-path)/.dx-keyring-env"
+      if ($keyring_env | path exists) {
+        open $keyring_env | lines | where {|l| $l starts-with "export "} | each {|l|
+          let parts = ($l | str replace "export " "" | split row "=" --max 2)
+          let val = ($parts.1? | default "" | str replace --all "'" "")
+          load-env {($parts.0): $val}
+        }
+      }
       $env.PATH = ($env.PATH | split row (char esep) | append $"($nu.home-path)/.local/bin" | append $"($nu.home-path)/.nix-profile/bin")
       $env.EDITOR = "nvim"
       $env.VISUAL = "nvim"
