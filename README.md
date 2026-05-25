@@ -37,6 +37,24 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
 - **Stop the Container:** `./bin/dx-stop-container`
 - **Push edited bootstrap payload to a running guest:** `./bin/dx-sync-bootstrap`
 
+## Hotkeys
+
+The default tmux prefix is `Ctrl-Space`. Press `Ctrl-Space ?` inside tmux to
+show the configured prefix-key help.
+
+| Key | Action |
+| --- | --- |
+| `Ctrl-Space c` | Open a new window in the current pane's directory. |
+| `Ctrl-Space %` | Split the current pane vertically in the current directory. |
+| `Ctrl-Space "` | Split the current pane horizontally in the current directory. |
+| `Ctrl-Space S` | Toggle synchronize-panes for the current window. When enabled, input is sent to every pane in that window and the tmux status bar shows a `SYNC` pill. |
+| `Ctrl-Space P` | Open a scratch shell popup in the current directory. Exit the shell to close it. |
+| `Ctrl-Space g` | Open `lazygit` in a popup in the current directory. |
+| `Ctrl-Space w` | Open the tmux session/window/pane picker. |
+| `Ctrl-Space a` | Open the picker filtered to windows with tmux activity or bell flags. This is useful when background windows have produced output; it may be empty when nothing has changed. |
+| `Ctrl-Space [` | Enter tmux copy mode. Use `v` to begin selection, `V` to select a line, `Ctrl-v` for rectangle selection, and `y` to copy and exit. |
+| `Ctrl-Space ]` | Paste the most recent tmux buffer. |
+
 ## Lifecycle Layers
 
 The DX environment is built from independent **layers** of state, ordered from
@@ -303,8 +321,9 @@ Aliases are declared in `home/theme.nix` (`dxThemes`) and rendered to
 full set. A representative subset:
 
 ```bash
-dx-theme dark                  # base16-gruvbox-dark-hard
+dx-theme dark                  # base16-mocha
 dx-theme light                 # base16-gruvbox-light-medium
+dx-theme gruvbox-dark          # base16-gruvbox-dark-hard
 dx-theme rose-pine             # plus rose-pine-moon, rose-pine-dawn
 dx-theme everforest-dark       # plus everforest-light
 dx-theme catppuccin            # = catppuccin-mocha; latte/frappe/macchiato/mocha also available
@@ -335,7 +354,7 @@ Current integrations:
 
 Rose Pine is available as a DXE-wide Tinty theme family, not just a Neovim colorscheme. The Neovim Rose Pine plugin remains packaged only as a manual fallback.
 
-On a fresh activation, DXE initializes the current Tinty scheme to the dark default (`base16-gruvbox-dark-hard`) if no previous theme has been selected. After that, `dx-theme` preserves the user's last selected theme, and activation only refreshes generated side files.
+On a fresh activation, DXE initializes the current Tinty scheme to the dark default (`base16-mocha`) if no previous theme has been selected. After that, `dx-theme` preserves the user's last selected theme, and activation only refreshes generated side files.
 
 On login, `dx-ssh` and shell startup run `dx-theme-restore` to re-emit the selected Tinty terminal palette and foreground/background without changing the selected theme. This is needed because host terminal OSC colors are session state, not durable guest files.
 

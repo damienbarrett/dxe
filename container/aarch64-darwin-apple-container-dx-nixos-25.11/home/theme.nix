@@ -6,12 +6,16 @@ let
   # scheme name tinty applies. dx-theme.sh reads this via jq from
   # ~/.config/dx/themes.json — adding a theme is a one-place edit.
   dxThemes = {
-    # Existing aliases — unchanged behavior.
-    dark                 = "base16-gruvbox-dark-hard";
+    # Existing aliases — unchanged behavior. `dark` intentionally stays on
+    # Mocha: its warm base00 avoids the near-black Gruvbox hard background.
+    dark                 = "base16-mocha";
     light                = "base16-gruvbox-light-medium";
     rose-pine            = "base16-rose-pine";
     rose-pine-moon       = "base16-rose-pine-moon";
     rose-pine-dawn       = "base16-rose-pine-dawn";
+
+    # Gruvbox — explicit alias for users who want the darker hard variant.
+    gruvbox-dark         = "base16-gruvbox-dark-hard";
 
     # Everforest — explicit dark/light variants.
     everforest-dark      = "base16-everforest-dark-hard";
@@ -35,12 +39,7 @@ let
   # Alias used at fresh-init when the user has no recorded theme yet.
   dxDefault = "dark";
 
-  # Schemes kept in tinty's preferred-schemes list but intentionally NOT
-  # exposed as dx-theme aliases. Useful for back-compat with raw scheme ids
-  # users may have invoked via `dx-theme apply`.
-  extraPreferredSchemes = [ "base16-mocha" ];
-
-  preferredSchemes = lib.unique (lib.attrValues dxThemes ++ extraPreferredSchemes);
+  preferredSchemes = lib.unique (lib.attrValues dxThemes);
 
   # Tinty TOML config rendered from a pure Nix attrset via nixpkgs' TOML
   # formatter. Verified against Tinty 0.29.0 from the pinned nixpkgs input:
