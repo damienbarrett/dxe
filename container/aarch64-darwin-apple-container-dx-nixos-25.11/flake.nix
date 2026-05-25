@@ -107,6 +107,12 @@
         claude-code
         codex
         agy
+        # D-Bus + gnome-keyring are required for agy (Antigravity CLI) which
+        # stores OAuth tokens via the D-Bus Secret Service API
+        # (zalando/go-keyring).  Without a running keyring daemon,
+        # authentication is lost every session.
+        pkgs.dbus
+        pkgs.gnome-keyring
       ];
 
       # Imported NixVim configuration

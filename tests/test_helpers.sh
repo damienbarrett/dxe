@@ -77,6 +77,18 @@ assert_file_contains() {
     return 0
 }
 
+assert_file_contains_literal() {
+    local file="$1"
+    local literal="$2"
+    local message="${3:-File $file contains literal '$literal'}"
+    if grep -Fq "$literal" "$file" 2>/dev/null; then
+        test_pass "$message"
+    else
+        test_fail "$message"
+    fi
+    return 0
+}
+
 assert_file_not_contains() {
     local file="$1"
     local pattern="$2"

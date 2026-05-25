@@ -41,6 +41,25 @@ export SSL_CERT_FILE="${SSL_CERT_FILE:-$HOME/.nix-profile/etc/ssl/certs/ca-bundl
 export NIX_SSL_CERT_FILE="${NIX_SSL_CERT_FILE:-$SSL_CERT_FILE}"
 NIX_FLAGS=(--extra-experimental-features "nix-command flakes" --accept-flake-config)
 
+dbus_session_config() {
+    local dbus_bin
+    local dbus_real
+    local dbus_prefix
+
+    dbus_bin="$(command -v dbus-daemon)"
+    dbus_real="$(readlink -f "$dbus_bin")"
+    dbus_prefix="${dbus_real%/bin/dbus-daemon}"
+
+    if [ -f "$dbus_prefix/share/dbus-1/session.conf" ]; then
+        printf '%s\n' "$dbus_prefix/share/dbus-1/session.conf"
+    elif [ -f "$dbus_prefix/etc/dbus-1/session.conf" ]; then
+        printf '%s\n' "$dbus_prefix/etc/dbus-1/session.conf"
+    else
+        echo "Error: could not locate dbus session.conf for $dbus_bin." >&2
+        return 1
+    fi
+}
+
 echo "Updating nixpkgs-unstable..."
 nix flake update "${NIX_FLAGS[@]}" nixpkgs-unstable
 
@@ -61,6 +80,27 @@ ln -sfn /workspace/home/dx/.gemini ~/.gemini
 ln -sfn /workspace/home/dx/.claude ~/.claude
 ln -sfn /workspace/home/dx/.claude.json ~/.claude.json
 ln -sfn /workspace/home/dx/.codex ~/.codex
+
+# Persist keyring data (used by agy for OAuth tokens via D-Bus Secret Service)
+mkdir -p /workspace/home/dx/.local/share/keyrings
+mkdir -p ~/.local/share
+ln -sfnT /workspace/home/dx/.local/share/keyrings ~/.local/share/keyrings
+
+# Start D-Bus session + gnome-keyring if not already running, so agy can
+# persist OAuth tokens via the Secret Service API (zalando/go-keyring).
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+    env_file="$HOME/.dx-keyring-env"
+    if command -v dbus-daemon >/dev/null 2>&1 && command -v gnome-keyring-daemon >/dev/null 2>&1; then
+        dbus-daemon --config-file="$(dbus_session_config)" --fork --print-address > "$env_file.addr"
+        export DBUS_SESSION_BUS_ADDRESS="$(cat "$env_file.addr")"
+        rm -f "$env_file.addr"
+        echo -n '' | gnome-keyring-daemon --unlock --start --components=secrets 2>/dev/null || true
+        printf "export DBUS_SESSION_BUS_ADDRESS='%s'\n" "$DBUS_SESSION_BUS_ADDRESS" > "$env_file"
+        echo "D-Bus keyring service started for agy credential persistence."
+    else
+        echo "Warning: dbus-daemon or gnome-keyring-daemon not found. agy auth may not persist."
+    fi
+fi
 
 # Seed the dx-claude-statusline hook in Claude's settings.json without
 # clobbering existing keys. Only sets statusLine if it isn't already configured.

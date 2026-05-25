@@ -50,6 +50,21 @@ else
     test_fail "shell.nix configures lazygit config conditionally"
 fi
 
+if grep -q -- "split row.*--max" "$SHELL_NIX"; then
+    test_fail "nushell keyring env parsing avoids unsupported split row --max"
+else
+    test_pass "nushell keyring env parsing avoids unsupported split row --max"
+fi
+
+# Fish snippets live inside a Nix indented string, where two adjacent single
+# quotes terminate/escape the Nix string instead of representing a Fish empty
+# string literal. Use double quotes for empty Fish strings in this file.
+if sed -n '/programs\.fish =/,/programs\.nushell =/p' "$SHELL_NIX" | grep -E "string replace.*''" >/dev/null 2>&1; then
+    test_fail "fish shell init avoids Nix-breaking adjacent single quotes"
+else
+    test_pass "fish shell init avoids Nix-breaking adjacent single quotes"
+fi
+
 # ---------- Runtime checks (require running container) ----------
 
 if ! requires_container; then
