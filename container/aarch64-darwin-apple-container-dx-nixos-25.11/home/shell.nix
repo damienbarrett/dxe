@@ -48,9 +48,9 @@
       # Source D-Bus keyring env so agy can persist OAuth tokens
       if test -f "$HOME/.dx-keyring-env"
         for line in (grep '^export ' "$HOME/.dx-keyring-env")
-          set -l kv (string replace 'export ' '' -- $line)
-          set -l key (string replace -r '=.*' '' -- $kv)
-          set -l val (string replace -r '^[^=]+=' '' -- $kv | string trim --chars="'")
+          set -l kv (string replace 'export ' "" -- $line)
+          set -l key (string replace -r '=.*' "" -- $kv)
+          set -l val (string replace -r '^[^=]+=' "" -- $kv | string trim --chars="'")
           set -gx $key $val
         end
       end
@@ -112,10 +112,9 @@
       # Source D-Bus keyring env so agy can persist OAuth tokens
       let keyring_env = $"($nu.home-path)/.dx-keyring-env"
       if ($keyring_env | path exists) {
-        open $keyring_env | lines | where {|l| $l starts-with "export "} | each {|l|
-          let parts = ($l | str replace "export " "" | split row "=" --max 2)
-          let val = ($parts.1? | default "" | str replace --all "'" "")
-          load-env {($parts.0): $val}
+        open $keyring_env | lines | where {|l| $l starts-with "export "} | parse "export {key}={val}" | each {|row|
+          let val = ($row.val | str replace --all "'" "")
+          load-env {($row.key): $val}
         }
       }
       $env.PATH = ($env.PATH | split row (char esep) | append $"($nu.home-path)/.local/bin" | append $"($nu.home-path)/.nix-profile/bin")

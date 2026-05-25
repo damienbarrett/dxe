@@ -237,6 +237,25 @@ run_as_dx() {
     setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx PATH="/home/dx/.nix-profile/bin:$PATH" bash -l -c "$cmd"
 }
 
+dbus_session_config_for_dx() {
+    local dbus_bin
+    local dbus_real
+    local dbus_prefix
+
+    dbus_bin="$(run_as_dx 'command -v dbus-daemon')"
+    dbus_real="$(readlink -f "$dbus_bin")"
+    dbus_prefix="${dbus_real%/bin/dbus-daemon}"
+
+    if [ -f "$dbus_prefix/share/dbus-1/session.conf" ]; then
+        printf '%s\n' "$dbus_prefix/share/dbus-1/session.conf"
+    elif [ -f "$dbus_prefix/etc/dbus-1/session.conf" ]; then
+        printf '%s\n' "$dbus_prefix/etc/dbus-1/session.conf"
+    else
+        echo "Error: could not locate dbus session.conf for $dbus_bin." >&2
+        return 1
+    fi
+}
+
 ensure_nix_ownership() {
     local sentinel="/nix/.dx-owner-set"
     local dx_owner
@@ -320,7 +339,9 @@ setup_keyring_service() {
 
     # 2. Start a D-Bus session bus owned by dx
     local env_file="/home/dx/.dx-keyring-env"
-    run_as_dx "dbus-daemon --session --fork --print-address > '$env_file.addr'"
+    local dbus_config
+    dbus_config="$(dbus_session_config_for_dx)"
+    run_as_dx "dbus-daemon --config-file='$dbus_config' --fork --print-address > '$env_file.addr'"
     local bus_addr
     bus_addr="$(cat "$env_file.addr")"
     rm -f "$env_file.addr"

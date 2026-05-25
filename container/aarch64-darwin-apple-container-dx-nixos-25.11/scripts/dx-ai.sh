@@ -41,6 +41,25 @@ export SSL_CERT_FILE="${SSL_CERT_FILE:-$HOME/.nix-profile/etc/ssl/certs/ca-bundl
 export NIX_SSL_CERT_FILE="${NIX_SSL_CERT_FILE:-$SSL_CERT_FILE}"
 NIX_FLAGS=(--extra-experimental-features "nix-command flakes" --accept-flake-config)
 
+dbus_session_config() {
+    local dbus_bin
+    local dbus_real
+    local dbus_prefix
+
+    dbus_bin="$(command -v dbus-daemon)"
+    dbus_real="$(readlink -f "$dbus_bin")"
+    dbus_prefix="${dbus_real%/bin/dbus-daemon}"
+
+    if [ -f "$dbus_prefix/share/dbus-1/session.conf" ]; then
+        printf '%s\n' "$dbus_prefix/share/dbus-1/session.conf"
+    elif [ -f "$dbus_prefix/etc/dbus-1/session.conf" ]; then
+        printf '%s\n' "$dbus_prefix/etc/dbus-1/session.conf"
+    else
+        echo "Error: could not locate dbus session.conf for $dbus_bin." >&2
+        return 1
+    fi
+}
+
 echo "Updating nixpkgs-unstable..."
 nix flake update "${NIX_FLAGS[@]}" nixpkgs-unstable
 
@@ -72,7 +91,7 @@ ln -sfnT /workspace/home/dx/.local/share/keyrings ~/.local/share/keyrings
 if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
     env_file="$HOME/.dx-keyring-env"
     if command -v dbus-daemon >/dev/null 2>&1 && command -v gnome-keyring-daemon >/dev/null 2>&1; then
-        dbus-daemon --session --fork --print-address > "$env_file.addr"
+        dbus-daemon --config-file="$(dbus_session_config)" --fork --print-address > "$env_file.addr"
         export DBUS_SESSION_BUS_ADDRESS="$(cat "$env_file.addr")"
         rm -f "$env_file.addr"
         echo -n '' | gnome-keyring-daemon --unlock --start --components=secrets 2>/dev/null || true
