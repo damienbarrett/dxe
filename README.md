@@ -20,7 +20,8 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
    ```
    `dx` is a state-driven entrypoint: on first run it generates the SSH
    keypair, builds the image, creates persistent volumes, creates and starts
-   the container, syncs the bootstrap payload, waits for SSH, and connects.
+   the container, syncs the bootstrap payload as part of container start,
+   waits for SSH, and connects.
    On every later run it skips whatever already exists and reconnects. Each
    underlying lifecycle script is idempotent toward its end state, so `dx`
    is safe to run from any starting state.
@@ -81,8 +82,8 @@ operations.
 6. **Persistent volumes are protected by construction.** `/nix` and `/workspace`
    survive everything except `dx-factory-reset` (or an explicit
    `dx-destroy-volumes`).
-7. **The bootstrap payload is part of every start.** `dx` always runs
-   `dx-sync-bootstrap` after starting the container, so edits to
+7. **The bootstrap payload is part of every start.** `dx-start-container`
+   always runs `dx-sync-bootstrap` after ensuring the container is running, so edits to
    `home/*.nix` or `bootstrap.sh` land on the next `dx` without an image
    rebuild.
 8. **Layer cost informs default behaviour.** Volumes (hours to rebuild) are
@@ -111,7 +112,7 @@ fire-and-forget.
 
 | Wrapper | Composition |
 | --- | --- |
-| [`bin/dx`](bin/dx) | `create-keys → create-image → create-volumes → create-container → start-container → sync-bootstrap → wait-ssh → ssh` |
+| [`bin/dx`](bin/dx) | `create-keys → create-image → create-volumes → create-container → start-container → wait-ssh → ssh` |
 | [`bin/dx-destroy`](bin/dx-destroy) | `destroy-container → destroy-image` (preserves volumes and keys) |
 | [`bin/dx-recreate`](bin/dx-recreate) | `dx-destroy → exec dx` (preserves volumes and keys) |
 | [`bin/dx-factory-reset`](bin/dx-factory-reset) | prompts once, then `destroy-container → destroy-image → destroy-volumes --force → destroy-keys` |
@@ -142,7 +143,7 @@ or perform maintenance operations.
 | `dx-build` | `dx-create-image` | Now idempotent: skips when the image already exists. |
 | `dx-create` | `dx-create-container` | |
 | `dx-destroy` | `dx-destroy-container` | The old name now refers to an umbrella that destroys image AND container — see the Wrappers table. |
-| `dx-start` | `dx-start-container` | Bootstrap-payload sync moved out of `dx-start-container`; callers must run `dx-sync-bootstrap` explicitly (or just use `dx`). |
+| `dx-start` | `dx-start-container` | Now also syncs the bootstrap payload, so direct starts bring SSH up without a separate `dx-sync-bootstrap` step. |
 | `dx-stop` | `dx-stop-container` | |
 
 ## Configuration Variables
@@ -238,9 +239,9 @@ sudo /guest-bootstrap/bootstrap.sh
 ```
 
 The image does not contain the bootstrap repository. `dx-create-container`
-mounts a dedicated `dx-bootstrap` volume at `/guest-bootstrap`, and `dx` (or a
-direct `./bin/dx-sync-bootstrap`) copies the local container configuration into
-that volume at start time. After editing `container/.../flake.nix`,
+mounts a dedicated `dx-bootstrap` volume at `/guest-bootstrap`, and
+`dx-start-container` copies the local container configuration into that volume
+at start time. After editing `container/.../flake.nix`,
 `bootstrap.sh`, or related guest configuration, rerun `./bin/dx-sync-bootstrap`
 against a running container rather than rebuilding the image.
 

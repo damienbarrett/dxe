@@ -18,7 +18,6 @@ container_system_ensure_started
 "$SCRIPT_DIR/dx-create-volumes"
 "$SCRIPT_DIR/dx-create-container"
 "$SCRIPT_DIR/dx-start-container"
-"$SCRIPT_DIR/dx-sync-bootstrap"
 "$SCRIPT_DIR/dx-wait-ssh"
 
 exec "$SCRIPT_DIR/dx-ssh" "$@"

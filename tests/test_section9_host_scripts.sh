@@ -166,7 +166,7 @@ assert_file_contains "$BIN_DIR/dx-create-container" "dx_bootstrap_launch_command
 assert_file_exists "$BIN_DIR/dx-start-container" "dx-start-container exists"
 assert_file_exists "$BIN_DIR/dx-stop-container" "dx-stop-container exists"
 assert_file_contains "$BIN_DIR/dx-start-container" "already running; skipping" "dx-start-container is idempotent"
-assert_file_not_contains "$BIN_DIR/dx-start-container" "dx-sync-bootstrap" "dx-start-container does not couple to bootstrap sync"
+assert_file_contains "$BIN_DIR/dx-start-container" "dx-sync-bootstrap" "dx-start-container syncs bootstrap payload after ensuring runtime state"
 assert_file_contains "$BIN_DIR/dx-stop-container" "container_stop_bounded" "dx-stop-container uses bounded stop helper"
 
 # -----------------------------------------------------------------------------
@@ -201,7 +201,7 @@ assert_file_contains "$DX" "dx-create-image" "dx calls dx-create-image (builds i
 assert_file_contains "$DX" "dx-create-volumes" "dx calls dx-create-volumes"
 assert_file_contains "$DX" "dx-create-container" "dx calls dx-create-container"
 assert_file_contains "$DX" "dx-start-container" "dx calls dx-start-container"
-assert_file_contains "$DX" "dx-sync-bootstrap" "dx syncs bootstrap as an explicit step"
+assert_file_not_contains "$DX" "dx-sync-bootstrap" "dx delegates bootstrap sync to dx-start-container"
 assert_file_contains "$DX" "dx-wait-ssh" "dx waits for SSH"
 assert_file_contains "$DX" "dx-ssh" "dx connects via dx-ssh"
 assert_file_not_contains "$DX" "container_is_running" "dx does not branch on container state itself"
