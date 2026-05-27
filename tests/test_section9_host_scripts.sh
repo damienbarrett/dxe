@@ -179,6 +179,10 @@ assert_file_contains "$BIN_DIR/dx-lib.sh" "container_stop_bounded" "dx-lib provi
 assert_file_contains "$BIN_DIR/dx-lib.sh" "container kill" "dx-lib escalates stuck stops through container kill"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "container_runtime_pids" "dx-lib can find the host runtime process for one container"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "container_kill_runtime_process" "dx-lib has a targeted runtime-process fallback"
+# Observed on Apple Container 0.12.0:
+# container-runtime-linux start --root .../containers/dx-host --uuid dx-host
+assert_file_contains "$BIN_DIR/dx-lib.sh" "index(\$0, \"--uuid \" name)" "dx-lib searches the observed runtime --uuid container-name signature"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "searched: ps -axo pid=,command=" "dx-lib logs the runtime-process search when no PID is found"
 assert_file_contains "$DX_DESTROY_CONTAINER" "container_stop_bounded" "dx-destroy-container uses bounded stop helper"
 assert_file_contains "$DX_DESTROY_CONTAINER" "container delete --force" "dx-destroy-container force-deletes when stop cannot complete"
 

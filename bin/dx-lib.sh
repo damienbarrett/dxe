@@ -150,6 +150,8 @@ container_wait_stopped() {
 
 container_runtime_pids() {
     local name="$1"
+    # Apple Container 0.12.0 starts runtime processes like:
+    # container-runtime-linux start --root .../containers/dx-host --uuid dx-host
     ps -axo pid=,command= | awk -v name="$name" '
         $0 ~ /container-runtime-linux/ && index($0, "--uuid " name) { print $1 }
     '
@@ -162,6 +164,7 @@ container_kill_runtime_process() {
 
     if [ -z "$pids" ]; then
         echo "No host runtime process found for container $name." >&2
+        echo "  (searched: ps -axo pid=,command= for container-runtime-linux with --uuid $name)" >&2
         return 1
     fi
 
