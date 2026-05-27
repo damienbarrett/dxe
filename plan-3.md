@@ -45,28 +45,6 @@ if ! container exec "$DX_CONTAINER_NAME" sh -c \
 fi
 ```
 
-### 2. Improve the loop to track state
-
-Alternatively, track whether the loop found the marker via a flag, which avoids running the `container exec` check twice:
-
-```bash
-bootstrap_ready=0
-for _ in {1..30}; do
-    if container exec "$DX_CONTAINER_NAME" sh -c \
-        'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready"' \
-        -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1; then
-        bootstrap_ready=1
-        break
-    fi
-    sleep 1
-done
-
-if [ "$bootstrap_ready" -eq 0 ]; then
-    echo "Error: Container $DX_CONTAINER_NAME entrypoint never became ready after 30s." >&2
-    echo "  The container may have crashed. Check with: container logs $DX_CONTAINER_NAME" >&2
-    exit 1
-fi
-```
 
 ### 3. Update the test assertion
 

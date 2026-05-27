@@ -94,6 +94,7 @@ fi
 
 assert_file_contains "$DX_SSH" "LogLevel=ERROR" "dx-ssh suppresses noisy known-host warnings"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_SSH_CONNECT_TIMEOUT=.*15" "dx-lib exposes 15s SSH connect timeout"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_BOOTSTRAP_WAIT_TIMEOUT=.*30" "dx-lib exposes bootstrap marker wait timeout"
 assert_file_contains "$DX_SSH" "ConnectTimeout=\$DX_SSH_CONNECT_TIMEOUT" "dx-ssh uses a bounded connect timeout"
 
 if grep -q "base64 -d | bash -l" "$DX_SSH"; then
@@ -123,6 +124,8 @@ assert_file_contains "$DX_SYNC_BOOTSTRAP" "DX_BOOTSTRAP_PATH" "dx-sync-bootstrap
 assert_file_contains "$DX_SYNC_BOOTSTRAP" ".dx-bootstrap-ready" "dx-sync-bootstrap marks payload ready after copy"
 assert_file_contains "$DX_SYNC_BOOTSTRAP" "Unsafe DX_BOOTSTRAP_PATH" "dx-sync-bootstrap rejects unsafe guest paths"
 assert_file_contains "$DX_SYNC_BOOTSTRAP" ".dx-bootstrap-waiting" "dx-sync-bootstrap waits for guest readiness marker"
+assert_file_contains "$DX_SYNC_BOOTSTRAP" "never became ready" "dx-sync-bootstrap exits with error if container entrypoint never becomes ready"
+assert_file_contains "$DX_SYNC_BOOTSTRAP" "container logs" "dx-sync-bootstrap points to container logs when entrypoint readiness times out"
 assert_file_not_contains "$DX_SYNC_BOOTSTRAP" "DX_BOOTSTRAP_WAIT_FOR_GUEST" "dx-sync-bootstrap self-detects wait state without env-var coupling"
 assert_file_not_contains "$DX_SYNC_BOOTSTRAP" "find \"\$dest\"" "dx-sync-bootstrap avoids nonessential guest dependencies"
 assert_file_contains "$DX_SYNC_BOOTSTRAP" "COPYFILE_DISABLE=1" "dx-sync-bootstrap suppresses macOS tar metadata"

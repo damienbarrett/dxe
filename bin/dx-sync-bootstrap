@@ -29,10 +29,10 @@ fi
 # Self-detect bootstrap state. A freshly-started container needs a moment to
 # enter its "waiting for payload" state before the payload can be pushed. An
 # already-warm container that has already received a payload will have the
-# .dx-bootstrap-ready marker present. Wait up to 30s for either marker before
-# proceeding so the script works whether called right after start or against a
-# long-running container, with no env-var coordination required.
-for _ in {1..30}; do
+# .dx-bootstrap-ready marker present. Wait for either marker before proceeding
+# so the script works whether called right after start or against a long-running
+# container, with no env-var coordination required.
+for _ in $(seq 1 "$DX_BOOTSTRAP_WAIT_TIMEOUT"); do
     if container exec "$DX_CONTAINER_NAME" sh -c \
         'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready"' \
         -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1; then
@@ -40,6 +40,14 @@ for _ in {1..30}; do
     fi
     sleep 1
 done
+
+if ! container exec "$DX_CONTAINER_NAME" sh -c \
+    'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready"' \
+    -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1; then
+    echo "Error: Container $DX_CONTAINER_NAME entrypoint never became ready after ${DX_BOOTSTRAP_WAIT_TIMEOUT}s." >&2
+    echo "  The container may have crashed. Check with: container logs $DX_CONTAINER_NAME" >&2
+    exit 1
+fi
 
 if [ ! -f "$DX_BOOTSTRAP_SOURCE/bootstrap.sh" ]; then
     echo "Error: Bootstrap source $DX_BOOTSTRAP_SOURCE/bootstrap.sh does not exist." >&2
