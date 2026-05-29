@@ -135,6 +135,23 @@ assert_file_contains "$DX_SYNC_BOOTSTRAP" "chmod -R a+rX" "dx-sync-bootstrap nor
 assert_file_contains "$DX_SYNC_BOOTSTRAP" "id -u dx" "dx-sync-bootstrap chowns payload when dx exists"
 
 # -----------------------------------------------------------------------------
+# dx-reclaim
+# -----------------------------------------------------------------------------
+
+DX_RECLAIM="$BIN_DIR/dx-reclaim"
+assert_file_exists "$DX_RECLAIM" "dx-reclaim exists"
+assert_file_contains "$DX_RECLAIM" "source \"\$SCRIPT_DIR/dx-lib.sh\"" "dx-reclaim uses shared script library"
+assert_file_contains "$DX_RECLAIM" "container_is_running \"\$DX_CONTAINER_NAME\"" "dx-reclaim requires the configured container to be running"
+assert_file_contains "$DX_RECLAIM" "DX_CONTAINER_VOLUME_DIR" "dx-reclaim uses configurable host volume directory"
+assert_file_contains "$DX_RECLAIM" "DX_NIX_VOLUME" "dx-reclaim uses configured Nix volume name"
+assert_file_contains "$DX_RECLAIM" "DX_WORKSPACE_VOLUME" "dx-reclaim uses configured workspace volume name"
+assert_file_contains "$DX_RECLAIM" "DX_NIX_MOUNT" "dx-reclaim trims the configured Nix mount"
+assert_file_contains "$DX_RECLAIM" "DX_WORKSPACE_PATH" "dx-reclaim trims the configured workspace mount"
+assert_file_contains "$DX_RECLAIM" "nix-collect-garbage -d" "dx-reclaim deletes old Nix generations"
+assert_file_contains "$DX_RECLAIM" "fstrim -v" "dx-reclaim returns free blocks to sparse host images"
+assert_file_contains "$DX_RECLAIM" "du -sh" "dx-reclaim reports host sparse image usage"
+
+# -----------------------------------------------------------------------------
 # Layer model: every layer has a create/destroy pair, every create is idempotent
 # -----------------------------------------------------------------------------
 

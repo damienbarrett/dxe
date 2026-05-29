@@ -36,6 +36,9 @@ assert_grep_in_file "$LIB_SH" \
 assert_grep_in_file "$LIB_SH" \
     "DX_NIX_VOLUME=.*dx-nix" \
     "dx-lib.sh declares DX_NIX_VOLUME (default dx-nix)"
+assert_grep_in_file "$LIB_SH" \
+    "DX_NIX_MOUNT=.*/nix" \
+    "dx-lib.sh declares DX_NIX_MOUNT (default /nix)"
 
 assert_grep_in_file "$DX_CREATE" \
     "DX_WORKSPACE_VOLUME" \

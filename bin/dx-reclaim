@@ -1,0 +1,87 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+rule() {
+    printf '%s\n' "------------------------------------------------------------"
+}
+
+volume_image_path() {
+    local volume="$1"
+    printf '%s\n' "$DX_CONTAINER_VOLUME_DIR/$volume/volume.img"
+}
+
+host_image_size() {
+    local image="$1"
+    if [ ! -f "$image" ]; then
+        printf 'missing'
+        return 0
+    fi
+
+    du -sh "$image" 2>/dev/null | cut -f1
+}
+
+run_in_guest() {
+    container exec "$DX_CONTAINER_NAME" sh -lc "$1"
+}
+
+report_host_images() {
+    echo "Host sparse image usage:"
+    printf '  %-14s %s\n' "$DX_NIX_VOLUME" "$(host_image_size "$(volume_image_path "$DX_NIX_VOLUME")")"
+    printf '  %-14s %s\n' "$DX_WORKSPACE_VOLUME" "$(host_image_size "$(volume_image_path "$DX_WORKSPACE_VOLUME")")"
+}
+
+report_guest_filesystems() {
+    echo "Guest filesystem usage:"
+    container exec "$DX_CONTAINER_NAME" sh -lc '
+        printf "  %-14s %s\n" "$1/store" "$(du -sh "$1/store" 2>/dev/null | cut -f1)"
+        df -h "$@" | sed "s/^/  /"
+    ' sh "$DX_NIX_MOUNT" "$DX_WORKSPACE_PATH"
+}
+
+report_usage() {
+    report_host_images
+    echo
+    report_guest_filesystems
+}
+
+trim_mount() {
+    local mount_path="$1"
+    container exec "$DX_CONTAINER_NAME" sh -lc '
+        if fstrim -v "$1"; then
+            exit 0
+        fi
+        echo "$1: trim not supported"
+    ' sh "$mount_path"
+}
+
+if ! container_is_running "$DX_CONTAINER_NAME"; then
+    echo "Error: Container $DX_CONTAINER_NAME is not running. Start it first." >&2
+    exit 1
+fi
+
+rule
+echo "Before"
+rule
+report_usage
+
+rule
+echo "Running Nix garbage collection in guest..."
+rule
+run_in_guest "nix-collect-garbage -d"
+
+rule
+echo "Trimming guest filesystems..."
+rule
+trim_mount "$DX_NIX_MOUNT"
+trim_mount "$DX_WORKSPACE_PATH"
+
+rule
+echo "After"
+rule
+report_usage
+
+rule
+echo "Reclaim complete."
