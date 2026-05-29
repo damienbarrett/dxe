@@ -85,6 +85,13 @@ assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?yazi" "yazi preserved in flake.nix"
 assert_file_contains "$TOOLS_NIX" "set -g display-panes-time 3000" "tmux display panes timeout is 3s"
 assert_file_contains "$TOOLS_NIX" "set -g base-index 1" "tmux windows use 1-based indexing"
 assert_file_contains "$TOOLS_NIX" "set -g renumber-windows on" "tmux renumbers windows on close"
+assert_file_contains "$TOOLS_NIX" "set-option -g main-pane-width 50%" "tmux main pane width is 50 percent"
+assert_file_contains "$TOOLS_NIX" 'bind -N "Switch to tiled layout" + select-layout tiled' "tmux prefix plus selects tiled layout"
+assert_file_contains "$TOOLS_NIX" 'bind -N "Promote selected pane to main pane" a select-layout main-vertical' "tmux prefix a selects main-vertical layout"
+assert_file_contains "$TOOLS_NIX" "display-panes \"swap-pane -s .%% -t .1" "tmux prefix-a shows pane picker that swaps into the main pane"
+assert_file_contains_literal "$TOOLS_NIX" \
+    'bind -N "Choose window with activity or bell" b choose-tree -Zw -f "#{||:#{window_activity_flag},#{window_bell_flag}}"' \
+    "tmux activity picker remains bound on prefix-b"
 
 # Test: Yazi cwd helpers are configured for interactive container shells
 assert_file_contains "$SHELL_NIX" "function y()" "bash yazi cwd helper is configured"

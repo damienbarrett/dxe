@@ -31,6 +31,7 @@
       set -g history-limit 50000
       set -g base-index 1
       set -g renumber-windows on
+      set-option -g main-pane-width 50%
       set -g status-position top
       set -g visual-activity off
       setw -g pane-base-index 1
@@ -58,7 +59,9 @@
       bind -N "Open scratch shell popup" P display-popup -E -w 80% -h 80% -d "#{pane_current_path}" -T "scratch"
       bind -N "Open lazygit popup" g if-shell 'command -v lazygit >/dev/null 2>&1' 'display-popup -E -w 90% -h 90% -d "#{pane_current_path}" -T "lazygit" lazygit' 'display-message "lazygit not found"'
       bind -N "Choose session, window, or pane" w choose-tree -Zw
-      bind -N "Choose window with activity or bell" a choose-tree -Zw -f "#{||:#{window_activity_flag},#{window_bell_flag}}"
+      bind -N "Choose window with activity or bell" b choose-tree -Zw -f "#{||:#{window_activity_flag},#{window_bell_flag}}"
+      bind -N "Switch to tiled layout" + select-layout tiled
+      bind -N "Promote selected pane to main pane" a select-layout main-vertical \; display-panes "swap-pane -s .%% -t .1 \; select-pane -t .1"
 
       # Vi-style copy mode with OSC52 clipboard support.
       setw -g mode-keys vi

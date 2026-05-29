@@ -52,9 +52,11 @@ show the configured prefix-key help.
 | `Ctrl-Space P` | Open a scratch shell popup in the current directory. Exit the shell to close it. |
 | `Ctrl-Space g` | Open `lazygit` in a popup in the current directory. |
 | `Ctrl-Space w` | Open the tmux session/window/pane picker. |
-| `Ctrl-Space a` | Open the picker filtered to windows with tmux activity or bell flags. This is useful when background windows have produced output; it may be empty when nothing has changed. |
+| `Ctrl-Space b` | Open the picker filtered to windows with tmux activity or bell flags. This is useful when background windows have produced output; it may be empty when nothing has changed. |
 | `Ctrl-Space [` | Enter tmux copy mode. Use `v` to begin selection, `V` to select a line, `Ctrl-v` for rectangle selection, and `y` to copy and exit. |
 | `Ctrl-Space ]` | Paste the most recent tmux buffer. |
+| `Ctrl-Space +` | Switch the current tmux window to the tiled layout. |
+| `Ctrl-Space a` | Switch to the main-vertical layout, show pane numbers, and swap the selected pane into the main slot. Press `Escape` to leave the layout unchanged. |
 
 ## Lifecycle Layers
 
@@ -135,6 +137,32 @@ or perform maintenance operations.
 | [`bin/dx-export`](bin/dx-export) | Archives the container to a tar file. |
 | [`bin/dx-nix-disk`](bin/dx-nix-disk) | Prepares a sparse Nix disk image; lifecycle-adjacent storage prep. |
 | [`container/.../bootstrap.sh`](container/aarch64-darwin-apple-container-dx-nixos-25.11/bootstrap.sh) | Runs inside the guest from the synced payload; configures `/nix`, the `dx` user, SSH, Home Manager, shell, tmux, and tools. |
+
+### Reclaiming host disk space
+
+Apple Container stores named volumes as sparse host images. The apparent size
+of those images can stay high after the guest deletes data until the guest
+filesystem reports its free blocks back to the host. `dx-reclaim` handles that
+maintenance path for the DX volumes:
+
+```bash
+./bin/dx-reclaim
+```
+
+Run it when the `dx-nix` or `dx-workspace` volume has grown noticeably and you
+want to return unused space to macOS. The container must already be running.
+
+`dx-reclaim` prints host sparse-image usage and guest filesystem usage before
+and after the operation. It then:
+
+1. Deletes old Nix generations inside the guest with `nix-collect-garbage -d`.
+2. Runs `fstrim -v` on `/nix` and `/workspace` so already-free blocks can be
+   discarded from the sparse host images.
+
+This does not delete workspace files. It removes only unreferenced Nix store
+paths and discards blocks the guest filesystem has already marked free. It is
+reasonable to run occasionally after large rebuilds or dependency churn, but it
+does not need to run constantly or on a tight schedule.
 
 ### Migration from earlier versions
 
