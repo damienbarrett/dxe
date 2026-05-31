@@ -352,6 +352,12 @@ apply_tmux_pills() {
   conditional_pill() {
     printf '#{?%s,%s ,}' "$1" "$(pill "$2" "$3")"
   }
+  # Like pill but uses spaces instead of commas in #[] attribute blocks.
+  # Safe to embed inside #{?cond,TRUE,FALSE} — commas there are delimiters.
+  safe_pill() {
+    printf '#[fg=#%s bg=#%s]%s#[fg=#%s bg=#%s bold]%s#[fg=#%s bg=#%s nobold noitalics nounderscore]%s' \
+      "$1" "$base00" "$cap_l" "$base00" "$1" "$2" "$1" "$base00" "$cap_r"
+  }
 
   local session_pill sync_pill prefix_pill time_pill date_pill
   session_pill="$(pill "$base0D" ' #S ')"
@@ -364,6 +370,10 @@ apply_tmux_pills() {
   local inactive_window active_window
   inactive_window="$(dim_pill "$base01" "$window_label")"
   active_window="$(pill "$base0A" "$window_label")"
+
+  local active_pane_status inactive_pane_status
+  active_pane_status="$(safe_pill "$base0A" ' #{b:pane_current_path} ')"
+  inactive_pane_status="$(safe_pill "$base0C" ' #{b:pane_current_path} ')"
 
   # Apply every option in one tmux IPC round-trip via source-file.
   # Sixteen separate `tmux set-option` calls collapse to one.
@@ -384,8 +394,14 @@ set-option -gq status-right "${sync_pill}${prefix_pill}${time_pill} ${date_pill}
 set-window-option -gq window-status-style "fg=#$base05,bg=#$base00"
 set-window-option -gq window-status-current-style "fg=#$base0A,bg=#$base00"
 set-window-option -gq window-status-separator " "
+set-window-option -gq window-status-activity-style "fg=#$base05,bg=#$base00"
+set-window-option -gq window-status-bell-style "fg=#$base08,bg=#$base00"
 set-window-option -gq window-status-format "$inactive_window"
 set-window-option -gq window-status-current-format "$active_window"
+set-option -gq pane-border-status bottom
+set-option -gq pane-border-format "#[align=right]#{?pane_active,$active_pane_status,$inactive_pane_status}"
+set-option -gq pane-active-border-style "fg=#$base0A,bg=#$base00,bold"
+set-option -gq pane-border-style "fg=#$base03,bg=#$base00"
 EOF
   tmux source-file "$conf" >/dev/null 2>&1 || true
 }

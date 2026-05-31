@@ -167,6 +167,15 @@ assert_file_contains "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" "set-option -gq status
 assert_file_contains_literal "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" \
     'set-option -gq status-style "fg=#$base05,bg=#$base00"' \
     "apply_tmux_pills derives status-style from the Base16 palette"
+# Activity/bell style overrides: without these, tmux's default `reverse`
+# attribute flips fg/bg on the Powerline cap glyphs, turning rounded pills
+# into square-edged blocks whenever a window has unseen activity or a bell.
+assert_file_contains_literal "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" \
+    'window-status-activity-style' \
+    "apply_tmux_pills sets window-status-activity-style (prevents reverse breaking pill caps)"
+assert_file_contains_literal "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" \
+    'window-status-bell-style' \
+    "apply_tmux_pills sets window-status-bell-style (prevents reverse breaking pill caps)"
 # After the rename, only `accent_*` names should appear; `purple_*` was
 # a misleading carry-over from the original gruvbox-only color palette.
 assert_file_not_contains "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" "purple_primary" \
@@ -289,11 +298,37 @@ else
 fi
 assert_file_exists "$DX_PILL_PROBE_OUT" "apply_tmux_pills issues a tmux source-file call"
 assert_file_contains_literal "$DX_PILL_PROBE_OUT" \
+    'set-option -gq pane-border-status bottom' \
+    "sourced config sets pane-border-status to bottom"
+assert_file_contains_literal "$DX_PILL_PROBE_OUT" \
+    'pane-border-format "#[align=right]#{?pane_active,' \
+    "pane-border-format right-aligns pill and uses conditional for active/inactive"
+assert_file_contains_literal "$DX_PILL_PROBE_OUT" \
+    'bg=#fabd2f bold]' \
+    "active pane label uses space-separated attrs (comma-safe for #{?} conditionals)"
+assert_file_contains_literal "$DX_PILL_PROBE_OUT" \
+    'pane-active-border-style "fg=#fabd2f,bg=#1d2021,bold"' \
+    "pane-active-border-style sets bg to base00 so pill caps blend correctly"
+assert_file_contains_literal "$DX_PILL_PROBE_OUT" \
+    'pane-border-style "fg=#' \
+    "pane-border-style is set (inactive pane border uses palette fg)"
+assert_file_contains_literal "$DX_PILL_PROBE_OUT" \
+    'pane-border-style "fg=#504945,bg=#1d2021"' \
+    "pane-border-style sets bg to base00 so pill caps blend on inactive panes"
+assert_file_contains_literal "$DX_PILL_PROBE_OUT" \
     'set-option -gq status-position top' \
     "sourced config pins status-position top"
 assert_file_contains_literal "$DX_PILL_PROBE_OUT" \
     'set-option -gq status-style "fg=#d5c4a1,bg=#1d2021"' \
     "sourced config derives status-style from the Base16 palette"
+# Captured activity/bell styles must use explicit palette colors (not the
+# default tmux `reverse`) so Powerline pill caps render correctly.
+assert_file_contains_literal "$DX_PILL_PROBE_OUT" \
+    'window-status-activity-style "fg=#d5c4a1,bg=#1d2021"' \
+    "sourced config sets window-status-activity-style to bar palette (not reverse)"
+assert_file_contains_literal "$DX_PILL_PROBE_OUT" \
+    'window-status-bell-style "fg=#fb4934,bg=#1d2021"' \
+    "sourced config sets window-status-bell-style to base08 accent on bar bg"
 # SYNC pill: gated on tmux's synchronize-panes predicate, colored from
 # base08 (red slot). Asserting the predicate name keeps a future
 # refactor from quietly flipping the condition.
@@ -448,7 +483,7 @@ shades-of-purple=base16-shades-of-purple'
         dx-theme dark >/dev/null
         dx-theme light >/dev/null
         # Light scheme bg should now be in status-style; the dark bg should not.
-        light_bg="$(awk -F\" "/^base00/ {print \$2; exit}" ~/.config/starship.toml | tr -d "#")"
+        light_bg="$(grep "^base00" ~/.config/starship.toml | cut -d"\"" -f2 | tr -d "#" | head -n1)"
         style="$(tmux -L dx-toctou-test show-options -gv status-style)"
         printf "%s" "$style" | grep -qi "bg=#$light_bg"
     '; then
