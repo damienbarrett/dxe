@@ -7,8 +7,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-FLAKE_NIX="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11/flake.nix"
 NVIM_DIR="$BASE_DIR/nvim"
 
 test_section "Section 7: Remove lazy.nvim"
@@ -58,6 +56,18 @@ if [ -d "$NVIM_DIR" ]; then
     fi
 else
     test_pass "nvim/ directory removed"
+fi
+
+if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+    test_skip "NixVim live launch skipped by --skip-integration"
+elif ! requires_container; then
+    :
+elif ! wait_for_ssh 60; then
+    test_fail "SSH not reachable on localhost:$DX_SSH_PORT"
+elif guest_bash "nvim --headless +q >/dev/null"; then
+    test_pass "built NixVim starts headlessly in the live guest"
+else
+    test_fail "built NixVim starts headlessly in the live guest"
 fi
 
 print_summary

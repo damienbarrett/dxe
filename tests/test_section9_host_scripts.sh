@@ -56,7 +56,6 @@ if [ "$SYNTAX_FAILED" -eq 0 ]; then
 fi
 
 # Test: bootstrap.sh also passes syntax check
-BOOTSTRAP="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11/bootstrap.sh"
 if bash -n "$BOOTSTRAP" 2>/dev/null; then
     test_pass "bootstrap.sh passes bash -n syntax check"
 else

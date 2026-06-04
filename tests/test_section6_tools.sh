@@ -9,7 +9,6 @@ source "$SCRIPT_DIR/test_helpers.sh"
 
 test_section "Section 6: Improve Guest Tooling"
 
-SHELL_NIX="$CONTAINER_DIR/home/shell.nix"
 TOOLS_NIX="$CONTAINER_DIR/home/tools.nix"
 DX_AI_SCRIPT="$CONTAINER_DIR/scripts/dx-ai.sh"
 
@@ -121,7 +120,7 @@ assert_file_contains "$FLAKE_NIX" '"ai-tools"' "ai-tools package output exists"
 assert_grep_in_file "$FLAKE_NIX" "paths = aiPackages;" "ai-tools package uses aiPackages"
 assert_grep_in_file "$FLAKE_NIX" "aiPackages = with unstable;" "aiPackages use unstable package set"
 assert_file_exists "$DX_AI_SCRIPT" "guest dx-ai script exists"
-if git -C "$BASE_DIR" ls-files --error-unmatch "container/aarch64-darwin-apple-container-dx-nixos-25.11/scripts/dx-ai.sh" >/dev/null 2>&1; then
+if git -C "$BASE_DIR" ls-files --error-unmatch "${DX_AI_SCRIPT#$BASE_DIR/}" >/dev/null 2>&1; then
     test_pass "guest dx-ai script is tracked for flake source inclusion"
 else
     test_fail "guest dx-ai script is tracked for flake source inclusion"
@@ -177,6 +176,30 @@ assert_file_contains "$SHELL_NIX" "agy = \\\"agy --dangerously-skip-permissions\
 assert_file_contains "$SHELL_NIX" "claude = \\\"claude --dangerously-skip-permissions\\\"" "shell.nix configures claude with --dangerously-skip-permissions"
 assert_file_contains "$SHELL_NIX" "codex = \\\"codex --dangerously-bypass-approvals-and-sandbox\\\"" "shell.nix configures codex with --dangerously-bypass-approvals-and-sandbox"
 assert_file_contains "$SHELL_NIX" "gemini = \\\"gemini --yolo\\\"" "shell.nix configures gemini with --yolo"
+
+if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+    test_skip "guest tool live checks skipped by --skip-integration"
+elif ! requires_container; then
+    :
+elif ! wait_for_ssh 60; then
+    test_fail "SSH not reachable on localhost:$DX_SSH_PORT"
+else
+    for tool_check in \
+        "nix --version" \
+        "git --version" \
+        "gh --version" \
+        "tmux -V" \
+        "yazi --version" \
+        "lazygit --version" \
+        "nvim --headless +q"
+    do
+        if guest_bash "$tool_check >/dev/null"; then
+            test_pass "guest tool runs: $tool_check"
+        else
+            test_fail "guest tool runs: $tool_check"
+        fi
+    done
+fi
 
 print_summary
 exit_with_code

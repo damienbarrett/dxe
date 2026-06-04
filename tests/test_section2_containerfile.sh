@@ -7,9 +7,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONTAINERFILE="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11/Containerfile"
-
 test_section "Section 2: Make The Containerfile Lightweight"
 
 # Test: Containerfile exists

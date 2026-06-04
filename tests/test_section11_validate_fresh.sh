@@ -29,8 +29,8 @@ fi
 
 # Test: dx-create-container works (or container already exists)
 echo "  Running: dx-create-container"
-if container ls | grep -qw "dx-host"; then
-    test_pass "dx-host container exists"
+if container_is_running "$DX_CONTAINER_NAME" || container_exists "$DX_CONTAINER_NAME"; then
+    test_pass "$DX_CONTAINER_NAME container exists"
 else
     if "$BIN_DIR/dx-create-container" >/dev/null 2>&1; then
         test_pass "dx-create-container completes successfully"
@@ -60,7 +60,7 @@ fi
 
 # Test: dx-ssh works with nvim
 echo "  Running: dx-ssh 'nvim --headless +q'"
-if "$BIN_DIR/dx-ssh" "nvim --headless +q" >/dev/null 2>&1; then
+if guest_bash "nvim --headless +q" >/dev/null 2>&1; then
     test_pass "dx-ssh works with nvim"
 else
     test_fail "dx-ssh works with nvim"
@@ -68,7 +68,7 @@ fi
 
 # Test: dx-ssh exposes lazygit in the guest runtime
 echo "  Running: dx-ssh 'command -v lazygit && lazygit --version'"
-if "$BIN_DIR/dx-ssh" "command -v lazygit >/dev/null && lazygit --version" >/dev/null 2>&1; then
+if guest_bash "command -v lazygit >/dev/null && lazygit --version" >/dev/null 2>&1; then
     test_pass "dx-ssh exposes lazygit in the guest runtime"
 else
     test_fail "dx-ssh exposes lazygit in the guest runtime"
@@ -76,7 +76,7 @@ fi
 
 # Test: tmux session can be created
 echo "  Running: dx-ssh tmux new-session test"
-if "$BIN_DIR/dx-ssh" "tmux new-session -d -s smoke true || true" >/dev/null 2>&1; then
+if guest_bash "tmux new-session -d -s smoke true || true" >/dev/null 2>&1; then
     test_pass "tmux session can be created via dx-ssh"
 else
     test_fail "tmux session can be created via dx-ssh"
@@ -84,12 +84,12 @@ fi
 
 # Test: source files survive stop/start
 echo "  Testing persistence: creating file, stopping, starting, checking"
-"$BIN_DIR/dx-ssh" "touch /workspace/persistence_test_file" >/dev/null 2>&1
+guest_bash "touch /workspace/persistence_test_file" >/dev/null 2>&1
 "$BIN_DIR/dx-stop-container" >/dev/null 2>&1
 sleep 5
 "$BIN_DIR/dx-start-container" >/dev/null 2>&1
 sleep 10
-if "$BIN_DIR/dx-ssh" "test -f /workspace/persistence_test_file" >/dev/null 2>&1; then
+if guest_bash "test -f /workspace/persistence_test_file" >/dev/null 2>&1; then
     test_pass "source files survive dx-stop-container and dx-start-container"
 else
     test_fail "source files survive dx-stop-container and dx-start-container"

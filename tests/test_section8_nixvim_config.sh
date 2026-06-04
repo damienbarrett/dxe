@@ -71,5 +71,17 @@ else
     test_skip "nix not available, skipping flake check"
 fi
 
+if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+    test_skip "NixVim live launch skipped by --skip-integration"
+elif ! requires_container; then
+    :
+elif ! wait_for_ssh 60; then
+    test_fail "SSH not reachable on localhost:$DX_SSH_PORT"
+elif guest_bash "nvim --headless +q >/dev/null"; then
+    test_pass "built NixVim starts headlessly in the live guest"
+else
+    test_fail "built NixVim starts headlessly in the live guest"
+fi
+
 print_summary
 exit_with_code

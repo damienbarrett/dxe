@@ -20,7 +20,13 @@ source "$SCRIPT_DIR/../bin/dx-lib.sh"
 BASE_DIR="$DX_PROJECT_ROOT"
 CONTAINER_DIR="$DX_CONTEXT_DIR"
 FLAKE_NIX="$CONTAINER_DIR/flake.nix"
+FLAKE_LOCK="$CONTAINER_DIR/flake.lock"
 NIXVIM_NIX="$CONTAINER_DIR/nixvim.nix"
+BOOTSTRAP="$CONTAINER_DIR/bootstrap.sh"
+CONTAINERFILE="$CONTAINER_DIR/Containerfile"
+SHELL_NIX="$CONTAINER_DIR/home/shell.nix"
+DX_EXPECTED_NIXOS_RELEASE="${DX_EXPECTED_NIXOS_RELEASE:-25.11}"
+DX_EXPECTED_NIXOS_BRANCH="${DX_EXPECTED_NIXOS_BRANCH:-nixos-$DX_EXPECTED_NIXOS_RELEASE}"
 
 # Test assertion functions
 assert_true() {
@@ -151,8 +157,8 @@ test_section() {
 
 # Requires running container
 requires_container() {
-    if ! container list | awk '{print $1}' | grep -x -q "dx-host"; then
-        echo -e "  ${YELLOW}○ SKIP${NC}: Container 'dx-host' is not running"
+    if ! container_is_running "$DX_CONTAINER_NAME" 2>/dev/null; then
+        test_skip "Container '$DX_CONTAINER_NAME' is not running"
         return 1
     fi
     return 0
@@ -161,12 +167,12 @@ requires_container() {
 # Global failure tracker
 GLOBAL_FAILED=0
 
-# Wait for SSH to be available on localhost:2222
+# Wait for SSH to be available on the active profile port.
 wait_for_ssh() {
     local timeout="${1:-180}"
-    echo "  Waiting for guest bootstrap (up to ${timeout}s)..."
+    echo "  Waiting for guest bootstrap on localhost:$DX_SSH_PORT (up to ${timeout}s)..."
     for i in $(seq 1 "$timeout"); do
-        if nc -z localhost 2222 2>/dev/null; then
+        if nc -z localhost "$DX_SSH_PORT" 2>/dev/null; then
             echo "  Guest bootstrap complete (SSH port is open)."
             return 0
         fi
@@ -174,6 +180,22 @@ wait_for_ssh() {
     done
     echo "  Timeout waiting for SSH."
     return 1
+}
+
+guest_ssh() {
+    "$BASE_DIR/bin/dx-ssh" "$@"
+}
+
+guest_bash() {
+    guest_ssh "$1"
+}
+
+container_exec_dx() {
+    container exec -u dx "$DX_CONTAINER_NAME" "$@"
+}
+
+container_exec_dx_bash() {
+    container_exec_dx bash -lc "$1"
 }
 
 # Summary

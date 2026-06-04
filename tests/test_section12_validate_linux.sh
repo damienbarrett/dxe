@@ -8,10 +8,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BOOTSTRAP="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11/bootstrap.sh"
-FLAKE_DIR="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11"
-
 test_section "Section 12: Validate Host-Agnostic Guest Bootstrap"
 
 assert_profile_command_present() {
@@ -64,7 +60,7 @@ fi
 # Test: Nix tools install through flake
 echo "  Testing: nix profile add from flake"
 rm -rf /tmp/test-dx-profile /tmp/test-dx-ai-profile
-if nix profile add --profile /tmp/test-dx-profile "$FLAKE_DIR#default" \
+if nix profile add --profile /tmp/test-dx-profile "$CONTAINER_DIR#default" \
     --extra-experimental-features "nix-command flakes" --accept-flake-config >/dev/null 2>&1; then
     test_pass "Nix tools install through flake"
 else
@@ -79,7 +75,7 @@ assert_profile_command_absent /tmp/test-dx-profile agy "agy absent from default 
 
 # Test: AI CLI tools install through the opt-in package output
 echo "  Testing: nix profile add from ai-tools output"
-if nix profile add --profile /tmp/test-dx-ai-profile "$FLAKE_DIR#ai-tools" \
+if nix profile add --profile /tmp/test-dx-ai-profile "$CONTAINER_DIR#ai-tools" \
     --extra-experimental-features "nix-command flakes" --accept-flake-config >/dev/null 2>&1; then
     test_pass "Nix AI tools install through flake"
 else

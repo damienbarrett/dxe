@@ -17,7 +17,6 @@ source "$SCRIPT_DIR/test_helpers.sh"
 LIB_SH="$BASE_DIR/bin/dx-lib.sh"
 DX_CREATE="$BASE_DIR/bin/dx-create-container"
 DX_CREATE_VOLUMES="$BASE_DIR/bin/dx-create-volumes"
-SHELL_NIX="$CONTAINER_DIR/home/shell.nix"
 
 test_section "Section 16: Workspace Persistence"
 

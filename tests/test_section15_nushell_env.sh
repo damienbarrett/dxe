@@ -11,8 +11,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-SHELL_NIX="$CONTAINER_DIR/home/shell.nix"
-
 test_section "Section 15: Nushell Environment"
 
 # ---------- Static checks (no container needed) ----------

@@ -7,9 +7,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BOOTSTRAP="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11/bootstrap.sh"
-
 test_section "Section 4: Harden SSH While Keeping Sudo Convenient"
 
 # Test: bootstrap.sh does not use passwd -d dx
@@ -53,6 +50,35 @@ assert_file_contains "$DX_CREATE" "127.0.0.1:\$DX_SSH_PORT:2222" "dx-create-cont
 
 # Test: passwordless sudo is preserved
 assert_file_contains "$BOOTSTRAP" "dx ALL=(ALL) NOPASSWD:ALL" "passwordless sudo preserved for dx"
+
+if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+    test_skip "SSH live behavior skipped by --skip-integration"
+elif ! requires_container; then
+    :
+elif ! wait_for_ssh 60; then
+    test_fail "SSH not reachable on localhost:$DX_SSH_PORT"
+else
+    SSH_COMMON_OPTS=(
+        "-i" "$DX_SSH_KEY"
+        "-o" "StrictHostKeyChecking=no"
+        "-o" "UserKnownHostsFile=/dev/null"
+        "-o" "IdentitiesOnly=yes"
+        "-o" "ConnectTimeout=5"
+        "-p" "$DX_SSH_PORT"
+    )
+
+    if ssh "${SSH_COMMON_OPTS[@]}" "-o" "BatchMode=yes" dx@127.0.0.1 "true" >/dev/null 2>&1; then
+        test_pass "live SSH accepts configured public-key auth"
+    else
+        test_fail "live SSH accepts configured public-key auth"
+    fi
+
+    if ssh "${SSH_COMMON_OPTS[@]}" "-o" "BatchMode=yes" "-o" "PubkeyAuthentication=no" dx@127.0.0.1 "true" >/dev/null 2>&1; then
+        test_fail "live SSH refuses password-only auth"
+    else
+        test_pass "live SSH refuses password-only auth"
+    fi
+fi
 
 print_summary
 exit_with_code

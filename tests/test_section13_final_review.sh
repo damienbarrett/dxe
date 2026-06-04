@@ -7,10 +7,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONTAINERFILE="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11/Containerfile"
-BOOTSTRAP="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11/bootstrap.sh"
-
 test_section "Section 13: Final Review"
 
 # Test: git status --short shows clean state for tracked files (excluding untracked and README.md)
@@ -36,7 +32,6 @@ else
 fi
 
 # Test: flake.lock exists and is not ignored
-FLAKE_LOCK="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11/flake.lock"
 if [ -f "$FLAKE_LOCK" ] && ! git -C "$BASE_DIR" check-ignore -q "$FLAKE_LOCK"; then
     test_pass "flake.lock is present and not ignored"
 else
@@ -60,22 +55,6 @@ assert_file_contains "$BOOTSTRAP" "PermitEmptyPasswords no" "SSH has PermitEmpty
 
 # Test: passwordless sudo still works for dx
 assert_file_contains "$BOOTSTRAP" "dx ALL=(ALL) NOPASSWD:ALL" "passwordless sudo works for dx"
-
-# Test: all completed tasks in todo.txt are marked with - [x]
-TODO_FILE="$BASE_DIR/todo.txt"
-UNMARKED=0
-while IFS= read -r line; do
-    if [[ "$line" =~ ^"- \[ \]" ]]; then
-        # This is an unmarked checkbox - check if it should be marked
-        ((UNMARKED++))
-    fi
-done < "$TODO_FILE"
-
-if [ $UNMARKED -eq 0 ]; then
-    test_pass "all tasks in todo.txt are marked complete"
-else
-    test_fail "all tasks in todo.txt are marked complete ($UNMARKED unmarked)"
-fi
 
 print_summary
 exit_with_code

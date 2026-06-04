@@ -378,36 +378,36 @@ if [ "${SKIP_INTEGRATION:-false}" = true ]; then
     test_skip "Tinty integration skipped by --skip-integration"
 elif ! command -v container >/dev/null 2>&1; then
     test_skip "container CLI not available, skipping Tinty integration"
-elif ! container list | grep -Eq '^dx-host([[:space:]]|$)'; then
-    test_skip "Container 'dx-host' is not running, skipping Tinty integration"
-elif ! container exec -u dx dx-host bash -lc 'command -v tinty >/dev/null 2>&1 && command -v dx-theme >/dev/null 2>&1'; then
+elif ! container_is_running "$DX_CONTAINER_NAME"; then
+    test_skip "Container '$DX_CONTAINER_NAME' is not running, skipping Tinty integration"
+elif ! container_exec_dx_bash 'command -v tinty >/dev/null 2>&1 && command -v dx-theme >/dev/null 2>&1'; then
     test_skip "running container has not been rebuilt or activated with Tinty yet"
 else
-    if container exec -u dx dx-host bash -lc 'command -v tinty && command -v dx-theme'; then
+    if container_exec_dx_bash 'command -v tinty && command -v dx-theme'; then
         test_pass "tinty and dx-theme are installed in running container"
     else
         test_fail "tinty and dx-theme are installed in running container"
     fi
 
-    if container exec -u dx dx-host bash -lc 'tinty config >/dev/null && dx-theme list >/dev/null'; then
+    if container_exec_dx_bash 'tinty config >/dev/null && dx-theme list >/dev/null'; then
         test_pass "Tinty config and dx-theme list work in running container"
     else
         test_fail "Tinty config and dx-theme list work in running container"
     fi
 
-    if container exec -u dx dx-host bash -lc 'dx-theme dark >/dev/null && test "$(tinty current)" = "base16-mocha" && dx-theme test | grep -qi "base00/background: #3B3228"'; then
+    if container_exec_dx_bash 'dx-theme dark >/dev/null && test "$(tinty current)" = "base16-mocha" && dx-theme test | grep -qi "base00/background: #3B3228"'; then
         test_pass "dx-theme dark applies the warm Mocha palette"
     else
         test_fail "dx-theme dark applies the warm Mocha palette"
     fi
 
-    if container exec -u dx dx-host bash -lc 'if [ -f ~/.config/dx/theme-current ]; then test "$(cat ~/.config/dx/theme-current)" = "$(tinty current)"; fi'; then
+    if container_exec_dx_bash 'if [ -f ~/.config/dx/theme-current ]; then test "$(cat ~/.config/dx/theme-current)" = "$(tinty current)"; fi'; then
         test_pass "optional DX theme mirror matches Tinty current state"
     else
         test_fail "optional DX theme mirror matches Tinty current state"
     fi
 
-    if container exec -u dx dx-host bash -lc 'dx-theme light >/dev/null && printf stale > ~/.config/btop/themes/dx-tinty.theme && printf stale > ~/.config/yazi/theme.toml && printf stale > ~/.config/starship.toml && dx-theme light >/dev/null && restore_output="$(dx-theme-restore)" && case "$restore_output" in *"$(printf "\033]10;#")"* ) true ;; *) false ;; esac && case "$restore_output" in *"$(printf "\033]11;#")"* ) true ;; *) false ;; esac && grep -q "#fbf1c7" ~/.config/btop/themes/dx-tinty.theme && grep -q "#fbf1c7" ~/.config/yazi/theme.toml && grep -q "palette = \"dx-tinty\"" ~/.config/starship.toml && grep -q "#fbf1c7" ~/.config/starship.toml && yazi --debug >/tmp/dx-yazi-debug.out 2>/tmp/dx-yazi-debug.err && test ! -s /tmp/dx-yazi-debug.err && starship print-config >/tmp/dx-starship-config.out 2>/tmp/dx-starship-config.err && test ! -s /tmp/dx-starship-config.err && dx-theme rose-pine >/dev/null && dx-theme rose-pine-moon >/dev/null && dx-theme rose-pine-dawn >/dev/null && dx-theme test >/dev/null'; then
+    if container_exec_dx_bash 'dx-theme light >/dev/null && printf stale > ~/.config/btop/themes/dx-tinty.theme && printf stale > ~/.config/yazi/theme.toml && printf stale > ~/.config/starship.toml && dx-theme light >/dev/null && restore_output="$(dx-theme-restore)" && case "$restore_output" in *"$(printf "\033]10;#")"* ) true ;; *) false ;; esac && case "$restore_output" in *"$(printf "\033]11;#")"* ) true ;; *) false ;; esac && grep -q "#fbf1c7" ~/.config/btop/themes/dx-tinty.theme && grep -q "#fbf1c7" ~/.config/yazi/theme.toml && grep -q "palette = \"dx-tinty\"" ~/.config/starship.toml && grep -q "#fbf1c7" ~/.config/starship.toml && yazi --debug >/tmp/dx-yazi-debug.out 2>/tmp/dx-yazi-debug.err && test ! -s /tmp/dx-yazi-debug.err && starship print-config >/tmp/dx-starship-config.out 2>/tmp/dx-starship-config.err && test ! -s /tmp/dx-starship-config.err && dx-theme rose-pine >/dev/null && dx-theme rose-pine-moon >/dev/null && dx-theme rose-pine-dawn >/dev/null && dx-theme test >/dev/null'; then
         test_pass "light and Rose Pine dx-theme commands work"
     else
         test_fail "light and Rose Pine dx-theme commands work"
@@ -427,7 +427,7 @@ everforest-light=base16-everforest-light-medium
 solarized-dark=base16-solarized-dark
 solarized-light=base16-solarized-light
 shades-of-purple=base16-shades-of-purple'
-    if container exec -u dx dx-host bash -lc "
+    if container_exec_dx_bash "
         set -e
         printf '%s\n' '$new_alias_pairs' | while IFS='=' read -r alias scheme; do
             dx-theme \"\$alias\" >/dev/null
@@ -448,7 +448,7 @@ shades-of-purple=base16-shades-of-purple'
     # ephemeral tmux server, switch theme, then probe the options.
     # This is the end-to-end proof that copy-hook → writer → apply_tmux_pills
     # actually reaches the running server (not just file generation).
-    if container exec -u dx dx-host bash -lc '
+    if container_exec_dx_bash '
         set -e
         export TMUX_TMPDIR="$(mktemp -d)"
         trap "tmux -L dx-pill-test kill-server >/dev/null 2>&1 || true; rm -rf \"$TMUX_TMPDIR\"" EXIT
@@ -474,7 +474,7 @@ shades-of-purple=base16-shades-of-purple'
     # status-style matching the *most recent* palette, not a stale one.
     # If the copy-hook re-queried `tinty current` mid-apply, the second
     # switch could lag one theme behind.
-    if container exec -u dx dx-host bash -lc '
+    if container_exec_dx_bash '
         set -e
         export TMUX_TMPDIR="$(mktemp -d)"
         trap "tmux -L dx-toctou-test kill-server >/dev/null 2>&1 || true; rm -rf \"$TMUX_TMPDIR\"" EXIT

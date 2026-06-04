@@ -7,9 +7,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BOOTSTRAP="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11/bootstrap.sh"
-
 test_section "Section 3: Split Bootstrap From Runtime"
 
 # Test: bootstrap.sh exists
@@ -82,9 +79,7 @@ else
 fi
 
 # Test: declarative timezone configuration exists
-FLAKE="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11/flake.nix"
-SHELL_NIX="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-25.11/home/shell.nix"
-assert_file_contains "$FLAKE" "tzdata" "flake.nix includes tzdata"
+assert_file_contains "$FLAKE_NIX" "tzdata" "flake.nix includes tzdata"
 assert_file_contains "$BOOTSTRAP" "run_as_dx 'printf %s \"\${TZDIR:-}\"'" "bootstrap reads timezone data directory from guest shell env"
 assert_file_contains "$SHELL_NIX" "TZ = \"\$HOST_TZ\"" "shell.nix sets TZ for Bash/Fish"
 assert_file_contains "$SHELL_NIX" "TZDIR = \"\${pkgs.tzdata}/share/zoneinfo\"" "shell.nix sets TZDIR for Bash/Fish"
