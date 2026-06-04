@@ -151,6 +151,6 @@
     claude = "claude --dangerously-skip-permissions";
     codex = "codex --dangerously-bypass-approvals-and-sandbox";
     gemini = "gemini --yolo";
-    usage = "/workspace/git/agent-status/run-stats.sh";
+    usage = "/workspace/git/agent-stats/run-stats.sh";
   };
 }
