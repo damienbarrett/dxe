@@ -1,14 +1,26 @@
-# NixOS 26.05 Upgrade Plan
+# NixOS 26.05 Upgrade & Code-Review Fixes Plan
+
+> **Scope.** This document covers two independent workstreams against the same repo:
+>
+> - **Part A — Release upgrade:** moving the dev container from NixOS 25.11 to 26.05 (the bulk of this plan).
+> - **Part B — Code-review fixes:** eight standalone correctness/quality fixes (originally `plan-3.md`…`plan-10.md`; there were no `plan-1`/`plan-2`) against the *current* 25.11 codebase. They are independent of the version bump and are sequenced into **Phase 1** so they land before promotion.
+>
+> Every fix was re-verified against the working tree on 2026-06-04. One (P3) is already implemented, one (P4) was dropped after external review, and the rest (P5–P10) remain open. See the [Codebase Assessment](#codebase-assessment-2026-06-04) for the full delta, including two inaccuracies found in the original fix files.
+
+**Contents**
+
+- **Part A — Release Upgrade:** [Strategy](#reusable-release-upgrade-strategy) · [Phases & Gates](#phases--gates) · [Summary](#summary) · [Implementation Changes](#implementation-changes) · [Test Harness Changes](#test-harness-changes) · [Public Interfaces](#public-interfaces) · [Staging & Rollback](#staging--rollback) · [Command Reference](#command-reference) · [Assumptions](#assumptions)
+- **Part B — Code-Review Fixes:** [Consolidated Code-Review Fixes](#consolidated-code-review-fixes)
+
+# Part A — Release Upgrade
 
 ## Reusable Release Upgrade Strategy
 
 Use this section as the playbook for future NixOS release bumps, such as 26.05 -> 26.11. For each upgrade, define:
 
-- `OLD_RELEASE`: the current NixOS release, for example `25.11`.
-- `NEW_RELEASE`: the target NixOS release, for example `26.05`.
-- `OLD_IMAGE`: the current image name, for example `dx-nixos-25.11`.
-- `NEW_IMAGE`: the target image name, for example `dx-nixos-26.05`.
-- `OLD_CONTEXT_DIR` and `NEW_CONTEXT_DIR`: the versioned container context paths under `container/`.
+- `OLD_RELEASE` / `NEW_RELEASE`: the current and target NixOS releases, for example `25.11` and `26.05`.
+- `OLD_IMAGE` / `NEW_IMAGE`: the current and target image names, for example `dx-nixos-25.11` and `dx-nixos-26.05`.
+- `OLD_CONTEXT_DIR` / `NEW_CONTEXT_DIR`: the versioned container context paths under `container/` (e.g. `container/aarch64-darwin-apple-container-dx-nixos-26.05`).
 
 Principles:
 
@@ -21,19 +33,43 @@ Principles:
 - Centralize versioned test paths in shared helpers before changing release strings. Future upgrades should mostly change helpers and release assertions, not repeated literal paths spread through tests.
 - Prefer behavior tests against a live guest for runtime behavior. Keep static source assertions for pinning, safety invariants, and documentation, but validate shells, tools, theming, persistence, SSH, and optional AI installation inside a running profiled guest.
 - Run stale-reference checks after the new lockfile is generated. Before lock regeneration, `flake.lock` is expected to still contain old release refs.
-- Treat rollback as source-driven. The Home Manager-managed user environment comes from the synced flake payload and committed lockfile; switching only the base image does not roll packages back.
+- Treat rollback as source-driven. The Home Manager-managed user environment comes from the synced flake payload and committed lockfile; switching only the base image does not roll packages back. (Detail in [Staging & Rollback](#staging--rollback).)
 - Do not garbage-collect old Nix generations or delete the old image until the target release has passed runtime validation.
 
-## Phase Overview
+## Phases & Gates
 
-Use these phases for this upgrade and future release bumps:
+These phases apply to this upgrade and to future release bumps. Do not treat this as "OS first, apps later" in the traditional distro sense: the Home Manager-managed guest environment is flake-driven, so package rollback is source/lock driven rather than base-image driven. For the release bump itself, move the base image, stable `nixpkgs` branch, Home Manager, NixVim, and default tool packages together by choice so the repo never ships a transient mixed-release combination. Phase the work by risk and validation surface.
 
-0. **Preflight and baseline:** verify the target release artifacts exist, then prove the current release is green or document known pre-existing failures.
-1. **Test harness cleanup on the old release:** make tests profile-aware and behavior-oriented while still running against the known-good current guest.
-2. **Target release source/build:** apply the release bump in an isolated branch or worktree, regenerate the lockfile, and pass static, flake, and aarch64 build checks.
-3. **Target release live validation:** launch the new release through an isolated profile with separate image, container, port, volumes, and keys; run the profile-aware full test suite there first.
-4. **Compatibility fixes:** make any package, shell, editor, theming, persistence, or optional AI fixes discovered in the isolated target guest; rerun the same gates after each fix.
-5. **Promote to default:** only after isolated validation passes, move the default `dx-host` workflow to the new release and keep the old image/volumes until default runtime validation passes.
+0. **Phase 0 — preflight and baseline.**
+   - Confirm the target Docker image tag and release branches exist.
+   - On the current 25.11 checkout, run `tests/run_all_tests.sh --skip-integration` and any available live tests against the existing `dx-host`.
+   - **Gate:** no known baseline failures except explicitly documented pre-existing failures being fixed in Phase 1.
+
+1. **Phase 1 — test harness cleanup, still on 25.11.**
+   - Apply the [Test Harness Changes](#test-harness-changes): centralize test paths, remove the obsolete `todo.txt` check, and make live tests profile-aware. (Partly done already in the uncommitted working tree — see [Codebase Assessment](#codebase-assessment-2026-06-04).)
+   - Convert or extend tests toward live guest behavior where appropriate: SSH, Home Manager activation, shells, tmux, NixVim, Yazi, theming, workspace persistence, and optional AI tooling should be exercised in a running guest rather than only by grepping source.
+   - Land the open [Consolidated Code-Review Fixes](#consolidated-code-review-fixes) (P5–P10) here, since they fix current 25.11 code that carries forward into 26.05. P3 is already done; P4 was dropped after review.
+   - **Gate:** `tests/run_all_tests.sh --skip-integration` passes; live tests pass against the current 25.11 instance when Apple Container is available.
+
+2. **Phase 2 — isolated 26.05 source and build.**
+   - In a branch or separate `git worktree`, apply the 26.05 context rename, flake input updates, lockfile regeneration, `stateVersion` review/bump, profile addition, docs, and release-string test updates (see [Implementation Changes](#implementation-changes)).
+   - If doing the optional same-release lockfile drift refresh, complete and validate that before this phase as described in [Staging & Rollback](#staging--rollback).
+   - **Gate:** stale-reference grep passes after lock regeneration; `nix flake check --no-write-lock-file` passes; the aarch64 build check passes on an aarch64 host or builder.
+
+3. **Phase 3 — isolated 26.05 live guest validation.**
+   - Launch and exercise the isolated `nixos-2605` instance with unique image, container, port, volumes, and keys, then run the profile-aware full suite against it **before** touching the default instance. Commands: see [Parallel validation instance](#parallel-validation-instance).
+   - **Gate:** all non-skipped tests pass against the isolated 26.05 guest. Any skipped test must have a clear host-capability reason, not a release failure.
+   - **Rollback gate:** before promotion, run a rollback smoke test in a disposable profiled instance that has an actual 25.11 generation. The cleanest path is to launch the disposable profile once from 25.11 source with its own volumes, repoint that same profile/source to 26.05, activate the upgrade, then switch the Home Manager profile back with `nix-env --rollback -p ~/.local/state/nix/profiles/home-manager` and run its `activate`. Confirm the rollback changes the guest as expected, then re-activate 26.05 and rerun smoke tests. Also rehearse source revert + `dx-recreate` in that disposable profile and confirm the guest returns to the 25.11 source and runtime baseline.
+
+4. **Phase 4 — compatibility fixes on 26.05, if needed.**
+   - Make targeted fixes for package, NixVim, shell, theming, persistence, or optional AI behavior discovered in Phase 3.
+   - Keep these commits separate from the raw release bump where practical.
+   - **Gate:** repeat the Phase 2 static/build checks and Phase 3 live guest tests after each fix commit.
+
+5. **Phase 5 — promote to default.**
+   - Only after the isolated 26.05 instance passes, update or merge the default branch/worktree so `dx-host` uses 26.05 defaults.
+   - Keep the 25.11 image and volumes available until the default 26.05 instance has passed runtime validation.
+   - **Gate:** `tests/run_all_tests.sh --skip-integration` and the full Apple Container suite pass against the promoted default instance.
 
 ## Summary
 
@@ -56,7 +92,7 @@ References:
     - `github:nix-community/nixvim/nixos-26.05`
     - `github:nix-community/home-manager/release-26.05`
   - If `home-manager/release-26.05` or `nixvim/nixos-26.05` is not published yet, wait by default. Temporary explicit rev pins are acceptable only for isolated exploration and must be removed before promotion; do not promote a mixed stable/unstable release combination.
-- Rename the container context directory from `container/aarch64-darwin-apple-container-dx-nixos-25.11` to `container/aarch64-darwin-apple-container-dx-nixos-26.05`.
+- Rename the container context directory from `container/aarch64-darwin-apple-container-dx-nixos-25.11` to `container/aarch64-darwin-apple-container-dx-nixos-26.05` (use `git mv`).
 - Update `Containerfile` to:
 
   ```Dockerfile
@@ -75,16 +111,18 @@ References:
   ```
 
 - Bump `home.stateVersion` from `25.11` to `26.05` after reviewing the Home Manager 26.05 state-version notes. This repo does not currently configure the listed GTK, zsh, xdg userDirs, Firefox, Hyprland, or Home Manager Yazi wrapper options directly.
-- Update host defaults:
-  - In `bin/dx-lib.sh`, update `DX_IMAGE`: `dx-nixos-25.11` -> `dx-nixos-26.05`.
-  - In `bin/dx-lib.sh`, update `DX_CONTEXT_DIR`: the versioned 25.11 container path -> the versioned 26.05 container path.
-- Update README defaults and links from `25.11` to `26.05`, including the `container/.../bootstrap.sh` Markdown link so it does not point at the renamed 25.11 directory.
+- Update host defaults in `bin/dx-lib.sh`:
+  - `DX_IMAGE`: `dx-nixos-25.11` -> `dx-nixos-26.05`.
+  - `DX_CONTEXT_DIR`: the versioned 25.11 container path -> the versioned 26.05 container path.
+- Update README defaults and links from `25.11` to `26.05`, including the `container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh` Markdown link so it does not point at the renamed 25.11 directory.
 - Update `tests/profiles/default.env` comments and active tests from `25.11` to `26.05`.
 - Add `tests/profiles/nixos-2605.env` for isolated validation before promoting 26.05 to the default instance:
 
   ```bash
   export DX_CONTAINER_NAME=dx-2605
   export DX_IMAGE=dx-nixos-26.05
+  export DX_EXPECTED_NIXOS_RELEASE=26.05      # else test_helpers.sh:28 defaults these to 25.11
+  export DX_EXPECTED_NIXOS_BRANCH=nixos-26.05
   export DX_SSH_PORT=2223
   export DX_NIX_VOLUME=dx-2605-nix
   export DX_WORKSPACE_VOLUME=dx-2605-workspace
@@ -94,36 +132,52 @@ References:
   export DX_CONTEXT_DIR="${DX_2605_PROJECT_ROOT:-$DX_PROJECT_ROOT}/container/aarch64-darwin-apple-container-dx-nixos-26.05"
   ```
 
-  Prefer running this from the 26.05 worktree with `./bin/dx-profile nixos-2605 ./bin/dx` and `./bin/dx-profile nixos-2605 ./bin/dx-ssh`. This lets the 26.05 container run alongside the default 25.11 instance because the port, image, volumes, and keys are isolated. If invoking `dx-profile` from a different checkout, that checkout must also contain `tests/profiles/nixos-2605.env`; set `DX_2605_PROJECT_ROOT` to the 26.05 worktree so the profile syncs the correct source.
-- Centralize repeated test paths in `tests/test_helpers.sh` before updating release references:
-  - Keep using the existing `CONTAINER_DIR`, `FLAKE_NIX`, and `NIXVIM_NIX` helpers.
-  - Add `BOOTSTRAP="$CONTAINER_DIR/bootstrap.sh"`, `CONTAINERFILE="$CONTAINER_DIR/Containerfile"`, `FLAKE_LOCK="$CONTAINER_DIR/flake.lock"`, and `SHELL_NIX="$CONTAINER_DIR/home/shell.nix"`.
-  - Replace repeated hard-coded `bootstrap.sh`, `Containerfile`, `flake.nix`, `flake.lock`, and `home/shell.nix` paths in active tests with those helpers.
-  - Update `tests/test_section2_containerfile.sh` to use the shared `CONTAINERFILE`.
-  - Update `tests/test_section3_bootstrap.sh` to use shared `BOOTSTRAP`, `FLAKE_NIX`, and `SHELL_NIX`; this is the only `SHELL_NIX` edit required for the directory rename because the current value is a literal 25.11 path.
-  - Update `tests/test_section4_ssh.sh` to use the shared `BOOTSTRAP`.
-  - Update `tests/test_section5_nix.sh` to use shared `FLAKE_NIX` and `FLAKE_LOCK`, use `CONTAINER_DIR` for `nix flake check`, assert `nixos-26.05`, and update the adjacent comment from `nixos-25.11` to `nixos-26.05`.
-  - Update `tests/test_section6_tools.sh` so the tracked `dx-ai.sh` check uses the new container path rather than a literal 25.11 path.
-  - Update `tests/test_section7_lazyvim.sh` to use the shared `FLAKE_NIX`.
-  - Update `tests/test_section9_host_scripts.sh` to use the shared `BOOTSTRAP`.
-  - Update `tests/test_section10_docs.sh` so the README default-image assertion expects `dx-nixos-26.05`.
-  - Update `tests/test_section12_validate_linux.sh` to use shared `BOOTSTRAP` and `CONTAINER_DIR` instead of local `BOOTSTRAP` and `FLAKE_DIR` definitions.
-  - Update `tests/test_section13_final_review.sh` to use shared `CONTAINERFILE`, `BOOTSTRAP`, and `FLAKE_LOCK`; remove the obsolete `todo.txt` verification block because `todo.txt` is no longer part of the repo and the current check can crash the suite under `set -e`.
-  - As DRY cleanup, update the existing local `SHELL_NIX` definitions in sections 6, 15, and 16 to use the shared helper. Leave section 14's `HOME_SHELL_NIX="$CONTAINER_DIR/home/shell.nix"` unchanged because it already tracks the renamed directory and is part of that file's local `HOME_*` path family.
-- Make live guest tests profile-aware so the same behavior tests can run against either the default 25.11 instance or the isolated 26.05 instance:
-  - Update `tests/test_helpers.sh` so `requires_container` checks `DX_CONTAINER_NAME`, `wait_for_ssh` probes `DX_SSH_PORT`, and guest helpers route through `bin/dx-ssh` or `container exec "$DX_CONTAINER_NAME"`.
-  - Update direct live-test literals in sections 11 and 14 so container existence checks and `container exec` calls use the active `DX_*` profile values.
-  - Sections 15, 16, and 17 should become profile-aware through the shared helper changes; avoid unnecessary per-file churn there unless a live assertion still bypasses the helpers.
-  - Leave static `dx-host` references in sections 1, 9, and 10 unchanged where they assert ignore patterns, comments, or documented default values rather than live runtime state.
-  - Keep literal guest SSH port `2222` checks only where they assert the in-container sshd configuration or host port forwarding contract.
-  - Where a runtime behavior can be tested directly in the guest, prefer that over adding or extending grep-only assertions.
-  - Add concrete live behavior targets where they reduce upgrade risk:
-    - Section 4 SSH: prove key auth works and password-only auth is refused against the live guest, while keeping source assertions for sshd port `2222` and host forwarding.
-    - Section 5 Nix/release identity: in the live guest, verify `/etc/os-release` reports the target base release and `/guest-bootstrap/flake.lock` points stable inputs at the target release.
-    - Section 6 tools: execute representative tools in the guest (`nix --version`, `git --version`, `gh --version`, `tmux -V`, `yazi --version`, `lazygit --version`, `nvim --headless +q`) instead of relying only on source package-list assertions.
-    - Sections 7 and 8 NixVim: keep structural config checks, but also validate the built `nvim` starts headlessly inside the live guest.
-    - Section 14 theming, section 15 Nushell, section 16 persistence, and section 17 `dx-ai`: keep these as live behavior tests and make them profile-aware.
-- Leave historical `plan-*.md` references alone unless a separate cleanup is requested.
+  Port, image, volumes, and keys are isolated so this container can run alongside the default 25.11 instance. The `DX_EXPECTED_NIXOS_*` exports are required, not cosmetic: `tests/test_helpers.sh:28-29` defaults them to `25.11`/`nixos-25.11`, so without overrides the section 5 release-identity checks (`test_section5_nix.sh:38,58,64`) would assert 25.11 against the 26.05 guest. For how to invoke the profile (and the `DX_2605_PROJECT_ROOT` worktree rule), see [Parallel validation instance](#parallel-validation-instance) — the single canonical recipe.
+- Update the test suite for the rename and for live-guest behavior — see [Test Harness Changes](#test-harness-changes).
+
+## Test Harness Changes
+
+These are the Phase 1 edits to the test suite. New assertions should use the shared path helpers (below) rather than re-deriving literal paths.
+
+**Centralize repeated test paths in `tests/test_helpers.sh` before updating release references:**
+
+- Keep using the existing `CONTAINER_DIR`, `FLAKE_NIX`, and `NIXVIM_NIX` helpers.
+- Add `BOOTSTRAP="$CONTAINER_DIR/bootstrap.sh"`, `CONTAINERFILE="$CONTAINER_DIR/Containerfile"`, `FLAKE_LOCK="$CONTAINER_DIR/flake.lock"`, and `SHELL_NIX="$CONTAINER_DIR/home/shell.nix"`.
+- Replace repeated hard-coded `bootstrap.sh`, `Containerfile`, `flake.nix`, `flake.lock`, and `home/shell.nix` paths in active tests with those helpers:
+  - `test_section2_containerfile.sh` → shared `CONTAINERFILE`.
+  - `test_section3_bootstrap.sh` → shared `BOOTSTRAP`, `FLAKE_NIX`, `SHELL_NIX` (the only `SHELL_NIX` edit required for the rename, since the current value is a literal 25.11 path).
+  - `test_section4_ssh.sh` → shared `BOOTSTRAP`.
+  - `test_section5_nix.sh` → shared `FLAKE_NIX` and `FLAKE_LOCK`; use `CONTAINER_DIR` for `nix flake check`; assert `nixos-26.05`; update the adjacent comment from `nixos-25.11` to `nixos-26.05`.
+  - `test_section6_tools.sh` → the tracked `dx-ai.sh` check uses the new container path, not a literal 25.11 path.
+  - `test_section7_lazyvim.sh` → shared `FLAKE_NIX`.
+  - `test_section9_host_scripts.sh` → shared `BOOTSTRAP`.
+  - `test_section10_docs.sh` → README default-image assertion expects `dx-nixos-26.05`.
+  - `test_section12_validate_linux.sh` → shared `BOOTSTRAP` and `CONTAINER_DIR` instead of local `BOOTSTRAP` / `FLAKE_DIR` definitions.
+  - `test_section13_final_review.sh` → shared `CONTAINERFILE`, `BOOTSTRAP`, `FLAKE_LOCK`; remove the obsolete `todo.txt` verification block (`todo.txt` is no longer in the repo and the current check can crash the suite under `set -e`).
+- As DRY cleanup, update the existing local `SHELL_NIX` definitions in sections 6, 15, and 16 to use the shared helper. Leave section 14's `HOME_SHELL_NIX="$CONTAINER_DIR/home/shell.nix"` unchanged because it already tracks the renamed directory and is part of that file's local `HOME_*` path family.
+
+**Make live guest tests profile-aware** so the same behavior tests run against either the default 25.11 instance or the isolated 26.05 instance:
+
+- Update `tests/test_helpers.sh` so `requires_container` checks `DX_CONTAINER_NAME`, `wait_for_ssh` probes `DX_SSH_PORT`, and guest helpers route through `bin/dx-ssh` or `container exec "$DX_CONTAINER_NAME"`.
+- Update direct live-test literals in sections 11 and 14 so container existence checks and `container exec` calls use the active `DX_*` profile values.
+- Sections 15, 16, and 17 should become profile-aware through the shared helper changes; avoid unnecessary per-file churn there unless a live assertion still bypasses the helpers.
+- Leave static `dx-host` references in sections 1, 9, and 10 unchanged where they assert ignore patterns, comments, or documented default values rather than live runtime state.
+- Keep literal guest SSH port `2222` checks only where they assert the in-container sshd configuration or host port forwarding contract.
+- Where a runtime behavior can be tested directly in the guest, prefer that over adding or extending grep-only assertions.
+
+**Add concrete live behavior targets where they reduce upgrade risk:**
+
+- Section 4 SSH: prove key auth works and password-only auth is refused against the live guest, while keeping source assertions for sshd port `2222` and host forwarding.
+- Section 5 Nix/release identity: in the live guest, verify `/etc/os-release` reports the target base release and `/guest-bootstrap/flake.lock` points stable inputs at the target release.
+- Section 6 tools: execute representative tools in the guest (`nix --version`, `git --version`, `gh --version`, `tmux -V`, `yazi --version`, `lazygit --version`, `nvim --headless +q`) instead of relying only on source package-list assertions.
+- Sections 7 and 8 NixVim: keep structural config checks, but also validate the built `nvim` starts headlessly inside the live guest.
+- Section 14 theming, section 15 Nushell, section 16 persistence, and section 17 `dx-ai`: keep these as live behavior tests and make them profile-aware.
+
+**Clarify the runner surface (`tests/run_all_tests.sh`) — from the 2026-06-05 review:**
+
+- `--skip-integration` only skips sections 11–12. Sections 13–17 still run; 14 (theming), 16 (persistence), and 17 (`dx-ai`) self-skip their *live* checks when no guest is present. So a phase gate that says "`--skip-integration` passes" means "static + self-skipping suite," not "zero live tests."
+- The `--help` text advertises `--section=N` as `0-16`, but section 17 exists and runs (`run_all_tests.sh:92`). Update the help text to `0-17` and confirm `--section=17` is reachable.
+- Section 13 (final review) fails on a dirty tracked worktree (`git -C … status -uno --short`, excluding `README.md`; `test_section13_final_review.sh:13`) and runs even under `--skip-integration`. During in-flight work, either scope around it (`--section`, or commit/stash first) or treat a section-13 dirty-tree failure as expected rather than a release regression. Consider splitting its in-flight checks from the final-only clean-tree check so mid-work runs are not blocked.
 
 ## Public Interfaces
 
@@ -133,66 +187,9 @@ References:
 - The public default container context path changes to the renamed 26.05 directory.
 - Existing 25.11 images and containers may remain on a user's machine until manually destroyed.
 
-## Phased Execution & Gates
-
-Do not treat this as "OS first, apps later" in the traditional distro sense. The
-Home Manager-managed guest environment is flake-driven, which means package rollback is
-source/lock driven rather than base-image driven. For the release bump itself, move the
-base image, stable `nixpkgs` branch, Home Manager, NixVim, and default tool packages
-together by choice so the repo does not ship a transient mixed-release combination.
-Phase the work by risk and validation surface:
-
-0. **Phase 0 — preflight and baseline.**
-   - Confirm the target Docker image tag and release branches exist.
-   - On the current 25.11 checkout, run `tests/run_all_tests.sh --skip-integration` and any available live tests against the existing `dx-host`.
-   - Gate: no known baseline failures except explicitly documented pre-existing failures being fixed in Phase 1.
-
-1. **Phase 1 — test harness cleanup, still on 25.11.**
-   - Centralize test paths, remove the obsolete `todo.txt` check, and make live tests profile-aware.
-   - Convert or extend tests toward live guest behavior where appropriate: SSH, Home Manager activation, shells, tmux, NixVim, Yazi, theming, workspace persistence, and optional AI tooling should be exercised in a running guest rather than only by grepping source.
-   - Gate: `tests/run_all_tests.sh --skip-integration` passes; live tests pass against the current 25.11 instance when Apple Container is available.
-
-2. **Phase 2 — isolated 26.05 source and build.**
-   - In a branch or separate `git worktree`, apply the 26.05 context rename, flake input updates, lockfile regeneration, `stateVersion` review/bump, profile addition, docs, and release-string test updates.
-   - If doing the optional same-release lockfile drift refresh, complete and validate that before this phase as described in the Staging section.
-   - Gate: stale-reference grep passes after lock regeneration; `nix flake check --no-write-lock-file` passes; the aarch64 build check passes on an aarch64 host or builder.
-
-3. **Phase 3 — isolated 26.05 live guest validation.**
-   - Launch `tests/profiles/nixos-2605.env` with unique image, container, port, volumes, and keys.
-   - Run the profile-aware full test suite against the isolated 26.05 guest before touching the default instance:
-
-     ```bash
-     # Preferred: run from the 26.05 worktree.
-     # If invoking from another checkout that also has tests/profiles/nixos-2605.env:
-     #   export DX_2605_PROJECT_ROOT=/path/to/dxe-2605-worktree
-     ./bin/dx-profile nixos-2605 ./bin/dx
-     ./bin/dx-profile nixos-2605 tests/run_all_tests.sh
-     ```
-
-   - Gate: all non-skipped tests pass against the isolated 26.05 guest. Any skipped test must have a clear host-capability reason, not a release failure.
-   - Rollback gate: before promotion, run a rollback smoke test in a disposable profiled instance that has an actual 25.11 generation. The cleanest path is to launch the disposable profile once from 25.11 source with its own volumes, repoint that same profile/source to 26.05, activate the upgrade, then switch the Home Manager profile back with `nix-env --rollback -p ~/.local/state/nix/profiles/home-manager` and run its `activate`. Confirm the rollback changes the guest as expected, then re-activate 26.05 and rerun smoke tests. Also rehearse source revert + `dx-recreate` in that disposable profile and confirm the guest returns to the 25.11 source and runtime baseline.
-
-4. **Phase 4 — compatibility fixes on 26.05, if needed.**
-   - Make targeted fixes for package, NixVim, shell, theming, persistence, or optional AI behavior discovered in Phase 3.
-   - Keep these commits separate from the raw release bump where practical.
-   - Gate: repeat Phase 2 static/build checks and Phase 3 live guest tests after each fix commit.
-
-5. **Phase 5 — promote to default.**
-   - Only after the isolated 26.05 instance passes, update or merge the default branch/worktree so `dx-host` uses 26.05 defaults.
-   - Keep the 25.11 image and volumes available until the default 26.05 instance has passed runtime validation.
-   - Gate: `tests/run_all_tests.sh --skip-integration` and the full Apple Container suite pass against the promoted default instance.
-
 ## Staging & Rollback
 
-Rollback is **source-driven**: the Home Manager-managed user environment comes from the
-flake payload, not the base image. `bootstrap.sh` activates the environment with
-`nix run /guest-bootstrap#homeConfigurations.dx.activationPackage`, and that payload is
-re-synced from the source tree on every recreate. So the unit of rollback is the
-committed source (`flake.nix` + `flake.lock`), which reproduces the old environment
-bit-for-bit. `dx-recreate` preserves `/nix` and `/workspace`, so a rollback never touches
-user data. Note: pointing `DX_IMAGE` at the old base image does **not** roll back
-packages on its own — with a 26.05 source tree it would just rebuild 26.05 packages on a
-25.11 base layer.
+Rollback is **source-driven**: the Home Manager-managed environment is reproduced from the committed source (`flake.nix` + `flake.lock`), which `bootstrap.sh` re-syncs and activates on every recreate, so pointing `DX_IMAGE` at the old base image does **not** roll packages back on its own. The mechanics are detailed under [Rollback](#rollback) below.
 
 ### Staging (separate the package jump from routine drift)
 
@@ -212,22 +209,32 @@ packages on its own — with a 26.05 source tree it would just rebuild 26.05 pac
 
 ### Parallel validation instance
 
-- Validate 26.05 in `tests/profiles/nixos-2605.env` before switching the default
-  `dx-host` instance. Run `./bin/dx-profile nixos-2605 ./bin/dx` from the 26.05 source
-  tree to build and launch the isolated instance.
-- Keep every stateful resource unique in the profile. In particular, never mount the
-  default `dx-nix`, `dx-workspace`, or `dx-bootstrap` volumes into the 26.05 validation
-  container while 25.11 may still use them. Concurrent containers must not share named
-  volume images.
+Validate 26.05 in `tests/profiles/nixos-2605.env` (defined in [Implementation Changes](#implementation-changes)) before switching the default `dx-host` instance. **Canonical invocation** — referenced from Phase 3 and the [Command Reference](#command-reference):
+
+```bash
+# Run from the 26.05 worktree. If invoking from another checkout that also has
+# tests/profiles/nixos-2605.env, first point DX_2605_PROJECT_ROOT at the 26.05 worktree
+# so the profile syncs the correct source:
+#   export DX_2605_PROJECT_ROOT=/path/to/dxe-2605-worktree
+./bin/dx-profile nixos-2605 ./bin/dx                  # build + launch the isolated instance
+./bin/dx-profile nixos-2605 ./bin/dx-ssh              # shell into it
+./bin/dx-profile nixos-2605 tests/run_all_tests.sh    # full profile-aware suite
+```
+
+Isolation rules for the profile:
+
+- Keep every stateful resource unique. In particular, never mount the default `dx-nix`,
+  `dx-workspace`, or `dx-bootstrap` volumes into the 26.05 validation container while
+  25.11 may still use them. Concurrent containers must not share named volume images.
 - The isolated 26.05 store starts empty and will repopulate `/nix` on first bootstrap.
   If avoiding that cost matters, stop both instances and copy the old Apple Container
   volume image to the new `dx-2605-nix` volume before first launch; this is optional and
   should be done only while neither volume is mounted.
 - For source isolation, use a `git worktree` or dedicated branch checkout for the 26.05
-  bump. Prefer invoking `dx-profile` from that 26.05 worktree. If invoking from another
-  checkout instead, that checkout must also contain `tests/profiles/nixos-2605.env`; set
-  `DX_2605_PROJECT_ROOT` so `DX_CONTEXT_DIR` points at the 26.05 source while the default
-  25.11 checkout can continue running unchanged.
+  bump, and prefer invoking `dx-profile` from that worktree. Invoking from another
+  checkout requires that checkout to also contain `tests/profiles/nixos-2605.env` and the
+  `DX_2605_PROJECT_ROOT` override above, so the default 25.11 checkout can keep running
+  unchanged.
 
 ### Rollback
 
@@ -270,58 +277,47 @@ packages on its own — with a 26.05 source tree it would just rebuild 26.05 pac
 - Optional belt-and-suspenders: snapshot the Apple Container named volume backing image
   for `DX_NIX_VOLUME` before the bump for a GC-independent instant restore.
 
-## Test Plan
+## Command Reference
 
-- Static checks after `flake.lock` regeneration:
-  - Search active paths for stale release references after the `nix flake update` step has rewritten the lockfile:
+The commands each phase gate depends on. Phases own *when* to run them (see [Phases & Gates](#phases--gates)); this section is the *how*.
 
-    ```bash
-    rg "25\\.11" README.md bin tests container
-    ```
+- **Stale-reference grep** (Phase 2 gate, after `flake.lock` regeneration):
 
-  - Confirm only intentional historical references remain.
-  - Confirm active tests no longer redefine versioned `BOOTSTRAP`, `CONTAINERFILE`, `FLAKE_NIX`, or `FLAKE_LOCK` paths outside `test_helpers.sh`, and that local `SHELL_NIX` definitions in sections 3, 6, 15, and 16 have been removed.
-  - Confirm `tests/test_section13_final_review.sh` no longer references `todo.txt`.
-  - Run shell syntax checks on changed shell scripts.
-  - Run the flake evaluation check:
+  ```bash
+  rg "25\\.11" README.md bin tests container   # only intentional historical refs should remain
+  ```
 
-    ```bash
-    nix flake check --no-write-lock-file container/aarch64-darwin-apple-container-dx-nixos-26.05
-    ```
+  Also confirm no active test redefines versioned `BOOTSTRAP`, `CONTAINERFILE`, `FLAKE_NIX`, or `FLAKE_LOCK` outside `test_helpers.sh`; that local `SHELL_NIX` definitions in sections 3, 6, 15, and 16 are gone; and that `test_section13_final_review.sh` no longer references `todo.txt`. Run `bash -n` on changed shell scripts.
 
-- Aarch64 build check:
-  - Run this on an `aarch64-linux` host or with an available aarch64 remote builder/emulation:
+- **Flake evaluation check** (Phase 2 gate):
 
-    ```bash
-    nix build container/aarch64-darwin-apple-container-dx-nixos-26.05#packages.aarch64-linux.default --no-link
-    ```
+  ```bash
+  nix flake check --no-write-lock-file container/aarch64-darwin-apple-container-dx-nixos-26.05
+  ```
 
-- Repo test suite:
+- **Aarch64 build check** (Phase 2 gate; needs an `aarch64-linux` host or remote builder/emulation):
+
+  ```bash
+  nix build container/aarch64-darwin-apple-container-dx-nixos-26.05#packages.aarch64-linux.default --no-link
+  ```
+
+- **Repo test suite** (Phase 0/1/5 gates):
 
   ```bash
   tests/run_all_tests.sh --skip-integration
   ```
 
-- Runtime validation after the Docker tag exists:
-  - Build and validate the isolated 26.05 instance first:
+  `--skip-integration` skips only the Apple-Container integration sections 11–12; sections 13–17 still run (their live checks self-skip without a guest). Section 13 also enforces a clean tracked worktree, so run the full suite only after committing/stashing or scope it with `--section`. See [Test Harness Changes](#test-harness-changes).
 
-    ```bash
-    # Preferred: run from the 26.05 worktree.
-    # If invoking from another checkout that also has tests/profiles/nixos-2605.env:
-    #   export DX_2605_PROJECT_ROOT=/path/to/dxe-2605-worktree
-    ./bin/dx-profile nixos-2605 ./bin/dx
-    ./bin/dx-profile nixos-2605 tests/run_all_tests.sh
-    ```
+- **Isolated runtime validation** (Phase 3 gate): build, launch, and test the `nixos-2605` instance using the canonical recipe in [Parallel validation instance](#parallel-validation-instance). Keep the default 25.11 instance available until this passes. Optionally build an isolated lifecycle test image/container with the existing `dx-test` profile.
 
-  - Keep the default 25.11 instance available until this isolated 26.05 instance passes validation.
-  - Optionally build an isolated lifecycle test image/container with the existing `dx-test` profile.
-  - After promotion to the default instance, run the unprofiled full test suite on a host with Apple Container available:
+- **Post-promotion full suite** (Phase 5 gate; host with Apple Container available):
 
-    ```bash
-    tests/run_all_tests.sh
-    ```
+  ```bash
+  tests/run_all_tests.sh
+  ```
 
-  - Confirm SSH bootstrap, Home Manager activation, core tools, Neovim/NixVim, Yazi, tmux, theming, and optional `dx-ai` behavior still work.
+  Then confirm SSH bootstrap, Home Manager activation, core tools, Neovim/NixVim, Yazi, tmux, theming, and optional `dx-ai` behavior still work.
 
 ## Assumptions
 
@@ -329,3 +325,111 @@ packages on its own — with a 26.05 source tree it would just rebuild 26.05 pac
 - The target architecture remains `aarch64-linux` for Apple Container on Apple silicon hosts.
 - The persistent Nix, workspace, and bootstrap volume model remains unchanged.
 - `nixpkgs-unstable` stays on `master` because it is intentionally scoped to the optional AI tools bundle.
+
+# Part B — Code-Review Fixes
+
+## Consolidated Code-Review Fixes
+
+These eight items came from a code review of the current `dx-nixos-25.11` codebase (originally `plan-3.md`…`plan-10.md`). They are folded into **Phase 1** because they fix code that exists today and carries forward unchanged into 26.05. All file/line references were re-verified against the working tree on 2026-06-04. Paths shown as `…/` are under the active container context dir, `container/aarch64-darwin-apple-container-dx-nixos-25.11/`. New test assertions should use the shared path helpers from [Test Harness Changes](#test-harness-changes) (`$BOOTSTRAP`, `$CONTAINERFILE`, `$FLAKE_NIX`, `$FLAKE_LOCK`, `$SHELL_NIX`) rather than re-deriving literal paths.
+
+**Decisions (2026-06-04; updated 2026-06-05 after external review):**
+
+- **Delivery — deferred.** Kept as plan only for now; whether to ship P5–P10 as a standalone PR on 25.11 or bundle them into the 26.05 upgrade is decided later. No implementation yet.
+- **P4 — dropped** after external review: the partial-hook-env "bug" is intentional race-avoidance behavior (see the P4 entry).
+- **P10 — wire it through, canonical default `64G`** (Option A; alternatives recorded in the P10 entry).
+
+| ID  | Fix | Primary file | Severity | Status (2026-06-04) |
+|-----|-----|--------------|----------|---------------------|
+| P3  | `dx-sync-bootstrap` post-loop ready guard + configurable wait timeout | `bin/dx-sync-bootstrap` | Medium-High | ✅ Already implemented — no action |
+| P4  | ~~`load_palette` fall back to `tinty current` on partial hook env~~ | `…/scripts/dx-theme-write-tool-themes.sh:42` | Medium | ❌ Dropped — behavior is intentional (see entry) |
+| P5  | `dx_get_host_timezone` returns `UTC` + warns instead of an empty string | `bin/dx-lib.sh:249` | Medium | ⛔ Open |
+| P6  | `configure_timezone` resolves zoneinfo from the store and runs after tool verify | `…/bootstrap.sh:125` | Medium | ⛔ Open (step 3 corrected) |
+| P7  | `setup_nix_volume` uses exact FSTYPE match, not substring grep | `…/bootstrap.sh:43` | Low | ⛔ Open |
+| P8  | Remove dead `start_ssh` function | `…/bootstrap.sh:421` | Low | ⛔ Open |
+| P9  | D-Bus address passed via environment, not interpolated into the command string | `…/bootstrap.sh:352` (+ `scripts/dx-ai.sh`) | Low | ⛔ Open |
+| P10 | Honour `DX_NIX_DISK_SIZE` (or remove it) and reconcile the 20G/64G mismatch | `bin/dx-lib.sh:33`, `…/bootstrap.sh:77` | Low | ⛔ Open |
+
+### P3 — `dx-sync-bootstrap` post-loop guard
+
+**Already implemented**, recorded only to close it out. `bin/dx-sync-bootstrap:44-50` re-runs the marker check after the wait loop and exits non-zero with `entrypoint never became ready after ${DX_BOOTSTRAP_WAIT_TIMEOUT}s` plus a `container logs` hint. The loop is driven by `DX_BOOTSTRAP_WAIT_TIMEOUT` (`bin/dx-lib.sh:29`, default 30, used at `dx-sync-bootstrap:35`). Both test assertions exist (`tests/test_section9_host_scripts.sh:96` for the timeout var, `:126` for the `never became ready` message). No further work; `plan-3.md` is obsolete.
+
+### P4 — `load_palette` partial-env behavior (dropped after review)
+
+**Re-evaluated and dropped.** `plan-4.md` treated the zero-arg `load_palette_from_env || return 0` path — silent exit with no write when the hook palette env is present but incomplete — as a bug, and proposed falling back to `tinty current`. The external review (2026-06-05) correctly flagged this as a conflict: that fallback is **deliberately** avoided. `tests/test_section14_tinty_theming.sh:256-257` asserts that partial hook env must *not* fall back to `tinty current`, because re-querying mid-switch reintroduces the switch-time race the script is built to avoid (design comment at `:197-211`; TOCTOU guard at `:211` and `:473-492`). Partial hook env is also not a real Tinty state — all 48 slots are set together — so the "stale theme files" concern does not arise in normal operation, and brief staleness is the intended race-free trade-off.
+
+**No code change; the original `plan-4.md` fix is rejected.** If the silent partial-env exit were ever deemed worth surfacing, the only safe option is a `>&2` diagnostic that still neither writes nor re-queries `tinty current` — not currently warranted.
+
+### P5 — `dx_get_host_timezone` empty result
+
+`bin/dx-lib.sh:249-251` is still the one-liner `readlink /etc/localtime | sed 's#^.*/zoneinfo/##'`, which yields an empty string (silently baked into `HOST_TZ=`) when `/etc/localtime` is absent, a regular file, or lacks `zoneinfo/`. Fix: add a `systemsetup -gettimezone` fallback and an `/etc/timezone` fallback, then default to `UTC` with a stderr warning rather than empty. Add a use-site guard in `bin/dx-create-container` that warns if `HOST_TZ` is empty before `container create`. Tests: assert a non-empty return in `tests/test_section9_host_scripts.sh`; add a commented `HOST_TZ` doc line to `tests/profiles/default.env` (it currently has none). Related: P6.
+
+### P6 — `configure_timezone` ordering / profile dependency
+
+`…/bootstrap.sh:125-140` still asks the dx login shell for `TZDIR` (`run_as_dx 'printf %s "${TZDIR:-}"'`) and is called at `bootstrap.sh:436` — after `configure_guest` but before `verify_guest_tools`. On a fresh boot the dx profile may not be fully settled, so `TZDIR` comes back empty and the guest silently stays UTC. Fix: resolve the zoneinfo directory directly, in order — nix store (`find /nix/store … zoneinfo | grep tzdata`) → `~/.nix-profile/share/zoneinfo/$HOST_TZ` → `run_as_dx TZDIR` as last resort — and move the call to **after** `verify_guest_tools` so the profile is proven available first.
+
+**Correction to plan-6 step 3.** The original file said "ensure `tzdata` is in `home/tools.nix`." That is inaccurate: `tzdata` is already an unconditional entry in `flake.nix:67` (`dxPackages`), and `home/shell.nix` already exports `TZDIR=${pkgs.tzdata}/share/zoneinfo` (lines 127 and 146). The package is present — the bug is purely shell-init timing, which the store-direct lookup plus the reorder eliminate. So **drop** the "add to `tools.nix`" step and instead just assert `tzdata` stays in `flake.nix` `dxPackages`. Related: P5.
+
+**Test update (required; from the 2026-06-05 review).** `tests/test_section3_bootstrap.sh:83` asserts `run_as_dx 'printf %s "${TZDIR:-}"'` as bootstrap's timezone lookup. Once P6 demotes that to a last-resort fallback (store-direct lookup becomes primary), update this assertion to check the new store-direct resolution; keep a softened TZDIR assertion only if the `run_as_dx TZDIR` fallback line is retained. The `shell.nix` TZDIR assertions at `:85,87` stay — they corroborate that `tzdata` is already wired. The sshd-ordering assertion at `:70-78` is unaffected by moving `configure_timezone` after `verify_guest_tools`.
+
+### P7 — `setup_nix_volume` unanchored `findmnt`
+
+`…/bootstrap.sh:43` still uses `findmnt -n -o TARGET,FSTYPE /nix | grep -q "$fs_type"`, an unanchored substring match. Recommended fix is an exact string compare, which also lets us warn on an unexpected existing type before re-formatting:
+
+```bash
+local current_fstype
+current_fstype="$(findmnt -n -o FSTYPE /nix 2>/dev/null || true)"
+if [ "$current_fstype" = "$fs_type" ]; then
+    echo "/nix is already a $fs_type mount. Skipping setup."
+    return 0
+elif [ -n "$current_fstype" ]; then
+    echo "Warning: /nix is mounted as $current_fstype, expected $fs_type; proceeding with re-format." >&2
+fi
+```
+
+Test: `assert_file_not_contains "$BOOTSTRAP" 'grep -q "$fs_type"'` in the bootstrap section.
+
+### P8 — dead `start_ssh`
+
+`start_ssh()` is defined at `…/bootstrap.sh:421-426` and never called — the main section `exec`s sshd directly at `:439-441`. Fix: delete the function (the `exec "$SSHD_BIN" -D -e -p 2222` block is authoritative). Test: `assert_file_not_contains "$BOOTSTRAP" "^start_ssh()"` in `tests/test_section9_host_scripts.sh`; `bash -n bootstrap.sh` must still pass.
+
+**Test update (required; from the 2026-06-05 review).** `tests/test_section3_bootstrap.sh:36-40` asserts bootstrap "checks if sshd is already running" via `grep -q 'sshd.*running\|pgrep.*sshd\|ps.*sshd'`. That pattern matches *only* the dead `start_ssh` body (`pgrep -x sshd`), so deleting the function makes the assertion fail. Remove that test — the authoritative `exec sshd` entrypoint performs no pre-start running-check and needs none (sshd is the container's main process); the assertion currently validates dead behavior.
+
+### P9 — D-Bus address quoting
+
+`…/bootstrap.sh:352` interpolates the bus address into a `run_as_dx` command string (`DBUS_SESSION_BUS_ADDRESS='$bus_addr' echo -n '' | gnome-keyring-daemon …`), which `run_as_dx` then re-evaluates via `bash -l -c`. With an unexpected address (e.g. containing spaces) this splits mid-token and fails silently (`2>/dev/null`). Fix: pass the address through the environment — have `run_as_dx` forward `DBUS_SESSION_BUS_ADDRESS` — or `printf '%q'` it before interpolation; add a warning when `bus_addr` is empty. Apply the same hygiene to `scripts/dx-ai.sh:91-98`. Note: the `dx-ai.sh` path is lower risk (it runs directly as dx and already `export`s the captured address at `:95`, so this is consistency, not a live bug). `bash -n` on both files.
+
+### P10 — `DX_NIX_DISK_SIZE` ignored + 20G/64G mismatch
+
+`bin/dx-lib.sh:33` exports `DX_NIX_DISK_SIZE="${DX_NIX_DISK_SIZE:-20G}"`, but `…/bootstrap.sh:77` hardcodes `truncate -s 64G`, and `bin/dx-create-container` (`CREATE_FLAGS`, lines 31-38) does **not** forward the variable into the container. So the variable is inert *and* its advertised default (20G) does not even match real behaviour (64G). **Chosen approach — Option A, wire it through** (decided 2026-06-04):
+
+- Add `-e "DX_NIX_DISK_SIZE=$DX_NIX_DISK_SIZE"` to `CREATE_FLAGS` in `bin/dx-create-container`.
+- In `setup_nix_volume`, replace `64G` with `"${DX_NIX_DISK_SIZE:-64G}"` (and reflect the size in the echo).
+- **Reconcile the default to a single value:** set `dx-lib.sh` to `:-64G` so the documented default matches today's real allocation, and document `64G` in `tests/profiles/default.env`.
+- `DX_NIX_DISK` (`dx-lib.sh:32`) remains unused in the normal flow; keep it only if `dx-nix-disk` is still intended, otherwise drop both `DX_NIX_DISK*` exports in a follow-up.
+- Tests: `assert_file_contains "$BIN_DIR/dx-create-container" "DX_NIX_DISK_SIZE"` and `assert_file_not_contains "$BOOTSTRAP" 'truncate -s 64G'`.
+
+Alternatives considered and rejected: **Option B** — delete the `DX_NIX_DISK*` exports entirely (less surface, but discards a usable knob); **Option C** — document the fixed-64G limitation only (leaves the variable inert). Option A was chosen because it makes the already-exported, user-settable variable behave as documented.
+
+### Codebase Assessment (2026-06-04)
+
+What the verification against the working tree turned up:
+
+- **P3 is already fully implemented** — code plus both test assertions. `plan-3.md` is obsolete; the consolidated table records it as done.
+- **P5–P10 remain open** and were each confirmed present at the cited file:line. **P4 was dropped** after the 2026-06-05 external review — its partial-hook-env fix conflicts with the intentional race-avoidance behavior asserted by `test_section14:256-257`.
+- **plan-6 step 3 was wrong:** `tzdata` lives in `flake.nix` `dxPackages` (line 67) and is wired via `home/shell.nix` `TZDIR` (lines 127, 146), not `home/tools.nix`. The merged P6 corrects this.
+- **P10 carries a latent inconsistency** between the documented `20G` default and the hardcoded `64G`. The merged P10 resolves it to a single `64G` default.
+- **`tests/profiles/default.env` has no `HOST_TZ` or `DX_NIX_DISK_SIZE` entries today** (and still references `25.11`), so the P5/P10 doc steps are additions, not edits; the `25.11` reference is handled by the upgrade rename.
+- **Phase 1 harness work is partly done in the uncommitted working tree:** `tests/test_helpers.sh` now defines the shared `CONTAINER_DIR/FLAKE_NIX/FLAKE_LOCK/NIXVIM_NIX/BOOTSTRAP/CONTAINERFILE/SHELL_NIX` paths, `tests/test_section13_final_review.sh` no longer references `todo.txt`, and sections 2–16 were updated toward shared helpers / live behavior. Land P5–P10 on top of this rather than re-deriving paths.
+- **Line numbers in the original fix files have drifted slightly** (e.g. P10's `truncate` is now `bootstrap.sh:77`, not the `:76` cited in `plan-10.md`); the references in this section are current.
+
+### External Review Reconciliation (2026-06-05)
+
+An external review (`review.md`) checked this plan against the working tree. All five findings were verified against the code and accepted:
+
+1. **P4 conflicts with intended behavior** → **accepted; P4 dropped.** The proposed `tinty current` fallback is exactly what `test_section14:256-257` forbids (switch-time race). See the P4 entry.
+2. **P6/P8 need test updates** → **accepted.** Added "Test update (required)" steps to P6 (`test_section3:83` TZDIR assertion) and P8 (`test_section3:36-40` pgrep-sshd assertion, which only the dead `start_ssh` satisfies).
+3. **Isolated profile missing expected-release env** → **accepted.** Added `DX_EXPECTED_NIXOS_RELEASE=26.05` / `DX_EXPECTED_NIXOS_BRANCH=nixos-26.05` to the `nixos-2605.env` block; otherwise `test_helpers.sh:28-29` runs 25.11 assertions against the 26.05 guest.
+4. **`--skip-integration` wording fuzzy + stale `--help`** → **accepted.** Documented the real runner surface (skips only 11–12; section 17 runs; help says `0-16`) in [Test Harness Changes](#test-harness-changes) and the [Command Reference](#command-reference).
+5. **Final-review gate fails on a dirty tree** → **accepted.** The section-13 clean-tree requirement (`git status -uno --short`, excluding `README.md`) is now called out in both sections above, with guidance to scope around it during in-flight work.
+
+The review's Confirmed Observations also align with this plan: the repo still defaults to 25.11; Docker Hub still does not expose `nixpkgs/nix-flakes:nixos-26.05-aarch64-linux` (the upgrade's hard gate, unchanged); the `nixos-26.05` / `release-26.05` branches exist; P3 is implemented and P5–P10 remain open.

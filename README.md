@@ -443,3 +443,7 @@ If you cannot connect via SSH, monitor the bootstrap progress on the host:
 ```bash
 container logs dx-host -f
 ```
+
+## Planned Work
+
+- **[NixOS 26.05 upgrade & code-review fixes](plan.md)** — the release-bump playbook (waiting on the official 26.05 base image) plus eight consolidated code-review fixes against the current 25.11 codebase. See [Consolidated Code-Review Fixes](plan.md#consolidated-code-review-fixes) for the per-item status.
