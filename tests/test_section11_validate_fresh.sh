@@ -84,12 +84,12 @@ fi
 
 # Test: source files survive stop/start
 echo "  Testing persistence: creating file, stopping, starting, checking"
-guest_bash "touch /workspace/persistence_test_file" >/dev/null 2>&1
+guest_bash "touch /persist/persistence_test_file" >/dev/null 2>&1
 "$BIN_DIR/dx-stop-container" >/dev/null 2>&1
 sleep 5
 "$BIN_DIR/dx-start-container" >/dev/null 2>&1
 sleep 10
-if guest_bash "test -f /workspace/persistence_test_file" >/dev/null 2>&1; then
+if guest_bash "test -f /persist/persistence_test_file" >/dev/null 2>&1; then
     test_pass "source files survive dx-stop-container and dx-start-container"
 else
     test_fail "source files survive dx-stop-container and dx-start-container"

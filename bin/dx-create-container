@@ -22,7 +22,7 @@ BOOTSTRAP_LAUNCH_CMD="$(dx_bootstrap_launch_command)"
 HOST_TZ="$(dx_get_host_timezone)"
 
 # Volume mounts: DX_NIX_VOLUME -> /var/lib/dx-nix-raw (the bootstrap formats
-# and remounts this at /nix); dx-workspace -> /workspace; dx-bootstrap ->
+# and remounts this at /nix); dx-persist -> /persist; dx-bootstrap ->
 # /guest-bootstrap.
 #
 # CAP_SYS_ADMIN is required so the guest bootstrap can umount the
@@ -33,7 +33,7 @@ CREATE_FLAGS=(
     --entrypoint sh
     --cap-add CAP_SYS_ADMIN
     --volume "$DX_NIX_VOLUME:/var/lib/dx-nix-raw:rw"
-    --volume "$DX_WORKSPACE_VOLUME:$DX_WORKSPACE_PATH:rw"
+    --volume "$DX_PERSIST_VOLUME:/persist:rw"
     --volume "$DX_BOOTSTRAP_VOLUME:$DX_BOOTSTRAP_PATH:rw"
     -e "HOST_TZ=$HOST_TZ"
     -m 12G -c 4

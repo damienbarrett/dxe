@@ -8,7 +8,20 @@ source "$SCRIPT_DIR/dx-lib.sh"
 # idempotent: it inspects the volume and returns early when it is already there.
 echo "Ensuring nix volume $DX_NIX_VOLUME..."
 container_ensure_volume "$DX_NIX_VOLUME"
-echo "Ensuring workspace volume $DX_WORKSPACE_VOLUME..."
-container_ensure_volume "$DX_WORKSPACE_VOLUME"
+
+legacy_volume="${DX_LEGACY_WORKSPACE_VOLUME:-dx-workspace}"
+if [ "$legacy_volume" != "$DX_PERSIST_VOLUME" ] \
+    && container volume inspect "$legacy_volume" >/dev/null 2>&1 \
+    && ! container volume inspect "$DX_PERSIST_VOLUME" >/dev/null 2>&1; then
+    cat >&2 <<EOF
+Error: legacy persistence volume $legacy_volume exists, but $DX_PERSIST_VOLUME does not.
+Run bin/dx-migrate-persist before creating the new /persist volume.
+Set DX_LEGACY_WORKSPACE_VOLUME=<old> and DX_PERSIST_VOLUME=<new> for custom volume names.
+EOF
+    exit 1
+fi
+
+echo "Ensuring persist volume $DX_PERSIST_VOLUME..."
+container_ensure_volume "$DX_PERSIST_VOLUME"
 echo "Ensuring bootstrap volume $DX_BOOTSTRAP_VOLUME..."
 container_ensure_volume "$DX_BOOTSTRAP_VOLUME"

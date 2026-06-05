@@ -3,11 +3,11 @@ set -euo pipefail
 
 # dx-recreate
 # Tears down the rebuildable host-side state and re-runs dx. Persistent volumes
-# (/nix and /workspace) and the SSH keypair are preserved.
+# (/nix and /persist) and the SSH keypair are preserved.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Recreating DX environment (preserves /nix and /workspace)..."
+echo "Recreating DX environment (preserves /nix and /persist)..."
 
 "$SCRIPT_DIR/dx-destroy"
 exec "$SCRIPT_DIR/dx" "$@"

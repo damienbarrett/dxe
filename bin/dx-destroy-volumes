@@ -15,7 +15,7 @@ for arg in "$@"; do
     esac
 done
 
-VOLUMES=("$DX_NIX_VOLUME" "$DX_WORKSPACE_VOLUME" "$DX_BOOTSTRAP_VOLUME")
+VOLUMES=("$DX_NIX_VOLUME" "$DX_PERSIST_VOLUME" "$DX_BOOTSTRAP_VOLUME")
 
 # Filter to volumes that actually exist so we don't prompt about nothing.
 existing=()
@@ -41,7 +41,7 @@ if [ "$force" -ne 1 ]; then
     for vol in "${existing[@]}"; do
         case "$vol" in
             "$DX_NIX_VOLUME")       echo "  $vol  (Nix store — re-download takes hours)" ;;
-            "$DX_WORKSPACE_VOLUME") echo "  $vol  (Your work in $DX_WORKSPACE_PATH — IRREVERSIBLE)" ;;
+            "$DX_PERSIST_VOLUME") echo "  $vol  (Your work in /persist — IRREVERSIBLE)" ;;
             "$DX_BOOTSTRAP_VOLUME") echo "  $vol  (Bootstrap payload — auto-rebuilt on next start)" ;;
             *)                      echo "  $vol" ;;
         esac

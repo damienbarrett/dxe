@@ -36,8 +36,8 @@ if container volume inspect "$DX_NIX_VOLUME" >/dev/null 2>&1; then
     exit_with_code 1 "Assert failed: volume $DX_NIX_VOLUME still exists"
 fi
 
-if container volume inspect "$DX_WORKSPACE_VOLUME" >/dev/null 2>&1; then
-    exit_with_code 1 "Assert failed: volume $DX_WORKSPACE_VOLUME still exists"
+if container volume inspect "$DX_PERSIST_VOLUME" >/dev/null 2>&1; then
+    exit_with_code 1 "Assert failed: volume $DX_PERSIST_VOLUME still exists"
 fi
 
 if container volume inspect "$DX_BOOTSTRAP_VOLUME" >/dev/null 2>&1; then

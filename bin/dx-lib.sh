@@ -15,6 +15,13 @@ if [ -f "$DX_PROJECT_ROOT/.env" ]; then
     set +a
 fi
 
+# Fail fast on retired persistence variables before defaults are assigned.
+if [ -n "${DX_WORKSPACE_VOLUME:-}" ] || [ -n "${DX_WORKSPACE_PATH:-}" ]; then
+    echo "Error: workspace persistence variables were renamed." >&2
+    echo "Use DX_PERSIST_VOLUME for the persistent volume and remove DX_WORKSPACE_PATH; /persist is fixed." >&2
+    exit 1
+fi
+
 # Set defaults for common variables
 export DX_CONTAINER_NAME="${DX_CONTAINER_NAME:-dx-host}"
 export DX_IMAGE="${DX_IMAGE:-dx-nixos-25.11}"
@@ -31,8 +38,7 @@ export DX_NIX_VOLUME="${DX_NIX_VOLUME:-dx-nix}"
 export DX_NIX_MOUNT="${DX_NIX_MOUNT:-/nix}"
 export DX_NIX_DISK="${DX_NIX_DISK:-$HOME/.dx-cache/nix-store.img}"
 export DX_NIX_DISK_SIZE="${DX_NIX_DISK_SIZE:-20G}"
-export DX_WORKSPACE_VOLUME="${DX_WORKSPACE_VOLUME:-dx-workspace}"
-export DX_WORKSPACE_PATH="${DX_WORKSPACE_PATH:-/workspace}"
+export DX_PERSIST_VOLUME="${DX_PERSIST_VOLUME:-dx-persist}"
 export DX_CONTAINER_VOLUME_DIR="${DX_CONTAINER_VOLUME_DIR:-$HOME/Library/Application Support/com.apple.container/volumes}"
 export DX_STOP_GRACE_SECONDS="${DX_STOP_GRACE_SECONDS:-5}"
 export DX_STOP_COMMAND_TIMEOUT="${DX_STOP_COMMAND_TIMEOUT:-15}"
@@ -243,7 +249,7 @@ container_stop_bounded() {
 }
 
 dx_bootstrap_launch_command() {
-    printf '%s\n' "set -eu; mkdir -p \"$DX_WORKSPACE_PATH\" \"$DX_BOOTSTRAP_PATH\"; rm -f \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-ready\"; touch \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-waiting\"; echo 'Waiting for bootstrap payload in $DX_BOOTSTRAP_PATH...'; while [ ! -f \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-ready\" ]; do sleep 1; done; rm -f \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-waiting\"; exec \"$DX_BOOTSTRAP_PATH/bootstrap.sh\" serve"
+    printf '%s\n' "set -eu; mkdir -p /persist \"$DX_BOOTSTRAP_PATH\"; rm -f \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-ready\"; touch \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-waiting\"; echo 'Waiting for bootstrap payload in $DX_BOOTSTRAP_PATH...'; while [ ! -f \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-ready\" ]; do sleep 1; done; rm -f \"$DX_BOOTSTRAP_PATH/.dx-bootstrap-waiting\"; exec \"$DX_BOOTSTRAP_PATH/bootstrap.sh\" serve"
 }
 
 dx_get_host_timezone() {

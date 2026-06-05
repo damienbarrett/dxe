@@ -139,8 +139,8 @@ else
     test_fail "guest dx-ai updates nixpkgs-unstable"
 fi
 
-assert_file_not_contains "$DX_AI_SCRIPT" "touch /workspace/home/dx/.claude.json" "guest dx-ai does not create empty Claude JSON config"
-assert_file_contains "$DX_AI_SCRIPT" "printf '%s\\\\n' '{}' > /workspace/home/dx/.claude.json" "guest dx-ai initializes empty Claude config as JSON"
+assert_file_not_contains "$DX_AI_SCRIPT" "touch /persist/home/dx/.claude.json" "guest dx-ai does not create empty Claude JSON config"
+assert_file_contains "$DX_AI_SCRIPT" "printf '%s\\\\n' '{}' > \"\$persist_home/.claude.json\"" "guest dx-ai initializes empty Claude config as JSON"
 
 if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "codex"; then
     test_pass "codex is in aiPackages"

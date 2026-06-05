@@ -122,7 +122,7 @@
       $env.VISUAL = "nvim"
       $env.SSL_CERT_FILE = $"($nu.home-path)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
       $env.NIX_SSL_CERT_FILE = $"($nu.home-path)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
-      $env.WORKSPACE = "/workspace"
+      $env.PERSIST = "/persist"
       $env.TZ = $env.HOST_TZ?
       $env.TZDIR = "${pkgs.tzdata}/share/zoneinfo"
       let lazygit_config = $"($nu.home-path)/.config/lazygit/config.yml"
@@ -141,7 +141,7 @@
     VISUAL = "nvim";
     SSL_CERT_FILE = "$HOME/.nix-profile/etc/ssl/certs/ca-bundle.crt";
     NIX_SSL_CERT_FILE = "$HOME/.nix-profile/etc/ssl/certs/ca-bundle.crt";
-    WORKSPACE = "/workspace";
+    PERSIST = "/persist";
     TZ = "$HOST_TZ";
     TZDIR = "${pkgs.tzdata}/share/zoneinfo";
   };
@@ -151,6 +151,6 @@
     claude = "claude --dangerously-skip-permissions";
     codex = "codex --dangerously-bypass-approvals-and-sandbox";
     gemini = "gemini --yolo";
-    usage = "/workspace/git/agent-stats/run-stats.sh";
+    usage = "/persist/git/agent-stats/run-stats.sh";
   };
 }

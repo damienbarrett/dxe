@@ -49,12 +49,12 @@ assert_file_contains "$BOOTSTRAP" "stat -c '%u:%g'" "bootstrap verifies Nix owne
 assert_file_contains "$BOOTSTRAP" "chown dx:dx \"\$sentinel\"" "bootstrap marks repaired Nix ownership as dx-owned"
 
 # Test: bootstrap initializes persisted Claude config as valid JSON
-assert_file_not_contains "$BOOTSTRAP" "touch /workspace/home/dx/.claude.json" "bootstrap does not create empty Claude JSON config"
-assert_file_contains "$BOOTSTRAP" "printf '%s\\\\n' '{}' > /workspace/home/dx/.claude.json" "bootstrap initializes empty Claude config as JSON"
+assert_file_not_contains "$BOOTSTRAP" "touch /persist/home/dx/.claude.json" "bootstrap does not create empty Claude JSON config"
+assert_file_contains "$BOOTSTRAP" "printf '%s\\\\n' '{}' > /persist/home/dx/.claude.json" "bootstrap initializes empty Claude config as JSON"
 
 # Test: bootstrap persists GitHub CLI auth/config across rebuilds
-assert_file_contains "$BOOTSTRAP" "/workspace/home/dx/.config/gh" "bootstrap persists GitHub CLI config under workspace"
-assert_file_contains "$BOOTSTRAP" "ln -sfnT /workspace/home/dx/.config/gh /home/dx/.config/gh" "bootstrap links GitHub CLI config into home"
+assert_file_contains "$BOOTSTRAP" "/persist/home/dx/.config/gh" "bootstrap persists GitHub CLI config under persist storage"
+assert_file_contains "$BOOTSTRAP" "ln -sfnT /persist/home/dx/.config/gh /home/dx/.config/gh" "bootstrap links GitHub CLI config into home"
 GH_PERSIST_LINE=$(grep -n "^[[:space:]]*setup_gh_persistence$" "$BOOTSTRAP" | head -1 | cut -d: -f1 || echo "")
 AI_GATE_LINE=$(grep -n "dx-ai-tools" "$BOOTSTRAP" | head -1 | cut -d: -f1 || echo "")
 if [ -n "$GH_PERSIST_LINE" ] && { [ -z "$AI_GATE_LINE" ] || [ "$GH_PERSIST_LINE" -lt "$AI_GATE_LINE" ]; }; then

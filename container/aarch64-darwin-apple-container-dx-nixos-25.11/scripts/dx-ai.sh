@@ -72,19 +72,20 @@ else
 fi
 
 echo "Setting up AI credentials persistence..."
-mkdir -p /workspace/home/dx/.gemini /workspace/home/dx/.claude /workspace/home/dx/.codex
-if [ ! -s /workspace/home/dx/.claude.json ]; then
-    printf '%s\n' '{}' > /workspace/home/dx/.claude.json
+persist_home=/persist/home/dx
+mkdir -p "$persist_home/.gemini" "$persist_home/.claude" "$persist_home/.codex"
+if [ ! -s "$persist_home/.claude.json" ]; then
+    printf '%s\n' '{}' > "$persist_home/.claude.json"
 fi
-ln -sfn /workspace/home/dx/.gemini ~/.gemini
-ln -sfn /workspace/home/dx/.claude ~/.claude
-ln -sfn /workspace/home/dx/.claude.json ~/.claude.json
-ln -sfn /workspace/home/dx/.codex ~/.codex
+ln -sfn "$persist_home/.gemini" ~/.gemini
+ln -sfn "$persist_home/.claude" ~/.claude
+ln -sfn "$persist_home/.claude.json" ~/.claude.json
+ln -sfn "$persist_home/.codex" ~/.codex
 
 # Persist keyring data (used by agy for OAuth tokens via D-Bus Secret Service)
-mkdir -p /workspace/home/dx/.local/share/keyrings
+mkdir -p "$persist_home/.local/share/keyrings"
 mkdir -p ~/.local/share
-ln -sfnT /workspace/home/dx/.local/share/keyrings ~/.local/share/keyrings
+ln -sfnT "$persist_home/.local/share/keyrings" ~/.local/share/keyrings
 
 # Start D-Bus session + gnome-keyring if not already running, so agy can
 # persist OAuth tokens via the Secret Service API (zalando/go-keyring).
@@ -104,7 +105,7 @@ fi
 
 # Seed the dx-claude-statusline hook in Claude's settings.json without
 # clobbering existing keys. Only sets statusLine if it isn't already configured.
-claude_settings=/workspace/home/dx/.claude/settings.json
+claude_settings="$persist_home/.claude/settings.json"
 if [ ! -s "$claude_settings" ]; then
     printf '%s\n' '{}' > "$claude_settings"
 fi

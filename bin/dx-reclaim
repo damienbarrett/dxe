@@ -30,7 +30,7 @@ run_in_guest() {
 report_host_images() {
     echo "Host sparse image usage:"
     printf '  %-14s %s\n' "$DX_NIX_VOLUME" "$(host_image_size "$(volume_image_path "$DX_NIX_VOLUME")")"
-    printf '  %-14s %s\n' "$DX_WORKSPACE_VOLUME" "$(host_image_size "$(volume_image_path "$DX_WORKSPACE_VOLUME")")"
+    printf '  %-14s %s\n' "$DX_PERSIST_VOLUME" "$(host_image_size "$(volume_image_path "$DX_PERSIST_VOLUME")")"
 }
 
 report_guest_filesystems() {
@@ -38,7 +38,7 @@ report_guest_filesystems() {
     container exec "$DX_CONTAINER_NAME" sh -lc '
         printf "  %-14s %s\n" "$1/store" "$(du -sh "$1/store" 2>/dev/null | cut -f1)"
         df -h "$@" | sed "s/^/  /"
-    ' sh "$DX_NIX_MOUNT" "$DX_WORKSPACE_PATH"
+    ' sh "$DX_NIX_MOUNT" /persist
 }
 
 report_usage() {
@@ -76,7 +76,7 @@ rule
 echo "Trimming guest filesystems..."
 rule
 trim_mount "$DX_NIX_MOUNT"
-trim_mount "$DX_WORKSPACE_PATH"
+trim_mount /persist
 
 rule
 echo "After"

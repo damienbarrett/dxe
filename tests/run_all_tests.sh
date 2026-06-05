@@ -88,7 +88,7 @@ fi
 run_test "$SCRIPT_DIR/test_section13_final_review.sh" "13"
 run_test "$SCRIPT_DIR/test_section14_tinty_theming.sh" "14"
 run_test "$SCRIPT_DIR/test_section15_nushell_env.sh" "15"
-run_test "$SCRIPT_DIR/test_section16_workspace_persistence.sh" "16"
+run_test "$SCRIPT_DIR/test_section16_persist_storage.sh" "16"
 run_test "$SCRIPT_DIR/test_section17_dx_ai_runtime.sh" "17"
 
 echo ""

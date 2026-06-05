@@ -33,7 +33,7 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
 
 - **Connect (or first-time setup):** `./bin/dx`
 - **Check Status:** `./bin/dx-status`
-- **Work with Code:** Use `/workspace` inside the guest.
+- **Work with Code:** Use `/persist` inside the guest.
 - **Transfer Files:** `./bin/dx-put <host_path> [guest_path]`
 - **Stop the Container:** `./bin/dx-stop-container`
 - **Push edited bootstrap payload to a running guest:** `./bin/dx-sync-bootstrap`
@@ -81,7 +81,7 @@ operations.
    logic. New phases land in one place.
 5. **Forcing a rebuild is explicit.** Idempotent build means "skip if present."
    To force a rebuild at any layer, destroy that layer first.
-6. **Persistent volumes are protected by construction.** `/nix` and `/workspace`
+6. **Persistent volumes are protected by construction.** `/nix` and `/persist`
    survive everything except `dx-factory-reset` (or an explicit
    `dx-destroy-volumes`).
 7. **The bootstrap payload is part of every start.** `dx-start-container`
@@ -129,7 +129,7 @@ or perform maintenance operations.
 | [`bin/dx-lib.sh`](bin/dx-lib.sh) | Shared library (env vars, container helpers). Sourced by every script; not executable on its own. |
 | [`bin/dx-profile`](bin/dx-profile) | Loads a named profile of env-var overrides from `tests/profiles/<name>.env`, then execs the rest of the command. Opt-in; defaults apply when not used. |
 | [`bin/dx-wait-ssh`](bin/dx-wait-ssh) | Blocks until guest SSH responds. Gates the SSH connection layer. |
-| [`bin/dx-status`](bin/dx-status) | Reports image, container, SSH, tool, workspace, and tmux status. |
+| [`bin/dx-status`](bin/dx-status) | Reports image, container, SSH, tool, persist, and tmux status. |
 | [`bin/dx-put`](bin/dx-put) | Copies host files into the guest. |
 | [`bin/dx-enter`](bin/dx-enter) | Direct `container exec` shell, bypassing SSH. |
 | [`bin/dx-gc`](bin/dx-gc) | Runs Nix garbage collection and store optimization inside the guest. |
@@ -149,17 +149,17 @@ maintenance path for the DX volumes:
 ./bin/dx-reclaim
 ```
 
-Run it when the `dx-nix` or `dx-workspace` volume has grown noticeably and you
+Run it when the `dx-nix` or `dx-persist` volume has grown noticeably and you
 want to return unused space to macOS. The container must already be running.
 
 `dx-reclaim` prints host sparse-image usage and guest filesystem usage before
 and after the operation. It then:
 
 1. Deletes old Nix generations inside the guest with `nix-collect-garbage -d`.
-2. Runs `fstrim -v` on `/nix` and `/workspace` so already-free blocks can be
+2. Runs `fstrim -v` on `/nix` and `/persist` so already-free blocks can be
    discarded from the sparse host images.
 
-This does not delete workspace files. It removes only unreferenced Nix store
+This does not delete persisted files. It removes only unreferenced Nix store
 paths and discards blocks the guest filesystem has already marked free. It is
 reasonable to run occasionally after large rebuilds or dependency churn, but it
 does not need to run constantly or on a tight schedule.
@@ -174,6 +174,29 @@ does not need to run constantly or on a tight schedule.
 | `dx-destroy` | `dx-destroy-container` | The old name now refers to an umbrella that destroys image AND container — see the Wrappers table. |
 | `dx-start` | `dx-start-container` | Now also syncs the bootstrap payload, so direct starts bring SSH up without a separate `dx-sync-bootstrap` step. |
 | `dx-stop` | `dx-stop-container` | |
+
+If you have data in the old default `dx-workspace` volume, migrate it before
+starting the renamed lifecycle:
+
+```bash
+./bin/dx-migrate-persist
+```
+
+The helper copies `dx-workspace` into `dx-persist`, writes a migration sentinel,
+and never deletes the old volume. For a custom old volume, run:
+
+```bash
+DX_LEGACY_WORKSPACE_VOLUME=<old-volume> \
+DX_PERSIST_VOLUME=<new-volume> \
+./bin/dx-migrate-persist
+```
+
+After starting the guest, verify the data under `/persist`. Only then remove
+the old volume manually, for example:
+
+```bash
+container volume rm dx-workspace
+```
 
 ## Configuration Variables
 
@@ -196,8 +219,7 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_BOOTSTRAP_WAIT_TIMEOUT` | `30` | Seconds `dx-sync-bootstrap` waits for the guest entrypoint to report bootstrap readiness before failing with a log hint. |
 | `DX_NIX_VOLUME` | `dx-nix` | Named volume that backs the persistent Nix store. Apple Container surfaces it inside the guest at `/var/lib/dx-nix-raw`; the bootstrap reformats it as btrfs (or ext4 as a fallback) and remounts it at `/nix`. Override this for isolated test containers or parallel experiments so they do not share the default writable Nix store. |
 | `DX_NIX_MOUNT` | `/nix` | Guest mount point for the active Nix filesystem. Used by maintenance commands such as `dx-reclaim`. |
-| `DX_WORKSPACE_VOLUME` | `dx-workspace` | Named volume mounted as the guest workspace. |
-| `DX_WORKSPACE_PATH` | `/workspace` | Guest path for the workspace volume. |
+| `DX_PERSIST_VOLUME` | `dx-persist` | Named volume mounted at the fixed guest path `/persist`. |
 | `DX_CONTAINER_VOLUME_DIR` | `$HOME/Library/Application Support/com.apple.container/volumes` | Host directory where Apple Container stores named volume sparse images. Used for `dx-reclaim` reporting. |
 | `DX_STOP_GRACE_SECONDS` | `5` | Seconds passed to `container stop --time` before the container CLI escalates. |
 | `DX_STOP_COMMAND_TIMEOUT` | `15` | Host-side timeout for a `container stop` or `container kill` CLI command that hangs. |
@@ -215,6 +237,11 @@ container should use that writable volume at a time. For a clean lifecycle
 test, use a separate Nix volume so the test cannot corrupt or lock the default
 environment.
 
+`/persist` is the fixed supported guest path for persisted files. Do not set
+`DX_PERSIST_PATH`; path overrides are not supported. Setting old
+`DX_WORKSPACE_VOLUME` or `DX_WORKSPACE_PATH` variables now fails early with a
+rename message so existing `.env` files are not silently ignored.
+
 Example isolated lifecycle create:
 
 ```bash
@@ -222,7 +249,7 @@ DX_IMAGE=dx-lifecycle \
 DX_CONTAINER_NAME=dx-lifecycle \
 DX_SSH_PORT=2299 \
 DX_NIX_VOLUME=dx-lifecycle-nix \
-DX_WORKSPACE_VOLUME=dx-lifecycle-workspace \
+DX_PERSIST_VOLUME=dx-lifecycle-persist \
 DX_BOOTSTRAP_VOLUME=dx-lifecycle-bootstrap \
 ./bin/dx
 ```
@@ -287,10 +314,10 @@ gh auth login
 ```
 
 `gh` uses `~/.config/gh` by default. The bootstrap links that path to
-`/workspace/home/dx/.config/gh`, so GitHub CLI configuration and auth state
-survive `dx-recreate` and container rebuilds through the persistent workspace
-volume. This state is removed only by `dx-factory-reset`, `dx-destroy-volumes`,
-or manually deleting the workspace volume/path.
+`/persist/home/dx/.config/gh`, so GitHub CLI configuration and auth state
+survive `dx-recreate` and container rebuilds through the persistent volume.
+This state is removed only by `dx-factory-reset`, `dx-destroy-volumes`,
+or manually deleting the persist volume/path.
 
 ## Optional AI Tools
 
@@ -435,7 +462,7 @@ start fresh:
    ```
    *Note: This will trigger a full download of all Nix packages during the next bootstrap.*
 
-For a complete wipe (including `/workspace` contents and SSH keys), use
+For a complete wipe (including `/persist` contents and SSH keys), use
 `./bin/dx-factory-reset` — it prompts for confirmation before removing anything.
 
 ### Checking Bootstrap Logs

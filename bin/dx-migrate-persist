@@ -1,0 +1,61 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+legacy_volume="${DX_LEGACY_WORKSPACE_VOLUME:-dx-workspace}"
+persist_volume="$DX_PERSIST_VOLUME"
+sentinel=".dxe-persist-migrated-from"
+
+if [ "$legacy_volume" = "$persist_volume" ]; then
+    echo "Error: legacy and persist volumes are both $persist_volume." >&2
+    exit 1
+fi
+
+if container_is_running "$DX_CONTAINER_NAME"; then
+    echo "Error: container $DX_CONTAINER_NAME is running; stop it before migrating persistence data." >&2
+    exit 1
+fi
+
+if ! container volume inspect "$legacy_volume" >/dev/null 2>&1; then
+    echo "Legacy volume $legacy_volume does not exist; nothing to migrate."
+    exit 0
+fi
+
+if ! container_image_exists "$DX_IMAGE"; then
+    echo "Error: Image $DX_IMAGE does not exist. Run ./bin/dx-create-image first." >&2
+    exit 1
+fi
+
+container_ensure_volume "$persist_volume"
+
+sentinel_value="$(container run --rm \
+    --volume "$persist_volume:/new:rw" \
+    --entrypoint sh \
+    "$DX_IMAGE" -lc "cat /new/$sentinel 2>/dev/null || true")"
+if [ "$sentinel_value" = "$legacy_volume" ]; then
+    echo "Persist volume $persist_volume was already migrated from $legacy_volume."
+    exit 0
+fi
+
+dest_listing="$(container run --rm \
+    --volume "$persist_volume:/new:rw" \
+    --entrypoint sh \
+    "$DX_IMAGE" -lc "for path in /new/* /new/.[!.]* /new/..?*; do [ -e \"\$path\" ] || continue; name=\"\${path##*/}\"; [ \"\$name\" = '$sentinel' ] && continue; [ \"\$name\" = lost+found ] && continue; printf '%s\n' \"\$path\"; break; done")"
+if [ -n "$dest_listing" ]; then
+    echo "Error: destination volume $persist_volume is not empty and has no matching migration sentinel." >&2
+    echo "Refusing to merge automatically. Inspect it or choose a different DX_PERSIST_VOLUME." >&2
+    exit 1
+fi
+
+echo "Migrating $legacy_volume to $persist_volume..."
+container run --rm \
+    --volume "$legacy_volume:/old:ro" \
+    --volume "$persist_volume:/new:rw" \
+    --entrypoint sh \
+    "$DX_IMAGE" -lc "cp -a /old/. /new/ && printf '%s\n' '$legacy_volume' > /new/$sentinel"
+
+echo "Migration complete."
+echo "Verify your data through /persist before deleting the legacy volume."
+echo "Legacy cleanup command: container volume rm $legacy_volume"

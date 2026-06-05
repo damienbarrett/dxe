@@ -28,7 +28,7 @@ Principles:
 - Keep the stable flake inputs aligned: `nixpkgs`, `home-manager`, and `nixvim` should all move to the same target release together. Keep intentionally independent inputs, such as `nixpkgs-unstable` for optional AI tooling, on their documented track.
 - Separate routine drift from the release jump. If desired, first do a same-release lockfile update on `OLD_RELEASE`; then do the branch bump to `NEW_RELEASE` in a separate commit so the lock diff has one cause.
 - Keep image and context names versioned. This allows old and new images to coexist, makes rollback easier, and keeps upgrade state visible in `DX_IMAGE` and `DX_CONTEXT_DIR`.
-- Validate the target release in an isolated profile before making it the default instance. Namespace `DX_CONTAINER_NAME`, `DX_IMAGE`, `DX_SSH_PORT`, `DX_NIX_VOLUME`, `DX_WORKSPACE_VOLUME`, `DX_BOOTSTRAP_VOLUME`, and SSH key paths so the new release cannot touch the current default instance.
+- Validate the target release in an isolated profile before making it the default instance. Namespace `DX_CONTAINER_NAME`, `DX_IMAGE`, `DX_SSH_PORT`, `DX_NIX_VOLUME`, `DX_PERSIST_VOLUME`, `DX_BOOTSTRAP_VOLUME`, and SSH key paths so the new release cannot touch the current default instance.
 - Prefer `git mv` for the context directory rename so history and rollback stay clean.
 - Centralize versioned test paths in shared helpers before changing release strings. Future upgrades should mostly change helpers and release assertions, not repeated literal paths spread through tests.
 - Prefer behavior tests against a live guest for runtime behavior. Keep static source assertions for pinning, safety invariants, and documentation, but validate shells, tools, theming, persistence, SSH, and optional AI installation inside a running profiled guest.
@@ -47,7 +47,7 @@ These phases apply to this upgrade and to future release bumps. Do not treat thi
 
 1. **Phase 1 — test harness cleanup, still on 25.11.**
    - Apply the [Test Harness Changes](#test-harness-changes): centralize test paths, remove the obsolete `todo.txt` check, and make live tests profile-aware. (Partly done already in the uncommitted working tree — see [Codebase Assessment](#codebase-assessment-2026-06-04).)
-   - Convert or extend tests toward live guest behavior where appropriate: SSH, Home Manager activation, shells, tmux, NixVim, Yazi, theming, workspace persistence, and optional AI tooling should be exercised in a running guest rather than only by grepping source.
+   - Convert or extend tests toward live guest behavior where appropriate: SSH, Home Manager activation, shells, tmux, NixVim, Yazi, theming, persist storage, and optional AI tooling should be exercised in a running guest rather than only by grepping source.
    - Land the open [Consolidated Code-Review Fixes](#consolidated-code-review-fixes) (P5–P10) here, since they fix current 25.11 code that carries forward into 26.05. P3 is already done; P4 was dropped after review.
    - **Gate:** `tests/run_all_tests.sh --skip-integration` passes; live tests pass against the current 25.11 instance when Apple Container is available.
 
@@ -125,7 +125,7 @@ References:
   export DX_EXPECTED_NIXOS_BRANCH=nixos-26.05
   export DX_SSH_PORT=2223
   export DX_NIX_VOLUME=dx-2605-nix
-  export DX_WORKSPACE_VOLUME=dx-2605-workspace
+  export DX_PERSIST_VOLUME=dx-2605-persist
   export DX_BOOTSTRAP_VOLUME=dx-2605-bootstrap
   export DX_SSH_KEY="$DX_PROJECT_ROOT/dx-2605_key"
   export DX_SSH_KEY_PUB="$DX_PROJECT_ROOT/dx-2605_key.pub"
@@ -224,7 +224,7 @@ Validate 26.05 in `tests/profiles/nixos-2605.env` (defined in [Implementation Ch
 Isolation rules for the profile:
 
 - Keep every stateful resource unique. In particular, never mount the default `dx-nix`,
-  `dx-workspace`, or `dx-bootstrap` volumes into the 26.05 validation container while
+  `dx-persist`, or `dx-bootstrap` volumes into the 26.05 validation container while
   25.11 may still use them. Concurrent containers must not share named volume images.
 - The isolated 26.05 store starts empty and will repopulate `/nix` on first bootstrap.
   If avoiding that cost matters, stop both instances and copy the old Apple Container
@@ -244,7 +244,7 @@ Isolation rules for the profile:
   directory in one step. The committed `flake.lock` makes this reproducible. Only once
   the source tree is back on 25.11 — so `DX_IMAGE`/`DX_CONTEXT_DIR` resolve to the 25.11
   values again and the 25.11 context directory exists — run `dx-recreate` to rebuild.
-  `/nix` and `/workspace` are preserved.
+  `/nix` and `/persist` are preserved.
 - **Fast, no-rebuild (if `/nix` was not GC'd) — generation rollback.** The previous Home
   Manager generation persists in `/nix`, so the environment can be rolled back inside the
   guest without rebuilding. The `home-manager` CLI is **not** installed (activation is via
@@ -269,7 +269,7 @@ Isolation rules for the profile:
 - **Do not garbage-collect until 26.05 is verified.** `dx-gc` / `nix-collect-garbage`
   can prune the old 25.11 generations and store paths, which disables the generation
   rollback and forces a rebuild from the reverted lock.
-- `/workspace` is never rolled back in either direction; hand-migrated data is not
+- `/persist` is never rolled back in either direction; hand-migrated data is not
   reversed.
 - `stateVersion` reverts cleanly here because no configured service persists
   version-specific stateful data; the general no-auto-downgrade caution does not apply to
@@ -323,7 +323,7 @@ The commands each phase gate depends on. Phases own *when* to run them (see [Pha
 
 - The upgrade waits for the stable 26.05 `nixpkgs/nix-flakes` image tag and does not switch to `latest`.
 - The target architecture remains `aarch64-linux` for Apple Container on Apple silicon hosts.
-- The persistent Nix, workspace, and bootstrap volume model remains unchanged.
+- The persistent Nix, persist, and bootstrap volume model remains unchanged.
 - `nixpkgs-unstable` stays on `master` because it is intentionally scoped to the optional AI tools bundle.
 
 # Part B — Code-Review Fixes

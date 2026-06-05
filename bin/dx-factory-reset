@@ -3,7 +3,7 @@ set -euo pipefail
 
 # dx-factory-reset
 # Removes every host-side artefact: container, image, persistent volumes,
-# and the SSH keypair. The /nix store and /workspace contents are GONE after
+# and the SSH keypair. The /nix store and /persist contents are GONE after
 # this — re-downloading Nix takes hours. Prompts once for confirmation; pass
 # --force to skip.
 
@@ -31,7 +31,7 @@ if [ "$force" -ne 1 ]; then
     echo "  - Container $DX_CONTAINER_NAME"
     echo "  - Image $DX_IMAGE"
     echo "  - Volume $DX_NIX_VOLUME (Nix store — re-download takes hours)"
-    echo "  - Volume $DX_WORKSPACE_VOLUME (Your work in $DX_WORKSPACE_PATH — IRREVERSIBLE)"
+    echo "  - Volume $DX_PERSIST_VOLUME (Your work in /persist — IRREVERSIBLE)"
     echo "  - Volume $DX_BOOTSTRAP_VOLUME (Bootstrap payload — auto-rebuilt)"
     echo "  - SSH keypair $DX_SSH_KEY / $DX_SSH_KEY_PUB"
     echo

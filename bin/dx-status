@@ -33,7 +33,7 @@ fi
 
 echo -e "\n--- Guest Environment ---"
 if container_is_running "$DX_CONTAINER_NAME"; then
-    container exec -u dx "$DX_CONTAINER_NAME" bash -lc "echo -n 'Tools: ' && command -v nvim && command -v nix && command -v tmux && echo -n 'Workspace: ' && df -h /workspace | tail -1"
+    container exec -u dx "$DX_CONTAINER_NAME" bash -lc "echo -n 'Tools: ' && command -v nvim && command -v nix && command -v tmux && echo -n 'Persist: ' && df -h /persist | tail -1"
 
     echo -e "\ntmux sessions:"
     container exec -u dx "$DX_CONTAINER_NAME" bash -lc "tmux ls 2>/dev/null" || echo "No active tmux sessions"

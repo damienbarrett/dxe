@@ -163,12 +163,12 @@ create_user() {
     fi
 }
 
-# Hand /workspace (mounted from the dx-workspace named volume) to dx.
-# Top-level only — recursive chown on a populated workspace is wasteful.
-setup_workspace() {
-    if [ -d /workspace ]; then
-        chown dx:dx /workspace
-        chmod 0755 /workspace
+# Hand /persist (mounted from the dx-persist named volume) to dx.
+# Top-level only; recursive chown on populated persistent storage is wasteful.
+setup_persist() {
+    if [ -d /persist ]; then
+        chown dx:dx /persist
+        chmod 0755 /persist
     fi
 }
 
@@ -286,8 +286,8 @@ ensure_nix_ownership() {
 }
 
 setup_gh_persistence() {
-    local persistent_config_dir="/workspace/home/dx/.config"
-    local persistent_gh="/workspace/home/dx/.config/gh"
+    local persistent_config_dir="/persist/home/dx/.config"
+    local persistent_gh="/persist/home/dx/.config/gh"
     local home_config_dir="/home/dx/.config"
     local home_gh="/home/dx/.config/gh"
     local timestamp=""
@@ -319,22 +319,22 @@ setup_gh_persistence() {
     fi
 
     mkdir -p "$persistent_gh"
-    chown -R dx:dx /workspace/home/dx "$home_config_dir"
+    chown -R dx:dx /persist/home/dx "$home_config_dir"
     chmod 700 "$persistent_gh"
-    run_as_dx "ln -sfnT /workspace/home/dx/.config/gh /home/dx/.config/gh"
+    run_as_dx "ln -sfnT /persist/home/dx/.config/gh /home/dx/.config/gh"
 }
 
 # Provide a D-Bus session + gnome-keyring secret-service daemon so that
 # agy (Antigravity CLI) can persist OAuth tokens via zalando/go-keyring.
 # The keyring data directory (~/.local/share/keyrings) is symlinked to the
-# persistent /workspace volume so tokens survive container rebuilds.
+# persistent /persist volume so tokens survive container rebuilds.
 setup_keyring_service() {
     echo "Setting up D-Bus keyring service for credential persistence..."
 
     # 1. Persist keyring data across container rebuilds
-    local persistent_keyrings="/workspace/home/dx/.local/share/keyrings"
+    local persistent_keyrings="/persist/home/dx/.local/share/keyrings"
     mkdir -p "$persistent_keyrings"
-    chown -R dx:dx /workspace/home/dx/.local
+    chown -R dx:dx /persist/home/dx/.local
     run_as_dx "mkdir -p ~/.local/share && ln -sfnT '$persistent_keyrings' ~/.local/share/keyrings"
 
     # 2. Start a D-Bus session bus owned by dx
@@ -372,8 +372,8 @@ configure_guest() {
     chown -R dx:dx /nix/cache
     run_as_dx "mkdir -p ~/.cache && ln -sf /nix/cache/nix ~/.cache/nix"
 
-    # Expose persistent /workspace volume at a stable path inside $HOME.
-    run_as_dx "ln -sfnT /workspace /home/dx/workspace"
+    # Expose persistent /persist volume at a stable path inside $HOME.
+    run_as_dx "ln -sfnT /persist /home/dx/persist"
 
     # Persist GitHub CLI credentials/configuration across container rebuilds.
     setup_gh_persistence
@@ -381,15 +381,15 @@ configure_guest() {
     # Persist AI CLI tool credentials/configuration across container rebuilds
     # Only restore these links if the user has opted into the AI tools
     if run_as_dx "nix profile list" | grep -qE "Flake attribute:[[:space:]]+packages\.[^.]+\.ai-tools$"; then
-        mkdir -p /workspace/home/dx/.gemini /workspace/home/dx/.claude /workspace/home/dx/.codex
-        if [ ! -s /workspace/home/dx/.claude.json ]; then
-            printf '%s\n' '{}' > /workspace/home/dx/.claude.json
+        mkdir -p /persist/home/dx/.gemini /persist/home/dx/.claude /persist/home/dx/.codex
+        if [ ! -s /persist/home/dx/.claude.json ]; then
+            printf '%s\n' '{}' > /persist/home/dx/.claude.json
         fi
-        chown -R dx:dx /workspace/home/dx
-        run_as_dx "ln -sfn /workspace/home/dx/.gemini ~/.gemini"
-        run_as_dx "ln -sfn /workspace/home/dx/.claude ~/.claude"
-        run_as_dx "ln -sfn /workspace/home/dx/.claude.json ~/.claude.json"
-        run_as_dx "ln -sfn /workspace/home/dx/.codex ~/.codex"
+        chown -R dx:dx /persist/home/dx
+        run_as_dx "ln -sfn /persist/home/dx/.gemini ~/.gemini"
+        run_as_dx "ln -sfn /persist/home/dx/.claude ~/.claude"
+        run_as_dx "ln -sfn /persist/home/dx/.claude.json ~/.claude.json"
+        run_as_dx "ln -sfn /persist/home/dx/.codex ~/.codex"
 
         # Start D-Bus + gnome-keyring so agy can persist OAuth tokens
         setup_keyring_service
@@ -430,7 +430,7 @@ install_essentials
 setup_nix_volume   # §2: Call BEFORE install_tools
 configure_nix_daemon # §3
 create_user
-setup_workspace
+setup_persist
 configure_ssh
 configure_guest
 configure_timezone   # §4: Run after guest profile is populated
