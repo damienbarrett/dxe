@@ -38,10 +38,10 @@ else
     exit_with_code
 fi
 
-if printf '%s\n' "$DX_AI_OUT" | grep -q "D-Bus keyring service started"; then
-    test_pass "dx-ai starts D-Bus keyring service"
+if printf '%s\n' "$DX_AI_OUT" | grep -Eq "D-Bus keyring service (started|already available)"; then
+    test_pass "dx-ai ensures D-Bus keyring service"
 else
-    test_fail "dx-ai starts D-Bus keyring service"
+    test_fail "dx-ai ensures D-Bus keyring service"
 fi
 
 for tool in codex gemini claude agy; do
@@ -51,6 +51,24 @@ for tool in codex gemini claude agy; do
         test_fail "$tool is available after dx-ai"
     fi
 done
+
+if run_guest 'case "$(agy --version)" in 0.*|1.0.0) exit 1 ;; *) exit 0 ;; esac' >/dev/null 2>&1; then
+    test_pass "agy version includes OAuth persistence fixes"
+else
+    test_fail "agy version includes OAuth persistence fixes"
+fi
+
+if run_guest 'test -L ~/.gemini && test "$(readlink ~/.gemini)" = /persist/home/dx/.gemini && test -d ~/.gemini/antigravity-cli' >/dev/null 2>&1; then
+    test_pass "agy state directory is under persisted Gemini storage"
+else
+    test_fail "agy state directory is under persisted Gemini storage"
+fi
+
+if run_guest 'marker=".dxe-agy-persistence-test-$$"; echo persisted > "$HOME/.gemini/antigravity-cli/$marker" && test -f "/persist/home/dx/.gemini/antigravity-cli/$marker"; rc=$?; rm -f "$HOME/.gemini/antigravity-cli/$marker"; exit $rc' >/dev/null 2>&1; then
+    test_pass "agy persisted state path is writable through ~/.gemini"
+else
+    test_fail "agy persisted state path is writable through ~/.gemini"
+fi
 
 if run_guest 'test -s "$HOME/.dx-keyring-env" && . "$HOME/.dx-keyring-env" && test -n "${DBUS_SESSION_BUS_ADDRESS:-}"' >/dev/null 2>&1; then
     test_pass "dx-ai writes a sourceable D-Bus keyring environment"

@@ -5,7 +5,7 @@
     enable = true;
     profileExtra = ''
       export PATH=$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH
-      # Source D-Bus keyring env so agy can persist OAuth tokens
+      # Source D-Bus keyring env for agy Secret Service compatibility
       if [ -f "$HOME/.dx-keyring-env" ]; then
         . "$HOME/.dx-keyring-env"
       fi
@@ -45,7 +45,7 @@
   programs.fish = {
     enable = true;
     interactiveShellInit = ''
-      # Source D-Bus keyring env so agy can persist OAuth tokens
+      # Source D-Bus keyring env for agy Secret Service compatibility
       if test -f "$HOME/.dx-keyring-env"
         for line in (grep '^export ' "$HOME/.dx-keyring-env")
           set -l kv (string replace 'export ' "" -- $line)
@@ -109,7 +109,7 @@
       try { ^/home/dx/.local/bin/dx-theme-restore }
     '';
     envFile.text = ''
-      # Source D-Bus keyring env so agy can persist OAuth tokens
+      # Source D-Bus keyring env for agy Secret Service compatibility
       let keyring_env = $"($nu.home-path)/.dx-keyring-env"
       if ($keyring_env | path exists) {
         open $keyring_env | lines | where {|l| $l starts-with "export "} | parse "export {key}={val}" | each {|row|

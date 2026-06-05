@@ -74,11 +74,11 @@
       # | bash` would do, but pinned and autoPatchelf'd for NixOS.
       agy = pkgs.stdenv.mkDerivation rec {
         pname = "antigravity-cli";
-        version = "1.0.0";
+        version = "1.0.5";
 
         src = pkgs.fetchurl {
-          url = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.0.0-5288553236791296/linux-arm/cli_linux_arm64.tar.gz";
-          hash = "sha512-l5fHlV0OB/xXYF+B+rFt/S85DUOyUIrzyml7HPpJjjfkOjqaVa2LJusTU9gLvsUi0QjrdaDrDrAOl5y1edbidw==";
+          url = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.0.5-5009297080451072/linux-arm/cli_linux_arm64.tar.gz";
+          hash = "sha512-j5LtbiYWbdq1lbOXXkfpH90cC/c7OTviUodjHMrgcCpjcuvqJej71Jl6v22budIzaIaKW/oMeifL0hEJgcUBmA==";
         };
 
         nativeBuildInputs = [ pkgs.autoPatchelfHook ];
@@ -108,10 +108,9 @@
         claude-code
         codex
         agy
-        # D-Bus + gnome-keyring are required for agy (Antigravity CLI) which
-        # stores OAuth tokens via the D-Bus Secret Service API
-        # (zalando/go-keyring).  Without a running keyring daemon,
-        # authentication is lost every session.
+        # agy stores its known CLI state under ~/.gemini/antigravity-cli, which
+        # DXE persists via ~/.gemini. Keep D-Bus + gnome-keyring available for
+        # Secret Service compatibility in auth flows that still request it.
         pkgs.dbus
         pkgs.gnome-keyring
       ];

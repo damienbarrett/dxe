@@ -138,9 +138,19 @@ if grep -q "nix flake update" "$DX_AI_SCRIPT" && grep -q "nixpkgs-unstable" "$DX
 else
     test_fail "guest dx-ai updates nixpkgs-unstable"
 fi
+assert_file_contains "$DX_AI_SCRIPT" "AGY_MANIFEST_URL=" "guest dx-ai has an agy updater manifest URL"
+assert_file_contains "$DX_AI_SCRIPT" "Refreshing Antigravity CLI manifest" "guest dx-ai refreshes the agy manifest before install"
+assert_file_contains "$DX_AI_SCRIPT" "nix hash convert --hash-algo sha512 --to sri" "guest dx-ai converts agy manifest hash to Nix SRI"
+assert_file_contains "$DX_AI_SCRIPT" "sed -i -E" "guest dx-ai rewrites the local agy derivation pin"
 
 assert_file_not_contains "$DX_AI_SCRIPT" "touch /persist/home/dx/.claude.json" "guest dx-ai does not create empty Claude JSON config"
 assert_file_contains "$DX_AI_SCRIPT" "printf '%s\\\\n' '{}' > \"\$persist_home/.claude.json\"" "guest dx-ai initializes empty Claude config as JSON"
+assert_file_contains_literal "$FLAKE_NIX" 'version = "1.0.5";' "agy derivation is pinned to a version with OAuth persistence fixes"
+assert_file_contains_literal "$FLAKE_NIX" "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.0.5-5009297080451072/linux-arm/cli_linux_arm64.tar.gz" "agy derivation uses the 1.0.5 Linux arm64 tarball"
+assert_file_contains_literal "$FLAKE_NIX" "sha512-j5LtbiYWbdq1lbOXXkfpH90cC/c7OTviUodjHMrgcCpjcuvqJej71Jl6v22budIzaIaKW/oMeifL0hEJgcUBmA==" "agy derivation has the expected 1.0.5 SRI hash"
+assert_file_not_contains "$FLAKE_NIX" 'version = "1.0.0";' "agy derivation is not pinned to the OAuth persistence bug version"
+assert_file_contains_literal "$DX_AI_SCRIPT" '$persist_home/.gemini/antigravity-cli' "guest dx-ai prepares persisted agy state directory"
+assert_file_contains "$BOOTSTRAP" "/persist/home/dx/.gemini/antigravity-cli" "bootstrap prepares persisted agy state directory"
 
 if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "codex"; then
     test_pass "codex is in aiPackages"

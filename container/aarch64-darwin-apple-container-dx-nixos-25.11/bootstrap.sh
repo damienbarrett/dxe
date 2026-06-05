@@ -256,6 +256,25 @@ dbus_session_config_for_dx() {
     fi
 }
 
+dbus_socket_from_address() {
+    local address="${1:-}"
+    local socket=""
+
+    case "$address" in
+        unix:path=*)
+            socket="${address#unix:path=}"
+            socket="${socket%%,*}"
+            printf '%s\n' "$socket"
+            ;;
+    esac
+}
+
+dbus_address_is_live() {
+    local socket
+    socket="$(dbus_socket_from_address "${1:-}")"
+    [ -n "$socket" ] && [ -S "$socket" ]
+}
+
 ensure_nix_ownership() {
     local sentinel="/nix/.dx-owner-set"
     local dx_owner
@@ -324,10 +343,10 @@ setup_gh_persistence() {
     run_as_dx "ln -sfnT /persist/home/dx/.config/gh /home/dx/.config/gh"
 }
 
-# Provide a D-Bus session + gnome-keyring secret-service daemon so that
-# agy (Antigravity CLI) can persist OAuth tokens via zalando/go-keyring.
-# The keyring data directory (~/.local/share/keyrings) is symlinked to the
-# persistent /persist volume so tokens survive container rebuilds.
+# agy stores its known CLI state under ~/.gemini/antigravity-cli, which is
+# persisted with ~/.gemini. Also provide D-Bus + gnome-keyring Secret Service
+# compatibility for auth flows that request it; keyring data is linked to
+# /persist so any Secret Service-backed tokens survive container rebuilds.
 setup_keyring_service() {
     echo "Setting up D-Bus keyring service for credential persistence..."
 
@@ -337,14 +356,18 @@ setup_keyring_service() {
     chown -R dx:dx /persist/home/dx/.local
     run_as_dx "mkdir -p ~/.local/share && ln -sfnT '$persistent_keyrings' ~/.local/share/keyrings"
 
-    # 2. Start a D-Bus session bus owned by dx
+    # 2. Reuse a live D-Bus session when available, otherwise start a fresh one.
     local env_file="/home/dx/.dx-keyring-env"
     local dbus_config
-    dbus_config="$(dbus_session_config_for_dx)"
-    run_as_dx "dbus-daemon --config-file='$dbus_config' --fork --print-address > '$env_file.addr'"
     local bus_addr
-    bus_addr="$(cat "$env_file.addr")"
-    rm -f "$env_file.addr"
+    bus_addr="$(sed -n "s/^export DBUS_SESSION_BUS_ADDRESS='\(.*\)'$/\1/p" "$env_file" 2>/dev/null || true)"
+
+    if ! dbus_address_is_live "$bus_addr"; then
+        dbus_config="$(dbus_session_config_for_dx)"
+        run_as_dx "dbus-daemon --config-file='$dbus_config' --fork --print-address > '$env_file.addr'"
+        bus_addr="$(cat "$env_file.addr")"
+        rm -f "$env_file.addr"
+    fi
 
     # 3. Start gnome-keyring-daemon (secret-service component) with an empty
     #    unlock password so it is immediately usable in this headless guest.
@@ -381,7 +404,7 @@ configure_guest() {
     # Persist AI CLI tool credentials/configuration across container rebuilds
     # Only restore these links if the user has opted into the AI tools
     if run_as_dx "nix profile list" | grep -qE "Flake attribute:[[:space:]]+packages\.[^.]+\.ai-tools$"; then
-        mkdir -p /persist/home/dx/.gemini /persist/home/dx/.claude /persist/home/dx/.codex
+        mkdir -p /persist/home/dx/.gemini/antigravity-cli /persist/home/dx/.claude /persist/home/dx/.codex
         if [ ! -s /persist/home/dx/.claude.json ]; then
             printf '%s\n' '{}' > /persist/home/dx/.claude.json
         fi

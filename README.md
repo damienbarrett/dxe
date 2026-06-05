@@ -341,15 +341,22 @@ way `dx-theme` is installed.
 
 `agy` is fetched as a pinned tarball from Google's release bucket (see the
 `antigravity-cli` derivation in `container/.../flake.nix`). The binary ships with
-a self-updater, but the Nix store is read-only, so updates have to be re-pinned
-in the flake. To bump:
+a self-updater, but the Nix store is read-only, so `dx-ai` refreshes the local
+flake pin from Google's CLI manifest before installing or upgrading `ai-tools`.
+
+To inspect the upstream manifest manually:
 
 ```bash
 # Linux arm64; substitute linux_amd64 / darwin_arm64 / darwin_amd64 as needed.
 curl -fsSL https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json
 ```
 
-The manifest returns `{ "version": ..., "url": ..., "sha512": ... }`. Then:
+The manifest returns `{ "version": ..., "url": ..., "sha512": ... }`. `dx-ai`
+converts `sha512` to a Nix SRI hash with `nix hash convert --hash-algo sha512
+--to sri` and rewrites the local `/guest-bootstrap/flake.nix` pin before running
+`nix profile add` or `nix profile upgrade`.
+
+To update the checked-in fallback pin:
 
 1. Replace the `version`, `src.url`, and `src.hash` in the `agy` derivation in
    `flake.nix`. `hash` uses SRI format: `sha512-<base64>`. Convert from the
