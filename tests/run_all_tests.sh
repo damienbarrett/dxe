@@ -25,7 +25,7 @@ for arg in "$@"; do
             echo "Usage: $0 [--section=N] [--skip-integration]"
             echo ""
             echo "Options:"
-            echo "  --section=N         Run only section N (0-16)"
+            echo "  --section=N         Run only section N (0-18)"
             echo "  --skip-integration  Skip integration tests (sections 11-12)"
             echo "  --help              Show this help message"
             exit 0
@@ -90,6 +90,7 @@ run_test "$SCRIPT_DIR/test_section14_tinty_theming.sh" "14"
 run_test "$SCRIPT_DIR/test_section15_nushell_env.sh" "15"
 run_test "$SCRIPT_DIR/test_section16_persist_storage.sh" "16"
 run_test "$SCRIPT_DIR/test_section17_dx_ai_runtime.sh" "17"
+run_test "$SCRIPT_DIR/test_section18_mount_git.sh" "18"
 
 echo ""
 echo "======================================"

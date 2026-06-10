@@ -121,7 +121,7 @@
       # Test image from NixOS GitHub
       testImage = pkgs.fetchurl {
         url = "https://avatars.githubusercontent.com/u/487568?s=200&v=4";
-        hash = "sha256-kVAx6WRUiS0fJIat/ymUVwj+2dp2ewgIx1LkCIuwFW4=";
+        hash = "sha256-4lDgsPtttAiM8b8d9vWZj4PbbhLPxANen+KwmYuLC3k=";
       };
     in
     {

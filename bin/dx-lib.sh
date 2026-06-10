@@ -39,6 +39,11 @@ export DX_NIX_MOUNT="${DX_NIX_MOUNT:-/nix}"
 export DX_NIX_DISK="${DX_NIX_DISK:-$HOME/.dx-cache/nix-store.img}"
 export DX_NIX_DISK_SIZE="${DX_NIX_DISK_SIZE:-20G}"
 export DX_PERSIST_VOLUME="${DX_PERSIST_VOLUME:-dx-persist}"
+export DX_GIT_MOUNT_SOURCE="${DX_GIT_MOUNT_SOURCE:-}"
+export DX_GIT_MOUNT_TARGET="${DX_GIT_MOUNT_TARGET:-/workspace}"
+export DX_GUEST_WORKDIR="${DX_GUEST_WORKDIR:-}"
+export DX_CONTAINER_MEMORY="${DX_CONTAINER_MEMORY:-12G}"
+export DX_CONTAINER_CPUS="${DX_CONTAINER_CPUS:-4}"
 export DX_CONTAINER_VOLUME_DIR="${DX_CONTAINER_VOLUME_DIR:-$HOME/Library/Application Support/com.apple.container/volumes}"
 export DX_STOP_GRACE_SECONDS="${DX_STOP_GRACE_SECONDS:-5}"
 export DX_STOP_COMMAND_TIMEOUT="${DX_STOP_COMMAND_TIMEOUT:-15}"
@@ -101,6 +106,68 @@ container_ensure_volume() {
         return 0
     fi
     container volume create "$name"
+}
+
+dx_require_non_reserved_container_name() {
+    local name="$1"
+    if [ "$name" = "dx-host" ]; then
+        echo "Error: dx-host is reserved for the default durable guest." >&2
+        return 1
+    fi
+}
+
+dx_slugify() {
+    local value="$1"
+    local fallback="${2:-item}"
+    local max_len="${3:-32}"
+    local slug
+
+    slug="$(printf '%s' "$value" \
+        | tr '[:upper:]' '[:lower:]' \
+        | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')"
+    if [ -z "$slug" ]; then
+        slug="$fallback"
+    fi
+    printf '%s' "${slug:0:$max_len}" | sed -E 's/-+$//'
+}
+
+dx_short_hash() {
+    local value="$1"
+    if command -v shasum >/dev/null 2>&1; then
+        printf '%s' "$value" | shasum -a 256 | awk '{print substr($1, 1, 10)}'
+    else
+        printf '%s' "$value" | sha256sum | awk '{print substr($1, 1, 10)}'
+    fi
+}
+
+dx_derived_name() {
+    local prefix="$1"
+    local identity="$2"
+    local display="${3:-$identity}"
+    local slug hash name
+
+    slug="$(dx_slugify "$(basename "$display")" item 32)"
+    hash="$(dx_short_hash "$identity")"
+    name="${prefix}${slug}-${hash}"
+    dx_require_non_reserved_container_name "$name"
+    printf '%s\n' "$name"
+}
+
+dx_derived_port() {
+    local identity="$1"
+    local hash_int
+
+    hash_int="$((0x$(dx_short_hash "$identity" | cut -c1-6)))"
+    # Keep derived side-container SSH ports out of dx-host (2222) and dx-test
+    # (2299), while staying in the unprivileged range.
+    printf '%s\n' "$((2300 + (hash_int % 17000)))"
+}
+
+dx_port_in_use() {
+    local port="$1"
+    # A successful loopback connect means something already owns the port.
+    # /dev/tcp avoids a dependency on nc/lsof; the fd closes with the subshell.
+    (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null
 }
 
 run_with_timeout() {

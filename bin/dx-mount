@@ -1,0 +1,249 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+user_supplied_port="${DX_SSH_PORT+x}"
+user_supplied_memory="${DX_CONTAINER_MEMORY+x}"
+user_supplied_cpus="${DX_CONTAINER_CPUS+x}"
+user_supplied_nix_volume="${DX_NIX_VOLUME+x}"
+user_supplied_persist_volume="${DX_PERSIST_VOLUME+x}"
+user_supplied_bootstrap_volume="${DX_BOOTSTRAP_VOLUME+x}"
+user_supplied_ssh_key="${DX_SSH_KEY+x}"
+user_supplied_ssh_key_pub="${DX_SSH_KEY_PUB+x}"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+usage() {
+    cat >&2 <<EOF
+Usage: $(basename "$0") [DIR] [--container NAME] [--print-env] [--destroy]
+
+Create or attach to an isolated side container with DIR bind-mounted at
+DX_GIT_MOUNT_TARGET (default: /workspace). Plain dx-host is never used.
+
+  DIR               Host directory to mount (default: current directory).
+                    Inside a git repo, the repo top-level is mounted and DIR
+                    becomes the initial guest workdir.
+  --container NAME  Use NAME instead of the derived dx-mount-<slug>-<hash>
+                    name. NAME must not be dx-host, and an existing container
+                    must match the recorded mount identity.
+  --print-env       Print the derived DX_* profile without creating or
+                    starting anything, then exit.
+  --destroy         Remove the derived side container, its private volumes,
+                    private key pair, and mount identity marker. Never removes
+                    the shared image or default dx-host resources.
+EOF
+}
+
+dir=""
+container_override=""
+print_env=false
+destroy=false
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --container)
+            if [ $# -lt 2 ]; then
+                echo "Error: --container requires a name." >&2
+                exit 2
+            fi
+            container_override="$2"
+            shift 2
+            ;;
+        --container=*)
+            container_override="${1#*=}"
+            shift
+            ;;
+        --print-env)
+            print_env=true
+            shift
+            ;;
+        --destroy)
+            destroy=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Error: unknown option: $1" >&2
+            usage
+            exit 2
+            ;;
+        *)
+            if [ -n "$dir" ]; then
+                echo "Error: only one DIR argument is supported." >&2
+                usage
+                exit 2
+            fi
+            dir="$1"
+            shift
+            ;;
+    esac
+done
+
+if [ $# -gt 0 ]; then
+    echo "Error: unexpected arguments: $*" >&2
+    usage
+    exit 2
+fi
+
+if [ "$print_env" = true ] && [ "$destroy" = true ]; then
+    echo "Error: --print-env and --destroy cannot be combined." >&2
+    exit 2
+fi
+
+dir="${dir:-$PWD}"
+if [ ! -d "$dir" ]; then
+    echo "Error: DIR is not a directory: $dir" >&2
+    exit 1
+fi
+
+resolved_dir="$(cd "$dir" && pwd -P)"
+git_top=""
+if git_top="$(git -C "$resolved_dir" rev-parse --show-toplevel 2>/dev/null)"; then
+    mount_source="$(cd "$git_top" && pwd -P)"
+else
+    mount_source="$resolved_dir"
+fi
+
+guest_workdir="$DX_GIT_MOUNT_TARGET"
+if [ "$resolved_dir" != "$mount_source" ]; then
+    relative_dir="${resolved_dir#"$mount_source"/}"
+    if [ "$relative_dir" != "$resolved_dir" ]; then
+        guest_workdir="$DX_GIT_MOUNT_TARGET/$relative_dir"
+    fi
+fi
+
+if [ -n "$container_override" ]; then
+    DX_CONTAINER_NAME="$container_override"
+else
+    DX_CONTAINER_NAME="$(dx_derived_name "dx-mount-" "$mount_source" "$mount_source")"
+fi
+dx_require_non_reserved_container_name "$DX_CONTAINER_NAME"
+
+mount_identity="$mount_source"
+identity_dir="${DX_MOUNT_IDENTITY_DIR:-$HOME/.dx-cache/mount-identities}"
+identity_file="$identity_dir/$DX_CONTAINER_NAME.env"
+
+if [ "$print_env" != true ] && [ -n "$container_override" ] && container_exists "$DX_CONTAINER_NAME"; then
+    if [ ! -f "$identity_file" ]; then
+        cat >&2 <<EOF
+Error: container $DX_CONTAINER_NAME already exists, but no mount identity marker was found.
+Refusing to attach because --container NAME overrides cannot be verified.
+To recreate it intentionally, run:
+  DX_CONTAINER_NAME=$DX_CONTAINER_NAME ./bin/dx-destroy-container
+EOF
+        exit 1
+    fi
+    # shellcheck disable=SC1090
+    source "$identity_file"
+    if [ "${DX_RECORDED_GIT_MOUNT_SOURCE:-}" != "$mount_identity" ]; then
+        cat >&2 <<EOF
+Error: container $DX_CONTAINER_NAME is recorded for a different mount source.
+Recorded: ${DX_RECORDED_GIT_MOUNT_SOURCE:-<unset>}
+Requested: $mount_identity
+To recreate it intentionally, run:
+  DX_CONTAINER_NAME=$DX_CONTAINER_NAME ./bin/dx-destroy-container
+EOF
+        exit 1
+    fi
+fi
+
+safe_name="$(dx_slugify "$DX_CONTAINER_NAME" mount 48)"
+export DX_CONTAINER_NAME
+export DX_IMAGE="${DX_IMAGE:-dx-nixos-25.11}"
+export DX_GIT_MOUNT_SOURCE="$mount_source"
+export DX_GIT_MOUNT_TARGET
+export DX_GUEST_WORKDIR="$guest_workdir"
+if [ -z "$user_supplied_nix_volume" ]; then
+    export DX_NIX_VOLUME="$DX_CONTAINER_NAME-nix"
+fi
+if [ -z "$user_supplied_persist_volume" ]; then
+    export DX_PERSIST_VOLUME="$DX_CONTAINER_NAME-persist"
+fi
+if [ -z "$user_supplied_bootstrap_volume" ]; then
+    export DX_BOOTSTRAP_VOLUME="$DX_CONTAINER_NAME-bootstrap"
+fi
+if [ -z "$user_supplied_ssh_key" ]; then
+    export DX_SSH_KEY="$DX_PROJECT_ROOT/${safe_name}_key"
+fi
+if [ -z "$user_supplied_ssh_key_pub" ]; then
+    export DX_SSH_KEY_PUB="$DX_PROJECT_ROOT/${safe_name}_key.pub"
+fi
+if [ -z "$user_supplied_port" ]; then
+    export DX_SSH_PORT
+    DX_SSH_PORT="$(dx_derived_port "$DX_CONTAINER_NAME")"
+fi
+if [ -z "$user_supplied_memory" ]; then
+    export DX_CONTAINER_MEMORY=6G
+fi
+if [ -z "$user_supplied_cpus" ]; then
+    export DX_CONTAINER_CPUS=2
+fi
+
+if [ "$print_env" = true ]; then
+    printf 'export DX_CONTAINER_NAME=%q\n' "$DX_CONTAINER_NAME"
+    printf 'export DX_IMAGE=%q\n' "$DX_IMAGE"
+    printf 'export DX_GIT_MOUNT_SOURCE=%q\n' "$DX_GIT_MOUNT_SOURCE"
+    printf 'export DX_GIT_MOUNT_TARGET=%q\n' "$DX_GIT_MOUNT_TARGET"
+    printf 'export DX_GUEST_WORKDIR=%q\n' "$DX_GUEST_WORKDIR"
+    printf 'export DX_NIX_VOLUME=%q\n' "$DX_NIX_VOLUME"
+    printf 'export DX_PERSIST_VOLUME=%q\n' "$DX_PERSIST_VOLUME"
+    printf 'export DX_BOOTSTRAP_VOLUME=%q\n' "$DX_BOOTSTRAP_VOLUME"
+    printf 'export DX_SSH_PORT=%q\n' "$DX_SSH_PORT"
+    printf 'export DX_SSH_KEY=%q\n' "$DX_SSH_KEY"
+    printf 'export DX_SSH_KEY_PUB=%q\n' "$DX_SSH_KEY_PUB"
+    printf 'export DX_CONTAINER_MEMORY=%q\n' "$DX_CONTAINER_MEMORY"
+    printf 'export DX_CONTAINER_CPUS=%q\n' "$DX_CONTAINER_CPUS"
+    exit 0
+fi
+
+if [ "$destroy" = true ]; then
+    # A leaked DX_NIX_VOLUME=dx-nix (or similar) in the caller's environment
+    # must never let a side-container cleanup take down dx-host's durable
+    # state. Only namespaced side-container resources may be destroyed.
+    refuse_default_destroy() {
+        local var="$1" value="$2" default_value="$3"
+        if [ "$value" = "$default_value" ]; then
+            echo "Error: refusing to destroy default dx-host resource ($var=$value)." >&2
+            echo "Unset $var so dx-mount can derive the private side-container value." >&2
+            exit 1
+        fi
+    }
+    refuse_default_destroy DX_NIX_VOLUME "$DX_NIX_VOLUME" dx-nix
+    refuse_default_destroy DX_PERSIST_VOLUME "$DX_PERSIST_VOLUME" dx-persist
+    refuse_default_destroy DX_BOOTSTRAP_VOLUME "$DX_BOOTSTRAP_VOLUME" dx-bootstrap
+    refuse_default_destroy DX_SSH_KEY "$DX_SSH_KEY" "$DX_PROJECT_ROOT/dx_key"
+    refuse_default_destroy DX_SSH_KEY_PUB "$DX_SSH_KEY_PUB" "$DX_PROJECT_ROOT/dx_key.pub"
+    echo "Destroying mount side container $DX_CONTAINER_NAME and private state..."
+    "$SCRIPT_DIR/dx-destroy-container"
+    "$SCRIPT_DIR/dx-destroy-volumes" --force
+    "$SCRIPT_DIR/dx-destroy-keys"
+    rm -f "$identity_file"
+    exit 0
+fi
+
+if ! container_exists "$DX_CONTAINER_NAME" && dx_port_in_use "$DX_SSH_PORT"; then
+    cat >&2 <<EOF
+Error: SSH port $DX_SSH_PORT is already in use on 127.0.0.1, and side container
+$DX_CONTAINER_NAME does not exist yet, so creating it would collide.
+Pick a free port explicitly, e.g.:
+  DX_SSH_PORT=10422 $(basename "$0") ...
+EOF
+    exit 1
+fi
+
+mkdir -p "$identity_dir"
+{
+    printf 'DX_RECORDED_GIT_MOUNT_SOURCE=%q\n' "$mount_identity"
+    printf 'DX_RECORDED_GIT_MOUNT_TARGET=%q\n' "$DX_GIT_MOUNT_TARGET"
+} > "$identity_file"
+
+echo "Bringing up mount side container $DX_CONTAINER_NAME..."
+echo "Mounting $DX_GIT_MOUNT_SOURCE at $DX_GIT_MOUNT_TARGET"
+
+exec "$SCRIPT_DIR/dx"

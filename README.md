@@ -34,6 +34,7 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
 - **Connect (or first-time setup):** `./bin/dx`
 - **Check Status:** `./bin/dx-status`
 - **Work with Code:** Use `/persist` inside the guest.
+- **Occasionally mount a host checkout in an isolated side container:** `./bin/dx-mount [DIR]`
 - **Transfer Files:** `./bin/dx-put <host_path> [guest_path]`
 - **Stop the Container:** `./bin/dx-stop-container`
 - **Push edited bootstrap payload to a running guest:** `./bin/dx-sync-bootstrap`
@@ -128,6 +129,7 @@ or perform maintenance operations.
 | --- | --- |
 | [`bin/dx-lib.sh`](bin/dx-lib.sh) | Shared library (env vars, container helpers). Sourced by every script; not executable on its own. |
 | [`bin/dx-profile`](bin/dx-profile) | Loads a named profile of env-var overrides from `tests/profiles/<name>.env`, then execs the rest of the command. Opt-in; defaults apply when not used. |
+| [`bin/dx-mount`](bin/dx-mount) | Explicitly launches an isolated side container with a host directory bind-mounted at `/workspace`. It derives private container, volume, key, and port defaults and refuses to use `dx-host`. |
 | [`bin/dx-wait-ssh`](bin/dx-wait-ssh) | Blocks until guest SSH responds. Gates the SSH connection layer. |
 | [`bin/dx-status`](bin/dx-status) | Reports image, container, SSH, tool, persist, and tmux status. |
 | [`bin/dx-put`](bin/dx-put) | Copies host files into the guest. |
@@ -220,6 +222,11 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_NIX_VOLUME` | `dx-nix` | Named volume that backs the persistent Nix store. Apple Container surfaces it inside the guest at `/var/lib/dx-nix-raw`; the bootstrap reformats it as btrfs (or ext4 as a fallback) and remounts it at `/nix`. Override this for isolated test containers or parallel experiments so they do not share the default writable Nix store. |
 | `DX_NIX_MOUNT` | `/nix` | Guest mount point for the active Nix filesystem. Used by maintenance commands such as `dx-reclaim`. |
 | `DX_PERSIST_VOLUME` | `dx-persist` | Named volume mounted at the fixed guest path `/persist`. |
+| `DX_GIT_MOUNT_SOURCE` | empty | Optional host directory bind-mounted by `dx-create-container`. Leave empty for plain `dx`; use `dx-mount` to set it for an isolated side container. |
+| `DX_GIT_MOUNT_TARGET` | `/workspace` | Guest path for an explicit host checkout mount. |
+| `DX_GUEST_WORKDIR` | empty | Optional guest workdir used by `dx-ssh`; `dx-mount` sets it to the mounted repo subdirectory. |
+| `DX_CONTAINER_MEMORY` | `12G` | Memory passed to `container create`. `dx-mount` defaults this to `6G` unless explicitly overridden. |
+| `DX_CONTAINER_CPUS` | `4` | CPU count passed to `container create`. `dx-mount` defaults this to `2` unless explicitly overridden. |
 | `DX_CONTAINER_VOLUME_DIR` | `$HOME/Library/Application Support/com.apple.container/volumes` | Host directory where Apple Container stores named volume sparse images. Used for `dx-reclaim` reporting. |
 | `DX_STOP_GRACE_SECONDS` | `5` | Seconds passed to `container stop --time` before the container CLI escalates. |
 | `DX_STOP_COMMAND_TIMEOUT` | `15` | Host-side timeout for a `container stop` or `container kill` CLI command that hangs. |
@@ -241,6 +248,47 @@ environment.
 `DX_PERSIST_PATH`; path overrides are not supported. Setting old
 `DX_WORKSPACE_VOLUME` or `DX_WORKSPACE_PATH` variables now fails early with a
 rename message so existing `.env` files are not silently ignored.
+
+### Mounting a Host Checkout (`dx-mount`)
+
+Host bind mounts are intentionally not part of plain `dx`. Use `./bin/dx-mount
+[DIR]` only when you explicitly want a host directory visible inside a
+separate, isolated side container. The typical session is three commands:
+
+```bash
+# 1. Optional: preview the derived profile. Creates and starts nothing.
+./bin/dx-mount ~/src/myrepo --print-env
+
+# 2. Bring up the side container and connect. The host checkout appears at
+#    /workspace inside the guest. Re-running the same command later
+#    reattaches to the same side container.
+./bin/dx-mount ~/src/myrepo
+
+# 3. When finished, remove the side container and all of its private state.
+./bin/dx-mount ~/src/myrepo --destroy
+```
+
+How it behaves:
+
+- If `DIR` is inside a git repository, `dx-mount` mounts the repo top-level
+  and maps the original subdirectory to the guest workdir under `/workspace`.
+  Running it from different subdirectories of one repo reuses the same side
+  container.
+- The derived side container uses a `dx-mount-<slug>-<hash>` name, private
+  Nix, persist, and bootstrap volumes, a private SSH key, and a derived
+  non-default SSH port. It shares the immutable default image to avoid a
+  rebuild. First boot is slow because the private Nix volume bootstraps a
+  fresh store.
+- It refuses `dx-host` and never destroys or recreates an existing container
+  to change a mount; with `--container NAME`, an existing side container must
+  match the recorded mount identity.
+- If the derived SSH port is already in use before the side container exists,
+  `dx-mount` refuses and tells you to pick a free port with `DX_SSH_PORT`.
+- `--destroy` removes the derived side container, private volumes, private key
+  pair, and mount identity marker. It does not remove the shared `dx-nixos-25.11` image.
+  It also refuses to destroy default dx-host resources (`dx-nix`, `dx-persist`,
+  `dx-bootstrap`, `dx_key`) even if your environment leaks those names into the
+  cleanup.
 
 Example isolated lifecycle create:
 

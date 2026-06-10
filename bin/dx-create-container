@@ -36,9 +36,21 @@ CREATE_FLAGS=(
     --volume "$DX_PERSIST_VOLUME:/persist:rw"
     --volume "$DX_BOOTSTRAP_VOLUME:$DX_BOOTSTRAP_PATH:rw"
     -e "HOST_TZ=$HOST_TZ"
-    -m 12G -c 4
+    -m "$DX_CONTAINER_MEMORY" -c "$DX_CONTAINER_CPUS"
     -p "127.0.0.1:$DX_SSH_PORT:2222"
 )
+
+if [ -n "$DX_GIT_MOUNT_SOURCE" ]; then
+    if [ "$DX_CONTAINER_NAME" = "dx-host" ]; then
+        echo "Error: refusing to bind-mount host source into reserved container dx-host." >&2
+        exit 1
+    fi
+    if [ ! -d "$DX_GIT_MOUNT_SOURCE" ]; then
+        echo "Error: DX_GIT_MOUNT_SOURCE is not a directory: $DX_GIT_MOUNT_SOURCE" >&2
+        exit 1
+    fi
+    CREATE_FLAGS+=(--volume "$DX_GIT_MOUNT_SOURCE:$DX_GIT_MOUNT_TARGET:rw")
+fi
 
 if [ -f "$DX_SSH_KEY_PUB" ]; then
     DX_PUB_KEY=$(cat "$DX_SSH_KEY_PUB")

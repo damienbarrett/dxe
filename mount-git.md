@@ -8,6 +8,67 @@ The primary workflow needs no host mount at all. Mounting remains useful, but
 only as a deliberate side-container feature that must never disturb the main
 `dx-host` environment.
 
+## Current Implementation Status
+
+Status as of 2026-06-10: **UC-2 `dx-mount` is implemented and interactively
+validated for ordinary host git repositories.**
+
+Implemented:
+
+- `bin/dx-mount [DIR] [--container NAME] [--print-env] [--destroy]`
+- optional `DX_GIT_MOUNT_SOURCE` / `DX_GIT_MOUNT_TARGET` plumbing in
+  `bin/dx-create-container`
+- shared slug/hash/derived-port helpers in `bin/dx-lib.sh`
+- `DX_GUEST_WORKDIR` support in `bin/dx-ssh`
+- configurable container resources through `DX_CONTAINER_MEMORY` and
+  `DX_CONTAINER_CPUS`
+- refuse-on-collision for derived SSH ports: creating a new side container on
+  a busy loopback port fails fast with `DX_SSH_PORT` guidance (`dx_port_in_use`
+  in `bin/dx-lib.sh`)
+- a `--destroy` guard that refuses to remove default dx-host resources
+  (`dx-nix`, `dx-persist`, `dx-bootstrap`, `dx_key`) even when the caller's
+  environment leaks those names into the cleanup
+- `tests/test_section18_mount_git.sh`
+- README documentation for the explicit mount side-container workflow
+
+Validated interactively without destroying existing containers or images:
+
+- Created a new derived side container only:
+  `dx-mount-dx-mount-validation-j18wsd-7c9adabc4f`.
+- Left `dx-host` running and unchanged.
+- Verified Apple Container created exactly one host bind mount:
+  `/private/tmp/dx-mount-validation.J18WSD` to `/workspace`.
+- Verified the side container used private Nix, persist, and bootstrap volumes,
+  private keypair paths, 2 CPUs, 6 GiB memory, and port `10678`.
+- Verified `DX_GUEST_WORKDIR` landed SSH commands in `/workspace/sub dir`.
+- Verified host-created files were visible in the guest.
+- Verified guest-created files were visible on the host.
+- Verified host and guest `git status --short` agreed for the test repo.
+
+Issues found during validation and fixed:
+
+- `dx-mount --print-env` originally omitted `DX_SSH_KEY_PUB`, so manual
+  lifecycle use could provision the default public key while connecting with the
+  derived private key. `--print-env` now emits both key paths, and section 18
+  asserts this.
+- The Nix fixed-output hash for the NixOS GitHub avatar test image had drifted
+  and blocked fresh private-volume bootstrap. The checked-in hash was updated to
+  the observed content hash.
+- Generated `dx-mount-*_key` and `dx-mount-*_key.pub` files are now ignored.
+- `dx-mount --print-env` no longer performs Apple Container inspection, so it is
+  a non-invasive dry-run path.
+
+Known caveats:
+
+- First boot of a side container with a private Nix volume is still expensive.
+  The seeded/read-only Nix base remains an optimization/deferred design item,
+  not a blocker for correctness.
+- Credential propagation is still intentionally out of scope.
+- Worktree/submodule edge cases are still unvalidated.
+- The interactive validation initially left the validation side container
+  (`dx-mount-dx-mount-validation-j18wsd-7c9adabc4f`) running by request; it has
+  since been removed and no longer appears in `container list -a`.
+
 ## Use Cases Drive The Design
 
 | Use case | Frequency | Source of truth | Container shape | Host mount? |
@@ -39,8 +100,8 @@ mount**. Apple Container fixes mounts at create time, so the answer is not to
 make rebind cheaper. The answer is to put host mounts only in a purpose-created
 side container with a derived name.
 
-This maps to **F1 side-container mount**, with **F4 sync** as the fallback if the
-mount spikes fail.
+This maps to **F1 side-container mount**, with **F4 sync** as the fallback if a
+specific repo or workflow proves unsuitable for bind mounts.
 
 Do not default UC-2 to sharing the main `/nix` or `/persist` volumes:
 
@@ -135,10 +196,10 @@ Therefore:
   default `dx-nixos-25.11` image — images are immutable, so sharing is safe and
   avoids a rebuild. UC-3 must namespace `DX_IMAGE` (as `dx-test.env` does)
   because the image-creation scripts are themselves under test.
-- **Nix cold-start is a prerequisite for `dx-mount`:** each side container's
-  private Nix volume pays a full store rebuild on first boot, which would make
-  `dx-mount` unacceptably slow. A seeded or shared read-only Nix base must be
-  designed and spiked before `dx-mount` ships; see the Recommendation spikes.
+- **Nix cold-start remains expensive for `dx-mount`:** each side container's
+  private Nix volume pays a full store bootstrap on first boot. A seeded or
+  shared read-only Nix base is still desirable, but the correctness path now
+  ships with private volumes and documented cold-start cost.
 
 ## Option Families
 
@@ -277,21 +338,21 @@ Ratings are relative for the intended development loop.
    directory detection in `dx`.
 2. Treat **F2-durable** as the primary workflow. Normal repos live under
    `/persist` in `dx-host` and synchronize through git remotes.
-3. Add host mounts only as a future **explicit `dx-mount` side-container**
-   command. It should derive a non-`dx-host` container name from the mounted path
-   and use private/namespaced volumes by default.
+3. Keep host mounts behind the **explicit `dx-mount` side-container** command.
+   It derives a non-`dx-host` container name from the mounted path and uses
+   private/namespaced volumes by default.
 4. Use **F2-ephemeral/private** for branch-based `dxe` self-development. The
    branch environment must never share the default `/nix`, persist, or bootstrap
    volumes with `dx-host`.
-5. Run F1 go/no-go spikes before implementing `dx-mount`: absolute host-path bind
-   support, bidirectional write-through as the `dx` user, usable ownership, and
-   clean `git status` from both host and guest after guest access. In the same
-   gate, spike a seeded or shared read-only Nix base so side containers do not
-   pay a full Nix-store rebuild on first boot; `dx-mount` does not ship until
-   cold-start is acceptable.
-6. Keep F4 available as the UC-2 fallback if bind mounts fail or prove too sharp.
+5. Treat the completed F1 validation as sufficient for ordinary repositories:
+   absolute host-path bind support, bidirectional write-through, side-container
+   SSH, and matching host/guest `git status --short` were validated. Continue
+   treating worktrees, submodules, credentials, and Nix cold-start optimization
+   as follow-up items.
+6. Keep F4 available as the UC-2 fallback if bind mounts prove too sharp for
+   specific repos or workflows.
 
-## Public Interface Plan
+## Public Interface
 
 ### Plain `dx`
 
@@ -305,10 +366,10 @@ No git-mount behavior:
 
 ### `bin/dx-mount`
 
-Future command for UC-2:
+Implemented command for UC-2:
 
 ```bash
-bin/dx-mount [DIR] [--container NAME]
+bin/dx-mount [DIR] [--container NAME] [--print-env] [--destroy]
 ```
 
 Behavior:
@@ -334,9 +395,19 @@ Behavior:
 - With `--container NAME`, verify the existing container's recorded mount
   identity. On mismatch, refuse by default and tell the user the exact
   destroy/recreate command. Do not silently delete even stopped containers.
-- Teardown reuses `bin/dx-destroy` under the same derived environment. Derived
-  name prefixes (`dx-mount-`, `dx-branch-`) keep side containers discoverable in
-  `container list` for cleanup.
+- `--print-env` prints the derived profile without Apple Container inspection or
+  lifecycle side effects.
+- `--destroy` removes the derived side container, private volumes, private key
+  pair, and mount identity marker. It does not remove the shared image, and it
+  refuses to destroy default dx-host resources even if the caller's
+  environment supplies the default volume or key names.
+- `--print-env` and `--destroy` are mutually exclusive; combining them is an
+  error rather than a silent preference.
+- Creating a new side container on an SSH port that is already in use on
+  loopback is refused with guidance to set `DX_SSH_PORT` explicitly.
+  Reattaching to an existing side container is unaffected.
+- Derived name prefixes (`dx-mount-`, `dx-branch-`) keep side containers
+  discoverable in `container list` for cleanup.
 
 ### Branch Self-Dev Profile
 
@@ -362,42 +433,53 @@ Behavior:
 exists, UC-3 is already achievable by hand: copy `tests/profiles/dx-test.env`,
 rename every resource, and run the pipeline through `bin/dx-profile`.
 
-## Implementation Notes For Future Code
+## Implementation Notes
 
-- Add a shared slug/hash helper for derived names. Normalize path/branch names to
-  lowercase alphanumerics plus `-`, trim repeated separators, cap the slug length,
-  and append a short stable hash to avoid collisions.
-- Reserve `dx-host` centrally so no derived-name helper can return it.
-- Add `DX_GIT_MOUNT_TARGET`, default `/workspace`.
-- Plumb the mount through `dx-create-container` as an optional
-  `DX_GIT_MOUNT_SOURCE` (empty by default; when set, append one `--volume
-  "$DX_GIT_MOUNT_SOURCE:$DX_GIT_MOUNT_TARGET"` to `CREATE_FLAGS`). Plain `dx`
-  never sets it, so the default pipeline stays mount-free.
-- Do not add `DX_GIT_MOUNT_ENABLED` to plain `dx`; mounts are triggered only by
-  `dx-mount`.
-- Make container memory and CPU configurable (the current `-m 12G -c 4` is
-  hardcoded in `CREATE_FLAGS`). A side container running alongside `dx-host`
-  doubles host VM memory pressure, so side containers likely want smaller
-  defaults.
-- Follow the `dx-test.env` precedent for derived key paths
-  (`$DX_PROJECT_ROOT/<name>_key`), and make teardown remove the derived key
-  pair along with the container and volumes.
-- Do not introduce host-side marker state for `dx-host`. Side containers may keep
-  a marker keyed by their derived name only to verify their own mount identity.
-- Do not `chown -R` the bind mount from inside the guest.
-- Quote every path. Host paths can contain spaces.
-- Derive the side-container SSH port deterministically from the slug/hash into a
-  reserved range, and retry/refuse on collision so concurrent side containers do
-  not contend for the same `127.0.0.1` port as `dx-host` (default `2222`).
-- Keep credential propagation out of the initial `dx-mount` implementation unless
-  a separate auth plan chooses one of:
+Completed:
+
+- Added shared slug/hash helpers for derived names. Path names are normalized to
+  lowercase alphanumerics plus `-`, repeated separators are trimmed, and a short
+  stable hash is appended.
+- Reserved `dx-host` centrally for mount workflows.
+- Added `DX_GIT_MOUNT_TARGET`, default `/workspace`.
+- Plumbed the mount through `dx-create-container` as optional
+  `DX_GIT_MOUNT_SOURCE`. Plain `dx` never sets it, so the default pipeline stays
+  mount-free.
+- Avoided `DX_GIT_MOUNT_ENABLED`; mounts are triggered by `dx-mount`.
+- Made container memory and CPU configurable through `DX_CONTAINER_MEMORY` and
+  `DX_CONTAINER_CPUS`; `dx-mount` defaults to `6G` and `2`.
+- Followed the `dx-test.env` precedent for derived key paths under
+  `$DX_PROJECT_ROOT/<name>_key` and `$DX_PROJECT_ROOT/<name>_key.pub`.
+- Added side-container cleanup through `dx-mount --destroy`.
+- Kept host-side marker state out of `dx-host`; only explicit `--container NAME`
+  workflows use a mount identity marker.
+- Quoted paths in the wrapper, including paths with spaces.
+- Derived side-container SSH ports deterministically in a range that avoids the
+  default `dx-host` and `dx-test` ports.
+
+- Refuse on SSH port collision: when the derived side container does not exist
+  yet and its SSH port is already in use on loopback, `dx-mount` refuses with
+  `DX_SSH_PORT` guidance instead of letting `container create` fail later.
+- Guarded `--destroy`: cleanup refuses to remove the default `dx-nix`,
+  `dx-persist`, `dx-bootstrap`, or `dx_key` resources regardless of what the
+  caller's environment supplies.
+
+Still open:
+
+- Automatic retry to an alternate derived port on collision; the current
+  behavior is an explicit refusal with override guidance.
+- Seeded/read-only Nix base for faster side-container cold starts.
+- Credential propagation. Keep it out of the initial `dx-mount` implementation
+  unless a separate auth plan chooses one of:
   - launch-time secret injection
   - credentials-only named volume
   - explicit re-auth in the side container
+- Do not `chown -R` the bind mount from inside the guest. This remains a policy
+  constraint; the current implementation does not do it.
 
 ## Validation Plan
 
-Future implementation tests:
+Implemented tests:
 
 - Plain `dx` from inside a host git repo does not attempt any host mount and does
   not alter `DX_CONTAINER_NAME`.
@@ -408,36 +490,57 @@ Future implementation tests:
   containing spaces.
 - `dx-mount` from two different subdirectories of the same repo derives the same
   container name and reuses the existing side container.
-- Destroying a side container removes its derived volumes and key pair and
-  leaves no orphaned resources.
 - `dx-mount` creates exactly one host source mount at `DX_GIT_MOUNT_TARGET`.
 - `dx-mount` uses private/namespaced Nix, persist, bootstrap, key, and port
   defaults.
-- A running `dx-host` continues unaffected while a mount side container is
-  created, started, stopped, and destroyed.
+- `dx-mount --destroy` preserves the shared image and is wired to remove the side
+  container, private volumes, private key pair, and marker.
+- `dx-mount --print-env` emits both `DX_SSH_KEY` and `DX_SSH_KEY_PUB`.
+- `dx-mount --help` describes every supported flag, and unknown options or
+  combined `--print-env --destroy` fail with a usage error.
+- `dx_port_in_use` detects occupied and released loopback ports, and `dx-mount`
+  is wired to refuse creating a new side container on a busy port.
+- `dx-mount --destroy` refuses the default `dx-nix`, `dx-persist`, and
+  `dx-bootstrap` names, exercised against a stubbed container CLI so the test
+  can never touch real state.
+
+Interactively validated:
+
+- A running `dx-host` continued unaffected while a mount side container was
+  created, started, and validated.
 - Guest-created files appear on the host, host-created files appear in the guest,
   and ownership remains usable on both sides.
-- `git status --short` stays clean on both host and guest after guest access, or
-  the known cross-OS churn is documented as a blocker.
+- `git status --short` matched on both host and guest after guest access. The
+  validation intentionally created two untracked files to prove bidirectional
+  write-through.
+
+Still open:
+
+- Destroying a side container removes its derived volumes and key pair and leaves
+  no orphaned resources. The code is wired and statically tested, but was not run
+  during interactive validation because the explicit instruction was not to
+  destroy existing containers or images.
 - Branch self-dev profiles never use default durable resources and can be
   destroyed without affecting `dx-host`.
 
-Suggested test section when implementation starts:
+Test section:
 
 ```bash
 tests/test_section18_mount_git.sh
 ```
 
-Promotion gate for future implementation:
+Current verification commands:
 
 ```bash
-tests/run_all_tests.sh --skip-integration
-tests/run_all_tests.sh --section=9 --skip-integration
-DX_TEST_MOUNT_GIT=1 tests/run_all_tests.sh --section=18
+tests/run_all_tests.sh --section=1
+tests/run_all_tests.sh --section=9
+tests/run_all_tests.sh --section=10
+tests/run_all_tests.sh --section=16 --skip-integration
+tests/run_all_tests.sh --section=18
 ```
 
-Then run the full Apple Container suite against an isolated profile before
-documenting the feature as available.
+`tests/run_all_tests.sh --skip-integration` is expected to fail section 13 while
+the worktree is dirty, because section 13 checks for a clean git status.
 
 ## Deferred Decisions
 
@@ -448,9 +551,10 @@ documenting the feature as available.
   that some such mechanism must exist before `dx-mount` ships is made; only the
   mechanism is open. It must not violate the single-writer constraint on the
   default `dx-nix` volume.
-- SSH-port allocation scheme for concurrent side containers (deterministic range
-  plus collision handling). The range must avoid `dx-host`'s default `2222` and
-  the `dx-test` profile's `2299`.
+- Whether SSH-port collisions for concurrent side containers should retry to an
+  alternate derived port. The deterministic range (avoiding `dx-host`'s default
+  `2222` and the `dx-test` profile's `2299`) and refuse-with-guidance behavior
+  are implemented; only automatic retry remains open.
 - Default memory/CPU sizing for side containers once the `-m`/`-c` flags become
   configurable.
 - Whether F4 sync is worth implementing after the F1 spikes.
