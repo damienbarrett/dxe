@@ -198,6 +198,67 @@ container_exec_dx_bash() {
     container_exec_dx bash -lc "$1"
 }
 
+# Start a throwaway tmux server inside the guest on a private -L socket, print
+# the live runtime state as `key=value` lines, then tear it down. This reads
+# the activated ~/.config/tmux/tmux.conf the same way a real server would, so
+# it validates behaviour rather than config strings. It never touches the host
+# and never touches the user's interactive dx-host session (separate socket +
+# server). Prints `__PROBE_FAILED__` and returns non-zero if no server starts.
+#
+# $1: optional extra guest script appended after the standard option dump. It
+#     may use the `g`/`s`/`w` helpers (global/server/window value queries) and
+#     the `$sock` socket name to emit additional `key=value` lines.
+tmux_guest_probe() {
+    local extra="${1:-}"
+    container_exec_dx_bash '
+        set -u
+        sock="dxe-bhv-$$-${RANDOM}"
+        tmux -L "$sock" kill-server >/dev/null 2>&1 || true
+        if ! tmux -L "$sock" new-session -d -s probe -x 200 -y 50 >/dev/null 2>&1; then
+            echo "__PROBE_FAILED__"
+            exit 1
+        fi
+        g() { tmux -L "$sock" show -gv "$1" 2>/dev/null; }
+        s() { tmux -L "$sock" show -sv "$1" 2>/dev/null; }
+        w() { tmux -L "$sock" showw -gv "$1" 2>/dev/null; }
+        printf "base-index=%s\n"       "$(g base-index)"
+        printf "pane-base-index=%s\n"  "$(w pane-base-index)"
+        printf "mouse=%s\n"            "$(g mouse)"
+        printf "history-limit=%s\n"    "$(g history-limit)"
+        printf "escape-time=%s\n"      "$(s escape-time)"
+        printf "focus-events=%s\n"     "$(g focus-events)"
+        printf "default-terminal=%s\n" "$(g default-terminal)"
+        printf "mode-keys=%s\n"        "$(w mode-keys)"
+        printf "status-keys=%s\n"      "$(g status-keys)"
+        printf "set-clipboard=%s\n"    "$(s set-clipboard)"
+        printf "repeat-time=%s\n"      "$(g repeat-time)"
+        printf "renumber-windows=%s\n" "$(g renumber-windows)"
+        printf "status-position=%s\n"  "$(g status-position)"
+        '"$extra"'
+        tmux -L "$sock" kill-server >/dev/null 2>&1 || true
+    ' 2>/dev/null
+}
+
+# Extract one value from a captured tmux_guest_probe blob.
+#   probe_value "$blob" status-keys
+probe_value() {
+    printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -n1
+}
+
+# Assert a probed runtime value equals an expected value.
+#   assert_tmux_runtime "$blob" status-keys emacs "tmux status-keys is emacs"
+assert_tmux_runtime() {
+    local blob="$1" key="$2" expected="$3" message="$4"
+    local got
+    got="$(probe_value "$blob" "$key")"
+    if [ "$got" = "$expected" ]; then
+        test_pass "$message (runtime $key=$got)"
+    else
+        test_fail "$message (expected $key=$expected, got '$got')"
+    fi
+    return 0
+}
+
 # Summary
 print_summary() {
     echo ""

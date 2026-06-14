@@ -17,27 +17,30 @@
   programs.tmux = {
     enable = true;
     shortcut = "space";
+    keyMode = "vi";
+    baseIndex = 1;
+    escapeTime = 0;
+    focusEvents = true;
+    mouse = true;
+    historyLimit = 50000;
+    terminal = "tmux-256color";
     extraConfig = ''
-      set -g default-terminal "tmux-256color"
+      # keyMode = "vi" emits both mode-keys vi and status-keys vi. Keep the
+      # command prompt on emacs editing; Home Manager models these together.
+      set -g status-keys emacs
       set -as terminal-features ",xterm-256color:RGB"
       set -as terminal-features ",xterm-256color:clipboard"
       set -ga terminal-overrides ",xterm-256color:Tc"
-      set -s escape-time 0
       set -s set-clipboard on
       set -g repeat-time 1000
       set -g display-panes-time 3000
-      set -g focus-events on
-      set -g mouse on
-      set -g history-limit 50000
-      set -g base-index 1
       set -g renumber-windows on
       set-option -g main-pane-width 50%
       set -g status-position top
       set -g visual-activity off
-      setw -g pane-base-index 1
       setw -g monitor-activity on
       setw -g monitor-bell on
-      
+
       # Yazi image support (Ghostty/Kitty protocol)
       set -g allow-passthrough on
       set -ga update-environment TERM
@@ -63,8 +66,8 @@
       bind -N "Switch to tiled layout" + select-layout tiled
       bind -N "Promote selected pane to main pane" a select-layout main-vertical \; display-panes "swap-pane -s .%% -t .1 \; select-pane -t .1"
 
-      # Vi-style copy mode with OSC52 clipboard support.
-      setw -g mode-keys vi
+      # Vi-style copy mode with OSC52 clipboard support. mode-keys vi comes
+      # from the typed keyMode option above.
       bind -T copy-mode-vi v send-keys -X begin-selection
       bind -T copy-mode-vi V send-keys -X select-line
       bind -T copy-mode-vi C-v send-keys -X rectangle-toggle

@@ -1,5 +1,63 @@
 # Tmux Configuration Improvement Plan
 
+## Status / Progress Log
+
+- **2026-06-14 — Slice 1 (typed options cleanup): DONE (automated gates green;
+  user manual-validation gate still open).**
+  - Migrated the option-shaped `extraConfig` settings to typed Home Manager
+    options in `home/tools.nix`: `keyMode = "vi"`, `baseIndex = 1`,
+    `escapeTime = 0`, `focusEvents = true`, `mouse = true`,
+    `historyLimit = 50000`, `terminal = "tmux-256color"`. Removed the now-dead
+    raw duplicates (`set -g base-index`, `setw -g pane-base-index`,
+    `set -s escape-time`, `set -g focus-events`, `set -g mouse`,
+    `set -g history-limit`, `set -g default-terminal`, `setw -g mode-keys vi`).
+    Confirmed at runtime that the typed `baseIndex` sets **both** `base-index`
+    and `pane-base-index`, so both raw lines were safe to drop.
+  - Kept the `status-keys emacs` override in `extraConfig` (with a comment),
+    because `keyMode = "vi"` emits both `mode-keys vi` and `status-keys vi`.
+  - **Behavior test harness** added to `tests/test_helpers.sh`
+    (`tmux_guest_probe`, `probe_value`, `assert_tmux_runtime`): starts a
+    throwaway tmux server on a private `-L` socket **inside the guest**, dumps
+    live runtime option values, and tears it down. It reads the activated
+    `~/.config/tmux/tmux.conf` exactly as a real server would, so it validates
+    behaviour, not config strings. It never touches the macOS host and never
+    touches the user's interactive `dx-host` session (separate socket/server).
+  - **TDD trail actually observed (not just asserted):**
+    1. Red (source wiring): the new `baseIndex = 1;` / `keyMode = "vi";` /
+       `status-keys emacs` source assertions failed before the migration.
+    2. Red (runtime): after adding `keyMode = "vi"` *without* the override and
+       activating in the guest, the live probe caught `status-keys` flip to
+       `vi` (`expected status-keys=emacs, got 'vi'`) — a regression a
+       string-grep test could never have seen.
+    3. Green: adding `set -g status-keys emacs` restored `status-keys=emacs`.
+    4. Refactor: duplicates already removed; section 6 (95 passed) and
+       section 14 theming (118 passed) both green.
+  - **Validation loop used** (against the running `dx-host`): edit
+    `home/tools.nix` → `./bin/dx-sync-bootstrap` → in guest
+    `USER=dx HOME=/home/dx nix run --extra-experimental-features 'nix-command flakes' /guest-bootstrap#homeConfigurations.dx.activationPackage`
+    → `tests/run_all_tests.sh --section=6`. The `USER`/`HOME` exports are
+    required for manual activation under `container exec -u dx` (the bootstrap's
+    `run_as_dx` sets them itself).
+  - Activation only rewrites the on-disk `~/.config/tmux/tmux.conf` symlink;
+    the user's already-running tmux server keeps its old config until a reload
+    or a new server. So the live `dx-host` session was not disrupted. **Manual
+    gate for the user:** in `dx-host`, start a fresh tmux (or reload) and
+    confirm 1-based indexing, mouse, vi copy-mode, and emacs command-prompt
+    editing all behave as expected.
+  - Test files touched: `tests/test_helpers.sh`, `tests/test_section6_tools.sh`.
+  - Not committed yet.
+
+- **Observation (out of scope, do not fix in this plan):** HM activation prints
+  deprecation warnings for `programs.git.userName` / `userEmail` / `extraConfig`
+  (renamed to `programs.git.settings.*` in this Home Manager). Same file
+  (`home/tools.nix`), unrelated to tmux. Worth a separate cleanup.
+
+- **Next:** Slice 2 (pane navigation + native binds). For pane nav, prefer a
+  genuinely interactive behavior test — send `prefix h/j/k/l` to a multi-pane
+  throwaway session in the guest and assert the active pane changed — rather
+  than only querying `list-keys`. Decide explicitly on the repeatable (`-r`)
+  pane-switch behavior change that `customPaneNavigationAndResize` introduces.
+
 ## Context
 
 Tmux is already managed by Home Manager. The source of truth is
@@ -347,7 +405,8 @@ Complete exactly one numbered slice at a time. After each slice, stop at the
 manual validation gate and do not begin the next slice until the user confirms
 the behavior is acceptable.
 
-1. **Typed options cleanup**
+1. **Typed options cleanup** — ✅ DONE 2026-06-14 (see Progress Log; automated
+   gates green, user manual-validation gate open).
    - Red: update section 6 so the migrated `baseIndex` behavior is asserted as a
      typed Nix option or runtime/generated tmux behavior instead of the old raw
      `set -g base-index 1` string. Add/adjust a guest behavior check that queries

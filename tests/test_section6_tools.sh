@@ -82,7 +82,11 @@ assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?go-task" "go-task preserved in flake.
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?lazygit" "lazygit preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?yazi" "yazi preserved in flake.nix"
 assert_file_contains "$TOOLS_NIX" "set -g display-panes-time 3000" "tmux display panes timeout is 3s"
-assert_file_contains "$TOOLS_NIX" "set -g base-index 1" "tmux windows use 1-based indexing"
+# base-index migrated from a raw `set -g base-index 1` string to the typed
+# Home Manager option. Runtime behaviour is asserted in the live block below.
+assert_file_contains "$TOOLS_NIX" "baseIndex = 1;" "tmux base-index is wired as a typed Home Manager option"
+assert_file_contains "$TOOLS_NIX" 'keyMode = "vi";' "tmux key mode is wired as a typed Home Manager option"
+assert_file_contains "$TOOLS_NIX" "set -g status-keys emacs" "tmux keeps emacs status-keys despite vi keyMode"
 assert_file_contains "$TOOLS_NIX" "set -g renumber-windows on" "tmux renumbers windows on close"
 assert_file_contains "$TOOLS_NIX" "set-option -g main-pane-width 50%" "tmux main pane width is 50 percent"
 assert_file_contains "$TOOLS_NIX" 'bind -N "Switch to tiled layout" + select-layout tiled' "tmux prefix plus selects tiled layout"
@@ -209,6 +213,26 @@ else
             test_fail "guest tool runs: $tool_check"
         fi
     done
+
+    # Behaviour: query the activated tmux config from a throwaway server inside
+    # the guest, proving the typed Home Manager options actually take effect at
+    # runtime (not merely that strings exist in tools.nix).
+    TMUX_PROBE="$(tmux_guest_probe || true)"
+    if printf '%s\n' "$TMUX_PROBE" | grep -q "__PROBE_FAILED__" || [ -z "$TMUX_PROBE" ]; then
+        test_fail "tmux runtime probe started a server in the guest"
+    else
+        test_pass "tmux runtime probe started a server in the guest"
+        assert_tmux_runtime "$TMUX_PROBE" base-index 1 "tmux windows use 1-based indexing"
+        assert_tmux_runtime "$TMUX_PROBE" pane-base-index 1 "tmux panes use 1-based indexing"
+        assert_tmux_runtime "$TMUX_PROBE" mouse on "tmux mouse mode is enabled"
+        assert_tmux_runtime "$TMUX_PROBE" history-limit 50000 "tmux history limit is 50000"
+        assert_tmux_runtime "$TMUX_PROBE" escape-time 0 "tmux escape-time is 0"
+        assert_tmux_runtime "$TMUX_PROBE" focus-events on "tmux focus-events are enabled"
+        assert_tmux_runtime "$TMUX_PROBE" default-terminal tmux-256color "tmux default-terminal is tmux-256color"
+        assert_tmux_runtime "$TMUX_PROBE" mode-keys vi "tmux copy mode uses vi keys"
+        assert_tmux_runtime "$TMUX_PROBE" status-keys emacs "tmux command prompt keeps emacs editing despite vi keyMode"
+        assert_tmux_runtime "$TMUX_PROBE" set-clipboard on "tmux set-clipboard is on for OSC52 copy"
+    fi
 fi
 
 print_summary
