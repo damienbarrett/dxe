@@ -287,6 +287,75 @@ tmux_guest_keys_probe() {
     ' 2>/dev/null
 }
 
+# Probe tmux-resurrect wiring from inside the guest: whether the persisted
+# save directory exists/writable, the runtime @resurrect-dir value, and whether
+# the save/restore key bindings parsed into the live key table. Guest only.
+tmux_guest_resurrect_probe() {
+    container_exec_dx_bash '
+        set -u
+        rdir="/persist/home/dx/.local/share/tmux/resurrect"
+        [ -d "$rdir" ] && echo "dir-exists=yes" || echo "dir-exists=no"
+        [ -w "$rdir" ] && echo "dir-writable=yes" || echo "dir-writable=no"
+        sock="dxe-rsr-$$-${RANDOM}"
+        tmux -L "$sock" kill-server >/dev/null 2>&1 || true
+        if ! tmux -L "$sock" new-session -d -s base -x 200 -y 50 >/dev/null 2>&1; then
+            echo "__PROBE_FAILED__"; exit 1
+        fi
+        printf "resurrect-dir=%s\n" "$(tmux -L "$sock" show -gv @resurrect-dir 2>/dev/null)"
+        if tmux -L "$sock" list-keys -T prefix | grep -qE "prefix C-s "; then echo "save-bound=yes"; else echo "save-bound=no"; fi
+        if tmux -L "$sock" list-keys -T prefix | grep -qE "prefix C-r "; then echo "restore-bound=yes"; else echo "restore-bound=no"; fi
+        tmux -L "$sock" kill-server >/dev/null 2>&1 || true
+    ' 2>/dev/null
+}
+
+# Run a full tmux-resurrect save/restore round trip inside the guest and report
+# whether it actually worked: create a uniquely-named session, trigger the
+# resurrect save (via its bound run-shell script), assert a save file lands
+# under the persisted dir, kill the server, start a fresh one, trigger restore,
+# and assert the named session came back. Guest only; uses a private socket so
+# it never touches the user's session. Echoes `save-file=` `restored=`.
+tmux_guest_resurrect_roundtrip() {
+    container_exec_dx_bash '
+        set -u
+        rdir="/persist/home/dx/.local/share/tmux/resurrect"
+        sock="dxe-rt-$$-${RANDOM}"
+        marker="dxe-restore-probe-$$-${RANDOM}"
+        # Extract the path a binding run-shells, tolerating optional quoting.
+        bound_path() {
+            local line cmd
+            line="$(tmux -L "$sock" list-keys -T prefix | grep -E "prefix $1 " | head -n1)"
+            cmd="${line#*run-shell }"
+            cmd="${cmd# }"
+            cmd="${cmd%\"}"; cmd="${cmd#\"}"
+            printf "%s" "$cmd"
+        }
+        tmux -L "$sock" kill-server >/dev/null 2>&1 || true
+        if ! tmux -L "$sock" new-session -d -s "$marker" -x 200 -y 50 >/dev/null 2>&1; then
+            echo "__PROBE_FAILED__"; exit 1
+        fi
+        tmux -L "$sock" new-window -t "$marker" >/dev/null 2>&1
+        save_sh="$(bound_path C-s)"
+        restore_sh="$(bound_path C-r)"
+        tmux -L "$sock" run-shell "$save_sh" >/dev/null 2>&1 || true
+        saved=no
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if ls "$rdir"/tmux_resurrect_*.txt >/dev/null 2>&1; then saved=yes; break; fi
+            sleep 1
+        done
+        echo "save-file=$saved"
+        tmux -L "$sock" kill-server >/dev/null 2>&1 || true
+        tmux -L "$sock" new-session -d -s placeholder -x 200 -y 50 >/dev/null 2>&1
+        tmux -L "$sock" run-shell "$restore_sh" >/dev/null 2>&1 || true
+        restored=no
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if tmux -L "$sock" list-sessions -F "#{session_name}" 2>/dev/null | grep -qx "$marker"; then restored=yes; break; fi
+            sleep 1
+        done
+        echo "restored=$restored"
+        tmux -L "$sock" kill-server >/dev/null 2>&1 || true
+    ' 2>/dev/null
+}
+
 # Extract one value from a captured tmux_guest_probe blob.
 #   probe_value "$blob" status-keys
 probe_value() {

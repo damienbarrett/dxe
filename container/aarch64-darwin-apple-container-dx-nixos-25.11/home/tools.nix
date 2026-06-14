@@ -26,6 +26,17 @@
     terminal = "tmux-256color";
     customPaneNavigationAndResize = true;
     disableConfirmationPrompt = true;
+    sensibleOnTop = true;
+    plugins = with pkgs.tmuxPlugins; [
+      {
+        plugin = resurrect;
+        extraConfig = ''
+          # Save data must live on /persist (created by bootstrap), not the
+          # ephemeral container home, so sessions survive container rebuilds.
+          set -g @resurrect-dir '/persist/home/dx/.local/share/tmux/resurrect'
+        '';
+      }
+    ];
     extraConfig = ''
       # keyMode = "vi" emits both mode-keys vi and status-keys vi. Keep the
       # command prompt on emacs editing; Home Manager models these together.

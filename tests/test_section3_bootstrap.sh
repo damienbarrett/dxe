@@ -63,6 +63,16 @@ else
     test_fail "GitHub CLI persistence is not gated by optional AI tools"
 fi
 
+# Test: bootstrap creates the tmux-resurrect save directory on persistent
+# storage (Home Manager cannot create it because /persist is a runtime mount).
+assert_file_contains "$BOOTSTRAP" "install -d -o dx -g dx -m 0755 /persist/home/dx/.local/share/tmux/resurrect" "bootstrap creates the persisted tmux-resurrect directory"
+RSR_PERSIST_LINE=$(grep -n "^[[:space:]]*setup_tmux_persistence$" "$BOOTSTRAP" | head -1 | cut -d: -f1 || echo "")
+if [ -n "$RSR_PERSIST_LINE" ] && { [ -z "$AI_GATE_LINE" ] || [ "$RSR_PERSIST_LINE" -lt "$AI_GATE_LINE" ]; }; then
+    test_pass "tmux-resurrect persistence is not gated by optional AI tools"
+else
+    test_fail "tmux-resurrect persistence is not gated by optional AI tools"
+fi
+
 # Test: bootstrap.sh is idempotent for user creation
 # Check that user creation is conditional
 assert_file_contains "$BOOTSTRAP" "if.*id -u dx" "bootstrap.sh conditionally creates dx user"

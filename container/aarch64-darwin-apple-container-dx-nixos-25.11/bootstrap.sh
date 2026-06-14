@@ -347,6 +347,15 @@ setup_gh_persistence() {
     run_as_dx "ln -sfnT /persist/home/dx/.config/gh /home/dx/.config/gh"
 }
 
+# Persist tmux-resurrect save data across container rebuilds. /persist is a
+# runtime mount, so Home Manager cannot create this directory declaratively;
+# home/tools.nix points resurrect at it via @resurrect-dir. install -d sets
+# ownership on the directories it creates regardless of the later recursive
+# chowns over /persist/home/dx.
+setup_tmux_persistence() {
+    install -d -o dx -g dx -m 0755 /persist/home/dx/.local/share/tmux/resurrect
+}
+
 # agy stores its known CLI state under ~/.gemini/antigravity-cli, which is
 # persisted with ~/.gemini. Also provide D-Bus + gnome-keyring Secret Service
 # compatibility for auth flows that request it; keyring data is linked to
@@ -404,6 +413,9 @@ configure_guest() {
 
     # Persist GitHub CLI credentials/configuration across container rebuilds.
     setup_gh_persistence
+
+    # Persist tmux-resurrect save data across container rebuilds.
+    setup_tmux_persistence
 
     # Persist AI CLI tool credentials/configuration across container rebuilds
     # Only restore these links if the user has opted into the AI tools

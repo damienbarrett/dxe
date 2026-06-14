@@ -89,6 +89,48 @@
     from plan section 4 was **not** added — it needs the nested-tmux
     passthrough check called out there; raise it if you want it.
 
+- **2026-06-14 — Slice 3 (resurrect + sensibleOnTop): automated gates green on
+  an isolated profile; user manual-validation gate open.**
+  - `home/tools.nix`: added `sensibleOnTop = true` and the `resurrect` plugin
+    with `@resurrect-dir = /persist/home/dx/.local/share/tmux/resurrect`.
+    Confirmed the Nix config builds (resurrect + sensible plugins fetched) and
+    that `sensibleOnTop` loads *beneath* the typed options — the runtime probe
+    still reports `escape-time=0`, `history-limit=50000`,
+    `default-terminal=tmux-256color`, `base-index=1`, so sensible does not win.
+  - `bootstrap.sh`: new `setup_tmux_persistence` runs
+    `install -d -o dx -g dx -m 0755 …/tmux/resurrect`, called unconditionally
+    from `configure_guest` (Prerequisite A). Home Manager cannot create it
+    because `/persist` is a runtime mount.
+  - **Validated on a fresh isolated `dx-test` profile (cold bootstrap), per the
+    chosen strategy — `dx-host` was left untouched:**
+    - `DX_TEST_DESTRUCTIVE=1 ./bin/dx-profile dx-test tests/run_all_tests.sh
+      --section=6` → 128 passed, 0 failed, including a real save→kill-server→
+      restore round trip (`save-file=yes`, `restored=yes`).
+    - Section 3 (26) and section 14 theming (118) green on `dx-test`.
+    - Resurrect dir created by bootstrap, owned `dx:dx`, writable.
+  - **Behaviour harness added** (`tests/test_helpers.sh`):
+    `tmux_guest_resurrect_probe` (dir exists/writable, `@resurrect-dir`,
+    C-s/C-r bindings) and `tmux_guest_resurrect_roundtrip` (extracts the bound
+    save/restore scripts from the live key table and runs a true save/restore
+    cycle on a private socket). The round trip writes to `/persist` and restarts
+    servers, so section 6 gates it behind `DX_TEST_DESTRUCTIVE=1` and self-skips
+    otherwise.
+  - **TDD trail observed:** against `dx-host` (pre-resurrect active config) all
+    seven runtime resurrect checks were red (no dir, no `@resurrect-dir`, no
+    C-s/C-r, no save/restore) while source-wiring passed; all green on the
+    freshly-bootstrapped `dx-test`.
+  - **Container-rebuild persistence: CONFIRMED.** Saved a uniquely-named marker
+    session, ran `dx-destroy-container + dx-create-container +
+    dx-start-container` on `dx-test` (preserving `/persist`), and the marker
+    save file survived. Restoring it into a fresh server after the rebuild
+    brought the `dxe-rebuild-marker-7788` session back, and bootstrap
+    re-created the resurrect dir (still `dx:dx`). End-to-end persistence proven.
+  - **Manual gate for the user:** in a real tmux, `prefix Ctrl-s` to save and
+    `prefix Ctrl-r` to restore after a server restart; confirm sessions/windows
+    return. Note: `dx-host` will only gain the resurrect dir + plugin on its
+    next `dx-recreate` (or an explicit re-bootstrap); until then its
+    `--section=6` resurrect checks will report red, which is expected.
+
 - **Observation (out of scope, do not fix in this plan):** HM activation prints
   deprecation warnings for `programs.git.userName` / `userEmail` / `extraConfig`
   (renamed to `programs.git.settings.*` in this Home Manager). Same file
@@ -475,7 +517,9 @@ the behavior is acceptable.
    - Manual validation gate: in an SSH login tmux session, manually exercise pane
      selection, pane resizing, config reload, and kill-pane behavior before
      continuing.
-3. **Resurrect and `sensibleOnTop`**
+3. **Resurrect and `sensibleOnTop`** — ✅ DONE 2026-06-14 (see Progress Log;
+   isolated-profile gates green incl. save/restore + rebuild persistence, user
+   manual-validation gate open).
    - Red: add a failing bootstrap/static check for the resurrect save directory
      and a live SSH-backed tmux behavior check for manual resurrect save/restore.
    - Green: add `resurrect`, `sensibleOnTop`, and the targeted bootstrap

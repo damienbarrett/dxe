@@ -89,6 +89,10 @@ assert_file_contains "$TOOLS_NIX" 'keyMode = "vi";' "tmux key mode is wired as a
 assert_file_contains "$TOOLS_NIX" "set -g status-keys emacs" "tmux keeps emacs status-keys despite vi keyMode"
 assert_file_contains "$TOOLS_NIX" "customPaneNavigationAndResize = true;" "tmux pane navigation/resize is wired as a typed Home Manager option"
 assert_file_contains "$TOOLS_NIX" "disableConfirmationPrompt = true;" "tmux kill-pane/window skip the confirmation prompt via typed option"
+assert_file_contains "$TOOLS_NIX" "sensibleOnTop = true;" "tmux loads tmux-sensible defaults beneath the typed options"
+assert_file_contains "$TOOLS_NIX" "plugin = resurrect;" "tmux-resurrect is declared as a Home Manager tmux plugin"
+assert_file_contains "$TOOLS_NIX" "@resurrect-dir '/persist/home/dx/.local/share/tmux/resurrect'" "tmux-resurrect saves to the persisted directory"
+assert_file_contains "$BOOTSTRAP" "/persist/home/dx/.local/share/tmux/resurrect" "bootstrap creates the persisted resurrect directory"
 assert_file_contains "$TOOLS_NIX" "set -g renumber-windows on" "tmux renumbers windows on close"
 assert_file_contains "$TOOLS_NIX" "set-option -g main-pane-width 50%" "tmux main pane width is 50 percent"
 assert_file_contains "$TOOLS_NIX" 'bind -N "Switch to tiled layout" + select-layout tiled' "tmux prefix plus selects tiled layout"
@@ -271,6 +275,36 @@ else
         assert_tmux_runtime_contains "$TMUX_KEYS" x.cmd "kill-pane" "tmux prefix-x kills the pane"
         assert_tmux_runtime_not_contains "$TMUX_KEYS" x.cmd "confirm-before" "tmux prefix-x skips the kill confirmation"
     fi
+
+    # Behaviour: tmux-resurrect wiring and a real save/restore round trip.
+    TMUX_RSR="$(tmux_guest_resurrect_probe || true)"
+    if printf '%s\n' "$TMUX_RSR" | grep -q "__PROBE_FAILED__" || [ -z "$TMUX_RSR" ]; then
+        test_fail "tmux resurrect probe started a server in the guest"
+    else
+        test_pass "tmux resurrect probe started a server in the guest"
+        assert_tmux_runtime "$TMUX_RSR" dir-exists yes "resurrect save directory exists under /persist"
+        assert_tmux_runtime "$TMUX_RSR" dir-writable yes "resurrect save directory is writable by dx"
+        assert_tmux_runtime "$TMUX_RSR" resurrect-dir /persist/home/dx/.local/share/tmux/resurrect "resurrect @resurrect-dir points at the persisted path"
+        assert_tmux_runtime "$TMUX_RSR" save-bound yes "resurrect save (prefix C-s) is bound"
+        assert_tmux_runtime "$TMUX_RSR" restore-bound yes "resurrect restore (prefix C-r) is bound"
+
+        # The full save/restore round trip writes into /persist and restarts
+        # tmux servers, so gate it behind DX_TEST_DESTRUCTIVE to keep routine
+        # runs side-effect free. Run it with DX_TEST_DESTRUCTIVE=1 (ideally in
+        # an isolated profile) to validate end-to-end resurrect behaviour.
+        if [ "${DX_TEST_DESTRUCTIVE:-0}" = "1" ]; then
+            TMUX_RT="$(tmux_guest_resurrect_roundtrip || true)"
+            assert_tmux_runtime "$TMUX_RT" save-file yes "resurrect writes a save file under the persisted dir"
+            assert_tmux_runtime "$TMUX_RT" restored yes "resurrect restores a saved session after a server restart"
+        else
+            test_skip "resurrect save/restore round trip (set DX_TEST_DESTRUCTIVE=1 to run)"
+        fi
+    fi
+
+    # sensibleOnTop must load beneath the typed options without overriding them.
+    # The typed-option runtime values asserted in the first probe block above
+    # (escape-time=0, history-limit=50000, default-terminal=tmux-256color,
+    # base-index=1) double as the regression check that sensible did not win.
 fi
 
 print_summary
