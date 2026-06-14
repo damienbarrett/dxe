@@ -23,8 +23,10 @@ host_image_size() {
     du -sh "$image" 2>/dev/null | cut -f1
 }
 
+# Nix must run as dx: the store is single-user dx-owned, and a root-invoked
+# nix re-owns /nix/store to root:nixbld, locking dx out.
 run_in_guest() {
-    container exec "$DX_CONTAINER_NAME" sh -lc "$1"
+    container exec -u dx "$DX_CONTAINER_NAME" bash -lc "$1"
 }
 
 report_host_images() {

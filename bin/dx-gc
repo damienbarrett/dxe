@@ -9,10 +9,12 @@ if ! container_is_running "$DX_CONTAINER_NAME"; then
     exit 1
 fi
 
+# Nix must run as dx: the store is single-user dx-owned, and a root-invoked
+# nix re-owns /nix/store to root:nixbld, locking dx out.
 echo "Running Nix garbage collection in guest..."
-container exec "$DX_CONTAINER_NAME" nix-collect-garbage --delete-older-than 14d
+container exec -u dx "$DX_CONTAINER_NAME" bash -lc 'nix-collect-garbage --delete-older-than 14d'
 
 echo "Running Nix store optimization in guest..."
-container exec "$DX_CONTAINER_NAME" nix-store --optimise
+container exec -u dx "$DX_CONTAINER_NAME" bash -lc 'nix-store --optimise'
 
 echo "Nix maintenance complete."

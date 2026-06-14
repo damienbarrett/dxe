@@ -113,11 +113,15 @@ setup_nix_volume() {
 configure_nix_daemon() {
     echo "Configuring Nix daemon..."
     mkdir -p /etc/nix
+    # build-users-group is cleared because the store is single-user (owned by
+    # dx, §7); a root-invoked nix would otherwise re-own /nix/store to
+    # root:nixbld and lock dx out.
     cat > /etc/nix/nix.conf <<EOF
 auto-optimise-store = true
 min-free = 1073741824
 max-free = 5368709120
 experimental-features = nix-command flakes
+build-users-group =
 EOF
 }
 
