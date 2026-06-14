@@ -1,5 +1,7 @@
 dx_key
 dx_key.pub
+dx-test_key
+dx-test_key.pub
 dx-mount-*_key
 dx-mount-*_key.pub
 .DS_Store
