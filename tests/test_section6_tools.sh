@@ -87,6 +87,8 @@ assert_file_contains "$TOOLS_NIX" "set -g display-panes-time 3000" "tmux display
 assert_file_contains "$TOOLS_NIX" "baseIndex = 1;" "tmux base-index is wired as a typed Home Manager option"
 assert_file_contains "$TOOLS_NIX" 'keyMode = "vi";' "tmux key mode is wired as a typed Home Manager option"
 assert_file_contains "$TOOLS_NIX" "set -g status-keys emacs" "tmux keeps emacs status-keys despite vi keyMode"
+assert_file_contains "$TOOLS_NIX" "customPaneNavigationAndResize = true;" "tmux pane navigation/resize is wired as a typed Home Manager option"
+assert_file_contains "$TOOLS_NIX" "disableConfirmationPrompt = true;" "tmux kill-pane/window skip the confirmation prompt via typed option"
 assert_file_contains "$TOOLS_NIX" "set -g renumber-windows on" "tmux renumbers windows on close"
 assert_file_contains "$TOOLS_NIX" "set-option -g main-pane-width 50%" "tmux main pane width is 50 percent"
 assert_file_contains "$TOOLS_NIX" 'bind -N "Switch to tiled layout" + select-layout tiled' "tmux prefix plus selects tiled layout"
@@ -232,6 +234,42 @@ else
         assert_tmux_runtime "$TMUX_PROBE" mode-keys vi "tmux copy mode uses vi keys"
         assert_tmux_runtime "$TMUX_PROBE" status-keys emacs "tmux command prompt keeps emacs editing despite vi keyMode"
         assert_tmux_runtime "$TMUX_PROBE" set-clipboard on "tmux set-clipboard is on for OSC52 copy"
+    fi
+
+    # Behaviour: query the live prefix key table and pane-navigation effects.
+    TMUX_KEYS="$(tmux_guest_keys_probe || true)"
+    if printf '%s\n' "$TMUX_KEYS" | grep -q "__PROBE_FAILED__" || [ -z "$TMUX_KEYS" ]; then
+        test_fail "tmux key-table probe started a server in the guest"
+    else
+        test_pass "tmux key-table probe started a server in the guest"
+        # hjkl select panes in the right direction and are now repeatable.
+        assert_tmux_runtime "$TMUX_KEYS" h.cmd "select-pane -L" "tmux prefix-h selects the left pane"
+        assert_tmux_runtime "$TMUX_KEYS" j.cmd "select-pane -D" "tmux prefix-j selects the lower pane"
+        assert_tmux_runtime "$TMUX_KEYS" k.cmd "select-pane -U" "tmux prefix-k selects the upper pane"
+        assert_tmux_runtime "$TMUX_KEYS" l.cmd "select-pane -R" "tmux prefix-l selects the right pane"
+        # The pinned Home Manager customPaneNavigationAndResize emits pane
+        # SWITCH binds without -r (non-repeatable) and only the RESIZE binds
+        # with -r. That preserves the prior hand-written behaviour, so assert
+        # non-repeatable switching deliberately rather than the repeatable
+        # switching the plan originally assumed this module would introduce.
+        assert_tmux_runtime "$TMUX_KEYS" h.repeat no "tmux prefix-h pane switch is non-repeatable (HM module default)"
+        assert_tmux_runtime "$TMUX_KEYS" j.repeat no "tmux prefix-j pane switch is non-repeatable (HM module default)"
+        assert_tmux_runtime "$TMUX_KEYS" k.repeat no "tmux prefix-k pane switch is non-repeatable (HM module default)"
+        assert_tmux_runtime "$TMUX_KEYS" l.repeat no "tmux prefix-l pane switch is non-repeatable (HM module default)"
+        # HJKL resize panes and stay repeatable.
+        assert_tmux_runtime_contains "$TMUX_KEYS" H.cmd "resize-pane -L" "tmux prefix-H resizes left"
+        assert_tmux_runtime_contains "$TMUX_KEYS" L.cmd "resize-pane -R" "tmux prefix-L resizes right"
+        assert_tmux_runtime "$TMUX_KEYS" H.repeat yes "tmux prefix-H resize is repeatable"
+        assert_tmux_runtime "$TMUX_KEYS" L.repeat yes "tmux prefix-L resize is repeatable"
+        # select-pane direction actually moves the active pane in the guest.
+        assert_tmux_runtime "$TMUX_KEYS" pane-after-right 2 "tmux select-pane -R moves to the right pane"
+        assert_tmux_runtime "$TMUX_KEYS" pane-after-left 1 "tmux select-pane -L moves to the left pane"
+        # reload bind rebinds prefix-r to source the config, and it reloads cleanly.
+        assert_tmux_runtime_contains "$TMUX_KEYS" r.cmd "source-file" "tmux prefix-r reloads the config"
+        assert_tmux_runtime "$TMUX_KEYS" reload-sources-ok yes "tmux config sources without error"
+        # disableConfirmationPrompt: prefix-x kills the pane with no confirm-before wrapper.
+        assert_tmux_runtime_contains "$TMUX_KEYS" x.cmd "kill-pane" "tmux prefix-x kills the pane"
+        assert_tmux_runtime_not_contains "$TMUX_KEYS" x.cmd "confirm-before" "tmux prefix-x skips the kill confirmation"
     fi
 fi
 

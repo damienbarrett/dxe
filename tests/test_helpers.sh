@@ -239,6 +239,54 @@ tmux_guest_probe() {
     ' 2>/dev/null
 }
 
+# Start a throwaway tmux server inside the guest and report the live, parsed
+# prefix key table plus pane-navigation effects as `key=value` lines. Like
+# tmux_guest_probe this reads the activated config the way a real server does,
+# so it proves the generated bindings actually parsed into the runtime key
+# table (not that strings exist in tools.nix). Guest only; never touches the
+# host or the user's interactive session.
+#
+# Emits, for each of h j k l H J K L r x: `<key>.repeat=yes|no` and
+# `<key>.cmd=<command>`; plus `pane-after-right`/`pane-after-left` (active pane
+# index after select-pane -R/-L in a horizontal split) and `reload-sources-ok`
+# (whether sourcing the activated tmux.conf — what the reload bind does —
+# succeeds).
+tmux_guest_keys_probe() {
+    container_exec_dx_bash '
+        set -u
+        sock="dxe-keys-$$-${RANDOM}"
+        tmux -L "$sock" kill-server >/dev/null 2>&1 || true
+        if ! tmux -L "$sock" new-session -d -s probe -x 200 -y 50 >/dev/null 2>&1; then
+            echo "__PROBE_FAILED__"; exit 1
+        fi
+        keyfact() {
+            key="$1"; label="$2"
+            line="$(tmux -L "$sock" list-keys -T prefix | grep -E "^bind-key( +-r)? +-T prefix ${key} +" | head -n1)"
+            if printf "%s" "$line" | grep -qE "^bind-key +-r +-T"; then
+                printf "%s.repeat=yes\n" "$label"
+            else
+                printf "%s.repeat=no\n" "$label"
+            fi
+            printf "%s.cmd=%s\n" "$label" "$(printf "%s" "$line" | sed -E "s/^bind-key( +-r)? +-T prefix ${key} +//")"
+        }
+        keyfact h h; keyfact j j; keyfact k k; keyfact l l
+        keyfact H H; keyfact J J; keyfact K K; keyfact L L
+        keyfact r r; keyfact x x
+        tmux -L "$sock" split-window -h >/dev/null 2>&1
+        tmux -L "$sock" select-pane -t 1 >/dev/null 2>&1
+        tmux -L "$sock" select-pane -R >/dev/null 2>&1
+        printf "pane-after-right=%s\n" "$(tmux -L "$sock" display-message -p "#{pane_index}")"
+        tmux -L "$sock" select-pane -L >/dev/null 2>&1
+        printf "pane-after-left=%s\n" "$(tmux -L "$sock" display-message -p "#{pane_index}")"
+        if tmux -L "$sock" source-file "$HOME/.config/tmux/tmux.conf" >/dev/null 2>&1; then
+            printf "reload-sources-ok=yes\n"
+        else
+            printf "reload-sources-ok=no\n"
+        fi
+        tmux -L "$sock" kill-server >/dev/null 2>&1 || true
+    ' 2>/dev/null
+}
+
 # Extract one value from a captured tmux_guest_probe blob.
 #   probe_value "$blob" status-keys
 probe_value() {
@@ -255,6 +303,32 @@ assert_tmux_runtime() {
         test_pass "$message (runtime $key=$got)"
     else
         test_fail "$message (expected $key=$expected, got '$got')"
+    fi
+    return 0
+}
+
+# Assert a probed runtime value contains a substring.
+assert_tmux_runtime_contains() {
+    local blob="$1" key="$2" needle="$3" message="$4"
+    local got
+    got="$(probe_value "$blob" "$key")"
+    if printf '%s' "$got" | grep -qF "$needle"; then
+        test_pass "$message (runtime $key=$got)"
+    else
+        test_fail "$message (expected $key to contain '$needle', got '$got')"
+    fi
+    return 0
+}
+
+# Assert a probed runtime value does NOT contain a substring.
+assert_tmux_runtime_not_contains() {
+    local blob="$1" key="$2" needle="$3" message="$4"
+    local got
+    got="$(probe_value "$blob" "$key")"
+    if printf '%s' "$got" | grep -qF "$needle"; then
+        test_fail "$message (expected $key to omit '$needle', got '$got')"
+    else
+        test_pass "$message (runtime $key=$got)"
     fi
     return 0
 }

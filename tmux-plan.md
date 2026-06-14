@@ -47,16 +47,59 @@
   - Test files touched: `tests/test_helpers.sh`, `tests/test_section6_tools.sh`.
   - Not committed yet.
 
+- **2026-06-14 — Slice 2 (pane navigation + native binds): DONE (automated
+  gates green; user manual-validation gate still open).**
+  - Enabled typed `customPaneNavigationAndResize = true` and
+    `disableConfirmationPrompt = true`; added a `bind r source-file
+    ~/.config/tmux/tmux.conf \; display-message` reload bind; removed the
+    hand-written hjkl/HJKL block from `extraConfig` (the typed option emits it,
+    and an extraConfig copy would override the generated binds via `mkAfter`).
+  - **Plan correction (found by behaviour testing, not assumed):** Section 3 of
+    this plan claimed the pinned Home Manager module emits *all eight* nav+resize
+    binds with `-r`, making pane switching newly repeatable. That is **false**
+    for the pinned module: it emits pane **switch** (`h/j/k/l`) *without* `-r`
+    and only pane **resize** (`H/J/K/L`) *with* `-r`. So there is **no** repeat
+    behaviour change — switching stays non-repeatable, matching the prior
+    hand-written binds and existing muscle memory. The "repeatable pane-switch is
+    a conscious behaviour change" caveat in section 3 does not apply to this
+    module version; no override was needed. Tests assert the real
+    (non-repeatable switch, repeatable resize) state.
+  - **Behaviour test harness extended** (`tests/test_helpers.sh`):
+    `tmux_guest_keys_probe` starts a throwaway guest server and reports the
+    *parsed* prefix key table (`<key>.repeat`, `<key>.cmd` for h j k l H J K L
+    r x), plus real pane-navigation effects (`select-pane -R/-L` moves the
+    active pane) and `reload-sources-ok` (sourcing the activated config — what
+    the reload bind does — succeeds). Added `assert_tmux_runtime_contains` /
+    `assert_tmux_runtime_not_contains`. These read the live key table, not
+    tools.nix strings.
+  - **TDD trail observed:** before the change the probe showed
+    `r.cmd=refresh-client` (red → now `source-file`),
+    `x.cmd=confirm-before … kill-pane` (red → now bare `kill-pane`), and the
+    typed-option source assertions red. A first harness pass also exposed a
+    *test* bug — tmux pads the missing `-r` slot with spaces, so the original
+    regex silently failed to match non-repeatable lines; fixed to tolerate
+    variable whitespace and re-verified against the live `list-keys` format.
+  - Section 6 (116 passed) and section 14 theming (118 passed) green against
+    the running guest. Files: `tests/test_helpers.sh`,
+    `tests/test_section6_tools.sh`, `home/tools.nix`.
+  - **Manual gate for the user:** in a real `dx-host` tmux, exercise
+    `prefix h/j/k/l` selection, `prefix H/J/K/L` resize, `prefix r` reload
+    (expect "tmux config reloaded"), and `prefix x` kill-pane (expect no y/n
+    confirmation). Deferred decision: the optional `bind C-space last-window`
+    from plan section 4 was **not** added — it needs the nested-tmux
+    passthrough check called out there; raise it if you want it.
+
 - **Observation (out of scope, do not fix in this plan):** HM activation prints
   deprecation warnings for `programs.git.userName` / `userEmail` / `extraConfig`
   (renamed to `programs.git.settings.*` in this Home Manager). Same file
   (`home/tools.nix`), unrelated to tmux. Worth a separate cleanup.
 
-- **Next:** Slice 2 (pane navigation + native binds). For pane nav, prefer a
-  genuinely interactive behavior test — send `prefix h/j/k/l` to a multi-pane
-  throwaway session in the guest and assert the active pane changed — rather
-  than only querying `list-keys`. Decide explicitly on the repeatable (`-r`)
-  pane-switch behavior change that `customPaneNavigationAndResize` introduces.
+- **Next:** Slice 3 (resurrect + sensibleOnTop). This one has real new
+  behaviour to drive test-first: Prerequisite A (bootstrap must create
+  `/persist/home/dx/.local/share/tmux/resurrect`) and a manual resurrect
+  save/restore across a tmux server restart. Use an isolated profile for the
+  save/restore + container-rebuild persistence checks per the plan's discipline,
+  since those mutate persist/HM state.
 
 ## Context
 
@@ -228,13 +271,14 @@ customPaneNavigationAndResize = true;
 Then remove the hand-written hjkl pane switching and HJKL resize block from
 `extraConfig`, letting Home Manager emit it consistently.
 
-Behavior change to note: the pinned Home Manager module emits all eight binds
-(navigation and resize) with the `-r` repeat flag. The current config only marks
-the HJKL resize binds repeatable; the hjkl pane-switch binds are non-repeating.
-After this switch, pane switching becomes repeatable within `repeat-time` (1000ms
-here). This is arguably an improvement, but it is a behavior change, not a
-preservation, and repeatable pane-switch can surprise existing muscle memory.
-Treat it as a conscious decision.
+Behavior note (corrected 2026-06-14 against the pinned module — the original
+claim here was wrong): the pinned Home Manager module emits the pane **resize**
+binds (HJKL) with `-r` but the pane **switch** binds (hjkl) **without** `-r`.
+That is identical to the prior hand-written behaviour, so this is a pure
+preservation — pane switching stays non-repeatable and no muscle memory changes.
+If repeatable pane switching is ever wanted, it must be added explicitly as
+`bind -r h select-pane -L` (etc.) overrides in `extraConfig`; the typed option
+alone will not do it.
 
 ## 4. Add Small Native Binds
 
@@ -419,7 +463,8 @@ the behavior is acceptable.
    - Manual validation gate: activate the config in an isolated profile, log in
      through `bin/dx-ssh`, and confirm the expected tmux options and basic tmux
      session startup behavior from inside the guest.
-2. **Pane navigation and native binds**
+2. **Pane navigation and native binds** — ✅ DONE 2026-06-14 (see Progress Log;
+   automated gates green, user manual-validation gate open).
    - Red: add coverage proving hjkl pane selection and HJKL resizing still work,
      and either assert the new repeatable `-r` behavior or document that
      repeatable pane switching is intentionally accepted.

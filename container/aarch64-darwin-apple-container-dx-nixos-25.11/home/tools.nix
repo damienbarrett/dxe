@@ -24,6 +24,8 @@
     mouse = true;
     historyLimit = 50000;
     terminal = "tmux-256color";
+    customPaneNavigationAndResize = true;
+    disableConfirmationPrompt = true;
     extraConfig = ''
       # keyMode = "vi" emits both mode-keys vi and status-keys vi. Keep the
       # command prompt on emacs editing; Home Manager models these together.
@@ -66,6 +68,9 @@
       bind -N "Switch to tiled layout" + select-layout tiled
       bind -N "Promote selected pane to main pane" a select-layout main-vertical \; display-panes "swap-pane -s .%% -t .1 \; select-pane -t .1"
 
+      # Reload the activated config without recreating the tmux server.
+      bind -N "Reload tmux config" r source-file ~/.config/tmux/tmux.conf \; display-message "tmux config reloaded"
+
       # Vi-style copy mode with OSC52 clipboard support. mode-keys vi comes
       # from the typed keyMode option above.
       bind -T copy-mode-vi v send-keys -X begin-selection
@@ -74,17 +79,10 @@
       bind -T copy-mode-vi y send-keys -X copy-selection-and-cancel
       bind -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection-and-cancel
 
-      # Vim-style pane switching
-      bind h select-pane -L
-      bind j select-pane -D
-      bind k select-pane -U
-      bind l select-pane -R
-
-      # Vim-style pane resizing
-      bind -r H resize-pane -L 5
-      bind -r J resize-pane -D 5
-      bind -r K resize-pane -U 5
-      bind -r L resize-pane -R 5
+      # hjkl pane switching and HJKL resizing come from the typed
+      # customPaneNavigationAndResize option above. The pinned Home Manager
+      # module emits switching without -r (non-repeatable) and only resizing
+      # with -r, which matches the prior hand-written behaviour.
     '';
   };
 
