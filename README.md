@@ -529,3 +529,6 @@ container logs dx-host -f
 ## Planned Work
 
 - **[NixOS 26.05 upgrade & code-review fixes](plan.md)** — the release-bump playbook (waiting on the official 26.05 base image) plus eight consolidated code-review fixes against the current 25.11 codebase. See [Consolidated Code-Review Fixes](plan.md#consolidated-code-review-fixes) for the per-item status.
+- **[Dual base-image support](flakes-to-nix.md)** — allow building from the official `nixos/nix` image as an alternative to `nixpkgs/nix-flakes`, selected via `DX_BASE`. Removes the third-party base-image dependency that gates the 26.05 upgrade. Not started; two open decisions are flagged in the plan.
+- **[Tmux configuration improvements](tmux-plan.md)** — migrate option-shaped tmux settings to typed Home Manager options and add resurrect/continuum persistence. Not started; sliced for TDD with manual validation gates.
+- **[Git-access follow-ups](mount-git.md)** — the `dx-mount` side-container workflow has shipped; remaining items are the `dx-branch` self-dev helper, seeded Nix base for faster side-container cold starts, credential propagation, and worktree/submodule validation.
