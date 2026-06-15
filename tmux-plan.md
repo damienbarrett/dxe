@@ -2,6 +2,10 @@
 
 ## Status / Progress Log
 
+> Manual validation steps for each slice live in
+> [tmux-validation.md](tmux-validation.md).
+
+
 - **2026-06-14 — Slice 1 (typed options cleanup): DONE (automated gates green;
   user manual-validation gate still open).**
   - Migrated the option-shaped `extraConfig` settings to typed Home Manager
