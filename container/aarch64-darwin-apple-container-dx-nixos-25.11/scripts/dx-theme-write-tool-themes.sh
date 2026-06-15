@@ -366,6 +366,13 @@ apply_tmux_pills() {
   time_pill="$(pill "$base0B" ' %H:%M ')"
   date_pill="$(pill "$base0E" ' %d %b ')"
 
+  # Preserve tmux-continuum's interval auto-save token. continuum injects
+  # #(.../continuum_save.sh) into status-right so its save hook runs on each
+  # status refresh; we overwrite status-right below, so carry the token across
+  # or interval auto-save silently stops after the first theme apply.
+  local continuum_interp
+  continuum_interp="$(tmux show-option -gqv status-right 2>/dev/null | grep -oE '#\([^)]*continuum_save\.sh\)' | head -n1 || true)"
+
   local window_label=' #I:#W#{?window_flags,#{window_flags},} '
   local inactive_window active_window
   inactive_window="$(dim_pill "$base01" "$window_label")"
@@ -390,7 +397,7 @@ set-option -gq status-right-style none
 set-option -gq status-left-length 80
 set-option -gq status-right-length 120
 set-option -gq status-left "$session_pill"
-set-option -gq status-right "${sync_pill}${prefix_pill}${time_pill} ${date_pill}"
+set-option -gq status-right "${continuum_interp}${sync_pill}${prefix_pill}${time_pill} ${date_pill}"
 set-window-option -gq window-status-style "fg=#$base05,bg=#$base00"
 set-window-option -gq window-status-current-style "fg=#$base0A,bg=#$base00"
 set-window-option -gq window-status-separator " "

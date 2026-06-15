@@ -36,6 +36,17 @@
           set -g @resurrect-dir '/persist/home/dx/.local/share/tmux/resurrect'
         '';
       }
+      {
+        plugin = continuum;
+        extraConfig = ''
+          # Auto-save on an interval and auto-restore on server start. continuum
+          # drives its interval save by injecting a #(continuum_save.sh) token
+          # into status-right; dx-theme-write-tool-themes.sh preserves that
+          # token when it rebuilds the status bar so auto-save keeps firing.
+          set -g @continuum-restore 'on'
+          set -g @continuum-save-interval '15'
+        '';
+      }
     ];
     extraConfig = ''
       # keyMode = "vi" emits both mode-keys vi and status-keys vi. Keep the

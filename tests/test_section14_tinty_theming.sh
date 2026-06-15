@@ -348,6 +348,11 @@ assert_file_contains_literal "$DX_PILL_PROBE_OUT" \
 assert_file_contains_literal "$DX_PILL_PROBE_OUT" \
     'bg=#fe8019,bold] PREFIX ' \
     "PREFIX pill uses base09 (orange) as accent against the bar bg"
+# tmux-continuum coexistence (static): the pill generator overwrites
+# status-right, so it must carry continuum's #(continuum_save.sh) save token
+# across the rewrite. Runtime behaviour is asserted in the live block below.
+assert_file_contains "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" "continuum_save" "pill generator preserves continuum auto-save token in status-right"
+
 # End-cap glyphs: U+E0B6 (left, ) and U+E0B4 (right, ). These come
 # from the pill() helper; if a refactor drops them, all pills go
 # square-edged. Bytes asserted via grep for portability.
@@ -490,6 +495,28 @@ shades-of-purple=base16-shades-of-purple'
         test_pass "back-to-back theme switches leave tmux pills on the latest palette (no TOCTOU)"
     else
         test_fail "back-to-back theme switches leave tmux pills on the latest palette (no TOCTOU)"
+    fi
+
+    # tmux-continuum coexistence: the pill generator overwrites status-right,
+    # so it must preserve continuum's #(continuum_save.sh) save token or
+    # interval auto-save dies after any theme apply. Behaviour-check the live
+    # status-right after a real server start.
+    SR_PROBE="$(tmux_guest_statusright_probe || true)"
+    if printf '%s\n' "$SR_PROBE" | grep -q "__PROBE_FAILED__" || [ -z "$SR_PROBE" ]; then
+        test_fail "status-right probe started a server in the guest"
+    else
+        test_pass "status-right probe started a server in the guest"
+        assert_tmux_runtime "$SR_PROBE" sync-pill yes "status-right keeps the SYNC pill alongside continuum"
+        assert_tmux_runtime "$SR_PROBE" prefix-pill yes "status-right keeps the PREFIX pill alongside continuum"
+        assert_tmux_runtime "$SR_PROBE" continuum-interp yes "status-right preserves continuum's auto-save token after the pill generator runs"
+    fi
+
+    # Prove interval auto-save actually fires (gated: ~80s and writes /persist).
+    if [ "${DX_TEST_DESTRUCTIVE:-0}" = "1" ]; then
+        CONT_AUTOSAVE="$(tmux_guest_continuum_autosave || true)"
+        assert_tmux_runtime "$CONT_AUTOSAVE" autosave-fired yes "continuum interval auto-save writes a fresh resurrect save"
+    else
+        test_skip "continuum interval auto-save behaviour (set DX_TEST_DESTRUCTIVE=1 to run)"
     fi
 fi
 

@@ -131,6 +131,46 @@
     next `dx-recreate` (or an explicit re-bootstrap); until then its
     `--section=6` resurrect checks will report red, which is expected.
 
+- **2026-06-16 — Slice 4 (tmux-continuum auto-save): automated gates green on
+  the isolated profile; user manual-validation gate open.**
+  - `home/tools.nix`: added the `continuum` plugin (`@continuum-restore 'on'`,
+    `@continuum-save-interval '15'`).
+  - **Prerequisite B (status-right collision) solved.** continuum injects a
+    `#(.../continuum_save.sh)` token into `status-right` so its save hook runs
+    on each status refresh, but `dx-theme-write-tool-themes.sh` overwrites
+    `status-right` for the theme pill and was stripping the token (auto-save
+    would silently die after any theme apply). Fix: the pill generator now
+    reads the live `status-right`, extracts any `#(...continuum_save.sh)` token,
+    and re-prepends it when it rebuilds the bar — no hardcoded store path, so it
+    survives Nix hash changes.
+  - **TDD trail observed:** with continuum added but the generator unfixed, the
+    behaviour probe showed the token stripped after the pill rebuild (red);
+    after the preserve fix, the token survives alongside the SYNC/PREFIX pills
+    (green). Also proved interval auto-save actually writes a fresh resurrect
+    save (not just that it is configured).
+  - **Test-design lesson (important for future tmux tests):** continuum only
+    injects its token when it is the *sole* tmux server
+    (`another_tmux_server_running` guard), and `bin/dx-ssh` with no args runs
+    `tmux attach -t dx || tmux new-session -s dx`, so an interactive session
+    leaves a persistent default server. Tests that relied on continuum
+    injecting the token were therefore order/environment dependent and flaked.
+    The probes were redesigned to be robust: the preservation test injects a
+    representative token itself and asserts the generator carries it across the
+    rewrite (this is the actual code under test); the auto-save test locates
+    `continuum_save.sh` from the activated config and runs it in the server
+    context with the interval forced elapsed. Neither depends on sole-server
+    state. Probes also disable `@continuum-restore` in their throwaway servers
+    so continuum's background restore can't re-spawn lingering servers.
+  - **Behaviour harness added** (`tests/test_helpers.sh`):
+    `tmux_guest_statusright_probe` (token preserved + SYNC/PREFIX pills) and
+    `tmux_guest_continuum_autosave` (real save fires; gated behind
+    DX_TEST_DESTRUCTIVE). Section 14 (124) and section 6 (131) green on
+    `dx-test`, stable across back-to-back runs.
+  - **Manual gate for the user:** leave a real tmux session idle past the
+    15-minute save interval and confirm the resurrect save timestamp advances
+    on its own, with the theme pill still rendering; then restart tmux and
+    confirm `@continuum-restore` brings the session back.
+
 - **Observation (out of scope, do not fix in this plan):** HM activation prints
   deprecation warnings for `programs.git.userName` / `userEmail` / `extraConfig`
   (renamed to `programs.git.settings.*` in this Home Manager). Same file
@@ -529,7 +569,9 @@ the behavior is acceptable.
    - Manual validation gate: create a real tmux session through SSH, manually save
      it with resurrect, restart the tmux server, and confirm the session restores
      before moving on.
-4. **Continuum**
+4. **Continuum** — ✅ DONE 2026-06-16 (see Progress Log; isolated-profile gates
+   green incl. status-right preservation + interval auto-save, user
+   manual-validation gate open).
    - Red: inspect the packaged Continuum plugin, add a failing section 14
      assertion for the exact `status-right` save interpolation alongside the
      existing SYNC/PREFIX pills, and add a live behavior check that fails until
