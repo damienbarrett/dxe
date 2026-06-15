@@ -451,6 +451,42 @@ tmux_guest_continuum_autosave() {
     ' 2>/dev/null
 }
 
+# Probe vim-tmux-navigator wiring from inside the guest, both halves: the tmux
+# root-table Ctrl-h/j/k/l bindings (prefix-less pane navigation) and the Neovim
+# normal-mode Ctrl-h/j/k/l maps (which must resolve to the TmuxNavigate
+# commands). Reads the live tmux key table and a headless nvim's resolved maps,
+# not config strings. Guest only. Emits `tmux-root-C-<k>=yes|other|no` and
+# `nvim-C-<k>=yes|no`.
+tmux_guest_navigator_probe() {
+    container_exec_dx_bash '
+        set -u
+        sock="dxe-nav-$$-${RANDOM}"
+        tmux -L "$sock" kill-server >/dev/null 2>&1 || true
+        started=no
+        for _ in 1 2 3; do
+            if tmux -L "$sock" new-session -d -s probe -x 200 -y 50 >/dev/null 2>&1; then started=yes; break; fi
+            tmux -L "$sock" kill-server >/dev/null 2>&1 || true; sleep 1
+        done
+        if [ "$started" != yes ]; then echo "__PROBE_FAILED__"; exit 1; fi
+        tmux -L "$sock" set -g @continuum-restore off >/dev/null 2>&1 || true
+        for k in C-h C-j C-k C-l; do
+            line="$(tmux -L "$sock" list-keys -T root 2>/dev/null | grep -E "^bind-key( +-r)? +-T root ${k} " | head -n1)"
+            if printf "%s" "$line" | grep -qE "select-pane|TmuxNavigate|is_vim"; then
+                echo "tmux-root-${k}=yes"
+            elif [ -n "$line" ]; then
+                echo "tmux-root-${k}=other"
+            else
+                echo "tmux-root-${k}=no"
+            fi
+        done
+        tmux -L "$sock" kill-server >/dev/null 2>&1 || true
+        for key in h j k l; do
+            rhs="$(nvim --headless -c "lua io.write((vim.fn.maparg(\"<C-${key}>\",\"n\") or \"\"))" -c "q" 2>/dev/null)"
+            case "$rhs" in *TmuxNavigate*) echo "nvim-C-${key}=yes" ;; *) echo "nvim-C-${key}=no" ;; esac
+        done
+    ' 2>/dev/null
+}
+
 # Extract one value from a captured tmux_guest_probe blob.
 #   probe_value "$blob" status-keys
 probe_value() {

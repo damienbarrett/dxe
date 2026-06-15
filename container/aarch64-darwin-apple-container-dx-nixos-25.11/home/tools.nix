@@ -47,6 +47,10 @@
           set -g @continuum-save-interval '15'
         '';
       }
+      # Prefix-less Ctrl-h/j/k/l navigation across tmux panes and Neovim splits.
+      # The Neovim half is nvim/plugins/vim-tmux-navigator.nix. Remove this entry
+      # and that file to revert. Binds Ctrl-h/j/k/l/\ in the root key table.
+      vim-tmux-navigator
     ];
     extraConfig = ''
       # keyMode = "vi" emits both mode-keys vi and status-keys vi. Keep the

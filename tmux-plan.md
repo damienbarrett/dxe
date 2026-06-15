@@ -171,6 +171,37 @@
     on its own, with the theme pill still rendering; then restart tmux and
     confirm `@continuum-restore` brings the session back.
 
+- **2026-06-16 — Slice 5 (vim-tmux-navigator): DONE (automated gates green on
+  the isolated profile; seamless cross-nav is a user manual gate).**
+  - Added prefix-less `Ctrl-h/j/k/l` navigation across tmux panes and Neovim
+    splits. tmux side: `vim-tmux-navigator` in `home/tools.nix` plugins (binds
+    `Ctrl-h/j/k/l/\` in the root table). Neovim side: self-contained
+    `nvim/plugins/vim-tmux-navigator.nix` (the `vimPlugins` plugin +
+    `tmux_navigator_no_mappings=1` + explicit `Ctrl-h/j/k/l → TmuxNavigate*`
+    maps), imported in `nixvim.nix`.
+  - **Conflict resolved:** in Neovim `<C-j>`/`<C-k>` were *duplicate* scroll
+    aliases of `<C-d>`/`<C-u>` (which stay), so the navigator took them with no
+    real loss. Window nav stays on `<leader>hjkl`; `<C-h>`/`<C-l>` were free.
+  - **Lesson:** nixvim keymaps do **not** override by module import order — a
+    later-imported module's `<C-j>`/`<C-k>` did *not* beat keymaps.nix. The two
+    scroll-alias lines had to be removed from `keymaps.nix` explicitly (the
+    behaviour probe caught this: `nvim-C-j/k` stayed on the scroll alias until
+    the lines were removed). Their original definitions are preserved in a
+    `keymaps.nix` comment for restore.
+  - **Reversibility (designed in):** delete `nvim/plugins/vim-tmux-navigator.nix`,
+    remove its `nixvim.nix` import line, remove the `vim-tmux-navigator` entry in
+    `home/tools.nix`, and restore the two commented `Ctrl-J/Ctrl-K` maps in
+    `keymaps.nix`. All landed in one commit, so `git revert <sha>` undoes it.
+  - **Behaviour tests** (`tmux_guest_navigator_probe`): tmux root-table
+    `Ctrl-h/j/k/l` bindings present, and headless-Neovim `Ctrl-h/j/k/l` resolve
+    to `TmuxNavigate*`. Section 6 (142), 7 (7), 8 (8) green on `dx-test`. The
+    seamless cross-boundary jump (nvim split ↔ tmux pane via a real keypress)
+    can't be tested headlessly — **manual gate for the user.**
+  - **Manual gate for the user:** open Neovim in a tmux pane next to a shell
+    pane; from inside Neovim press `Ctrl-l`/`Ctrl-h` at a split edge and confirm
+    focus crosses into the adjacent tmux pane and back, and that `Ctrl-d`/`Ctrl-u`
+    still scroll in Neovim.
+
 - **Observation (out of scope, do not fix in this plan):** HM activation prints
   deprecation warnings for `programs.git.userName` / `userEmail` / `extraConfig`
   (renamed to `programs.git.settings.*` in this Home Manager). Same file
@@ -583,7 +614,9 @@ the behavior is acceptable.
    - Manual validation gate: leave an SSH tmux session running past the configured
      save interval, confirm the save timestamp advances without manual save, then
      restart tmux and confirm restore works with the Tinty status bar intact.
-5. **Optional picker/navigation integrations**
+5. **Optional picker/navigation integrations** — vim-tmux-navigator ✅ DONE
+   2026-06-16 (see Progress Log; manual cross-nav gate open). tmux-fzf / sesh
+   remain optional and not started.
    - Start only after restore behavior is verified. Use the same Red > Green >
      Refactor loop and add both tmux and Neovim sides together for
      `vim-tmux-navigator`.

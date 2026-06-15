@@ -28,5 +28,9 @@ nixvim.legacyPackages.${system}.makeNixvim {
     ./nvim/extra_plugins/outline.nix
     ./nvim/extra_plugins/ts-context-commentstring.nix
     ./nvim/extra_plugins/undotree.nix
+    # Seamless tmux/vim Ctrl-h/j/k/l navigation. Remove this line and
+    # nvim/plugins/vim-tmux-navigator.nix (and restore the Ctrl-J/Ctrl-K maps in
+    # keymaps.nix) to revert.
+    ./nvim/plugins/vim-tmux-navigator.nix
   ];
 }

@@ -13,8 +13,12 @@
     { mode = "n"; key = "J"; action = "mzJ`z"; options.desc = "[J] Join Lines"; }
     { mode = "n"; key = "<C-d>"; action = "<C-d>zz"; options.desc = "Scroll [D]own"; }
     { mode = "n"; key = "<C-u>"; action = "<C-u>zz"; options.desc = "Scroll [U]p"; }
-    { mode = "n"; key = "<C-j>"; action = "<C-d>zz"; options.desc = "Scroll [D]own [Ctrl-J]"; }
-    { mode = "n"; key = "<C-k>"; action = "<C-u>zz"; options.desc = "Scroll [U]p [Ctrl-K]"; }
+    # Ctrl-J / Ctrl-K are owned by vim-tmux-navigator (seamless tmux/vim pane
+    # navigation, nvim/plugins/vim-tmux-navigator.nix). They were duplicate
+    # scroll aliases of <C-d>/<C-u> above, which still scroll. To revert the
+    # navigator, restore these two lines:
+    #   { mode = "n"; key = "<C-j>"; action = "<C-d>zz"; options.desc = "Scroll [D]own [Ctrl-J]"; }
+    #   { mode = "n"; key = "<C-k>"; action = "<C-u>zz"; options.desc = "Scroll [U]p [Ctrl-K]"; }
     { mode = "n"; key = "n"; action = "nzzzv"; options.desc = "[N]ext Search"; }
     { mode = "n"; key = "N"; action = "Nzzzv"; options.desc = "[P]revious Search"; }
     { mode = "n"; key = "<leader>y"; action = "\"+y"; options.desc = "[Y]ank to Clipboard"; }

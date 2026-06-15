@@ -95,6 +95,14 @@ assert_file_contains "$TOOLS_NIX" "@resurrect-dir '/persist/home/dx/.local/share
 assert_file_contains "$TOOLS_NIX" "plugin = continuum;" "tmux-continuum is declared as a Home Manager tmux plugin"
 assert_file_contains "$TOOLS_NIX" "@continuum-restore 'on'" "tmux-continuum restores sessions on server start"
 assert_file_contains "$TOOLS_NIX" "@continuum-save-interval" "tmux-continuum auto-saves on an interval"
+
+# vim-tmux-navigator: prefix-less Ctrl-h/j/k/l across tmux panes and nvim splits.
+NAV_NVIM_NIX="$CONTAINER_DIR/nvim/plugins/vim-tmux-navigator.nix"
+NIXVIM_NIX="$CONTAINER_DIR/nixvim.nix"
+assert_file_contains "$TOOLS_NIX" "vim-tmux-navigator" "tmux side of vim-tmux-navigator is declared in tmux plugins"
+assert_file_exists "$NAV_NVIM_NIX" "Neovim side of vim-tmux-navigator is a self-contained module"
+assert_file_contains "$NAV_NVIM_NIX" "TmuxNavigateLeft" "Neovim navigator maps Ctrl-h to TmuxNavigateLeft"
+assert_file_contains "$NIXVIM_NIX" "vim-tmux-navigator.nix" "Neovim navigator module is imported by nixvim"
 assert_file_contains "$BOOTSTRAP" "/persist/home/dx/.local/share/tmux/resurrect" "bootstrap creates the persisted resurrect directory"
 assert_file_contains "$TOOLS_NIX" "set -g renumber-windows on" "tmux renumbers windows on close"
 assert_file_contains "$TOOLS_NIX" "set-option -g main-pane-width 50%" "tmux main pane width is 50 percent"
@@ -308,6 +316,24 @@ else
     # The typed-option runtime values asserted in the first probe block above
     # (escape-time=0, history-limit=50000, default-terminal=tmux-256color,
     # base-index=1) double as the regression check that sensible did not win.
+
+    # Behaviour: vim-tmux-navigator binds Ctrl-h/j/k/l in the tmux root table and
+    # maps them in Neovim to the TmuxNavigate commands (seamless cross-nav itself
+    # is a manual gate). Reads the live key table and headless nvim maps.
+    TMUX_NAV="$(tmux_guest_navigator_probe || true)"
+    if printf '%s\n' "$TMUX_NAV" | grep -q "__PROBE_FAILED__" || [ -z "$TMUX_NAV" ]; then
+        test_fail "tmux navigator probe started a server in the guest"
+    else
+        test_pass "tmux navigator probe started a server in the guest"
+        assert_tmux_runtime "$TMUX_NAV" tmux-root-C-h yes "tmux root table binds Ctrl-h for pane navigation"
+        assert_tmux_runtime "$TMUX_NAV" tmux-root-C-j yes "tmux root table binds Ctrl-j for pane navigation"
+        assert_tmux_runtime "$TMUX_NAV" tmux-root-C-k yes "tmux root table binds Ctrl-k for pane navigation"
+        assert_tmux_runtime "$TMUX_NAV" tmux-root-C-l yes "tmux root table binds Ctrl-l for pane navigation"
+        assert_tmux_runtime "$TMUX_NAV" nvim-C-h yes "Neovim Ctrl-h resolves to TmuxNavigate (overrides the scroll alias)"
+        assert_tmux_runtime "$TMUX_NAV" nvim-C-j yes "Neovim Ctrl-j resolves to TmuxNavigate (overrides the scroll alias)"
+        assert_tmux_runtime "$TMUX_NAV" nvim-C-k yes "Neovim Ctrl-k resolves to TmuxNavigate (overrides the scroll alias)"
+        assert_tmux_runtime "$TMUX_NAV" nvim-C-l yes "Neovim Ctrl-l resolves to TmuxNavigate"
+    fi
 fi
 
 print_summary
