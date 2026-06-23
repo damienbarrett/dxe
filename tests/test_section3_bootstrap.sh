@@ -48,6 +48,16 @@ assert_file_contains "$BOOTSTRAP" "ensure_nix_ownership" "bootstrap centralizes 
 assert_file_contains "$BOOTSTRAP" "stat -c '%u:%g'" "bootstrap verifies Nix ownership marker owner"
 assert_file_contains "$BOOTSTRAP" "chown dx:dx \"\$sentinel\"" "bootstrap marks repaired Nix ownership as dx-owned"
 
+# Test: Home Manager activation is bounded and retryable so Nix substitutes
+# cannot wedge the guest before sshd starts.
+assert_file_contains "$BOOTSTRAP" "DX_GUEST_ACTIVATION_TIMEOUT" "bootstrap exposes a guest activation timeout"
+assert_file_contains "$BOOTSTRAP" "DX_GUEST_ACTIVATION_ATTEMPTS" "bootstrap exposes guest activation attempts"
+assert_file_contains "$BOOTSTRAP" "run_as_dx_with_timeout" "bootstrap can run dx commands with a timeout"
+assert_file_contains "$BOOTSTRAP" "timeout --kill-after=30s" "bootstrap kills stuck activation process groups"
+assert_file_contains "$BOOTSTRAP" "run_home_manager_activation" "bootstrap centralizes Home Manager activation"
+assert_file_contains "$BOOTSTRAP" "stalled-download-timeout 60" "bootstrap bounds stalled Nix downloads during activation"
+assert_file_contains "$BOOTSTRAP" "Retrying Home Manager activation" "bootstrap retries failed activation before giving up"
+
 # Test: bootstrap initializes persisted Claude config as valid JSON
 assert_file_not_contains "$BOOTSTRAP" "touch /persist/home/dx/.claude.json" "bootstrap does not create empty Claude JSON config"
 assert_file_contains "$BOOTSTRAP" "printf '%s\\\\n' '{}' > /persist/home/dx/.claude.json" "bootstrap initializes empty Claude config as JSON"
@@ -90,10 +100,21 @@ fi
 
 # Test: declarative timezone configuration exists
 assert_file_contains "$FLAKE_NIX" "tzdata" "flake.nix includes tzdata"
-assert_file_contains "$BOOTSTRAP" "run_as_dx 'printf %s \"\${TZDIR:-}\"'" "bootstrap reads timezone data directory from guest shell env"
-assert_file_contains "$SHELL_NIX" "TZ = \"\$HOST_TZ\"" "shell.nix sets TZ for Bash/Fish"
+assert_file_contains "$BOOTSTRAP" "resolve_timezone_file" "bootstrap centralizes timezone file resolution"
+assert_file_contains "$BOOTSTRAP" "/nix/store -path" "bootstrap resolves timezone data directly from the Nix store"
+assert_file_contains "$BOOTSTRAP" "/home/dx/.nix-profile/bin/find" "bootstrap can use find from the dx Nix profile"
+assert_file_contains "$BOOTSTRAP" "/home/dx/.nix-profile/share/zoneinfo" "bootstrap falls back to user profile timezone data"
+assert_file_contains "$BOOTSTRAP" "run_as_dx 'printf %s \"\${TZDIR:-}\"'" "bootstrap keeps guest shell TZDIR as a last-resort fallback"
+assert_file_contains "$BOOTSTRAP" "/etc/timezone" "bootstrap writes textual timezone for tools that do not infer localtime symlinks"
+TZ_CALL=$(grep -n "^configure_timezone" "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")
+if [ -n "$VERIFY_CALL" ] && [ -n "$TZ_CALL" ] && [ "$VERIFY_CALL" -lt "$TZ_CALL" ]; then
+    test_pass "bootstrap configures timezone after guest tools are verified"
+else
+    test_fail "bootstrap configures timezone after guest tools are verified"
+fi
+assert_file_contains "$SHELL_NIX" "TZ = \":/etc/localtime\"" "shell.nix points Bash/Fish TZ at /etc/localtime"
 assert_file_contains "$SHELL_NIX" "TZDIR = \"\${pkgs.tzdata}/share/zoneinfo\"" "shell.nix sets TZDIR for Bash/Fish"
-assert_file_contains "$SHELL_NIX" "\$env.TZ = \$env.HOST_TZ?" "shell.nix sets TZ for Nushell"
+assert_file_contains "$SHELL_NIX" "\$env.TZ = \":/etc/localtime\"" "shell.nix points Nushell TZ at /etc/localtime"
 assert_file_contains "$SHELL_NIX" "\$env.TZDIR = \"\${pkgs.tzdata}/share/zoneinfo\"" "shell.nix sets TZDIR for Nushell"
 
 # Test: bash syntax check

@@ -20,8 +20,18 @@ SSH_CHECK_OPTS=(
 )
 
 while ! ssh "${SSH_CHECK_OPTS[@]}" dx@127.0.0.1 "bash -lc 'true'" 2>/dev/null; do
+    if container_exists "$DX_CONTAINER_NAME" && ! container_is_running "$DX_CONTAINER_NAME"; then
+        echo "Error: Container $DX_CONTAINER_NAME stopped before SSH became responsive." >&2
+        echo "Last 80 container log lines:" >&2
+        container logs -n 80 "$DX_CONTAINER_NAME" 2>&1 | sed 's/^/  /' >&2
+        exit 1
+    fi
     if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
         echo "Error: Timed out waiting for guest SSH service to become responsive." >&2
+        if container_exists "$DX_CONTAINER_NAME"; then
+            echo "Last 80 container log lines:" >&2
+            container logs -n 80 "$DX_CONTAINER_NAME" 2>&1 | sed 's/^/  /' >&2
+        fi
         exit 1
     fi
     RETRY_COUNT=$((RETRY_COUNT + 1))

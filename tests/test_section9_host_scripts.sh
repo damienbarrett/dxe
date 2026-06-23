@@ -94,6 +94,9 @@ fi
 assert_file_contains "$DX_SSH" "LogLevel=ERROR" "dx-ssh suppresses noisy known-host warnings"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_SSH_CONNECT_TIMEOUT=.*15" "dx-lib exposes 15s SSH connect timeout"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_BOOTSTRAP_WAIT_TIMEOUT=.*30" "dx-lib exposes bootstrap marker wait timeout"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_GUEST_ACTIVATION_TIMEOUT=.*600" "dx-lib exposes guest activation timeout"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_GUEST_ACTIVATION_ATTEMPTS=.*2" "dx-lib exposes guest activation attempts"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_GUEST_ACTIVATION_RETRY_DELAY=.*5" "dx-lib exposes guest activation retry delay"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_GIT_MOUNT_SOURCE=.*:-" "dx-lib defaults git mount source to empty"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_GIT_MOUNT_TARGET=.*workspace" "dx-lib exposes git mount target"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_CONTAINER_MEMORY" "dx-lib exposes configurable container memory"
@@ -101,8 +104,24 @@ assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_CONTAINER_CPUS" "dx-lib exposes co
 assert_file_contains "$BIN_DIR/dx-lib.sh" "dx_derived_name" "dx-lib provides derived side-container names"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "dx_require_non_reserved_container_name" "dx-lib reserves dx-host centrally"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "dx_port_in_use" "dx-lib provides a loopback port probe"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "dx_get_host_timezone" "dx-lib centralizes host timezone detection"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "defaulting guest timezone to UTC" "dx-lib defaults timezone detection to UTC instead of empty"
+assert_file_contains "$DX_CREATE_CONTAINER" "HOST_TZ=\"UTC\"" "dx-create-container guards against an empty host timezone"
+assert_file_contains "$DX_CREATE_CONTAINER" "DX_GUEST_ACTIVATION_TIMEOUT" "dx-create-container passes activation timeout into the guest"
+assert_file_contains "$DX_CREATE_CONTAINER" "DX_GUEST_ACTIVATION_ATTEMPTS" "dx-create-container passes activation attempts into the guest"
+assert_file_contains "$DX_CREATE_CONTAINER" "DX_GUEST_ACTIVATION_RETRY_DELAY" "dx-create-container passes activation retry delay into the guest"
+HOST_TZ_PROBE="$(dx_get_host_timezone 2>/dev/null || true)"
+if [ -n "$HOST_TZ_PROBE" ]; then
+    test_pass "dx_get_host_timezone returns a non-empty timezone"
+else
+    test_fail "dx_get_host_timezone returns a non-empty timezone"
+fi
 assert_file_contains "$DX_SSH" "ConnectTimeout=\$DX_SSH_CONNECT_TIMEOUT" "dx-ssh uses a bounded connect timeout"
 assert_file_contains "$DX_SSH" "DX_GUEST_WORKDIR" "dx-ssh supports optional profile workdir"
+
+DX_WAIT_SSH="$BIN_DIR/dx-wait-ssh"
+assert_file_contains "$DX_WAIT_SSH" "container_is_running" "dx-wait-ssh detects bootstrap container exits"
+assert_file_contains "$DX_WAIT_SSH" "Last 80 container log lines" "dx-wait-ssh prints recent container logs on SSH wait failure"
 
 if grep -q "base64 -d | bash -l" "$DX_SSH"; then
     test_pass "dx-ssh wraps non-interactive commands for bash"

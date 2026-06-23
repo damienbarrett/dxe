@@ -4,6 +4,9 @@ set -euo pipefail
 # Ensure SSL certificates are found
 export SSL_CERT_FILE=${SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}
 export NIX_SSL_CERT_FILE=${NIX_SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}
+DX_GUEST_ACTIVATION_TIMEOUT="${DX_GUEST_ACTIVATION_TIMEOUT:-600}"
+DX_GUEST_ACTIVATION_ATTEMPTS="${DX_GUEST_ACTIVATION_ATTEMPTS:-2}"
+DX_GUEST_ACTIVATION_RETRY_DELAY="${DX_GUEST_ACTIVATION_RETRY_DELAY:-5}"
 
 # 1. Bootstrapping dependencies (Section 2/3)
 install_essentials() {
@@ -13,7 +16,7 @@ install_essentials() {
         # Install tools needed for the bootstrap itself into the root profile.
         # util-linux/btrfs-progs/e2fsprogs provide mount/umount/mkfs for the
         # dedicated /nix volume managed in setup_nix_volume (§2).
-        nix profile install nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs nixpkgs#e2fsprogs --extra-experimental-features "nix-command flakes"
+        nix profile install nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#coreutils nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs nixpkgs#e2fsprogs --extra-experimental-features "nix-command flakes"
     fi
     export PATH="/root/.nix-profile/bin:$PATH"
 }
@@ -126,19 +129,55 @@ EOF
 }
 
 # §4: Configure timezone
+resolve_timezone_file() {
+    local timezone="$1"
+    local candidate=""
+    local tz_dir=""
+    local find_bin=""
+
+    for candidate in /home/dx/.nix-profile/bin/find /root/.nix-profile/bin/find /usr/bin/find /bin/find; do
+        if [ -x "$candidate" ]; then
+            find_bin="$candidate"
+            break
+        fi
+    done
+
+    if [ -n "$find_bin" ]; then
+        candidate="$("$find_bin" /nix/store -path "*/share/zoneinfo/$timezone" -type f -print -quit 2>/dev/null || true)"
+        if [ -n "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+
+    candidate="/home/dx/.nix-profile/share/zoneinfo/$timezone"
+    if [ -f "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    tz_dir="$(run_as_dx 'printf %s "${TZDIR:-}"' || true)"
+    if [ -n "$tz_dir" ]; then
+        candidate="$tz_dir/$timezone"
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 configure_timezone() {
     if [ -n "${HOST_TZ:-}" ]; then
         echo "Configuring timezone to $HOST_TZ..."
-        local tz_dir
-        tz_dir="$(run_as_dx 'printf %s "${TZDIR:-}"')"
-        if [ -z "$tz_dir" ]; then
-            tz_dir="/home/dx/.nix-profile/share/zoneinfo"
-        fi
-        local tz_file="$tz_dir/$HOST_TZ"
+        local tz_file
+        tz_file="$(resolve_timezone_file "$HOST_TZ" || true)"
         if [ -f "$tz_file" ]; then
             ln -sf "$tz_file" /etc/localtime
+            printf '%s\n' "$HOST_TZ" > /etc/timezone
         else
-            echo "Warning: Timezone file $tz_file not found. Is tzdata in dxPackages?"
+            echo "Warning: Timezone file for $HOST_TZ not found. Is tzdata in dxPackages?"
         fi
     fi
 }
@@ -239,6 +278,60 @@ run_as_dx() {
     # setpriv --reuid=dx --regid=dx --init-groups bash -l -c "$cmd"
     # Note: bash -l is needed to pick up the profile
     setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx PATH="/home/dx/.nix-profile/bin:$PATH" bash -l -c "$cmd"
+}
+
+run_as_dx_with_timeout() {
+    local timeout_seconds="$1"
+    local cmd="$2"
+
+    setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx PATH="/home/dx/.nix-profile/bin:$PATH" \
+        timeout --kill-after=30s "${timeout_seconds}s" bash -l -c "$cmd"
+}
+
+validate_positive_integer() {
+    local name="$1"
+    local value="$2"
+
+    case "$value" in
+        ''|*[!0-9]*|0)
+            echo "Error: $name must be a positive integer, got '$value'." >&2
+            return 1
+            ;;
+    esac
+}
+
+run_home_manager_activation() {
+    validate_positive_integer DX_GUEST_ACTIVATION_TIMEOUT "$DX_GUEST_ACTIVATION_TIMEOUT"
+    validate_positive_integer DX_GUEST_ACTIVATION_ATTEMPTS "$DX_GUEST_ACTIVATION_ATTEMPTS"
+    validate_positive_integer DX_GUEST_ACTIVATION_RETRY_DELAY "$DX_GUEST_ACTIVATION_RETRY_DELAY"
+
+    local attempt=1
+    local status=0
+    local activation_cmd
+    activation_cmd="nix run --option connect-timeout 15 --option stalled-download-timeout 60 --option download-attempts 2 --extra-experimental-features 'nix-command flakes' /guest-bootstrap#homeConfigurations.dx.activationPackage"
+
+    while [ "$attempt" -le "$DX_GUEST_ACTIVATION_ATTEMPTS" ]; do
+        echo "Running Home Manager activation (attempt $attempt/$DX_GUEST_ACTIVATION_ATTEMPTS, timeout ${DX_GUEST_ACTIVATION_TIMEOUT}s)..."
+        if run_as_dx_with_timeout "$DX_GUEST_ACTIVATION_TIMEOUT" "$activation_cmd"; then
+            return 0
+        fi
+
+        status=$?
+        if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            echo "Warning: Home Manager activation timed out after ${DX_GUEST_ACTIVATION_TIMEOUT}s." >&2
+        else
+            echo "Warning: Home Manager activation failed with exit status $status." >&2
+        fi
+
+        if [ "$attempt" -ge "$DX_GUEST_ACTIVATION_ATTEMPTS" ]; then
+            echo "Error: Home Manager activation failed after $DX_GUEST_ACTIVATION_ATTEMPTS attempt(s)." >&2
+            return "$status"
+        fi
+
+        echo "Retrying Home Manager activation in ${DX_GUEST_ACTIVATION_RETRY_DELAY}s..."
+        sleep "$DX_GUEST_ACTIVATION_RETRY_DELAY"
+        attempt=$((attempt + 1))
+    done
 }
 
 dbus_session_config_for_dx() {
@@ -434,8 +527,9 @@ configure_guest() {
         setup_keyring_service
     fi
 
-    # Use Home Manager to manage dotfiles and user profile
-    run_as_dx "nix run --extra-experimental-features 'nix-command flakes' /guest-bootstrap#homeConfigurations.dx.activationPackage"
+    # Use Home Manager to manage dotfiles and user profile. This is bounded so
+    # a wedged Nix substitute cannot leave the container alive but pre-SSH.
+    run_home_manager_activation
 
     # Set nushell as default shell
     NU_PATH="/home/dx/.nix-profile/bin/nu"
@@ -472,8 +566,8 @@ create_user
 setup_persist
 configure_ssh
 configure_guest
-configure_timezone   # §4: Run after guest profile is populated
 verify_guest_tools
+configure_timezone   # §4: Run after guest profile is verified
 
 echo "Guest bootstrap complete. Starting sshd in foreground..."
 SSHD_BIN=$(command -v sshd)

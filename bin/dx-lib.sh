@@ -34,6 +34,9 @@ export DX_BOOTSTRAP_SOURCE="${DX_BOOTSTRAP_SOURCE:-$DX_CONTEXT_DIR}"
 export DX_BOOTSTRAP_VOLUME="${DX_BOOTSTRAP_VOLUME:-dx-bootstrap}"
 export DX_BOOTSTRAP_PATH="${DX_BOOTSTRAP_PATH:-/guest-bootstrap}"
 export DX_BOOTSTRAP_WAIT_TIMEOUT="${DX_BOOTSTRAP_WAIT_TIMEOUT:-30}"
+export DX_GUEST_ACTIVATION_TIMEOUT="${DX_GUEST_ACTIVATION_TIMEOUT:-600}"
+export DX_GUEST_ACTIVATION_ATTEMPTS="${DX_GUEST_ACTIVATION_ATTEMPTS:-2}"
+export DX_GUEST_ACTIVATION_RETRY_DELAY="${DX_GUEST_ACTIVATION_RETRY_DELAY:-5}"
 export DX_NIX_VOLUME="${DX_NIX_VOLUME:-dx-nix}"
 export DX_NIX_MOUNT="${DX_NIX_MOUNT:-/nix}"
 export DX_NIX_DISK="${DX_NIX_DISK:-$HOME/.dx-cache/nix-store.img}"
@@ -320,5 +323,28 @@ dx_bootstrap_launch_command() {
 }
 
 dx_get_host_timezone() {
-    readlink /etc/localtime | sed 's#^.*/zoneinfo/##'
+    local tz=""
+    local localtime_target=""
+
+    if [ -L /etc/localtime ]; then
+        localtime_target="$(readlink /etc/localtime || true)"
+        if [ -n "$localtime_target" ] && printf '%s\n' "$localtime_target" | grep -q '/zoneinfo/'; then
+            tz="$(printf '%s\n' "$localtime_target" | sed 's#^.*/zoneinfo/##')"
+        fi
+    fi
+
+    if [ -z "$tz" ] && [ -f /etc/timezone ]; then
+        tz="$(sed -n '1{s/[[:space:]]*$//;p;}' /etc/timezone)"
+    fi
+
+    if [ -z "$tz" ] && command -v systemsetup >/dev/null 2>&1; then
+        tz="$(systemsetup -gettimezone 2>/dev/null | sed -n 's/^Time Zone: //p' || true)"
+    fi
+
+    if [ -z "$tz" ]; then
+        echo "Warning: could not detect host timezone; defaulting guest timezone to UTC." >&2
+        tz="UTC"
+    fi
+
+    printf '%s\n' "$tz"
 }

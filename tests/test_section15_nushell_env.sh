@@ -42,6 +42,12 @@ else
     test_fail "shell.nix adds ~/.local/bin to nushell PATH"
 fi
 
+if grep -Fq '$env.TZ = ":/etc/localtime"' "$SHELL_NIX"; then
+    test_pass "shell.nix points nushell TZ at /etc/localtime"
+else
+    test_fail "shell.nix points nushell TZ at /etc/localtime"
+fi
+
 if grep -Eq 'LG_CONFIG_FILE.*path exists|path exists.*LG_CONFIG_FILE' "$SHELL_NIX"; then
     test_pass "shell.nix configures lazygit config conditionally"
 else
