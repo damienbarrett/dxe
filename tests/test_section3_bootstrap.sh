@@ -117,6 +117,31 @@ assert_file_contains "$SHELL_NIX" "TZDIR = \"\${pkgs.tzdata}/share/zoneinfo\"" "
 assert_file_contains "$SHELL_NIX" "\$env.TZ = \":/etc/localtime\"" "shell.nix points Nushell TZ at /etc/localtime"
 assert_file_contains "$SHELL_NIX" "\$env.TZDIR = \"\${pkgs.tzdata}/share/zoneinfo\"" "shell.nix sets TZDIR for Nushell"
 
+# Test (fix 1+2): the bootstrap toolchain is verified and repaired after the
+# /nix volume remount. setup_nix_volume merges the image store onto an
+# already-seeded volume with `cp -a -n`, which can leave an essentials store
+# path present but incompletely materialized; mmap-exec'ing it (ssh-keygen -A,
+# useradd) then SIGBUSes. Verify + repair from substituters closes that hole.
+assert_file_contains "$BOOTSTRAP" "ensure_essentials_valid" "bootstrap verifies/repairs the toolchain after the volume remount"
+assert_file_contains "$BOOTSTRAP" "store verify --recursive --no-contents" "bootstrap fast-checks the essentials store closure (no content re-hash)"
+assert_file_contains "$BOOTSTRAP" "store verify --recursive --repair" "bootstrap repairs incomplete store paths from substituters"
+assert_file_contains "$BOOTSTRAP" "DX_ESSENTIAL_PKGS" "bootstrap keeps one source of truth for the essential packages"
+
+# Test: the toolchain repair runs after the remount but before anything execs
+# the essentials (create_user's useradd, configure_ssh's ssh-keygen).
+SETUP_VOL_CALL=$(grep -n "^setup_nix_volume" "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")
+ENSURE_VALID_CALL=$(grep -n "^ensure_essentials_valid" "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")
+CREATE_USER_CALL=$(grep -n "^create_user$" "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")
+CONFIGURE_SSH_CALL=$(grep -n "^configure_ssh$" "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")
+if [ -n "$SETUP_VOL_CALL" ] && [ -n "$ENSURE_VALID_CALL" ] && [ -n "$CREATE_USER_CALL" ] && [ -n "$CONFIGURE_SSH_CALL" ] &&
+    [ "$SETUP_VOL_CALL" -lt "$ENSURE_VALID_CALL" ] &&
+    [ "$ENSURE_VALID_CALL" -lt "$CREATE_USER_CALL" ] &&
+    [ "$ENSURE_VALID_CALL" -lt "$CONFIGURE_SSH_CALL" ]; then
+    test_pass "bootstrap repairs the toolchain after remount and before useradd/ssh-keygen"
+else
+    test_fail "bootstrap repairs the toolchain after remount and before useradd/ssh-keygen"
+fi
+
 # Test: bash syntax check
 if bash -n "$BOOTSTRAP" 2>/dev/null; then
     test_pass "bootstrap.sh passes bash syntax check"

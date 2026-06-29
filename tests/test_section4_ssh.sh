@@ -51,6 +51,26 @@ assert_file_contains "$DX_CREATE" "127.0.0.1:\$DX_SSH_PORT:2222" "dx-create-cont
 # Test: passwordless sudo is preserved
 assert_file_contains "$BOOTSTRAP" "dx ALL=(ALL) NOPASSWD:ALL" "passwordless sudo preserved for dx"
 
+# Test (fix 4): SSH host keys are persisted on the dx-persist volume. /etc/ssh
+# lives on the ephemeral rootfs, so without this a one-time keygen failure
+# would recur on every boot and the guest identity would churn on every rebuild.
+assert_file_contains "$BOOTSTRAP" "/persist/etc/ssh" "bootstrap persists SSH host keys under persist storage"
+
+# Test (fix 3): host-key generation is self-healing -- it repairs the openssh
+# closure and retries rather than letting a SIGBUS abort the whole boot.
+assert_file_contains "$BOOTSTRAP" "generate_host_keys" "bootstrap uses a self-healing host-key generator"
+assert_file_contains "$BOOTSTRAP" "repair_store_closure" "host-key generation repairs the openssh closure on failure"
+assert_grep_in_file "$BOOTSTRAP" "ssh-keygen -A failed" "host-key generation warns and retries on failure"
+assert_grep_in_file "$BOOTSTRAP" "^[[:space:]]*generate_host_keys$" "configure_ssh calls the self-healing host-key generator"
+
+# Test: the old fatal, unguarded `ssh-keygen -A` call is gone (its failure under
+# set -e is exactly what left dx-host stopped before sshd started).
+if grep -Eq '^[[:space:]]*ssh-keygen -A$' "$BOOTSTRAP"; then
+    test_fail "bootstrap no longer calls ssh-keygen -A unguarded"
+else
+    test_pass "bootstrap no longer calls ssh-keygen -A unguarded"
+fi
+
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
     test_skip "SSH live behavior skipped by --skip-integration"
 elif ! requires_container; then

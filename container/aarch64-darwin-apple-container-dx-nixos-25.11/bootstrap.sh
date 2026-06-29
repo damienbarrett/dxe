@@ -8,17 +8,46 @@ DX_GUEST_ACTIVATION_TIMEOUT="${DX_GUEST_ACTIVATION_TIMEOUT:-600}"
 DX_GUEST_ACTIVATION_ATTEMPTS="${DX_GUEST_ACTIVATION_ATTEMPTS:-2}"
 DX_GUEST_ACTIVATION_RETRY_DELAY="${DX_GUEST_ACTIVATION_RETRY_DELAY:-5}"
 
+# Shared Nix invocation options. The network bounds mirror
+# run_home_manager_activation so a stalled substituter fetch aborts and retries
+# instead of hanging the whole bootstrap.
+DX_NIX_FEAT_OPTS=(--extra-experimental-features "nix-command flakes")
+DX_NIX_NET_OPTS=(--option connect-timeout 15 --option stalled-download-timeout 60 --option download-attempts 2)
+
+# The bootstrap toolchain installed into root's Nix profile (§1). Kept as a
+# single list so install (install_essentials) and post-remount repair
+# (ensure_essentials_valid) share one source of truth.
+DX_ESSENTIAL_PKGS=(
+    nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar
+    nixpkgs#gzip nixpkgs#sudo nixpkgs#coreutils nixpkgs#gnused nixpkgs#gnugrep
+    nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs
+    nixpkgs#e2fsprogs
+)
+
+# Resolve root's Nix profile to its concrete /nix/store generation path. Used
+# to put essentials on PATH and to verify/repair their closure after the volume
+# remount.
+dx_root_profile_path() {
+    readlink -f /root/.nix-profile 2>/dev/null || true
+}
+
+dx_install_essential_pkgs() {
+    nix profile install "${DX_ESSENTIAL_PKGS[@]}" \
+        "${DX_NIX_FEAT_OPTS[@]}" "${DX_NIX_NET_OPTS[@]}"
+}
+
 # 1. Bootstrapping dependencies (Section 2/3)
 install_essentials() {
-    # Only install if shadow tools (like useradd) aren't available
+    # Only install if shadow tools (like useradd) aren't available. This is just
+    # the fast path: ensure_essentials_valid (run after the volume remount)
+    # is what guarantees the toolchain closure is actually complete, since a
+    # pre-existing useradd may come from a stale/partial profile on the volume.
     if ! command -v useradd >/dev/null 2>&1; then
         echo "Installing essential tools..."
         # Install tools needed for the bootstrap itself into the root profile.
         # util-linux/btrfs-progs/e2fsprogs provide mount/umount/mkfs for the
-        # dedicated /nix volume managed in setup_nix_volume (§2). The download
-        # options mirror run_home_manager_activation so a stalled substituter
-        # fetch aborts and retries instead of hanging the whole bootstrap.
-        nix profile install nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#coreutils nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs nixpkgs#e2fsprogs --extra-experimental-features "nix-command flakes" --option connect-timeout 15 --option stalled-download-timeout 60 --option download-attempts 2
+        # dedicated /nix volume managed in setup_nix_volume (§2).
+        dx_install_essential_pkgs
     fi
     # Put the essentials on PATH by their concrete /nix/store path, not via the
     # /root/.nix-profile symlink. setup_nix_volume (§2) remounts the persistent
@@ -31,6 +60,62 @@ install_essentials() {
     local essentials_bin
     essentials_bin="$(readlink -f /root/.nix-profile/bin 2>/dev/null || echo /root/.nix-profile/bin)"
     export PATH="$essentials_bin:$PATH"
+}
+
+# Fast check that the bootstrap toolchain's store closure is complete: a
+# registration/presence check (no content re-hash, so it is cheap to run every
+# boot). Returns non-zero when any closure path is missing or unregistered --
+# the state the cp-based volume merge in setup_nix_volume can leave behind.
+essentials_store_valid() {
+    local profile
+    profile="$(dx_root_profile_path)"
+    [ -n "$profile" ] || return 1
+    nix "${DX_NIX_FEAT_OPTS[@]}" store verify --recursive --no-contents "$profile" \
+        >/dev/null 2>&1
+}
+
+# Re-fetch any missing, unregistered, or corrupt paths in a store closure from
+# the configured substituters. `nix store verify --repair` (without
+# --no-contents) re-hashes the closure -- catching truncation the fast check
+# above trusts -- and re-downloads anything broken, fixing the exact store paths
+# already referenced. No profile churn, no nixpkgs version drift.
+repair_store_closure() {
+    local path="$1"
+    [ -n "$path" ] || return 0
+    nix "${DX_NIX_FEAT_OPTS[@]}" "${DX_NIX_NET_OPTS[@]}" \
+        store verify --recursive --repair "$path" 2>&1 | tail -n 5 || true
+}
+
+# §2b (fix 1+2): never trust a bootstrap toolchain inherited from the persistent
+# /nix volume. setup_nix_volume merges the freshly built image store onto an
+# already-seeded volume with `cp -a -n`, which can leave an essentials store
+# path that physically exists but is incompletely materialized (cp -n never
+# repairs an already-present path). Memory-mapping such a binary -- e.g.
+# `ssh-keygen -A` (§4) or `useradd` (§3) -- then SIGBUSes even though `cat`
+# reads it fine. Verify the closure after the remount and repair it from
+# substituters before anything execs it.
+ensure_essentials_valid() {
+    local profile
+    profile="$(dx_root_profile_path)"
+    if [ -z "$profile" ]; then
+        return 0
+    fi
+    if essentials_store_valid; then
+        echo "Bootstrap toolchain store paths are valid."
+        return 0
+    fi
+    echo "Bootstrap toolchain is incomplete after the /nix volume remount; repairing from substituters..."
+    repair_store_closure "$profile"
+    if ! essentials_store_valid; then
+        echo "Reinstalling essential tools to obtain a complete closure..."
+        dx_install_essential_pkgs || true
+    fi
+    # Repair/reinstall may have produced a new profile generation; refresh PATH
+    # (and bash's command hash) so subsequent commands exec the now-valid paths.
+    hash -r 2>/dev/null || true
+    local refreshed_bin
+    refreshed_bin="$(readlink -f /root/.nix-profile/bin 2>/dev/null || echo /root/.nix-profile/bin)"
+    export PATH="$refreshed_bin:$PATH"
 }
 
 # §2: Setup dedicated Nix volume.
@@ -239,6 +324,35 @@ setup_persist() {
     fi
 }
 
+# Fix (3): make host-key generation self-healing instead of fatal. ssh-keygen
+# mmaps openssh + libcrypto from the /nix volume; a still-incomplete copy can
+# SIGBUS on the first map even after ensure_essentials_valid (e.g. a path whose
+# registration the fast check trusted but whose contents are truncated). Rather
+# than let `set -e` abort the whole boot on one bad mmap -- which leaves the
+# container stopped before sshd ever starts -- repair the openssh closure, warm
+# its pages, and retry.
+generate_host_keys() {
+    local attempt rc skg openssh
+    for attempt in 1 2 3; do
+        if ssh-keygen -A; then
+            return 0
+        fi
+        rc=$?
+        echo "Warning: ssh-keygen -A failed (attempt ${attempt}/3, exit ${rc}); repairing openssh and retrying..." >&2
+        skg="$(readlink -f "$(command -v ssh-keygen)" 2>/dev/null || true)"
+        if [ -n "$skg" ]; then
+            openssh="${skg%/bin/ssh-keygen}"
+            repair_store_closure "$openssh"
+            # Fault the binary's pages into cache so the next exec maps complete
+            # data (a plain read succeeds where the first mmap-exec faulted).
+            cat "$skg" >/dev/null 2>&1 || true
+        fi
+        sleep 1
+    done
+    echo "Error: ssh-keygen -A failed after repair attempts; cannot configure SSH host keys." >&2
+    return 1
+}
+
 # 3. Configure SSH (Section 4)
 configure_ssh() {
     echo "Configuring SSH..."
@@ -261,9 +375,29 @@ configure_ssh() {
         chmod 600 /home/dx/.ssh/authorized_keys
     fi
 
+    # Fix (4): persist SSH host keys on the dx-persist volume. /etc/ssh lives on
+    # the ephemeral rootfs, so without this a one-time keygen hiccup would recur
+    # on every boot and the guest's host identity would churn on every rebuild
+    # (noisy known_hosts warnings). The persisted copy is authoritative: restore
+    # it when present, otherwise generate (self-healing), and always backfill
+    # persist from /etc/ssh -- including older rootfses that already carry keys
+    # the persist volume has never seen.
     mkdir -p /etc/ssh
-    if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
-        ssh-keygen -A
+    local persist_ssh="/persist/etc/ssh"
+    if [ -d /persist ]; then
+        mkdir -p "$persist_ssh"
+        chmod 700 "$persist_ssh"
+    fi
+
+    if ls "$persist_ssh"/ssh_host_*_key >/dev/null 2>&1; then
+        cp -a "$persist_ssh"/ssh_host_* /etc/ssh/ 2>/dev/null || true
+    elif [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
+        generate_host_keys
+    fi
+
+    if [ -d "$persist_ssh" ] && [ -f /etc/ssh/ssh_host_ed25519_key ] \
+        && ! ls "$persist_ssh"/ssh_host_*_key >/dev/null 2>&1; then
+        cp -a /etc/ssh/ssh_host_* "$persist_ssh"/ 2>/dev/null || true
     fi
 
     mkdir -p /run /var/run/sshd
@@ -585,6 +719,7 @@ start_ssh() {
 # Main
 install_essentials
 setup_nix_volume   # §2: Call BEFORE install_tools
+ensure_essentials_valid # §2b: repair the bootstrap toolchain after the remount
 configure_nix_daemon # §3
 create_user
 setup_persist
