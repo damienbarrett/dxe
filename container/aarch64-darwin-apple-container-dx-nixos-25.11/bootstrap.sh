@@ -15,10 +15,22 @@ install_essentials() {
         echo "Installing essential tools..."
         # Install tools needed for the bootstrap itself into the root profile.
         # util-linux/btrfs-progs/e2fsprogs provide mount/umount/mkfs for the
-        # dedicated /nix volume managed in setup_nix_volume (§2).
-        nix profile install nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#coreutils nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs nixpkgs#e2fsprogs --extra-experimental-features "nix-command flakes"
+        # dedicated /nix volume managed in setup_nix_volume (§2). The download
+        # options mirror run_home_manager_activation so a stalled substituter
+        # fetch aborts and retries instead of hanging the whole bootstrap.
+        nix profile install nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#coreutils nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs nixpkgs#e2fsprogs --extra-experimental-features "nix-command flakes" --option connect-timeout 15 --option stalled-download-timeout 60 --option download-attempts 2
     fi
-    export PATH="/root/.nix-profile/bin:$PATH"
+    # Put the essentials on PATH by their concrete /nix/store path, not via the
+    # /root/.nix-profile symlink. setup_nix_volume (§2) remounts the persistent
+    # volume over /nix, replacing /nix/var -- where the profile generation
+    # pointer lives -- so the symlink would dangle afterwards. The resolved
+    # store path survives because setup_nix_volume merges the freshly built
+    # image store onto the volume before remounting; it also keeps bash's
+    # command hash (e.g. mkdir) pointing at a path that still exists. The
+    # fallback covers the rare case where the install above was skipped.
+    local essentials_bin
+    essentials_bin="$(readlink -f /root/.nix-profile/bin 2>/dev/null || echo /root/.nix-profile/bin)"
+    export PATH="$essentials_bin:$PATH"
 }
 
 # §2: Setup dedicated Nix volume.
@@ -96,6 +108,18 @@ setup_nix_volume() {
         echo "Initializing Nix volume with existing /nix content..."
         # Use cp -a to preserve permissions and links
         cp -a /nix/. /mnt/tmp-nix/
+    else
+        # The volume was seeded by a previous build, so the first-init copy
+        # above is skipped. Merge in store paths that exist only in the freshly
+        # built image -- chiefly the root bootstrap essentials installed in §1
+        # plus the base image's /usr/bin -> /nix/store targets (nix, sshd, ...).
+        # Without this, the remount below shadows them and the rest of the
+        # bootstrap loses mkdir/mount/nix/etc. cp -a -n only adds missing,
+        # immutable store paths; it never clobbers existing ones. Errors are
+        # non-fatal but surfaced -- a silent partial copy would be invisible.
+        echo "Merging freshly built image store into Nix volume..."
+        cp -a -n /nix/store/. /mnt/tmp-nix/store/ \
+            || echo "Warning: image store merge reported errors; continuing." >&2
     fi
 
     umount /mnt/tmp-nix
