@@ -375,7 +375,7 @@ assert_file_contains "$LUALINE_NIX" 'theme = "tinted"' "lualine uses tinted them
 assert_file_not_contains "$LUALINE_NIX" 'theme = "rose-pine"' "lualine no longer hard-codes rose-pine"
 assert_file_contains "$ROSE_PINE_NIX" "pkgs.vimPlugins.rose-pine" "Rose Pine remains packaged as fallback"
 
-assert_file_contains "$RUNNER" "0-18" "test runner help advertises current section range"
+assert_file_contains "$RUNNER" "0-19" "test runner help advertises current section range"
 assert_file_contains "$RUNNER" 'run_test "$SCRIPT_DIR/test_section14_tinty_theming.sh" "14"' "test runner explicitly runs section 14"
 assert_file_not_contains "$FLAKE_NIX" "stylix" "Stylix dependency was not added"
 

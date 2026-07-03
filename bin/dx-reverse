@@ -1,0 +1,435 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+DX_REVERSE_WAIT_SSH="${DX_REVERSE_WAIT_SSH:-$SCRIPT_DIR/dx-wait-ssh}"
+DX_REVERSE_SSH_COMMON_OPTS=(
+    -p "$DX_SSH_PORT"
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o LogLevel=ERROR
+)
+
+usage() {
+    cat <<'EOF'
+Usage:
+  dx-reverse <host_port> [<host_port> ...]
+  dx-reverse <host_port>:<guest_port> [<host_port>:<guest_port> ...]
+  dx-reverse --list
+  dx-reverse --stop <guest_port>
+  dx-reverse --stop-all
+
+Examples:
+  ./bin/dx-reverse 5432
+  ./bin/dx-reverse 5432:15432
+  ./bin/dx-reverse 5432 3000:13000
+EOF
+}
+
+fail() {
+    echo "Error: $*" >&2
+    exit 1
+}
+
+validate_port() {
+    local value="$1"
+    local label="$2"
+    local allow_privileged="${3:-false}"
+    local port
+
+    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+        fail "$label port '$value' is not an integer."
+    fi
+
+    if [ "${#value}" -gt 5 ]; then
+        fail "$label port '$value' must be in 1..65535."
+    fi
+
+    port="$((10#$value))"
+
+    if (( port < 1 || port > 65535 )); then
+        fail "$label port '$value' must be in 1..65535."
+    fi
+
+    if [ "$allow_privileged" != "true" ] && (( port < 1024 )); then
+        fail "$label port '$value' is privileged; use a guest port >= 1024."
+    fi
+}
+
+parse_reverse_arg() {
+    local arg="$1"
+    local host_port
+    local guest_port
+
+    if [[ "$arg" == *:* ]]; then
+        if [[ ! "$arg" =~ ^([0-9]+):([0-9]+)$ ]]; then
+            fail "Invalid reverse '$arg'. Use <host_port> or <host_port>:<guest_port>."
+        fi
+        host_port="${BASH_REMATCH[1]}"
+        guest_port="${BASH_REMATCH[2]}"
+    else
+        host_port="$arg"
+        guest_port="$arg"
+    fi
+
+    validate_port "$host_port" "host" true
+    validate_port "$guest_port" "guest" false
+
+    printf '%s:%s\n' "$guest_port" "$host_port"
+}
+
+socket_path() {
+    local guest_port="$1"
+    printf '%s/dx-reverse-%s-%s.sock\n' "${TMPDIR:-/tmp}" "$DX_CONTAINER_NAME" "$guest_port"
+}
+
+metadata_path() {
+    local socket="$1"
+    printf '%s.meta\n' "$socket"
+}
+
+socket_guest_port() {
+    local socket="$1"
+    local base="${socket##*/}"
+    local prefix="dx-reverse-${DX_CONTAINER_NAME}-"
+    local port
+
+    case "$base" in
+        "$prefix"*.sock)
+            port="${base#"$prefix"}"
+            port="${port%.sock}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    [[ "$port" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$port"
+}
+
+control_socket_active() {
+    local socket="$1"
+
+    [ -e "$socket" ] || return 1
+    ssh -S "$socket" -O check \
+        "${DX_REVERSE_SSH_COMMON_OPTS[@]}" \
+        dx@127.0.0.1 >/dev/null 2>&1
+}
+
+remove_reverse_state() {
+    local socket="$1"
+    rm -f "$socket" "$(metadata_path "$socket")"
+}
+
+require_reverse_prerequisites() {
+    if [ ! -f "$DX_SSH_KEY" ]; then
+        fail "SSH key file not found at $DX_SSH_KEY."
+    fi
+
+    container_system_ensure_started
+
+    if ! container_exists "$DX_CONTAINER_NAME"; then
+        fail "Container $DX_CONTAINER_NAME does not exist. Run ./bin/dx first."
+    fi
+
+    if ! container_is_running "$DX_CONTAINER_NAME"; then
+        fail "Container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start-container first."
+    fi
+
+    "$DX_REVERSE_WAIT_SSH"
+}
+
+write_metadata() {
+    local socket="$1"
+    local guest_port="$2"
+    local host_port="$3"
+    local metadata
+
+    metadata="$(metadata_path "$socket")"
+    {
+        printf 'container=%s\n' "$DX_CONTAINER_NAME"
+        printf 'guest_port=%s\n' "$guest_port"
+        printf 'host_port=%s\n' "$host_port"
+    } > "$metadata"
+}
+
+metadata_host_port() {
+    local socket="$1"
+    local metadata
+    metadata="$(metadata_path "$socket")"
+
+    if [ -f "$metadata" ]; then
+        awk -F= '$1 == "host_port" { print $2; found = 1 } END { exit found ? 0 : 1 }' "$metadata" 2>/dev/null || true
+    fi
+}
+
+ensure_guest_port_available() {
+    local guest_port="$1"
+    local socket="$2"
+
+    if control_socket_active "$socket"; then
+        return 0
+    fi
+
+    if [ -e "$socket" ]; then
+        echo "Removing stale dx-reverse socket for guest port $guest_port."
+        remove_reverse_state "$socket"
+    fi
+}
+
+start_reverse() {
+    local guest_port="$1"
+    local host_port="$2"
+    local socket
+    local existing_host_port
+
+    socket="$(socket_path "$guest_port")"
+    ensure_guest_port_available "$guest_port" "$socket"
+
+    if control_socket_active "$socket"; then
+        existing_host_port="$(metadata_host_port "$socket")"
+        if [ -z "$existing_host_port" ]; then
+            fail "Guest port 127.0.0.1:$guest_port already has an active dx-reverse socket, but its host port is unknown. Stop it with ./bin/dx-reverse --stop $guest_port before changing it."
+        fi
+        if [ "$existing_host_port" != "$host_port" ]; then
+            fail "Guest port 127.0.0.1:$guest_port is already reversed to host port $existing_host_port. Stop it with ./bin/dx-reverse --stop $guest_port before changing it."
+        fi
+        echo "Reverse forward already active $DX_CONTAINER_NAME 127.0.0.1:$guest_port -> host 127.0.0.1:$existing_host_port"
+        return 0
+    fi
+
+    ssh -f -N -M \
+        -S "$socket" \
+        -R "127.0.0.1:${guest_port}:127.0.0.1:${host_port}" \
+        -i "$DX_SSH_KEY" \
+        "${DX_REVERSE_SSH_COMMON_OPTS[@]}" \
+        -o IdentitiesOnly=yes \
+        -o ConnectTimeout="$DX_SSH_CONNECT_TIMEOUT" \
+        -o ExitOnForwardFailure=yes \
+        dx@127.0.0.1
+
+    write_metadata "$socket" "$guest_port" "$host_port"
+    echo "Reverse forwarded $DX_CONTAINER_NAME 127.0.0.1:$guest_port -> host 127.0.0.1:$host_port"
+}
+
+discover_state_sockets() {
+    local tmpdir="${TMPDIR:-/tmp}"
+    local path
+    local socket
+
+    while IFS= read -r path; do
+        case "$path" in
+            *.sock.meta)
+                socket="${path%.meta}"
+                ;;
+            *.sock)
+                socket="$path"
+                ;;
+            *)
+                continue
+                ;;
+        esac
+
+        if socket_guest_port "$socket" >/dev/null; then
+            printf '%s\n' "$socket"
+        fi
+    done < <(
+        find "$tmpdir" -maxdepth 1 \
+            \( -name 'dx-reverse-*.sock' -o -name 'dx-reverse-*.sock.meta' \) \
+            -print 2>/dev/null || true
+    ) | sort -u
+}
+
+list_reverses() {
+    local found=0
+    local socket
+    local metadata
+    local guest_port
+    local host_port
+
+    while IFS= read -r socket; do
+        [ -n "$socket" ] || continue
+        metadata="$(metadata_path "$socket")"
+        if [ ! -e "$socket" ] && [ ! -f "$metadata" ]; then
+            continue
+        fi
+        guest_port="$(socket_guest_port "$socket")"
+        host_port="$(metadata_host_port "$socket")"
+        found=1
+
+        if control_socket_active "$socket"; then
+            if [ -n "$host_port" ]; then
+                echo "Active $DX_CONTAINER_NAME 127.0.0.1:$guest_port -> host 127.0.0.1:$host_port"
+            else
+                echo "Active $DX_CONTAINER_NAME 127.0.0.1:$guest_port -> host (host port unknown)"
+            fi
+            echo "  Socket: $socket"
+        elif [ -e "$socket" ]; then
+            echo "Stale dx-reverse socket for guest port $guest_port: $socket"
+        else
+            echo "Orphan dx-reverse metadata for guest port $guest_port: $metadata"
+        fi
+    done < <(discover_state_sockets)
+
+    if [ "$found" -eq 0 ]; then
+        echo "No dx-reverse reverse forwards found for $DX_CONTAINER_NAME."
+    fi
+}
+
+stop_socket() {
+    local socket="$1"
+    local guest_port="$2"
+    local metadata
+
+    metadata="$(metadata_path "$socket")"
+
+    if control_socket_active "$socket"; then
+        if ssh -S "$socket" -O exit \
+            "${DX_REVERSE_SSH_COMMON_OPTS[@]}" \
+            dx@127.0.0.1 >/dev/null 2>&1; then
+            remove_reverse_state "$socket"
+            echo "Stopped reverse $DX_CONTAINER_NAME 127.0.0.1:$guest_port"
+            return 0
+        fi
+
+        if control_socket_active "$socket"; then
+            echo "Error: Could not stop reverse $DX_CONTAINER_NAME 127.0.0.1:$guest_port; its SSH master is still active. State retained at $socket." >&2
+            return 1
+        fi
+
+        remove_reverse_state "$socket"
+        echo "Stopped reverse $DX_CONTAINER_NAME 127.0.0.1:$guest_port"
+        return 0
+    fi
+
+    if [ -e "$socket" ]; then
+        remove_reverse_state "$socket"
+        echo "Removed stale dx-reverse socket for guest port $guest_port."
+    elif [ -f "$metadata" ]; then
+        remove_reverse_state "$socket"
+        echo "Removed orphan dx-reverse metadata for guest port $guest_port."
+    else
+        echo "No dx-reverse reverse forward found for guest port $guest_port."
+    fi
+}
+
+stop_reverse() {
+    local guest_port="$1"
+    local socket
+
+    validate_port "$guest_port" "guest" false
+    socket="$(socket_path "$guest_port")"
+    stop_socket "$socket" "$guest_port"
+}
+
+stop_all_reverses() {
+    local found=0
+    local failed=0
+    local socket
+    local guest_port
+
+    while IFS= read -r socket; do
+        [ -n "$socket" ] || continue
+        found=1
+        guest_port="$(socket_guest_port "$socket")"
+        if ! stop_socket "$socket" "$guest_port"; then
+            failed=1
+        fi
+    done < <(discover_state_sockets)
+
+    if [ "$found" -eq 0 ]; then
+        echo "No dx-reverse reverse forwards found for $DX_CONTAINER_NAME."
+    fi
+
+    return "$failed"
+}
+
+REVERSE_MAPPINGS=()
+
+collect_reverses() {
+    local seen_guests=""
+    local arg
+    local mapping
+    local guest_port
+
+    REVERSE_MAPPINGS=()
+    for arg in "$@"; do
+        mapping="$(parse_reverse_arg "$arg")"
+        guest_port="${mapping%%:*}"
+        case " $seen_guests " in
+            *" $guest_port "*)
+                fail "Guest port $guest_port was requested more than once."
+                ;;
+        esac
+        seen_guests="$seen_guests $guest_port"
+        REVERSE_MAPPINGS+=("$mapping")
+    done
+}
+
+parse_all_reverses() {
+    local mapping
+
+    collect_reverses "$@"
+    for mapping in "${REVERSE_MAPPINGS[@]}"; do
+        printf '%s\n' "$mapping"
+    done
+}
+
+main() {
+    if [ "${DX_REVERSE_TEST_MODE:-}" = "parse" ]; then
+        [ "$#" -gt 0 ] || fail "At least one port is required."
+        parse_all_reverses "$@"
+        return 0
+    fi
+
+    if [ "$#" -eq 0 ]; then
+        usage
+        exit 1
+    fi
+
+    case "$1" in
+        -h|--help)
+            usage
+            ;;
+        --list)
+            if [ "$#" -ne 1 ]; then
+                fail "--list does not accept port arguments."
+            fi
+            list_reverses
+            ;;
+        --stop)
+            if [ "$#" -ne 2 ]; then
+                fail "Usage: dx-reverse --stop <guest_port>"
+            fi
+            stop_reverse "$2"
+            ;;
+        --stop-all)
+            if [ "$#" -ne 1 ]; then
+                fail "--stop-all does not accept port arguments."
+            fi
+            stop_all_reverses
+            ;;
+        -*)
+            fail "Unknown option '$1'."
+            ;;
+        *)
+            local mapping
+            local guest_port
+            local host_port
+
+            collect_reverses "$@"
+            require_reverse_prerequisites
+
+            for mapping in "${REVERSE_MAPPINGS[@]}"; do
+                guest_port="${mapping%%:*}"
+                host_port="${mapping#*:}"
+                start_reverse "$guest_port" "$host_port"
+            done
+            ;;
+    esac
+}
+
+main "$@"

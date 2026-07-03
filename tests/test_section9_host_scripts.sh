@@ -133,6 +133,791 @@ fi
 assert_file_not_exists "$BIN_DIR/dx-ai" "dx-ai is not installed as a host script"
 
 # -----------------------------------------------------------------------------
+# dx-forward
+# -----------------------------------------------------------------------------
+
+DX_FORWARD="$BIN_DIR/dx-forward"
+assert_file_exists "$DX_FORWARD" "dx-forward helper exists"
+assert_file_contains "$DX_FORWARD" "source \"\$SCRIPT_DIR/dx-lib.sh\"" "dx-forward uses shared script library"
+assert_file_contains "$DX_FORWARD" "set -euo pipefail" "dx-forward uses strict shell mode"
+assert_file_contains "$DX_FORWARD" "ssh -f -N -M" "dx-forward uses a background SSH master"
+assert_file_contains "$DX_FORWARD" "ExitOnForwardFailure=yes" "dx-forward fails when a local forward cannot bind"
+assert_file_contains "$DX_FORWARD" "127.0.0.1:\${host_port}:127.0.0.1:\${guest_port}" "dx-forward binds host forwards to loopback"
+assert_file_contains "$DX_FORWARD" "DX_CONTAINER_NAME" "dx-forward namespaces sockets by configured container"
+assert_file_contains "$DX_FORWARD" "DX_SSH_PORT" "dx-forward uses configured SSH port"
+assert_file_contains "$DX_FORWARD" "DX_SSH_KEY" "dx-forward uses configured SSH key"
+assert_file_contains "$DX_FORWARD" "DX_SSH_CONNECT_TIMEOUT" "dx-forward uses configured SSH connect timeout"
+assert_file_contains "$DX_FORWARD" "dx-wait-ssh" "dx-forward waits for guest SSH readiness"
+assert_file_contains "$DX_FORWARD" "DX_FORWARD_WAIT_SSH" "dx-forward allows tests to stub SSH readiness waiting"
+assert_file_contains "$DX_FORWARD" "container_exists \"\$DX_CONTAINER_NAME\"" "dx-forward verifies the configured container exists"
+assert_file_contains "$DX_FORWARD" "container_is_running \"\$DX_CONTAINER_NAME\"" "dx-forward verifies the configured container is running"
+assert_file_contains "$DX_FORWARD" "validate_port" "dx-forward validates port arguments"
+assert_file_contains "$DX_FORWARD" "port < 1024" "dx-forward rejects privileged host ports"
+assert_file_contains "$DX_FORWARD" "dx_port_in_use" "dx-forward detects host port conflicts"
+assert_file_contains "$DX_FORWARD" "[[:space:]]--list)" "dx-forward supports listing helper-managed forwards"
+assert_file_contains "$DX_FORWARD" "[[:space:]]--stop)" "dx-forward supports stopping one forward"
+assert_file_contains "$DX_FORWARD" "[[:space:]]--stop-all)" "dx-forward supports stopping all forwards"
+assert_file_contains "$DX_FORWARD" "ssh .* -O check" "dx-forward checks existing control sockets"
+assert_file_contains "$DX_FORWARD" "ssh .* -O exit" "dx-forward stops forwards through SSH control sockets"
+assert_file_contains "$DX_FORWARD" "Forwarded http://127.0.0.1:" "dx-forward prints a browser URL for opened forwards"
+
+DX_FORWARD_PARSE_OUTPUT="$(DX_FORWARD_TEST_MODE=parse "$DX_FORWARD" 5173 5173:5175 2>/dev/null || true)"
+if [ "$DX_FORWARD_PARSE_OUTPUT" = $'5173:5173\n5175:5173' ]; then
+    test_pass "dx-forward parses bare and remapped port arguments"
+else
+    test_fail "dx-forward parses bare and remapped port arguments"
+fi
+
+if DX_FORWARD_TEST_MODE=parse "$DX_FORWARD" foo >/dev/null 2>&1; then
+    test_fail "dx-forward rejects non-integer ports"
+else
+    test_pass "dx-forward rejects non-integer ports"
+fi
+
+if DX_FORWARD_TEST_MODE=parse "$DX_FORWARD" 80 >/dev/null 2>&1; then
+    test_fail "dx-forward rejects privileged host ports"
+else
+    test_pass "dx-forward rejects privileged host ports"
+fi
+
+if DX_FORWARD_TEST_MODE=parse "$DX_FORWARD" 70000 >/dev/null 2>&1; then
+    test_fail "dx-forward rejects out-of-range ports"
+else
+    test_pass "dx-forward rejects out-of-range ports"
+fi
+
+DX_FORWARD_BEHAVIOR_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dx-forward-behavior.XXXXXX")"
+DX_FORWARD_STUB_BIN="$DX_FORWARD_BEHAVIOR_TMP/bin"
+DX_FORWARD_SOCKET_TMP="$DX_FORWARD_BEHAVIOR_TMP/tmp"
+DX_FORWARD_SSH_LOG="$DX_FORWARD_BEHAVIOR_TMP/ssh.log"
+DX_FORWARD_WAIT_LOG="$DX_FORWARD_BEHAVIOR_TMP/wait.log"
+DX_FORWARD_KEY="$DX_FORWARD_BEHAVIOR_TMP/dx_key"
+trap 'rm -rf "${DX_FORWARD_BEHAVIOR_TMP:-}" "${DX_REVERSE_BEHAVIOR_TMP:-}"' EXIT
+mkdir -p "$DX_FORWARD_STUB_BIN" "$DX_FORWARD_SOCKET_TMP"
+touch "$DX_FORWARD_KEY"
+
+cat > "$DX_FORWARD_STUB_BIN/container" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-} ${2:-}" in
+    "system status")
+        exit 0
+        ;;
+    "list -a"|"list ")
+        printf '%s\n' "${DX_CONTAINER_NAME:-dx-host}"
+        exit 0
+        ;;
+esac
+
+exit 0
+EOF
+chmod +x "$DX_FORWARD_STUB_BIN/container"
+
+cat > "$DX_FORWARD_STUB_BIN/ssh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+socket=""
+operation=""
+forward=""
+
+selected_port() {
+    local candidate="$1"
+    local selected="${2:-}"
+
+    case " $selected " in
+        *" $candidate "*)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -S)
+            socket="$2"
+            shift 2
+            ;;
+        -O)
+            operation="$2"
+            shift 2
+            ;;
+        -L)
+            forward="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+{
+    printf 'operation=%s\n' "$operation"
+    printf 'socket=%s\n' "$socket"
+    printf 'forward=%s\n' "$forward"
+} >> "${DX_FORWARD_SSH_LOG:?}"
+
+case "$operation" in
+    check)
+        port="${socket%.sock}"
+        port="${port##*-}"
+        if selected_port "$port" "${DX_STUB_SSH_CHECK_FAIL_PORTS:-}"; then
+            exit 1
+        fi
+        [ -n "$socket" ] && [ -e "$socket" ]
+        exit $?
+        ;;
+    exit)
+        port="${socket%.sock}"
+        port="${port##*-}"
+        if selected_port "$port" "${DX_STUB_SSH_EXIT_FAIL_PORTS:-}"; then
+            if selected_port "$port" "${DX_STUB_SSH_EXIT_DISAPPEARS_PORTS:-}"; then
+                rm -f "$socket"
+            fi
+            exit 1
+        fi
+        rm -f "$socket"
+        exit 0
+        ;;
+esac
+
+if [ -n "$socket" ]; then
+    : > "$socket"
+fi
+exit 0
+EOF
+chmod +x "$DX_FORWARD_STUB_BIN/ssh"
+
+cat > "$DX_FORWARD_STUB_BIN/lsof" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n'
+EOF
+chmod +x "$DX_FORWARD_STUB_BIN/lsof"
+
+cat > "$DX_FORWARD_STUB_BIN/dx-wait-ssh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'waited\n' >> "${DX_FORWARD_WAIT_LOG:?}"
+EOF
+chmod +x "$DX_FORWARD_STUB_BIN/dx-wait-ssh"
+
+dx_forward_behavior() {
+    env \
+        DX_CONTAINER_NAME=dx-forward-test \
+        DX_SSH_PORT=29999 \
+        DX_SSH_KEY="$DX_FORWARD_KEY" \
+        DX_SSH_CONNECT_TIMEOUT=1 \
+        DX_FORWARD_WAIT_SSH="$DX_FORWARD_STUB_BIN/dx-wait-ssh" \
+        DX_FORWARD_SSH_LOG="$DX_FORWARD_SSH_LOG" \
+        DX_FORWARD_WAIT_LOG="$DX_FORWARD_WAIT_LOG" \
+        TMPDIR="$DX_FORWARD_SOCKET_TMP" \
+        PATH="$DX_FORWARD_STUB_BIN:$PATH" \
+        "$DX_FORWARD" "$@"
+}
+
+dx_forward_host_port=31873
+dx_forward_attempts=0
+while dx_port_in_use "$dx_forward_host_port" 2>/dev/null && [ "$dx_forward_attempts" -lt 100 ]; do
+    dx_forward_host_port=$((dx_forward_host_port + 1))
+    dx_forward_attempts=$((dx_forward_attempts + 1))
+done
+
+dx_forward_socket="$DX_FORWARD_SOCKET_TMP/dx-forward-dx-forward-test-$dx_forward_host_port.sock"
+dx_forward_metadata="$dx_forward_socket.meta"
+rm -f "$DX_FORWARD_SSH_LOG" "$DX_FORWARD_WAIT_LOG"
+
+DX_FORWARD_START_OUT="$(dx_forward_behavior "5173:$dx_forward_host_port" 2>&1 || true)"
+if printf '%s\n' "$DX_FORWARD_START_OUT" | grep -q "Forwarded http://127.0.0.1:$dx_forward_host_port -> dx-forward-test:5173" \
+    && [ -e "$dx_forward_socket" ] \
+    && grep -qx "host_port=$dx_forward_host_port" "$dx_forward_metadata" \
+    && grep -qx "guest_port=5173" "$dx_forward_metadata" \
+    && grep -qx "forward=127.0.0.1:${dx_forward_host_port}:127.0.0.1:5173" "$DX_FORWARD_SSH_LOG" \
+    && grep -qx "waited" "$DX_FORWARD_WAIT_LOG"; then
+    test_pass "dx-forward starts a loopback SSH forward and writes metadata"
+else
+    test_fail "dx-forward starts a loopback SSH forward and writes metadata"
+fi
+
+DX_FORWARD_REPEAT_OUT="$(dx_forward_behavior "5173:$dx_forward_host_port" 2>&1 || true)"
+if printf '%s\n' "$DX_FORWARD_REPEAT_OUT" | grep -q "Forward already active http://127.0.0.1:$dx_forward_host_port -> dx-forward-test:5173"; then
+    test_pass "dx-forward treats an identical active forward as idempotent"
+else
+    test_fail "dx-forward treats an identical active forward as idempotent"
+fi
+
+if dx_forward_behavior "5174:$dx_forward_host_port" >/dev/null 2>&1; then
+    test_fail "dx-forward refuses to retarget an active host port"
+else
+    test_pass "dx-forward refuses to retarget an active host port"
+fi
+
+DX_FORWARD_LIST_OUT="$(dx_forward_behavior --list 2>&1 || true)"
+if printf '%s\n' "$DX_FORWARD_LIST_OUT" | grep -q "Active http://127.0.0.1:$dx_forward_host_port -> dx-forward-test:5173"; then
+    test_pass "dx-forward lists active forwards from control sockets and metadata"
+else
+    test_fail "dx-forward lists active forwards from control sockets and metadata"
+fi
+
+DX_FORWARD_STOP_OUT="$(dx_forward_behavior --stop "$dx_forward_host_port" 2>&1 || true)"
+if printf '%s\n' "$DX_FORWARD_STOP_OUT" | grep -q "Stopped http://127.0.0.1:$dx_forward_host_port" \
+    && [ ! -e "$dx_forward_socket" ] \
+    && [ ! -e "$dx_forward_metadata" ] \
+    && grep -qx "operation=exit" "$DX_FORWARD_SSH_LOG"; then
+    test_pass "dx-forward stops an active forward and removes socket metadata"
+else
+    test_fail "dx-forward stops an active forward and removes socket metadata"
+fi
+
+dx_forward_behavior "5173:$dx_forward_host_port" >/dev/null
+if DX_STUB_SSH_EXIT_FAIL_PORTS="$dx_forward_host_port" \
+    dx_forward_behavior --stop "$dx_forward_host_port" > "$DX_FORWARD_BEHAVIOR_TMP/failed-stop.out" 2>&1; then
+    test_fail "dx-forward reports a failed exit while the SSH master remains active"
+elif [ -e "$dx_forward_socket" ] \
+    && [ -e "$dx_forward_metadata" ] \
+    && grep -q "still active" "$DX_FORWARD_BEHAVIOR_TMP/failed-stop.out"; then
+    test_pass "dx-forward reports a failed exit while preserving active state"
+else
+    test_fail "dx-forward reports a failed exit while preserving active state"
+fi
+
+if DX_STUB_SSH_EXIT_FAIL_PORTS="$dx_forward_host_port" \
+    DX_STUB_SSH_EXIT_DISAPPEARS_PORTS="$dx_forward_host_port" \
+    dx_forward_behavior --stop "$dx_forward_host_port" > "$DX_FORWARD_BEHAVIOR_TMP/disappeared-stop.out" 2>&1 \
+    && [ ! -e "$dx_forward_socket" ] \
+    && [ ! -e "$dx_forward_metadata" ] \
+    && grep -q "Stopped http://127.0.0.1:$dx_forward_host_port" "$DX_FORWARD_BEHAVIOR_TMP/disappeared-stop.out"; then
+    test_pass "dx-forward cleans state when exit fails after the master disappears"
+else
+    test_fail "dx-forward cleans state when exit fails after the master disappears"
+fi
+
+printf 'container=dx-forward-test\nhost_port=%s\nguest_port=5173\n' \
+    "$dx_forward_host_port" > "$dx_forward_metadata"
+if dx_forward_behavior --stop "$dx_forward_host_port" > "$DX_FORWARD_BEHAVIOR_TMP/orphan-stop.out" 2>&1 \
+    && [ ! -e "$dx_forward_metadata" ] \
+    && grep -q "Removed orphan dx-forward metadata" "$DX_FORWARD_BEHAVIOR_TMP/orphan-stop.out"; then
+    test_pass "dx-forward explicit stop removes orphan metadata"
+else
+    test_fail "dx-forward explicit stop removes orphan metadata"
+fi
+
+printf 'container=dx-forward-test\nhost_port=%s\nguest_port=5173\n' \
+    "$dx_forward_host_port" > "$dx_forward_metadata"
+DX_FORWARD_ORPHAN_LIST_OUT="$(dx_forward_behavior --list 2>&1 || true)"
+if printf '%s\n' "$DX_FORWARD_ORPHAN_LIST_OUT" | grep -q "Orphan dx-forward metadata for host port $dx_forward_host_port" \
+    && ! printf '%s\n' "$DX_FORWARD_ORPHAN_LIST_OUT" | grep -q "Active http://127.0.0.1:$dx_forward_host_port"; then
+    test_pass "dx-forward lists orphan metadata without reporting it active"
+else
+    test_fail "dx-forward lists orphan metadata without reporting it active"
+fi
+dx_forward_behavior --stop "$dx_forward_host_port" >/dev/null
+
+touch "$dx_forward_socket"
+printf 'container=dx-forward-test\nhost_port=%s\nguest_port=5173\n' \
+    "$dx_forward_host_port" > "$dx_forward_metadata"
+DX_FORWARD_STALE_LIST_OUT="$(
+    DX_STUB_SSH_CHECK_FAIL_PORTS="$dx_forward_host_port" dx_forward_behavior --list 2>&1 || true
+)"
+if printf '%s\n' "$DX_FORWARD_STALE_LIST_OUT" | grep -q "Stale dx-forward socket for host port $dx_forward_host_port" \
+    && DX_STUB_SSH_CHECK_FAIL_PORTS="$dx_forward_host_port" \
+        dx_forward_behavior --stop "$dx_forward_host_port" >/dev/null \
+    && [ ! -e "$dx_forward_socket" ] \
+    && [ ! -e "$dx_forward_metadata" ]; then
+    test_pass "dx-forward distinguishes and removes stale socket state"
+else
+    test_fail "dx-forward distinguishes and removes stale socket state"
+fi
+
+dx_forward_second_port=$((dx_forward_host_port + 1))
+while dx_port_in_use "$dx_forward_second_port" 2>/dev/null; do
+    dx_forward_second_port=$((dx_forward_second_port + 1))
+done
+dx_forward_third_port=$((dx_forward_second_port + 1))
+while dx_port_in_use "$dx_forward_third_port" 2>/dev/null; do
+    dx_forward_third_port=$((dx_forward_third_port + 1))
+done
+dx_forward_second_socket="$DX_FORWARD_SOCKET_TMP/dx-forward-dx-forward-test-$dx_forward_second_port.sock"
+dx_forward_second_metadata="$dx_forward_second_socket.meta"
+dx_forward_third_socket="$DX_FORWARD_SOCKET_TMP/dx-forward-dx-forward-test-$dx_forward_third_port.sock"
+dx_forward_third_metadata="$dx_forward_third_socket.meta"
+dx_forward_other_socket="$DX_FORWARD_SOCKET_TMP/dx-forward-dx-forward-test-2-$dx_forward_host_port.sock"
+dx_forward_other_metadata="$dx_forward_other_socket.meta"
+
+dx_forward_behavior "5173:$dx_forward_host_port" >/dev/null
+DX_FORWARD_DEDUPED_LIST_OUT="$(dx_forward_behavior --list 2>&1 || true)"
+if [ "$(printf '%s\n' "$DX_FORWARD_DEDUPED_LIST_OUT" | grep -c "Active http://127.0.0.1:$dx_forward_host_port")" -eq 1 ]; then
+    test_pass "dx-forward lists an active socket and its metadata once"
+else
+    test_fail "dx-forward lists an active socket and its metadata once"
+fi
+
+dx_forward_behavior "5174:$dx_forward_second_port" >/dev/null
+printf 'container=dx-forward-test\nhost_port=%s\nguest_port=5175\n' \
+    "$dx_forward_third_port" > "$dx_forward_third_metadata"
+touch "$dx_forward_other_socket"
+printf 'container=dx-forward-test-2\nhost_port=%s\nguest_port=5173\n' \
+    "$dx_forward_host_port" > "$dx_forward_other_metadata"
+
+if DX_STUB_SSH_EXIT_FAIL_PORTS="$dx_forward_host_port" \
+    dx_forward_behavior --stop-all > "$DX_FORWARD_BEHAVIOR_TMP/stop-all.out" 2>&1; then
+    test_fail "dx-forward stop-all returns failure when one master cannot stop"
+elif [ -e "$dx_forward_socket" ] \
+    && [ -e "$dx_forward_metadata" ] \
+    && [ ! -e "$dx_forward_second_socket" ] \
+    && [ ! -e "$dx_forward_second_metadata" ] \
+    && [ ! -e "$dx_forward_third_metadata" ] \
+    && [ -e "$dx_forward_other_socket" ] \
+    && [ -e "$dx_forward_other_metadata" ]; then
+    test_pass "dx-forward stop-all continues cleanup and preserves failed and other-container state"
+else
+    test_fail "dx-forward stop-all continues cleanup and preserves failed and other-container state"
+fi
+
+DX_FORWARD_SCOPED_LIST_OUT="$(dx_forward_behavior --list 2>&1 || true)"
+if ! printf '%s\n' "$DX_FORWARD_SCOPED_LIST_OUT" | grep -q "dx-forward-test-2"; then
+    test_pass "dx-forward discovery excludes prefix-colliding container state"
+else
+    test_fail "dx-forward discovery excludes prefix-colliding container state"
+fi
+
+dx_forward_behavior --stop "$dx_forward_host_port" >/dev/null
+rm -f "$dx_forward_other_socket" "$dx_forward_other_metadata"
+
+# -----------------------------------------------------------------------------
+# dx-reverse
+# -----------------------------------------------------------------------------
+
+DX_REVERSE="$BIN_DIR/dx-reverse"
+assert_file_exists "$DX_REVERSE" "dx-reverse helper exists"
+assert_file_contains "$DX_REVERSE" "source \"\$SCRIPT_DIR/dx-lib.sh\"" "dx-reverse uses shared script library"
+assert_file_contains "$DX_REVERSE" "set -euo pipefail" "dx-reverse uses strict shell mode"
+assert_file_contains "$DX_REVERSE" "ssh -f -N -M" "dx-reverse uses a background SSH master"
+assert_file_contains "$DX_REVERSE" "ExitOnForwardFailure=yes" "dx-reverse fails when a remote forward cannot bind"
+assert_file_contains "$DX_REVERSE" "127.0.0.1:\${guest_port}:127.0.0.1:\${host_port}" "dx-reverse binds guest reverse forwards to loopback"
+assert_file_contains "$DX_REVERSE" "DX_CONTAINER_NAME" "dx-reverse namespaces sockets by configured container"
+assert_file_contains "$DX_REVERSE" "DX_SSH_PORT" "dx-reverse uses configured SSH port"
+assert_file_contains "$DX_REVERSE" "DX_SSH_KEY" "dx-reverse uses configured SSH key"
+assert_file_contains "$DX_REVERSE" "DX_SSH_CONNECT_TIMEOUT" "dx-reverse uses configured SSH connect timeout"
+assert_file_contains "$DX_REVERSE" "DX_REVERSE_WAIT_SSH" "dx-reverse allows tests to stub SSH readiness waiting"
+assert_file_contains "$DX_REVERSE" "container_exists \"\$DX_CONTAINER_NAME\"" "dx-reverse verifies the configured container exists"
+assert_file_contains "$DX_REVERSE" "container_is_running \"\$DX_CONTAINER_NAME\"" "dx-reverse verifies the configured container is running"
+assert_file_contains "$DX_REVERSE" "validate_port" "dx-reverse validates port arguments"
+assert_file_contains "$DX_REVERSE" "port < 1024" "dx-reverse rejects privileged guest ports"
+assert_file_contains "$DX_REVERSE" "[[:space:]]--list)" "dx-reverse supports listing helper-managed reverse forwards"
+assert_file_contains "$DX_REVERSE" "[[:space:]]--stop)" "dx-reverse supports stopping one reverse forward"
+assert_file_contains "$DX_REVERSE" "[[:space:]]--stop-all)" "dx-reverse supports stopping all reverse forwards"
+assert_file_contains "$DX_REVERSE" "ssh .* -O check" "dx-reverse checks existing control sockets"
+assert_file_contains "$DX_REVERSE" "ssh .* -O exit" "dx-reverse stops reverse forwards through SSH control sockets"
+assert_file_contains "$DX_REVERSE" "Reverse forwarded" "dx-reverse prints a guest access target"
+
+DX_REVERSE_PARSE_OUTPUT="$(DX_REVERSE_TEST_MODE=parse "$DX_REVERSE" 5432 5432:15432 2>/dev/null || true)"
+if [ "$DX_REVERSE_PARSE_OUTPUT" = $'5432:5432\n15432:5432' ]; then
+    test_pass "dx-reverse parses bare and remapped port arguments"
+else
+    test_fail "dx-reverse parses bare and remapped port arguments"
+fi
+
+if DX_REVERSE_TEST_MODE=parse "$DX_REVERSE" foo >/dev/null 2>&1; then
+    test_fail "dx-reverse rejects non-integer ports"
+else
+    test_pass "dx-reverse rejects non-integer ports"
+fi
+
+if DX_REVERSE_TEST_MODE=parse "$DX_REVERSE" 80 >/dev/null 2>&1; then
+    test_fail "dx-reverse rejects privileged guest ports"
+else
+    test_pass "dx-reverse rejects privileged guest ports"
+fi
+
+if DX_REVERSE_TEST_MODE=parse "$DX_REVERSE" 70000 >/dev/null 2>&1; then
+    test_fail "dx-reverse rejects out-of-range ports"
+else
+    test_pass "dx-reverse rejects out-of-range ports"
+fi
+
+DX_REVERSE_BEHAVIOR_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dx-reverse-behavior.XXXXXX")"
+DX_REVERSE_STUB_BIN="$DX_REVERSE_BEHAVIOR_TMP/bin"
+DX_REVERSE_SOCKET_TMP="$DX_REVERSE_BEHAVIOR_TMP/tmp"
+DX_REVERSE_SSH_LOG="$DX_REVERSE_BEHAVIOR_TMP/ssh.log"
+DX_REVERSE_WAIT_LOG="$DX_REVERSE_BEHAVIOR_TMP/wait.log"
+DX_REVERSE_KEY="$DX_REVERSE_BEHAVIOR_TMP/dx_key"
+mkdir -p "$DX_REVERSE_STUB_BIN" "$DX_REVERSE_SOCKET_TMP"
+touch "$DX_REVERSE_KEY"
+
+cat > "$DX_REVERSE_STUB_BIN/container" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-} ${2:-}" in
+    "system status")
+        exit 0
+        ;;
+    "list -a"|"list ")
+        printf '%s\n' "${DX_CONTAINER_NAME:-dx-host}"
+        exit 0
+        ;;
+esac
+
+exit 0
+EOF
+chmod +x "$DX_REVERSE_STUB_BIN/container"
+
+cat > "$DX_REVERSE_STUB_BIN/ssh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+socket=""
+operation=""
+reverse=""
+
+selected_port() {
+    local candidate="$1"
+    local selected="${2:-}"
+
+    case " $selected " in
+        *" $candidate "*)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -S)
+            socket="$2"
+            shift 2
+            ;;
+        -O)
+            operation="$2"
+            shift 2
+            ;;
+        -R)
+            reverse="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+{
+    printf 'operation=%s\n' "$operation"
+    printf 'socket=%s\n' "$socket"
+    printf 'reverse=%s\n' "$reverse"
+} >> "${DX_REVERSE_SSH_LOG:?}"
+
+case "$operation" in
+    check)
+        port="${socket%.sock}"
+        port="${port##*-}"
+        if selected_port "$port" "${DX_STUB_SSH_CHECK_FAIL_PORTS:-}"; then
+            exit 1
+        fi
+        [ -n "$socket" ] && [ -e "$socket" ]
+        exit $?
+        ;;
+    exit)
+        port="${socket%.sock}"
+        port="${port##*-}"
+        if selected_port "$port" "${DX_STUB_SSH_EXIT_FAIL_PORTS:-}"; then
+            if selected_port "$port" "${DX_STUB_SSH_EXIT_DISAPPEARS_PORTS:-}"; then
+                rm -f "$socket"
+            fi
+            exit 1
+        fi
+        rm -f "$socket"
+        exit 0
+        ;;
+esac
+
+if [ -n "$socket" ]; then
+    : > "$socket"
+fi
+exit 0
+EOF
+chmod +x "$DX_REVERSE_STUB_BIN/ssh"
+
+cat > "$DX_REVERSE_STUB_BIN/dx-wait-ssh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'waited\n' >> "${DX_REVERSE_WAIT_LOG:?}"
+EOF
+chmod +x "$DX_REVERSE_STUB_BIN/dx-wait-ssh"
+
+dx_reverse_behavior() {
+    env \
+        DX_CONTAINER_NAME=dx-reverse-test \
+        DX_SSH_PORT=29998 \
+        DX_SSH_KEY="$DX_REVERSE_KEY" \
+        DX_SSH_CONNECT_TIMEOUT=1 \
+        DX_REVERSE_WAIT_SSH="$DX_REVERSE_STUB_BIN/dx-wait-ssh" \
+        DX_REVERSE_SSH_LOG="$DX_REVERSE_SSH_LOG" \
+        DX_REVERSE_WAIT_LOG="$DX_REVERSE_WAIT_LOG" \
+        TMPDIR="$DX_REVERSE_SOCKET_TMP" \
+        PATH="$DX_REVERSE_STUB_BIN:$PATH" \
+        "$DX_REVERSE" "$@"
+}
+
+dx_reverse_guest_port=31883
+dx_reverse_host_port=5432
+dx_reverse_socket="$DX_REVERSE_SOCKET_TMP/dx-reverse-dx-reverse-test-$dx_reverse_guest_port.sock"
+dx_reverse_metadata="$dx_reverse_socket.meta"
+rm -f "$DX_REVERSE_SSH_LOG" "$DX_REVERSE_WAIT_LOG"
+
+DX_REVERSE_START_OUT="$(dx_reverse_behavior "$dx_reverse_host_port:$dx_reverse_guest_port" 2>&1 || true)"
+if printf '%s\n' "$DX_REVERSE_START_OUT" | grep -q "Reverse forwarded dx-reverse-test 127.0.0.1:$dx_reverse_guest_port -> host 127.0.0.1:$dx_reverse_host_port" \
+    && [ -e "$dx_reverse_socket" ] \
+    && grep -qx "guest_port=$dx_reverse_guest_port" "$dx_reverse_metadata" \
+    && grep -qx "host_port=$dx_reverse_host_port" "$dx_reverse_metadata" \
+    && grep -qx "reverse=127.0.0.1:${dx_reverse_guest_port}:127.0.0.1:${dx_reverse_host_port}" "$DX_REVERSE_SSH_LOG" \
+    && grep -qx "waited" "$DX_REVERSE_WAIT_LOG"; then
+    test_pass "dx-reverse starts a loopback SSH reverse forward and writes metadata"
+else
+    test_fail "dx-reverse starts a loopback SSH reverse forward and writes metadata"
+fi
+
+DX_REVERSE_REPEAT_OUT="$(dx_reverse_behavior "$dx_reverse_host_port:$dx_reverse_guest_port" 2>&1 || true)"
+if printf '%s\n' "$DX_REVERSE_REPEAT_OUT" | grep -q "Reverse forward already active dx-reverse-test 127.0.0.1:$dx_reverse_guest_port -> host 127.0.0.1:$dx_reverse_host_port"; then
+    test_pass "dx-reverse treats an identical active reverse as idempotent"
+else
+    test_fail "dx-reverse treats an identical active reverse as idempotent"
+fi
+
+if dx_reverse_behavior "5433:$dx_reverse_guest_port" >/dev/null 2>&1; then
+    test_fail "dx-reverse refuses to retarget an active guest port"
+else
+    test_pass "dx-reverse refuses to retarget an active guest port"
+fi
+
+DX_REVERSE_LIST_OUT="$(dx_reverse_behavior --list 2>&1 || true)"
+if printf '%s\n' "$DX_REVERSE_LIST_OUT" | grep -q "Active dx-reverse-test 127.0.0.1:$dx_reverse_guest_port -> host 127.0.0.1:$dx_reverse_host_port"; then
+    test_pass "dx-reverse lists active reverse forwards from control sockets and metadata"
+else
+    test_fail "dx-reverse lists active reverse forwards from control sockets and metadata"
+fi
+
+DX_REVERSE_STOP_OUT="$(dx_reverse_behavior --stop "$dx_reverse_guest_port" 2>&1 || true)"
+if printf '%s\n' "$DX_REVERSE_STOP_OUT" | grep -q "Stopped reverse dx-reverse-test 127.0.0.1:$dx_reverse_guest_port" \
+    && [ ! -e "$dx_reverse_socket" ] \
+    && [ ! -e "$dx_reverse_metadata" ] \
+    && grep -qx "operation=exit" "$DX_REVERSE_SSH_LOG"; then
+    test_pass "dx-reverse stops an active reverse forward and removes socket metadata"
+else
+    test_fail "dx-reverse stops an active reverse forward and removes socket metadata"
+fi
+
+dx_reverse_behavior "$dx_reverse_host_port:$dx_reverse_guest_port" >/dev/null
+if DX_STUB_SSH_EXIT_FAIL_PORTS="$dx_reverse_guest_port" \
+    dx_reverse_behavior --stop "$dx_reverse_guest_port" > "$DX_REVERSE_BEHAVIOR_TMP/failed-stop.out" 2>&1; then
+    test_fail "dx-reverse reports a failed exit while the SSH master remains active"
+elif [ -e "$dx_reverse_socket" ] \
+    && [ -e "$dx_reverse_metadata" ] \
+    && grep -q "still active" "$DX_REVERSE_BEHAVIOR_TMP/failed-stop.out"; then
+    test_pass "dx-reverse reports a failed exit while preserving active state"
+else
+    test_fail "dx-reverse reports a failed exit while preserving active state"
+fi
+
+if DX_STUB_SSH_EXIT_FAIL_PORTS="$dx_reverse_guest_port" \
+    DX_STUB_SSH_EXIT_DISAPPEARS_PORTS="$dx_reverse_guest_port" \
+    dx_reverse_behavior --stop "$dx_reverse_guest_port" > "$DX_REVERSE_BEHAVIOR_TMP/disappeared-stop.out" 2>&1 \
+    && [ ! -e "$dx_reverse_socket" ] \
+    && [ ! -e "$dx_reverse_metadata" ] \
+    && grep -q "Stopped reverse dx-reverse-test 127.0.0.1:$dx_reverse_guest_port" "$DX_REVERSE_BEHAVIOR_TMP/disappeared-stop.out"; then
+    test_pass "dx-reverse cleans state when exit fails after the master disappears"
+else
+    test_fail "dx-reverse cleans state when exit fails after the master disappears"
+fi
+
+printf 'container=dx-reverse-test\nguest_port=%s\nhost_port=%s\n' \
+    "$dx_reverse_guest_port" "$dx_reverse_host_port" > "$dx_reverse_metadata"
+if dx_reverse_behavior --stop "$dx_reverse_guest_port" > "$DX_REVERSE_BEHAVIOR_TMP/orphan-stop.out" 2>&1 \
+    && [ ! -e "$dx_reverse_metadata" ] \
+    && grep -q "Removed orphan dx-reverse metadata" "$DX_REVERSE_BEHAVIOR_TMP/orphan-stop.out"; then
+    test_pass "dx-reverse explicit stop removes orphan metadata"
+else
+    test_fail "dx-reverse explicit stop removes orphan metadata"
+fi
+
+printf 'container=dx-reverse-test\nguest_port=%s\nhost_port=%s\n' \
+    "$dx_reverse_guest_port" "$dx_reverse_host_port" > "$dx_reverse_metadata"
+DX_REVERSE_ORPHAN_LIST_OUT="$(dx_reverse_behavior --list 2>&1 || true)"
+if printf '%s\n' "$DX_REVERSE_ORPHAN_LIST_OUT" | grep -q "Orphan dx-reverse metadata for guest port $dx_reverse_guest_port" \
+    && ! printf '%s\n' "$DX_REVERSE_ORPHAN_LIST_OUT" | grep -q "Active dx-reverse-test 127.0.0.1:$dx_reverse_guest_port"; then
+    test_pass "dx-reverse lists orphan metadata without reporting it active"
+else
+    test_fail "dx-reverse lists orphan metadata without reporting it active"
+fi
+dx_reverse_behavior --stop "$dx_reverse_guest_port" >/dev/null
+
+touch "$dx_reverse_socket"
+printf 'container=dx-reverse-test\nguest_port=%s\nhost_port=%s\n' \
+    "$dx_reverse_guest_port" "$dx_reverse_host_port" > "$dx_reverse_metadata"
+DX_REVERSE_STALE_LIST_OUT="$(
+    DX_STUB_SSH_CHECK_FAIL_PORTS="$dx_reverse_guest_port" dx_reverse_behavior --list 2>&1 || true
+)"
+if printf '%s\n' "$DX_REVERSE_STALE_LIST_OUT" | grep -q "Stale dx-reverse socket for guest port $dx_reverse_guest_port" \
+    && DX_STUB_SSH_CHECK_FAIL_PORTS="$dx_reverse_guest_port" \
+        dx_reverse_behavior --stop "$dx_reverse_guest_port" >/dev/null \
+    && [ ! -e "$dx_reverse_socket" ] \
+    && [ ! -e "$dx_reverse_metadata" ]; then
+    test_pass "dx-reverse distinguishes and removes stale socket state"
+else
+    test_fail "dx-reverse distinguishes and removes stale socket state"
+fi
+
+dx_reverse_second_guest_port=$((dx_reverse_guest_port + 1))
+dx_reverse_third_guest_port=$((dx_reverse_guest_port + 2))
+dx_reverse_second_socket="$DX_REVERSE_SOCKET_TMP/dx-reverse-dx-reverse-test-$dx_reverse_second_guest_port.sock"
+dx_reverse_second_metadata="$dx_reverse_second_socket.meta"
+dx_reverse_third_socket="$DX_REVERSE_SOCKET_TMP/dx-reverse-dx-reverse-test-$dx_reverse_third_guest_port.sock"
+dx_reverse_third_metadata="$dx_reverse_third_socket.meta"
+dx_reverse_other_socket="$DX_REVERSE_SOCKET_TMP/dx-reverse-dx-reverse-test-2-$dx_reverse_guest_port.sock"
+dx_reverse_other_metadata="$dx_reverse_other_socket.meta"
+
+dx_reverse_behavior "$dx_reverse_host_port:$dx_reverse_guest_port" >/dev/null
+DX_REVERSE_DEDUPED_LIST_OUT="$(dx_reverse_behavior --list 2>&1 || true)"
+if [ "$(printf '%s\n' "$DX_REVERSE_DEDUPED_LIST_OUT" | grep -c "Active dx-reverse-test 127.0.0.1:$dx_reverse_guest_port")" -eq 1 ]; then
+    test_pass "dx-reverse lists an active socket and its metadata once"
+else
+    test_fail "dx-reverse lists an active socket and its metadata once"
+fi
+
+dx_reverse_behavior "$((dx_reverse_host_port + 1)):$dx_reverse_second_guest_port" >/dev/null
+printf 'container=dx-reverse-test\nguest_port=%s\nhost_port=%s\n' \
+    "$dx_reverse_third_guest_port" "$((dx_reverse_host_port + 2))" > "$dx_reverse_third_metadata"
+touch "$dx_reverse_other_socket"
+printf 'container=dx-reverse-test-2\nguest_port=%s\nhost_port=%s\n' \
+    "$dx_reverse_guest_port" "$dx_reverse_host_port" > "$dx_reverse_other_metadata"
+
+if DX_STUB_SSH_EXIT_FAIL_PORTS="$dx_reverse_guest_port" \
+    dx_reverse_behavior --stop-all > "$DX_REVERSE_BEHAVIOR_TMP/stop-all.out" 2>&1; then
+    test_fail "dx-reverse stop-all returns failure when one master cannot stop"
+elif [ -e "$dx_reverse_socket" ] \
+    && [ -e "$dx_reverse_metadata" ] \
+    && [ ! -e "$dx_reverse_second_socket" ] \
+    && [ ! -e "$dx_reverse_second_metadata" ] \
+    && [ ! -e "$dx_reverse_third_metadata" ] \
+    && [ -e "$dx_reverse_other_socket" ] \
+    && [ -e "$dx_reverse_other_metadata" ]; then
+    test_pass "dx-reverse stop-all continues cleanup and preserves failed and other-container state"
+else
+    test_fail "dx-reverse stop-all continues cleanup and preserves failed and other-container state"
+fi
+
+DX_REVERSE_SCOPED_LIST_OUT="$(dx_reverse_behavior --list 2>&1 || true)"
+if ! printf '%s\n' "$DX_REVERSE_SCOPED_LIST_OUT" | grep -q "dx-reverse-test-2"; then
+    test_pass "dx-reverse discovery excludes prefix-colliding container state"
+else
+    test_fail "dx-reverse discovery excludes prefix-colliding container state"
+fi
+
+dx_reverse_behavior --stop "$dx_reverse_guest_port" >/dev/null
+rm -f "$dx_reverse_other_socket" "$dx_reverse_other_metadata"
+
+DX_REVERSE_LIVE_STUB="$DX_REVERSE_STUB_BIN/dx-reverse-live-stub"
+DX_REVERSE_LIVE_LOG="$DX_REVERSE_BEHAVIOR_TMP/live-state.log"
+DX_REVERSE_CALLER_SOCKET="$DX_REVERSE_SOCKET_TMP/dx-reverse-dx-reverse-test-49999.sock"
+
+cat > "$DX_REVERSE_LIVE_STUB" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${TMPDIR:?}" in
+    "${DX_REVERSE_ISOLATION_CALLER_TMP:?}"/*)
+        ;;
+    *)
+        echo "dx-reverse live test used caller TMPDIR: $TMPDIR" >&2
+        exit 1
+        ;;
+esac
+
+printf '%s|%s\n' "$TMPDIR" "$*" >> "${DX_REVERSE_LIVE_LOG:?}"
+socket="$TMPDIR/stub.sock"
+
+case "${1:-}" in
+    --list)
+        [ -e "$socket" ]
+        ;;
+    --stop)
+        if [ "${DX_REVERSE_LIVE_STOP_FAIL:-false}" = true ]; then
+            exit 1
+        fi
+        rm -f "$socket" "$socket.meta"
+        ;;
+    *)
+        touch "$socket" "$socket.meta"
+        ;;
+esac
+EOF
+chmod +x "$DX_REVERSE_LIVE_STUB"
+
+dx_reverse_private_state_removed() {
+    local state_dir
+    local command
+
+    while IFS='|' read -r state_dir command; do
+        [ -n "$command" ] || continue
+        [ ! -e "$state_dir" ] || return 1
+    done < "$DX_REVERSE_LIVE_LOG"
+}
+
+touch "$DX_REVERSE_CALLER_SOCKET"
+: > "$DX_REVERSE_LIVE_LOG"
+if TMPDIR="$DX_REVERSE_SOCKET_TMP" \
+    SKIP_INTEGRATION=true \
+    DX_REVERSE_LIVE_TEST_MODE=state-isolation \
+    DX_REVERSE_OVERRIDE="$DX_REVERSE_LIVE_STUB" \
+    DX_REVERSE_ISOLATION_CALLER_TMP="$DX_REVERSE_SOCKET_TMP" \
+    DX_REVERSE_LIVE_LOG="$DX_REVERSE_LIVE_LOG" \
+    "$SCRIPT_DIR/test_section19_reverse_forward.sh" >/dev/null 2>&1 \
+    && [ -e "$DX_REVERSE_CALLER_SOCKET" ] \
+    && [ "$(wc -l < "$DX_REVERSE_LIVE_LOG" | tr -d ' ')" -eq 3 ] \
+    && grep -q '|5432:15432$' "$DX_REVERSE_LIVE_LOG" \
+    && grep -q '|--list$' "$DX_REVERSE_LIVE_LOG" \
+    && grep -q '|--stop 15432$' "$DX_REVERSE_LIVE_LOG" \
+    && dx_reverse_private_state_removed; then
+    test_pass "dx-reverse live test isolates start, list, and cleanup state"
+else
+    test_fail "dx-reverse live test isolates start, list, and cleanup state"
+fi
+
+: > "$DX_REVERSE_LIVE_LOG"
+if TMPDIR="$DX_REVERSE_SOCKET_TMP" \
+    SKIP_INTEGRATION=true \
+    DX_REVERSE_LIVE_TEST_MODE=state-isolation \
+    DX_REVERSE_OVERRIDE="$DX_REVERSE_LIVE_STUB" \
+    DX_REVERSE_ISOLATION_CALLER_TMP="$DX_REVERSE_SOCKET_TMP" \
+    DX_REVERSE_LIVE_LOG="$DX_REVERSE_LIVE_LOG" \
+    DX_REVERSE_LIVE_STOP_FAIL=true \
+    "$SCRIPT_DIR/test_section19_reverse_forward.sh" >/dev/null 2>&1; then
+    dx_reverse_failed_cleanup_status=0
+else
+    dx_reverse_failed_cleanup_status=$?
+fi
+dx_reverse_retained_state="$(awk -F'|' 'NR == 1 { print $1 }' "$DX_REVERSE_LIVE_LOG")"
+if [ "$dx_reverse_failed_cleanup_status" -ne 0 ] \
+    && [ -e "$DX_REVERSE_CALLER_SOCKET" ] \
+    && [ -e "$dx_reverse_retained_state/stub.sock" ] \
+    && [ -e "$dx_reverse_retained_state/stub.sock.meta" ]; then
+    test_pass "dx-reverse live test retains private state when cleanup cannot stop its master"
+else
+    test_fail "dx-reverse live test retains private state when cleanup cannot stop its master"
+fi
+case "$dx_reverse_retained_state" in
+    "$DX_REVERSE_SOCKET_TMP"/*)
+        rm -rf "$dx_reverse_retained_state"
+        ;;
+esac
+rm -f "$DX_REVERSE_CALLER_SOCKET"
+
+# -----------------------------------------------------------------------------
 # dx-put / dx-sync-bootstrap
 # -----------------------------------------------------------------------------
 

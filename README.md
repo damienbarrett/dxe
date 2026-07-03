@@ -92,6 +92,12 @@ Manage active reverse forwards with:
 ./bin/dx-reverse --stop-all
 ```
 
+For both helpers, `--list` reports active forwards, stale sockets, and orphan
+metadata. `--stop` removes stale or orphan state. `--stop-all` continues
+cleaning other entries after an individual failure, but exits non-zero if any
+active SSH master could not be stopped; state for that master is retained so it
+can be inspected and stopped later.
+
 ## Hotkeys
 
 The default tmux prefix is `Ctrl-Space`. Press `Ctrl-Space ?` inside tmux to

@@ -1,0 +1,450 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+DX_FORWARD_WAIT_SSH="${DX_FORWARD_WAIT_SSH:-$SCRIPT_DIR/dx-wait-ssh}"
+DX_FORWARD_SSH_COMMON_OPTS=(
+    -p "$DX_SSH_PORT"
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o LogLevel=ERROR
+)
+
+usage() {
+    cat <<'EOF'
+Usage:
+  dx-forward <guest_port> [<guest_port> ...]
+  dx-forward <guest_port>:<host_port> [<guest_port>:<host_port> ...]
+  dx-forward --list
+  dx-forward --stop <host_port>
+  dx-forward --stop-all
+
+Examples:
+  ./bin/dx-forward 5173
+  ./bin/dx-forward 5173:5175
+  ./bin/dx-forward 8000 8001 5173:5175
+EOF
+}
+
+fail() {
+    echo "Error: $*" >&2
+    exit 1
+}
+
+validate_port() {
+    local value="$1"
+    local label="$2"
+    local allow_privileged="${3:-false}"
+    local port
+
+    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+        fail "$label port '$value' is not an integer."
+    fi
+
+    if [ "${#value}" -gt 5 ]; then
+        fail "$label port '$value' must be in 1..65535."
+    fi
+
+    port="$((10#$value))"
+
+    if (( port < 1 || port > 65535 )); then
+        fail "$label port '$value' must be in 1..65535."
+    fi
+
+    if [ "$allow_privileged" != "true" ] && (( port < 1024 )); then
+        fail "$label port '$value' is privileged; use a host port >= 1024."
+    fi
+}
+
+parse_forward_arg() {
+    local arg="$1"
+    local guest_port
+    local host_port
+
+    if [[ "$arg" == *:* ]]; then
+        if [[ ! "$arg" =~ ^([0-9]+):([0-9]+)$ ]]; then
+            fail "Invalid forward '$arg'. Use <guest_port> or <guest_port>:<host_port>."
+        fi
+        guest_port="${BASH_REMATCH[1]}"
+        host_port="${BASH_REMATCH[2]}"
+    else
+        guest_port="$arg"
+        host_port="$arg"
+    fi
+
+    validate_port "$guest_port" "guest" true
+    validate_port "$host_port" "host" false
+
+    printf '%s:%s\n' "$host_port" "$guest_port"
+}
+
+socket_path() {
+    local host_port="$1"
+    printf '%s/dx-forward-%s-%s.sock\n' "${TMPDIR:-/tmp}" "$DX_CONTAINER_NAME" "$host_port"
+}
+
+metadata_path() {
+    local socket="$1"
+    printf '%s.meta\n' "$socket"
+}
+
+socket_host_port() {
+    local socket="$1"
+    local base="${socket##*/}"
+    local prefix="dx-forward-${DX_CONTAINER_NAME}-"
+    local port
+
+    case "$base" in
+        "$prefix"*.sock)
+            port="${base#"$prefix"}"
+            port="${port%.sock}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    [[ "$port" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$port"
+}
+
+control_socket_active() {
+    local socket="$1"
+
+    [ -e "$socket" ] || return 1
+    ssh -S "$socket" -O check \
+        "${DX_FORWARD_SSH_COMMON_OPTS[@]}" \
+        dx@127.0.0.1 >/dev/null 2>&1
+}
+
+remove_forward_state() {
+    local socket="$1"
+    rm -f "$socket" "$(metadata_path "$socket")"
+}
+
+require_forward_prerequisites() {
+    if [ ! -f "$DX_SSH_KEY" ]; then
+        fail "SSH key file not found at $DX_SSH_KEY."
+    fi
+
+    container_system_ensure_started
+
+    if ! container_exists "$DX_CONTAINER_NAME"; then
+        fail "Container $DX_CONTAINER_NAME does not exist. Run ./bin/dx first."
+    fi
+
+    if ! container_is_running "$DX_CONTAINER_NAME"; then
+        fail "Container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start-container first."
+    fi
+
+    "$DX_FORWARD_WAIT_SSH"
+}
+
+write_metadata() {
+    local socket="$1"
+    local guest_port="$2"
+    local host_port="$3"
+    local metadata
+
+    metadata="$(metadata_path "$socket")"
+    {
+        printf 'container=%s\n' "$DX_CONTAINER_NAME"
+        printf 'host_port=%s\n' "$host_port"
+        printf 'guest_port=%s\n' "$guest_port"
+    } > "$metadata"
+}
+
+metadata_guest_port() {
+    local socket="$1"
+    local metadata
+    metadata="$(metadata_path "$socket")"
+
+    if [ -f "$metadata" ]; then
+        awk -F= '$1 == "guest_port" { print $2; found = 1 } END { exit found ? 0 : 1 }' "$metadata" 2>/dev/null || true
+    fi
+}
+
+print_lsof_for_port() {
+    local host_port="$1"
+
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP@127.0.0.1:"$host_port" -sTCP:LISTEN 2>/dev/null | sed 's/^/  /' || true
+    fi
+}
+
+ensure_host_port_available() {
+    local host_port="$1"
+    local socket="$2"
+
+    if control_socket_active "$socket"; then
+        return 0
+    fi
+
+    if [ -e "$socket" ]; then
+        echo "Removing stale dx-forward socket for host port $host_port."
+        remove_forward_state "$socket"
+    fi
+
+    if dx_port_in_use "$host_port"; then
+        echo "Error: Host port 127.0.0.1:$host_port is already in use and is not managed by dx-forward." >&2
+        print_lsof_for_port "$host_port" >&2
+        exit 1
+    fi
+}
+
+start_forward() {
+    local host_port="$1"
+    local guest_port="$2"
+    local socket
+    local existing_guest_port
+
+    socket="$(socket_path "$host_port")"
+    ensure_host_port_available "$host_port" "$socket"
+
+    if control_socket_active "$socket"; then
+        existing_guest_port="$(metadata_guest_port "$socket")"
+        if [ -z "$existing_guest_port" ]; then
+            fail "Host port 127.0.0.1:$host_port already has an active dx-forward socket, but its guest port is unknown. Stop it with ./bin/dx-forward --stop $host_port before changing it."
+        fi
+        if [ "$existing_guest_port" != "$guest_port" ]; then
+            fail "Host port 127.0.0.1:$host_port is already forwarded to $DX_CONTAINER_NAME:$existing_guest_port. Stop it with ./bin/dx-forward --stop $host_port before changing it."
+        fi
+        echo "Forward already active http://127.0.0.1:$host_port -> $DX_CONTAINER_NAME:$existing_guest_port"
+        return 0
+    fi
+
+    ssh -f -N -M \
+        -S "$socket" \
+        -L "127.0.0.1:${host_port}:127.0.0.1:${guest_port}" \
+        -i "$DX_SSH_KEY" \
+        "${DX_FORWARD_SSH_COMMON_OPTS[@]}" \
+        -o IdentitiesOnly=yes \
+        -o ConnectTimeout="$DX_SSH_CONNECT_TIMEOUT" \
+        -o ExitOnForwardFailure=yes \
+        dx@127.0.0.1
+
+    write_metadata "$socket" "$guest_port" "$host_port"
+    echo "Forwarded http://127.0.0.1:$host_port -> $DX_CONTAINER_NAME:$guest_port"
+}
+
+discover_state_sockets() {
+    local tmpdir="${TMPDIR:-/tmp}"
+    local path
+    local socket
+
+    while IFS= read -r path; do
+        case "$path" in
+            *.sock.meta)
+                socket="${path%.meta}"
+                ;;
+            *.sock)
+                socket="$path"
+                ;;
+            *)
+                continue
+                ;;
+        esac
+
+        if socket_host_port "$socket" >/dev/null; then
+            printf '%s\n' "$socket"
+        fi
+    done < <(
+        find "$tmpdir" -maxdepth 1 \
+            \( -name 'dx-forward-*.sock' -o -name 'dx-forward-*.sock.meta' \) \
+            -print 2>/dev/null || true
+    ) | sort -u
+}
+
+list_forwards() {
+    local found=0
+    local socket
+    local metadata
+    local host_port
+    local guest_port
+
+    while IFS= read -r socket; do
+        [ -n "$socket" ] || continue
+        metadata="$(metadata_path "$socket")"
+        if [ ! -e "$socket" ] && [ ! -f "$metadata" ]; then
+            continue
+        fi
+        host_port="$(socket_host_port "$socket")"
+        guest_port="$(metadata_guest_port "$socket")"
+        found=1
+
+        if control_socket_active "$socket"; then
+            if [ -n "$guest_port" ]; then
+                echo "Active http://127.0.0.1:$host_port -> $DX_CONTAINER_NAME:$guest_port"
+            else
+                echo "Active http://127.0.0.1:$host_port -> $DX_CONTAINER_NAME (guest port unknown)"
+            fi
+            echo "  Socket: $socket"
+            print_lsof_for_port "$host_port"
+        elif [ -e "$socket" ]; then
+            echo "Stale dx-forward socket for host port $host_port: $socket"
+        else
+            echo "Orphan dx-forward metadata for host port $host_port: $metadata"
+        fi
+    done < <(discover_state_sockets)
+
+    if [ "$found" -eq 0 ]; then
+        echo "No dx-forward forwards found for $DX_CONTAINER_NAME."
+    fi
+}
+
+stop_socket() {
+    local socket="$1"
+    local host_port="$2"
+    local metadata
+
+    metadata="$(metadata_path "$socket")"
+
+    if control_socket_active "$socket"; then
+        if ssh -S "$socket" -O exit \
+            "${DX_FORWARD_SSH_COMMON_OPTS[@]}" \
+            dx@127.0.0.1 >/dev/null 2>&1; then
+            remove_forward_state "$socket"
+            echo "Stopped http://127.0.0.1:$host_port"
+            return 0
+        fi
+
+        if control_socket_active "$socket"; then
+            echo "Error: Could not stop http://127.0.0.1:$host_port; its SSH master is still active. State retained at $socket." >&2
+            return 1
+        fi
+
+        remove_forward_state "$socket"
+        echo "Stopped http://127.0.0.1:$host_port"
+        return 0
+    fi
+
+    if [ -e "$socket" ]; then
+        remove_forward_state "$socket"
+        echo "Removed stale dx-forward socket for host port $host_port."
+    elif [ -f "$metadata" ]; then
+        remove_forward_state "$socket"
+        echo "Removed orphan dx-forward metadata for host port $host_port."
+    else
+        echo "No dx-forward forward found for host port $host_port."
+    fi
+}
+
+stop_forward() {
+    local host_port="$1"
+    local socket
+
+    validate_port "$host_port" "host" false
+    socket="$(socket_path "$host_port")"
+    stop_socket "$socket" "$host_port"
+}
+
+stop_all_forwards() {
+    local found=0
+    local failed=0
+    local socket
+    local host_port
+
+    while IFS= read -r socket; do
+        [ -n "$socket" ] || continue
+        found=1
+        host_port="$(socket_host_port "$socket")"
+        if ! stop_socket "$socket" "$host_port"; then
+            failed=1
+        fi
+    done < <(discover_state_sockets)
+
+    if [ "$found" -eq 0 ]; then
+        echo "No dx-forward forwards found for $DX_CONTAINER_NAME."
+    fi
+
+    return "$failed"
+}
+
+FORWARD_MAPPINGS=()
+
+collect_forwards() {
+    local seen_hosts=""
+    local arg
+    local mapping
+    local host_port
+
+    FORWARD_MAPPINGS=()
+    for arg in "$@"; do
+        mapping="$(parse_forward_arg "$arg")"
+        host_port="${mapping%%:*}"
+        case " $seen_hosts " in
+            *" $host_port "*)
+                fail "Host port $host_port was requested more than once."
+                ;;
+        esac
+        seen_hosts="$seen_hosts $host_port"
+        FORWARD_MAPPINGS+=("$mapping")
+    done
+}
+
+parse_all_forwards() {
+    local mapping
+
+    collect_forwards "$@"
+    for mapping in "${FORWARD_MAPPINGS[@]}"; do
+        printf '%s\n' "$mapping"
+    done
+}
+
+main() {
+    if [ "${DX_FORWARD_TEST_MODE:-}" = "parse" ]; then
+        [ "$#" -gt 0 ] || fail "At least one port is required."
+        parse_all_forwards "$@"
+        return 0
+    fi
+
+    if [ "$#" -eq 0 ]; then
+        usage
+        exit 1
+    fi
+
+    case "$1" in
+        -h|--help)
+            usage
+            ;;
+        --list)
+            if [ "$#" -ne 1 ]; then
+                fail "--list does not accept port arguments."
+            fi
+            list_forwards
+            ;;
+        --stop)
+            if [ "$#" -ne 2 ]; then
+                fail "Usage: dx-forward --stop <host_port>"
+            fi
+            stop_forward "$2"
+            ;;
+        --stop-all)
+            if [ "$#" -ne 1 ]; then
+                fail "--stop-all does not accept port arguments."
+            fi
+            stop_all_forwards
+            ;;
+        -*)
+            fail "Unknown option '$1'."
+            ;;
+        *)
+            local mapping
+            local host_port
+            local guest_port
+
+            collect_forwards "$@"
+            require_forward_prerequisites
+
+            for mapping in "${FORWARD_MAPPINGS[@]}"; do
+                host_port="${mapping%%:*}"
+                guest_port="${mapping#*:}"
+                start_forward "$host_port" "$guest_port"
+            done
+            ;;
+    esac
+}
+
+main "$@"
