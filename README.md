@@ -36,8 +36,61 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
 - **Work with Code:** Use `/persist` inside the guest.
 - **Occasionally mount a host checkout in an isolated side container:** `./bin/dx-mount [DIR]`
 - **Transfer Files:** `./bin/dx-put <host_path> [guest_path]`
+- **Forward guest web ports to macOS:** `./bin/dx-forward 5173:5175`
+- **Expose macOS host ports inside the guest:** `./bin/dx-reverse 5432:15432`
 - **Stop the Container:** `./bin/dx-stop-container`
 - **Push edited bootstrap payload to a running guest:** `./bin/dx-sync-bootstrap`
+
+## Forwarding guest web ports
+
+Use `dx-forward` when a web server is listening inside the guest and you want
+to open it from a macOS browser on `127.0.0.1`. It creates SSH local forwards
+against the already-running `dx-host`, so you do not need to recreate the
+container.
+
+```bash
+./bin/dx-forward 5173:5175
+open http://127.0.0.1:5175/
+```
+
+Port syntax is `guest_port` or `guest_port:host_port`. For example,
+`./bin/dx-forward 8000` maps guest `127.0.0.1:8000` to host
+`127.0.0.1:8000`, while `./bin/dx-forward 5173:5175` maps guest
+`127.0.0.1:5173` to host `127.0.0.1:5175`.
+
+Use direct `http://192.168.64.x:<port>` access only as a diagnostic shortcut.
+Use `dx-reverse` for guest-to-host access, not for macOS-browser-to-guest
+access.
+
+Manage active forwards with:
+
+```bash
+./bin/dx-forward --list
+./bin/dx-forward --stop 5175
+./bin/dx-forward --stop-all
+```
+
+## Accessing host ports from the guest
+
+Use `dx-reverse` when a service is listening on macOS and guest tools need to
+reach it through guest loopback. It creates SSH reverse forwards (`ssh -R`)
+against the already-running `dx-host`.
+
+```bash
+./bin/dx-reverse 5432:15432
+```
+
+Port syntax is `host_port` or `host_port:guest_port`. For example,
+`./bin/dx-reverse 5432:15432` maps host `127.0.0.1:5432` to guest
+`127.0.0.1:15432`. Inside the guest, connect to `127.0.0.1:15432`.
+
+Manage active reverse forwards with:
+
+```bash
+./bin/dx-reverse --list
+./bin/dx-reverse --stop 15432
+./bin/dx-reverse --stop-all
+```
 
 ## Hotkeys
 
@@ -133,6 +186,8 @@ or perform maintenance operations.
 | [`bin/dx-wait-ssh`](bin/dx-wait-ssh) | Blocks until guest SSH responds. Gates the SSH connection layer. |
 | [`bin/dx-status`](bin/dx-status) | Reports image, container, SSH, tool, persist, and tmux status. |
 | [`bin/dx-put`](bin/dx-put) | Copies host files into the guest. |
+| [`bin/dx-forward`](bin/dx-forward) | Exposes guest web ports on macOS loopback addresses with SSH local forwarding. |
+| [`bin/dx-reverse`](bin/dx-reverse) | Exposes macOS loopback services inside the guest with SSH reverse forwarding. |
 | [`bin/dx-enter`](bin/dx-enter) | Direct `container exec` shell, bypassing SSH. |
 | [`bin/dx-gc`](bin/dx-gc) | Runs Nix garbage collection and store optimization inside the guest. |
 | [`bin/dx-reclaim`](bin/dx-reclaim) | Reclaims host disk space by deleting old Nix generations in the guest and trimming persistent filesystems. |
