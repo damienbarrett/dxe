@@ -1,0 +1,2 @@
+- Use established patterns.
+- Use Test Driven Development, with 100% code coverage, and a Red --> Green --> Refactor workflow. Where practical, tests should validate *behaviour*, not simply parsing configuration files.
