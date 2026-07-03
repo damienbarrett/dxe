@@ -529,9 +529,123 @@ If you cannot connect via SSH, monitor the bootstrap progress on the host:
 container logs dx-host -f
 ```
 
+## Release and Pin Maintenance
+
+> Status: this section is the agreed maintenance contract for the dual-base
+> feature ([flakes-to-nix.md](flakes-to-nix.md)), written ahead of
+> implementation. The `DX_BASE=nix` flavor and the bootstrap lock pin land
+> with that plan; once validated, `nix` becomes the default flavor.
+> Profiles with custom `DX_IMAGE`/`DX_NIX_VOLUME` names must pin
+> `DX_BASE` explicitly (or be deliberately migrated) before the flip.
+
+### One release pin
+
+The NixOS release is pinned in exactly one file — the flake inputs in
+`container/aarch64-darwin-apple-container-dx-nixos-25.11/flake.nix`:
+
+```nix
+nixpkgs.url      = "github:nixos/nixpkgs/nixos-25.11";
+nixvim.url       = "github:nix-community/nixvim/nixos-25.11";
+home-manager.url = "github:nix-community/home-manager/release-25.11";
+```
+
+`flake.lock` records the concrete revisions those branches resolved to
+(`nixvim` and `home-manager` follow this flake's `nixpkgs` for their own
+package set), and everything in the resulting guest follows the lock:
+
+- the full guest toolset — Home Manager activation builds from this flake;
+- the root bootstrap essentials — installed with
+  `--inputs-from /guest-bootstrap --no-update-lock-file`, so they resolve
+  to the locked `nixpkgs` revision, not the global flake registry.
+
+Under `DX_BASE=nix` the base image is release-agnostic: it contributes the
+Nix tool itself and a seed store that is merged once and then inert —
+after bootstrap, every tool in use resolves through the lock. The release
+string also appears in *names* (the context directory, the
+`dx-nixos-25.11*` image names); those are identity labels refreshed during
+a release bump, not additional pins.
+
+A release bump is therefore:
+
+```bash
+# 1. One place: edit the three branch refs in flake.nix (one file, one commit).
+# 2. Re-lock — run in the guest, or anywhere with Nix; the macOS host needs none:
+nix flake update
+# 3. Check the base-image alignment rule (below), then recreate and validate:
+./bin/dx-recreate
+tests/run_all_tests.sh
+```
+
+Under the legacy `flakes` flavor, the base image itself is per-release
+(`nixpkgs/nix-flakes:nixos-XX.YY-aarch64-linux`) and third-party published —
+the extra pin and availability gate that motivated the `nix` flavor. The
+full release playbook, including the context-directory rename and the
+parallel validation instance, is in [plan.md](plan.md).
+
+### Base-image alignment rule (`nix` flavor)
+
+`Containerfile.nix` pins the official image by Nix version and
+manifest-list digest:
+
+```Dockerfile
+FROM nixos/nix:2.31.5@sha256:<manifest-list digest>
+```
+
+The tag is not chosen freely — it follows the release pin. Policy: match
+the major.minor of the pinned release's default Nix (`nixpkgs#nix.version`
+at the locked revision, i.e. `nixVersions.stable`), taking the newest patch
+tag within that minor. Bumping the release therefore tells you the correct
+image tag mechanically, and the Nix-version bump folds into the same
+deliberate event instead of being an independent chore. A post-activation
+in-guest `nix --version` cannot verify the alignment — the guest toolset
+itself ships the locked `nix`, which shadows the image's on `PATH`. The
+alignment is asserted with two image-faithful checks instead:
+
+```bash
+# Authoritative: the pristine image, against the exact pinned reference
+container run --rm nixos/nix:<tag>@sha256:<digest> nix --version
+# Bootstrap evidence: recorded pre-remount in the provenance artifact,
+# where nix still resolves to the image's own binary
+container exec dx-host cat /persist/.dx/essentials-provenance/meta.env
+# Both must match the tag's major.minor — and the release's (run in the
+# guest; the macOS host has no Nix):
+container exec dx-host nix eval --raw --inputs-from /guest-bootstrap nixpkgs#nix.version
+```
+
+The alignment is test-enforced rather than templated into the
+Containerfile: each Containerfile is deliberately a single `FROM` line (no
+`ARG` indirection), and the macOS host has no Nix with which to evaluate
+the version at build time.
+
+### Bumping the Nix image pin
+
+Deliberate and procedure-gated — never `latest`, never casual. Normally
+triggered by a release bump via the alignment rule; an out-of-band bump
+within the same minor (e.g. a security fix) uses the same procedure.
+
+1. Update the tag and digest in `Containerfile.nix` (the digest is the
+   tag's multi-platform manifest-list digest — what
+   `container image pull nixos/nix:<tag>` resolves).
+2. Stop or destroy every container referencing the official image
+   (dx-host and side containers), then
+   `container image rm dx-nixos-25.11-official`. Without this,
+   `dx-create-image` silently keeps using the old local image. The removal
+   fails while a running container references the image — resolve that,
+   don't work around it.
+3. Validate against a fresh throwaway volume in an isolated profile (full
+   test suite).
+4. Store-transition gate on a disposable volume: old image seeds the
+   volume → new image boots against it and mutates the store → old image
+   boots it again. Nix can migrate the store schema one-way; this proves
+   the forward *and rollback* paths before the real `dx-nix-official`
+   volume ever sees the new version. Release notes are advisory input;
+   this test is the gate.
+5. Rollback: revert the pin and repeat step 2. The persisted volume is
+   rollback-safe only if step 4's rollback stage passed.
+
 ## Planned Work
 
 - **[NixOS 26.05 upgrade & code-review fixes](plan.md)** — the release-bump playbook (waiting on the official 26.05 base image) plus eight consolidated code-review fixes against the current 25.11 codebase. See [Consolidated Code-Review Fixes](plan.md#consolidated-code-review-fixes) for the per-item status.
-- **[Dual base-image support](flakes-to-nix.md)** — allow building from the official `nixos/nix` image as an alternative to `nixpkgs/nix-flakes`, selected via `DX_BASE`. Removes the third-party base-image dependency that gates the 26.05 upgrade. Not started; two open decisions are flagged in the plan.
+- **[Dual base-image support](flakes-to-nix.md)** — allow building from the official `nixos/nix` image as an alternative to `nixpkgs/nix-flakes`, selected via `DX_BASE`. Removes the third-party base-image dependency that gates the 26.05 upgrade. Implementation-ready after seven review passes; all decisions resolved, and `nix` is slated to become the default flavor after validation (staged flip). Maintenance contract: [Release and Pin Maintenance](#release-and-pin-maintenance).
 - **[Tmux configuration improvements](tmux-plan.md)** — migrate option-shaped tmux settings to typed Home Manager options and add resurrect/continuum persistence. Not started; sliced for TDD with manual validation gates.
 - **[Git-access follow-ups](mount-git.md)** — the `dx-mount` side-container workflow has shipped; remaining items are the `dx-branch` self-dev helper, seeded Nix base for faster side-container cold starts, credential propagation, and worktree/submodule validation.
