@@ -736,6 +736,195 @@ rebuild, validate), not an in-place volume-reusing bump. What *is* safe to
 rely on today: the alignment rule above, this section's build-cache trap
 warning, and the digest re-query discipline.
 
+## Upgrade / Bump (new NixOS release)
+
+The step-by-step runbook for moving the pinned release, e.g. **26.05 →
+26.11**. This is the sequence validated on the 25.11 → 26.05 bump
+(2026-07-04); the reference policy it leans on lives in
+[Release and Pin Maintenance](#release-and-pin-maintenance) above, and the
+destructive apply in step 6 is [Base Image Changeover](#base-image-changeover-one-time)
+below. Throughout, **OLD** is the current release (e.g. `26.05`) and
+**NEW** is the target (e.g. `26.11`).
+
+**Two hard-won rules before you start:**
+
+- **Static checks do not catch the breakages that cost the most time.**
+  `nix flake check` catches *eval*-time breaks (a removed package). It does
+  **not** catch `home-manager` buildEnv path conflicts or runtime shell/tool
+  API changes — those surface only at **live Home Manager activation**, i.e.
+  at the canary in step 5. On the 26.05 bump, three separate breaks
+  (`neofetch` removed, `ghostty.terminfo` colliding with ncurses, nushell's
+  `$nu.home-path` renamed to `$nu.home-dir`) each slipped past the static
+  suite and were caught only by rebuilding a real guest.
+- **`nix flake check` needs a roomy container** (≥ 8 GB). The default
+  container size OOMs mid-evaluation and is `SIGKILL`ed, which can look like
+  a pass if you only check the exit path — always give it memory and read
+  the final `all checks passed!` line.
+
+### 1. Preconditions
+
+- NEW's flake input branches exist and resolve — check without changing
+  anything (throwaway container; the macOS host has no Nix):
+
+  ```bash
+  IMG='nixos/nix:2.34.7@sha256:<current pinned digest>'   # current base is fine
+  for ref in \
+      github:nixos/nixpkgs/nixos-26.11 \
+      github:nix-community/home-manager/release-26.11 \
+      github:nix-community/nixvim/nixos-26.11; do
+    container run --rm "$IMG" nix --extra-experimental-features 'nix-command flakes' \
+        flake metadata "$ref" >/dev/null 2>&1 \
+        && echo "OK  $ref" || echo "MISSING  $ref"
+  done
+  ```
+
+  If `home-manager/release-NEW` or `nixvim/nixos-NEW` is not published yet,
+  **wait** — do not promote a mixed stable/unstable combination.
+- Clean configuration surface (same precondition as the changeover):
+  `env | grep '^DX_'` prints nothing, and `.env` is absent or reviewed
+  line by line.
+- A working tree with no unrelated changes (section 13 rejects a dirty
+  tree, and the canary must validate a committed bump).
+
+### 2. Pick the aligned Nix image pin
+
+The base image is pinned by **Nix version**, not NixOS release, per the
+[Base-image alignment rule](#base-image-alignment-rule). A release bump can
+therefore change the correct image tag. Determine NEW's default Nix and
+choose the newest patch tag of that minor:
+
+```bash
+# NEW's default Nix version (throwaway container, locked to NEW's nixpkgs):
+container run --rm "$IMG" nix --extra-experimental-features 'nix-command flakes' \
+    eval --raw 'github:nixos/nixpkgs/nixos-26.11#nix.version'
+# → e.g. 2.36.1  ⇒  pin the newest nixos/nix:2.36.x tag
+```
+
+Then **re-query the manifest-list digest from Docker Hub immediately**
+(never copy a digest blind — tags are mutable) and confirm the tag has a
+`linux/arm64` manifest. This exact `tag@sha256:digest` is what lands in the
+`Containerfile`.
+
+### 3. Pre-flight the new image (throwaway containers, no repo change)
+
+Prove the pinned reference before editing anything:
+
+```bash
+NEW_IMG='nixos/nix:2.36.1@sha256:<re-queried digest>'
+container run --rm "$NEW_IMG" /usr/bin/env bash -c 'echo env-bash-ok'
+container run --rm "$NEW_IMG" nix --version                 # matches the tag
+container run --rm --entrypoint sh "$NEW_IMG" -c \
+    'if [ -e /bin/bash ] || [ -L /bin/bash ]; then echo OLD_BASE; else echo OK-no-bin-bash; fi'
+mkdir -p /tmp/pf && printf 'FROM %s\n' "$NEW_IMG" > /tmp/pf/Containerfile \
+    && container build -t dx-preflight -f /tmp/pf/Containerfile /tmp/pf \
+    && container image rm dx-preflight        # digest-pinned FROM must build
+```
+
+`OK-no-bin-bash` is required — the official base ships no `/bin/bash`, which
+is what the temporary old-base guards key on.
+
+### 4. Make the bump (one revertible commit)
+
+Do these together so the lock diff has a single cause. TDD where a test
+encodes the change: flip the failing test first (`test_helpers.sh`'s
+`DX_EXPECTED_NIXOS_RELEASE`, `test_section2_containerfile.sh`'s exact `FROM`
+line), watch it fail against OLD, then make it pass.
+
+- `git mv container/aarch64-darwin-apple-container-dx-nixos-OLD container/aarch64-darwin-apple-container-dx-nixos-NEW`
+- `flake.nix` inputs → the three NEW branches (`nixpkgs-unstable` stays on
+  `master`).
+- Regenerate `flake.lock` — targeted, in a throwaway container bind-mounting
+  the renamed context dir:
+
+  ```bash
+  container run --rm -v "$PWD/container/aarch64-darwin-apple-container-dx-nixos-NEW:/ctx" "$IMG" \
+      nix --extra-experimental-features 'nix-command flakes' \
+      flake update nixpkgs nixvim home-manager --flake /ctx
+  ```
+- `home.nix`: `home.stateVersion = "NEW"` (review the Home Manager
+  state-version notes first).
+- `Containerfile`: the single `FROM` line to the step-2 `tag@sha256:digest`,
+  and update the exact-line string in `tests/test_section2_containerfile.sh`.
+- `bin/dx-lib.sh` defaults: `DX_IMAGE=dx-nixos-NEW` and `DX_CONTEXT_DIR`.
+- `tests/test_helpers.sh`: `DX_EXPECTED_NIXOS_RELEASE=NEW`.
+- Release-string sweep — update every **live** reference, leave design
+  history alone:
+
+  ```bash
+  grep -rn 'OLD' bin tests container README.md   # e.g. grep -rn '26\.05' ...
+  ```
+
+  Update `dx-nixos-OLD` image names, the `dx-nixos-OLD` assertions in
+  `tests/test_section18_mount_git.sh`, profile `.env` comments, and this
+  file's examples. Leave `flake*-to-nix.md`, `nix-base-plan.md`, and
+  `plan.md`'s OLD/NEW playbook framing as history.
+- Static gate — all green, plus a roomy `flake check`:
+
+  ```bash
+  for s in 0 1 2 3 5 9 10 18; do bash tests/test_section$s*.sh || break; done
+  container run --rm --memory 8g --cpus 4 \
+      -v "$PWD/container/aarch64-darwin-apple-container-dx-nixos-NEW:/ctx" "$NEW_IMG" \
+      nix --extra-experimental-features 'nix-command flakes' \
+      flake check --no-write-lock-file /ctx        # must end: all checks passed!
+  ```
+
+  Commit as one "Bump the pinned release to NixOS NEW" commit.
+
+### 5. Fix compatibility breaks (separate commits, TDD)
+
+`nix flake check` will name any **removed / renamed package** (eval error) —
+fix each in `flake.nix` (e.g. `neofetch` → `fastfetch`) as its own commit
+with the check as the gate. The **activation-only** breaks (buildEnv path
+conflicts, shell/tool API changes) are not visible yet; they surface at the
+canary in step 6. Keep every compat fix a separate commit from the raw bump
+so a lock diff and a package swap never share a commit.
+
+### 6. Canary — rebuild the isolated `dx-test` profile (non-destructive)
+
+Gate the primary on a full, from-scratch NEW build of the throwaway
+profile. This is where activation-only breaks appear; fix each (own commit),
+restart, and re-run until green:
+
+```bash
+./bin/dx-profile dx-test ./bin/dx-destroy
+./bin/dx-profile dx-test ./bin/dx-destroy-volumes --force
+./bin/dx-profile dx-test ./bin/dx-destroy-keys
+./bin/dx-profile dx-test ./bin/dx                      # fresh NEW bootstrap
+./bin/dx-profile dx-test bash tests/run_all_tests.sh   # must be all-green
+# Confirm the release oracle actually reports NEW (not a stale default):
+./bin/dx-profile dx-test ./bin/dx-ssh \
+    "bash -lc 'grep VERSION_ID /etc/os-release; nix --version'"
+```
+
+**Do not touch the primary until this is all-green and reports NEW.**
+
+### 7. Apply to the primary
+
+Because there is still **no valid volume-reusing pin-bump procedure** (see
+[Bumping the Nix image pin](#bumping-the-nix-image-pin--unresolved-pending-store-reuse-fixes)
+— blocked on the `setup_nix_volume` store-reuse defects), a pin-changing
+bump reaches the primary the same way the base changeover did: **full
+destroy-and-rebuild with salvage.** Follow
+[Base Image Changeover](#base-image-changeover-one-time) below verbatim —
+salvage `/persist` first (the `dx-get`/`dx-put` round-trip is now reliable),
+inventory referrer-first, `dx-factory-reset`, rebuild on the NEW commit,
+pass the old-base exclusion gate and the full suite, then re-establish
+`gh auth` / `dx-ai` / repos. (Only once the store-reuse fixes land, and only
+for a bump that does **not** change the Nix image pin, would an in-place
+`./bin/dx-recreate` become a valid volume-reusing alternative.)
+
+### 8. After the bump
+
+- Remove any now-stale OLD image left behind (`container image ls`;
+  `container image rm dx-nixos-OLD` once no container references it) — see
+  the [Build-cache trap](#build-cache-trap).
+- Update the concrete release numbers and the current digest in **this**
+  section and in [Release and Pin Maintenance](#release-and-pin-maintenance)
+  so the next bump starts from accurate examples.
+- Once every machine and profile is on the new base, the temporary old-base
+  guards (`guard_old_base` in `bootstrap.sh`, its twin in
+  `dx-start-container`, and their tests) can be removed in a cleanup commit.
+
 ## Base Image Changeover (one-time)
 
 > This is a **one-time, destructive** cutover — not a recurring maintenance
