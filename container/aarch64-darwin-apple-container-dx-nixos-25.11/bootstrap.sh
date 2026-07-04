@@ -28,6 +28,27 @@ guard_old_base() {
     fi
 }
 
+# Root's freshly installed essentials land in whichever profile this Nix
+# picks: the official base creates /nix/var/nix/profiles/per-user/root/profile
+# (not on the image PATH), while other layouts use the XDG state dir or the
+# legacy ~/.nix-profile link. Resolve every candidate that exists to its
+# concrete /nix/store path -- setup_nix_volume (§2) remounts the persistent
+# volume over /nix, replacing /nix/var, so profile symlinks dangle afterwards
+# while resolved store paths survive the pre-remount store merge.
+essentials_profile_path() {
+    local root="${DX_ESSENTIALS_ROOT:-}"
+    local joined="" candidate resolved
+    for candidate in \
+        "$root/nix/var/nix/profiles/per-user/root/profile/bin" \
+        "$root/root/.local/state/nix/profiles/profile/bin" \
+        "$root/root/.nix-profile/bin"; do
+        resolved="$(readlink -f "$candidate" 2>/dev/null)" || continue
+        [ -d "$resolved" ] || continue
+        joined="${joined:+$joined:}$resolved"
+    done
+    printf '%s\n' "$joined"
+}
+
 # 1. Bootstrapping dependencies (Section 2/3)
 install_essentials() {
     # Only install if shadow tools (like useradd) aren't available
@@ -38,23 +59,13 @@ install_essentials() {
         # dedicated /nix volume managed in setup_nix_volume (§2). The download
         # options mirror run_home_manager_activation so a stalled substituter
         # fetch aborts and retries instead of hanging the whole bootstrap.
-        # On the official nixos/nix base image, a plain `nix profile install`
-        # targets /nix/var/nix/profiles/per-user/root/profile (not on PATH). The
-        # explicit --profile keeps the install aligned with the /root/.nix-profile
-        # symlink resolution below, which points to /nix/var/nix/profiles/default.
-        nix profile install --profile /nix/var/nix/profiles/default nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#coreutils nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs nixpkgs#e2fsprogs --extra-experimental-features "nix-command flakes" --option connect-timeout 15 --option stalled-download-timeout 60 --option download-attempts 2
+        nix profile install nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#coreutils nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs nixpkgs#e2fsprogs --extra-experimental-features "nix-command flakes" --option connect-timeout 15 --option stalled-download-timeout 60 --option download-attempts 2
     fi
-    # Put the essentials on PATH by their concrete /nix/store path, not via the
-    # /root/.nix-profile symlink. setup_nix_volume (§2) remounts the persistent
-    # volume over /nix, replacing /nix/var -- where the profile generation
-    # pointer lives -- so the symlink would dangle afterwards. The resolved
-    # store path survives because setup_nix_volume merges the freshly built
-    # image store onto the volume before remounting; it also keeps bash's
-    # command hash (e.g. mkdir) pointing at a path that still exists. The
-    # fallback covers the rare case where the install above was skipped.
-    local essentials_bin
-    essentials_bin="$(readlink -f /root/.nix-profile/bin 2>/dev/null || echo /root/.nix-profile/bin)"
-    export PATH="$essentials_bin:$PATH"
+    local essentials_path
+    essentials_path="$(essentials_profile_path)"
+    if [ -n "$essentials_path" ]; then
+        export PATH="$essentials_path:$PATH"
+    fi
 }
 
 # §2: Setup dedicated Nix volume.

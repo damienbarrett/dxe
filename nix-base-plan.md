@@ -359,10 +359,21 @@ FROM nixos/nix:2.31.5@sha256:<manifest-list digest, re-queried at implementation
   `setup_nix_volume` — on the official image a plain root `nix profile install`
   targets `/nix/var/nix/profiles/per-user/root/profile` (not on PATH, not what
   `install_essentials`' `/root/.nix-profile` resolution sees), so the installed
-  essentials were unreachable; fixed by installing with an explicit
-  `--profile /nix/var/nix/profiles/default` (verified against the pinned image).
-  This falsifies the "shebang and useradd are the only hard breakages" hypothesis
-  exactly the way the canary gate was designed to catch.
+  essentials were unreachable. This falsifies the "shebang and useradd are the
+  only hard breakages" hypothesis exactly the way the canary gate was designed
+  to catch. The interim fix — pinning the install with an explicit
+  `--profile /nix/var/nix/profiles/default` — failed a second canary: that
+  profile already holds the image's own package environment at priority 5, so
+  the essentials collide with it at an equal-priority tie, and the blanket
+  `--priority` override tried to break that tie instead broke nixpkgs' own
+  meta-priority de-confliction *between* essentials-list packages (a
+  `shadow`/`util-linux` man-page tie on `chfn.1.gz`). The resolution that
+  passed both canaries keeps the stock, conflict-free `nix profile install`
+  (no `--profile`, no `--priority`) and instead generalizes PATH derivation:
+  `essentials_profile_path` iterates every profile-bin candidate that Nix
+  might have used (per-user root profile, XDG state profile, legacy
+  `~/.nix-profile`), resolving each existing one with `readlink -f` so the
+  concrete `/nix/store` paths survive the `/nix` remount in `setup_nix_volume`.
 - **Temporary old-base guard (pass 1 / F-06, revised in pass 2) — two
   sites, one invariant**: fail fast with an explicit message when
   `/bin/bash` exists (`-e` or `-L`, catching a dangling symlink) — the

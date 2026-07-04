@@ -48,8 +48,94 @@ assert_file_contains "$BOOTSTRAP" "ensure_nix_ownership" "bootstrap centralizes 
 assert_file_contains "$BOOTSTRAP" "stat -c '%u:%g'" "bootstrap verifies Nix ownership marker owner"
 assert_file_contains "$BOOTSTRAP" "chown dx:dx \"\$sentinel\"" "bootstrap marks repaired Nix ownership as dx-owned"
 
-# Test: bootstrap installs essentials into the default profile the image PATH resolves
-assert_file_contains "$BOOTSTRAP" "nix profile install --profile /nix/var/nix/profiles/default" "bootstrap installs essentials into the default profile the image PATH resolves"
+# Test: bootstrap keeps the stock, conflict-free essentials install. A prior
+# fix pinned --profile /nix/var/nix/profiles/default, but that profile already
+# holds the image's package env at priority 5, and a blanket --priority
+# override to break the tie broke nixpkgs' own meta-priority de-confliction
+# between packages in the essentials list (see nix-base-plan.md).
+assert_file_not_contains "$BOOTSTRAP" "nix profile install --profile" "bootstrap keeps the stock conflict-free essentials install"
+
+# Behavioral tests: essentials_profile_path resolves whichever profile
+# candidates actually exist under DX_ESSENTIALS_ROOT to their concrete
+# /nix/store paths, colon-joined, per-user profile first. This is the
+# generalized PATH derivation that replaces the --profile pin above.
+ESSENTIALS_FUNCTIONS="$(mktemp)"
+sed '/^# Main$/,$d' "$BOOTSTRAP" > "$ESSENTIALS_FUNCTIONS"
+
+# (a) Only the per-user candidate exists -> output is exactly that resolved path.
+# The root itself is canonicalized (readlink -f) before use: mktemp -d can
+# hand back a path that is itself under a symlink (e.g. macOS /tmp ->
+# /private/tmp), and essentials_profile_path's own readlink -f would resolve
+# that too, so the expected value must be built from the same canonical base.
+ESSENTIALS_ROOT_A="$(mktemp -d)"
+ESSENTIALS_ROOT_A="$(readlink -f "$ESSENTIALS_ROOT_A")"
+mkdir -p "$ESSENTIALS_ROOT_A/nix/var/nix/profiles/per-user/root/profile/bin"
+set +e
+ESSENTIALS_OUT_A="$(
+    (
+        source "$ESSENTIALS_FUNCTIONS"
+        DX_ESSENTIALS_ROOT="$ESSENTIALS_ROOT_A"
+        essentials_profile_path
+    )
+)"
+set -e
+if [ "$ESSENTIALS_OUT_A" = "$ESSENTIALS_ROOT_A/nix/var/nix/profiles/per-user/root/profile/bin" ]; then
+    test_pass "essentials_profile_path resolves the sole existing per-user candidate"
+else
+    test_fail "essentials_profile_path resolves the sole existing per-user candidate"
+fi
+rm -rf "$ESSENTIALS_ROOT_A"
+
+# (b) Per-user AND legacy .nix-profile candidates exist, with the legacy one a
+# symlink to another dir -> output is both, colon-joined, per-user first, and
+# the symlinked one appears as its readlink -f resolved target. The root is
+# canonicalized up front for the same reason as (a).
+ESSENTIALS_ROOT_B="$(mktemp -d)"
+ESSENTIALS_ROOT_B="$(readlink -f "$ESSENTIALS_ROOT_B")"
+mkdir -p "$ESSENTIALS_ROOT_B/nix/var/nix/profiles/per-user/root/profile/bin"
+mkdir -p "$ESSENTIALS_ROOT_B/legacy-target/bin"
+mkdir -p "$ESSENTIALS_ROOT_B/root"
+# .nix-profile symlinks to the profile directory itself (which contains bin/),
+# mirroring the real /root/.nix-profile -> profile generation link -- not
+# directly to a bin/ directory.
+ln -s "$ESSENTIALS_ROOT_B/legacy-target" "$ESSENTIALS_ROOT_B/root/.nix-profile"
+ESSENTIALS_EXPECTED_B="$ESSENTIALS_ROOT_B/nix/var/nix/profiles/per-user/root/profile/bin:$ESSENTIALS_ROOT_B/legacy-target/bin"
+set +e
+ESSENTIALS_OUT_B="$(
+    (
+        source "$ESSENTIALS_FUNCTIONS"
+        DX_ESSENTIALS_ROOT="$ESSENTIALS_ROOT_B"
+        essentials_profile_path
+    )
+)"
+set -e
+if [ "$ESSENTIALS_OUT_B" = "$ESSENTIALS_EXPECTED_B" ]; then
+    test_pass "essentials_profile_path joins per-user and resolved legacy symlink candidates, per-user first"
+else
+    test_fail "essentials_profile_path joins per-user and resolved legacy symlink candidates, per-user first"
+fi
+rm -rf "$ESSENTIALS_ROOT_B"
+
+# (c) No candidate exists -> output is empty and exit status 0.
+ESSENTIALS_ROOT_C="$(mktemp -d)"
+set +e
+ESSENTIALS_OUT_C="$(
+    (
+        source "$ESSENTIALS_FUNCTIONS"
+        DX_ESSENTIALS_ROOT="$ESSENTIALS_ROOT_C"
+        essentials_profile_path
+    )
+)"
+ESSENTIALS_STATUS_C=$?
+set -e
+if [ "$ESSENTIALS_STATUS_C" -eq 0 ] && [ -z "$ESSENTIALS_OUT_C" ]; then
+    test_pass "essentials_profile_path prints nothing and exits 0 when no candidate exists"
+else
+    test_fail "essentials_profile_path prints nothing and exits 0 when no candidate exists"
+fi
+rm -rf "$ESSENTIALS_ROOT_C"
+
+rm -f "$ESSENTIALS_FUNCTIONS"
 
 # Test: Home Manager activation is bounded and retryable so Nix substitutes
 # cannot wedge the guest before sshd starts.
