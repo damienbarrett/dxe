@@ -26,24 +26,31 @@ fi
 
 echo "Copying $DX_CONTAINER_NAME:$SOURCE to $DEST"
 
-# Handle destination directory logic
-if [[ "$DEST" == */ ]] || [ -d "$DEST" ]; then
-    mkdir -p "$DEST"
-    if [ "$IS_DIR" -eq 1 ]; then
-        FINAL_DEST_DIR="$DEST"
+if [ "$IS_DIR" -eq 1 ]; then
+    # Directory: standard cp -r semantics. A destination ending in / or
+    # already an existing directory means "copy INTO it", landing at
+    # DEST/basename(SOURCE). Any other destination names the copy itself
+    # ("copy AS"), so extraction strips the leading basename(SOURCE)/ path
+    # component and SOURCE's contents land directly in DEST instead of a
+    # nested DEST/basename(SOURCE).
+    if [[ "$DEST" == */ ]] || [ -d "$DEST" ]; then
+        mkdir -p "$DEST"
+        container exec "$DX_CONTAINER_NAME" tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
+            | tar -xf - -C "$DEST"
     else
-        FINAL_DEST="$DEST/$(basename "$SOURCE")"
+        mkdir -p "$DEST"
+        container exec "$DX_CONTAINER_NAME" tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
+            | tar -xf - -C "$DEST" --strip-components=1
     fi
 else
-    FINAL_DEST="$DEST"
-    PARENT_DIR=$(dirname "$FINAL_DEST")
-    mkdir -p "$PARENT_DIR"
-fi
-
-if [ "$IS_DIR" -eq 1 ]; then
-    # For directory, we'll tar it from the container
-    container exec "$DX_CONTAINER_NAME" tar -C "$(dirname "$SOURCE")" -cf - "$(basename "$SOURCE")" | tar -xf - -C "${FINAL_DEST_DIR:-$(dirname "$FINAL_DEST")}"
-else
-    # For file, we'll cat it from the container
+    # File: land at DEST/basename(SOURCE) if DEST is/looks like a directory,
+    # otherwise DEST is the exact destination path.
+    if [[ "$DEST" == */ ]] || [ -d "$DEST" ]; then
+        mkdir -p "$DEST"
+        FINAL_DEST="$DEST/$(basename "$SOURCE")"
+    else
+        FINAL_DEST="$DEST"
+        mkdir -p "$(dirname "$FINAL_DEST")"
+    fi
     container exec "$DX_CONTAINER_NAME" cat "$SOURCE" > "$FINAL_DEST"
 fi

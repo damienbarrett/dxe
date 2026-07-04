@@ -1069,6 +1069,229 @@ else
     test_fail "dx-put handles missing arguments"
 fi
 
+# -----------------------------------------------------------------------------
+# dx-get / dx-put: directory copy-to-a-new-name and AppleDouble exclusion
+#
+# Both scripts tar basename(SOURCE) and used to always extract it verbatim,
+# so a destination naming a NEW directory (cp -r's "copy AS" case) landed in
+# the destination's PARENT instead of at the requested name. These tests
+# drive the real host tar/extract pipeline end to end against a stub
+# `container` and a fake guest filesystem rooted at a mktemp dir (never the
+# real dx-host container), matching the stub convention used above for
+# dx-start-container.
+# -----------------------------------------------------------------------------
+
+DX_GET="$BIN_DIR/dx-get"
+
+DX_XFER_TMP="$(mktemp -d)"
+DX_XFER_STUB_BIN="$DX_XFER_TMP/bin"
+DX_XFER_GUEST_ROOT="$DX_XFER_TMP/guest"
+DX_XFER_HOST="$DX_XFER_TMP/host"
+mkdir -p "$DX_XFER_STUB_BIN" "$DX_XFER_GUEST_ROOT" "$DX_XFER_HOST"
+
+cat > "$DX_XFER_STUB_BIN/container" <<'STUBEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Map a guest absolute path onto the fake guest filesystem rooted at
+# DX_STUB_GUEST_ROOT (strip the leading '/').
+strip_root() {
+    printf '%s' "${DX_STUB_GUEST_ROOT:?}/${1#/}"
+}
+
+if [ "${1:-}" != "exec" ]; then
+    echo "Unexpected container stub invocation (expected exec): $*" >&2
+    exit 2
+fi
+shift
+
+if [ "${1:-}" = "-i" ]; then
+    shift
+fi
+
+# Container name -- unused for routing here, just consumed.
+shift
+
+cmd="${1:-}"
+case "$cmd" in
+    "[")
+        flag="$2"
+        path="$3"
+        real="$(strip_root "$path")"
+        case "$flag" in
+            -e) [ -e "$real" ]; exit $? ;;
+            -d) [ -d "$real" ]; exit $? ;;
+            *) echo "Unexpected test-stub flag: $*" >&2; exit 2 ;;
+        esac
+        ;;
+    tar)
+        shift
+        # Translate the -C directory argument onto the fake guest root and
+        # run the real tar so archive streams actually move fixture data.
+        new_args=()
+        while [ $# -gt 0 ]; do
+            if [ "$1" = "-C" ]; then
+                new_args+=("-C" "$(strip_root "$2")")
+                shift 2
+            else
+                new_args+=("$1")
+                shift
+            fi
+        done
+        exec tar "${new_args[@]}"
+        ;;
+    cat)
+        shift
+        real="$(strip_root "$1")"
+        exec cat "$real"
+        ;;
+    chown)
+        # No `dx` user exists on the host; the chown step is a no-op success.
+        exit 0
+        ;;
+    bash)
+        shift
+        if [ "${1:-}" != "-c" ]; then
+            echo "Unexpected bash invocation: $*" >&2
+            exit 2
+        fi
+        script="$2"
+        shift 2
+        if [ "${1:-}" = "--" ]; then
+            shift
+        fi
+        real="$(strip_root "${1:-}")"
+        case "$script" in
+            *'cat > "$1"'*)
+                exec cat > "$real"
+                ;;
+            *mkdir*)
+                # dx-put's "[ -d ] || (mkdir -p && chown)" helper: perform the
+                # mkdir against the fake guest root; the chown half is a
+                # deliberate no-op (no `dx` user on the host).
+                [ -d "$real" ] || mkdir -p "$real"
+                exit 0
+                ;;
+            *)
+                echo "Unexpected bash -c script: $script" >&2
+                exit 2
+                ;;
+        esac
+        ;;
+    *)
+        echo "Unexpected container stub arguments: $*" >&2
+        exit 2
+        ;;
+esac
+STUBEOF
+chmod +x "$DX_XFER_STUB_BIN/container"
+
+dx_xfer_get() {
+    env \
+        PATH="$DX_XFER_STUB_BIN:$PATH" \
+        DX_CONTAINER_NAME=dx-xfer-test \
+        DX_STUB_GUEST_ROOT="$DX_XFER_GUEST_ROOT" \
+        "$DX_GET" "$@"
+}
+
+dx_xfer_put() {
+    env \
+        PATH="$DX_XFER_STUB_BIN:$PATH" \
+        DX_CONTAINER_NAME=dx-xfer-test \
+        DX_STUB_GUEST_ROOT="$DX_XFER_GUEST_ROOT" \
+        "$DX_PUT" "$@"
+}
+
+# --- dx-get fixtures: a fake /persist in the guest -------------------------
+rm -rf "${DX_XFER_GUEST_ROOT:?}/persist"
+mkdir -p "$DX_XFER_GUEST_ROOT/persist/subdir"
+echo "one" > "$DX_XFER_GUEST_ROOT/persist/file1.txt"
+echo "two" > "$DX_XFER_GUEST_ROOT/persist/subdir/file2.txt"
+
+# dx-get dir -> new destination name (the headline bug: must be red first)
+DX_XFER_DEST1="$DX_XFER_HOST/dest1"
+mkdir -p "$DX_XFER_DEST1"
+if dx_xfer_get /persist "$DX_XFER_DEST1/backup-x" >/dev/null 2>&1 \
+    && [ -f "$DX_XFER_DEST1/backup-x/file1.txt" ] \
+    && [ -f "$DX_XFER_DEST1/backup-x/subdir/file2.txt" ] \
+    && [ ! -e "$DX_XFER_DEST1/persist" ]; then
+    test_pass "dx-get copies a directory to a new destination name, not into its parent"
+else
+    test_fail "dx-get copies a directory to a new destination name, not into its parent"
+fi
+
+# dx-get dir -> existing destination directory (copy INTO it)
+DX_XFER_DEST2="$DX_XFER_HOST/dest2"
+mkdir -p "$DX_XFER_DEST2/into"
+if dx_xfer_get /persist "$DX_XFER_DEST2/into" >/dev/null 2>&1 \
+    && [ -f "$DX_XFER_DEST2/into/persist/file1.txt" ] \
+    && [ -f "$DX_XFER_DEST2/into/persist/subdir/file2.txt" ]; then
+    test_pass "dx-get copies a directory into an existing destination directory"
+else
+    test_fail "dx-get copies a directory into an existing destination directory"
+fi
+
+# dx-get dir -> trailing-slash destination (copy INTO it)
+DX_XFER_DEST3="$DX_XFER_HOST/dest3"
+if dx_xfer_get /persist "$DX_XFER_DEST3/slash/" >/dev/null 2>&1 \
+    && [ -f "$DX_XFER_DEST3/slash/persist/file1.txt" ] \
+    && [ -f "$DX_XFER_DEST3/slash/persist/subdir/file2.txt" ]; then
+    test_pass "dx-get copies a directory into a trailing-slash destination"
+else
+    test_fail "dx-get copies a directory into a trailing-slash destination"
+fi
+
+# dx-get file -> new destination name
+DX_XFER_DEST4="$DX_XFER_HOST/dest4"
+mkdir -p "$DX_XFER_DEST4"
+if dx_xfer_get /persist/file1.txt "$DX_XFER_DEST4/renamed.txt" >/dev/null 2>&1 \
+    && [ -f "$DX_XFER_DEST4/renamed.txt" ] \
+    && [ "$(cat "$DX_XFER_DEST4/renamed.txt")" = "one" ]; then
+    test_pass "dx-get copies a file to an exact new destination path"
+else
+    test_fail "dx-get copies a file to an exact new destination path"
+fi
+
+# --- dx-put fixtures: a fake host source tree ------------------------------
+mkdir -p "$DX_XFER_HOST/src/git"
+echo "obj" > "$DX_XFER_HOST/src/git/objects.txt"
+
+# dx-put dir -> new destination name with a differing basename
+rm -rf "${DX_XFER_GUEST_ROOT:?}/persist"
+mkdir -p "$DX_XFER_GUEST_ROOT/persist"
+if dx_xfer_put "$DX_XFER_HOST/src/git" /persist/foo >/dev/null 2>&1 \
+    && [ -f "$DX_XFER_GUEST_ROOT/persist/foo/objects.txt" ] \
+    && [ ! -e "$DX_XFER_GUEST_ROOT/persist/git" ]; then
+    test_pass "dx-put copies a directory to a new destination name, not by source basename"
+else
+    test_fail "dx-put copies a directory to a new destination name, not by source basename"
+fi
+
+# dx-put dir -> trailing-slash destination (copy INTO it)
+rm -rf "${DX_XFER_GUEST_ROOT:?}/persist/inbox"
+if dx_xfer_put "$DX_XFER_HOST/src/git" /persist/inbox/ >/dev/null 2>&1 \
+    && [ -f "$DX_XFER_GUEST_ROOT/persist/inbox/git/objects.txt" ]; then
+    test_pass "dx-put copies a directory into a trailing-slash destination"
+else
+    test_fail "dx-put copies a directory into a trailing-slash destination"
+fi
+
+# dx-put excludes macOS AppleDouble sidecar files (a real file, deterministic
+# -- no need to make bsdtar actually generate one)
+mkdir -p "$DX_XFER_HOST/src/withmeta"
+echo "keep" > "$DX_XFER_HOST/src/withmeta/real.txt"
+echo "meta" > "$DX_XFER_HOST/src/withmeta/._probe"
+rm -rf "${DX_XFER_GUEST_ROOT:?}/persist/meta-dest"
+if dx_xfer_put "$DX_XFER_HOST/src/withmeta" /persist/meta-dest >/dev/null 2>&1 \
+    && [ -f "$DX_XFER_GUEST_ROOT/persist/meta-dest/real.txt" ] \
+    && [ -z "$(find "$DX_XFER_GUEST_ROOT/persist/meta-dest" -name '._*')" ]; then
+    test_pass "dx-put excludes macOS AppleDouble sidecar files from the guest"
+else
+    test_fail "dx-put excludes macOS AppleDouble sidecar files from the guest"
+fi
+
+rm -rf "$DX_XFER_TMP"
+
 DX_SYNC_BOOTSTRAP="$BIN_DIR/dx-sync-bootstrap"
 assert_file_exists "$DX_SYNC_BOOTSTRAP" "dx-sync-bootstrap exists"
 assert_file_contains "$DX_SYNC_BOOTSTRAP" "DX_BOOTSTRAP_SOURCE" "dx-sync-bootstrap reads from configurable source"

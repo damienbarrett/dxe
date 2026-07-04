@@ -19,26 +19,48 @@ fi
 
 echo "Copying $SOURCE to $DX_CONTAINER_NAME:$DEST"
 
-# Handle destination directory logic in a more robust way
-if [[ "$DEST" == */ ]]; then
-    # Create the directory first
-    container exec "$DX_CONTAINER_NAME" bash -c "[ -d \"\$1\" ] || (mkdir -p \"\$1\" && chown dx:dx \"\$1\")" -- "$DEST"
-    # Destination path for the file/dir itself
-    FINAL_DEST="${DEST%/}/$(basename "$SOURCE")"
-else
-    FINAL_DEST="$DEST"
-fi
-
-# Ensure parent directory exists
-PARENT_DIR=$(dirname "$FINAL_DEST")
-container exec "$DX_CONTAINER_NAME" bash -c "[ -d \"\$1\" ] || (mkdir -p \"\$1\" && chown dx:dx \"\$1\")" -- "$PARENT_DIR"
+# Idempotently create a guest directory and hand ownership to dx.
+dx_put_ensure_guest_dir() {
+    local guest_dir="$1"
+    container exec "$DX_CONTAINER_NAME" bash -c '[ -d "$1" ] || (mkdir -p "$1" && chown dx:dx "$1")' -- "$guest_dir"
+}
 
 if [ -d "$SOURCE" ]; then
-    # For directory, we'll tar it
-    tar -C "$(dirname "$SOURCE")" -cf - "$(basename "$SOURCE")" | container exec -i "$DX_CONTAINER_NAME" tar -xf - -C "$PARENT_DIR"
+    # Directory: standard cp -r semantics. A destination ending in / or
+    # already an existing directory in the guest means "copy INTO it",
+    # landing at DEST/basename(SOURCE). Any other destination names the copy
+    # itself ("copy AS"), so extraction strips the leading basename(SOURCE)/
+    # path component and SOURCE's contents land directly in DEST instead of
+    # a nested DEST/basename(SOURCE).
+    if [[ "$DEST" == */ ]] || container exec "$DX_CONTAINER_NAME" [ -d "$DEST" ]; then
+        TARGET_DIR="${DEST%/}"
+        [ -n "$TARGET_DIR" ] || TARGET_DIR="/"
+        FINAL_DEST="$TARGET_DIR/$(basename "$SOURCE")"
+        dx_put_ensure_guest_dir "$TARGET_DIR"
+        # macOS AppleDouble sidecar files (._*) must never reach the guest: a
+        # stray ._pack-*.idx alongside a real git pack corrupts git's object
+        # store ("index file too small"). Exclude them on every put.
+        COPYFILE_DISABLE=1 tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
+            | container exec -i "$DX_CONTAINER_NAME" tar -xf - -C "$TARGET_DIR"
+    else
+        FINAL_DEST="$DEST"
+        dx_put_ensure_guest_dir "$DEST"
+        COPYFILE_DISABLE=1 tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
+            | container exec -i "$DX_CONTAINER_NAME" tar -xf - -C "$DEST" --strip-components=1
+    fi
     container exec "$DX_CONTAINER_NAME" chown -R dx:dx "$FINAL_DEST"
 else
-    # For file, we'll just cat it
-    container exec -i "$DX_CONTAINER_NAME" bash -c "cat > \"\$1\"" -- "$FINAL_DEST" < "$SOURCE"
+    # File: land at DEST/basename(SOURCE) if DEST is/looks like a directory
+    # in the guest, otherwise DEST is the exact destination path.
+    if [[ "$DEST" == */ ]] || container exec "$DX_CONTAINER_NAME" [ -d "$DEST" ]; then
+        TARGET_DIR="${DEST%/}"
+        [ -n "$TARGET_DIR" ] || TARGET_DIR="/"
+        FINAL_DEST="$TARGET_DIR/$(basename "$SOURCE")"
+        dx_put_ensure_guest_dir "$TARGET_DIR"
+    else
+        FINAL_DEST="$DEST"
+        dx_put_ensure_guest_dir "$(dirname "$FINAL_DEST")"
+    fi
+    container exec -i "$DX_CONTAINER_NAME" bash -c 'cat > "$1"' -- "$FINAL_DEST" < "$SOURCE"
     container exec "$DX_CONTAINER_NAME" chown dx:dx "$FINAL_DEST"
 fi
