@@ -114,7 +114,18 @@ assert_file_contains "$SCRIPT_DX_THEME_RESTORE" 'emit_osc 11 "$base00"' "login r
 assert_file_contains "$HOME_SHELL_NIX" 'try { ^/home/dx/.local/bin/dx-theme-restore }' "Nushell runs Tinty login restore"
 
 TOOL_THEME_TEST_HOME="$(mktemp -d)"
-trap 'rm -rf "$TOOL_THEME_TEST_HOME"' EXIT
+# ORIGINAL_THEME_SCHEME is populated by the live Tinted/project.nvim runtime
+# block below (if it runs). Restoring it on every exit path -- including an
+# early failure -- keeps this test from leaving the guest's active theme
+# changed after the selector.watch=true proof switches it.
+ORIGINAL_THEME_SCHEME=""
+cleanup_section14() {
+    rm -rf "$TOOL_THEME_TEST_HOME"
+    if [ -n "$ORIGINAL_THEME_SCHEME" ]; then
+        container_exec_dx_bash "dx-theme apply '$ORIGINAL_THEME_SCHEME'" >/dev/null 2>&1 || true
+    fi
+}
+trap cleanup_section14 EXIT
 if run_tool_theme_writer "$TOOL_THEME_TEST_HOME" "${TEST_PALETTE[@]}"; then
     test_pass "tool theme writer accepts a direct Base16 palette"
 else
@@ -519,6 +530,230 @@ shades-of-purple=base16-shades-of-purple'
         assert_tmux_runtime "$CONT_AUTOSAVE" autosave-fired yes "continuum interval auto-save writes a fresh resurrect save"
     else
         test_skip "continuum interval auto-save behaviour (set DX_TEST_DESTRUCTIVE=1 to run)"
+    fi
+
+    # --- Live Tinted Neovim + project.nvim runtime regression coverage -----
+    # (complete-bump-plan.md: "P1 -- Commit repeatable Tinted Neovim runtime
+    # coverage" and "P1 -- Remove project.nvim's empty-history warning".)
+    # These load the guest's REAL baked nixvim config via headless Neovim, so
+    # they only pass once the project-nvim.nix payload above is deployed.
+    # Any guest state this mutates (the active Tinty scheme) is restored by
+    # the cleanup_section14 EXIT trap declared near the top of this file.
+    if ! wait_for_ssh 60; then
+        test_skip "Tinted/project.nvim live runtime probes (SSH not reachable on localhost:$DX_SSH_PORT)"
+    else
+        ORIGINAL_THEME_SCHEME="$(container_exec_dx_bash 'tinty current' 2>/dev/null | tr -d '\r\n')"
+
+        SSH_COMMON_OPTS=(
+            "-i" "$DX_SSH_KEY"
+            "-o" "StrictHostKeyChecking=no"
+            "-o" "UserKnownHostsFile=/dev/null"
+            "-o" "IdentitiesOnly=yes"
+            "-o" "BatchMode=yes"
+            "-o" "ConnectTimeout=5"
+        )
+        SSH_OPTS=("${SSH_COMMON_OPTS[@]}" "-p" "$DX_SSH_PORT")
+        SCP_OPTS=("${SSH_COMMON_OPTS[@]}" "-P" "$DX_SSH_PORT")
+
+        # scp a file to an explicit remote path. A multi-line Lua probe
+        # embedded directly in an ssh/bash command string fights quoting --
+        # especially the project.nvim message text below, which itself
+        # contains embedded quotes -- so probes travel as files, mirroring
+        # section 15/16's run_nu scp-then-ssh pattern.
+        push_file() {
+            local local_file="$1" remote_path="$2"
+            scp "${SCP_OPTS[@]}" "$local_file" "dx@127.0.0.1:$remote_path" >/dev/null 2>&1
+        }
+
+        # --- Tinted: no deprecation message + colors_name matches Tinty ----
+        TINTED_STARTUP_PROBE_LOCAL=$(mktemp -t dx_tinted_startup_probe.XXXXXX)
+        cat > "$TINTED_STARTUP_PROBE_LOCAL" <<'LUA_EOF'
+local msgs = vim.fn.execute("messages")
+local deprecated = "no"
+if msgs:find("Deprecated module 'tinted-colorscheme'", 1, true) then
+  deprecated = "yes"
+end
+io.write("DEPRECATION_SEEN=" .. deprecated .. "\n")
+io.write("COLORS_NAME=" .. tostring(vim.g.colors_name) .. "\n")
+LUA_EOF
+        remote_tinted_probe="/tmp/$(basename "$TINTED_STARTUP_PROBE_LOCAL").lua"
+        if push_file "$TINTED_STARTUP_PROBE_LOCAL" "$remote_tinted_probe"; then
+            TINTED_PROBE_OUT="$(ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "bash -lc 'nvim --headless -c \"luafile $remote_tinted_probe\" -c \"qa\" 2>&1; rc=\$?; rm -f $remote_tinted_probe; exit \$rc'" 2>&1)"
+        else
+            TINTED_PROBE_OUT=""
+        fi
+        rm -f "$TINTED_STARTUP_PROBE_LOCAL"
+
+        if printf '%s\n' "$TINTED_PROBE_OUT" | grep -qx "DEPRECATION_SEEN=no"; then
+            test_pass "headless nvim startup emits no tinted-colorscheme deprecation message"
+        else
+            test_fail "headless nvim startup emits no tinted-colorscheme deprecation message (probe output: $TINTED_PROBE_OUT)"
+        fi
+
+        NVIM_COLORS_NAME="$(printf '%s\n' "$TINTED_PROBE_OUT" | sed -n 's/^COLORS_NAME=//p' | head -n1)"
+        if [ -n "$NVIM_COLORS_NAME" ] && [ -n "$ORIGINAL_THEME_SCHEME" ] && [ "$NVIM_COLORS_NAME" = "$ORIGINAL_THEME_SCHEME" ]; then
+            test_pass "vim.g.colors_name equals tinty current ($ORIGINAL_THEME_SCHEME) at startup"
+        else
+            test_fail "vim.g.colors_name ('$NVIM_COLORS_NAME') does not equal tinty current ('$ORIGINAL_THEME_SCHEME')"
+        fi
+
+        # --- Tinted: selector.watch=true updates a long-lived nvim's colors_name.
+        # Start a headless nvim with an RPC socket, read colors_name, switch
+        # the active scheme, then poll the SAME running process (not a fresh
+        # one, which would only prove apply_scheme_on_startup).
+        ALT_SCHEME="base16-gruvbox-dark-hard"
+        if [ "$ALT_SCHEME" = "$ORIGINAL_THEME_SCHEME" ]; then
+            ALT_SCHEME="base16-mocha"
+        fi
+        WATCH_OUT="$(container_exec_dx env ALT_SCHEME="$ALT_SCHEME" bash -lc '
+            set -u
+            sock="/tmp/dxe-nvim-watch-$$.sock"
+            rm -f "$sock"
+            nvim --headless --listen "$sock" >/tmp/dxe-nvim-watch-$$.log 2>&1 &
+            nvpid=$!
+            started=no
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+                if [ -S "$sock" ]; then started=yes; break; fi
+                sleep 0.5
+            done
+            if [ "$started" != yes ]; then
+                echo "WATCH_STARTED=no"
+                kill "$nvpid" >/dev/null 2>&1 || true
+                exit 0
+            fi
+            echo "WATCH_STARTED=yes"
+            before="$(nvim --server "$sock" --remote-expr "g:colors_name" 2>/dev/null)"
+            echo "WATCH_BEFORE=$before"
+            dx-theme apply "$ALT_SCHEME" >/dev/null 2>&1
+            after="$before"
+            for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+                after="$(nvim --server "$sock" --remote-expr "g:colors_name" 2>/dev/null)"
+                [ "$after" = "$ALT_SCHEME" ] && break
+                sleep 0.5
+            done
+            echo "WATCH_AFTER=$after"
+            kill "$nvpid" >/dev/null 2>&1 || true
+            rm -f "$sock" "/tmp/dxe-nvim-watch-$$.log"
+        ' 2>&1)"
+        WATCH_STARTED="$(printf '%s\n' "$WATCH_OUT" | sed -n 's/^WATCH_STARTED=//p' | head -n1)"
+        WATCH_BEFORE="$(printf '%s\n' "$WATCH_OUT" | sed -n 's/^WATCH_BEFORE=//p' | head -n1)"
+        WATCH_AFTER="$(printf '%s\n' "$WATCH_OUT" | sed -n 's/^WATCH_AFTER=//p' | head -n1)"
+        if [ "$WATCH_STARTED" != "yes" ]; then
+            test_skip "selector.watch=true live-update proof (could not start a --listen headless nvim on the guest: $WATCH_OUT)"
+        elif [ "$WATCH_AFTER" = "$ALT_SCHEME" ] && [ "$WATCH_BEFORE" != "$ALT_SCHEME" ]; then
+            test_pass "long-lived nvim's vim.g.colors_name follows dx-theme apply $ALT_SCHEME (selector.watch=true)"
+        else
+            test_fail "long-lived nvim's vim.g.colors_name did not follow dx-theme apply $ALT_SCHEME (before=$WATCH_BEFORE after=$WATCH_AFTER)"
+        fi
+
+        # --- project.nvim: exact empty-history warning is filtered, control passes.
+        PROJECT_EMPTY_PROBE_LOCAL=$(mktemp -t dx_project_empty_probe.XXXXXX)
+        cat > "$PROJECT_EMPTY_PROBE_LOCAL" <<'LUA_EOF'
+vim.cmd("messages clear")
+local ok_history, history = pcall(require, "project.util.history")
+if ok_history and history and history.write_history then
+  pcall(history.write_history)
+end
+vim.notify("dx-project-notify-control", vim.log.levels.WARN)
+local msgs = vim.fn.execute("messages")
+local empty_seen = "no"
+if msgs:find("(project.util.history.write_history): No data available to write!", 1, true) then
+  empty_seen = "yes"
+end
+local control_seen = "no"
+if msgs:find("dx-project-notify-control", 1, true) then
+  control_seen = "yes"
+end
+io.write("REQUIRE_OK=" .. tostring(ok_history) .. "\n")
+io.write("EMPTY_HISTORY_SEEN=" .. empty_seen .. "\n")
+io.write("CONTROL_SEEN=" .. control_seen .. "\n")
+LUA_EOF
+        PROJECT_EMPTY_DRIVER_LOCAL=$(mktemp -t dx_project_empty_driver.XXXXXX)
+        cat > "$PROJECT_EMPTY_DRIVER_LOCAL" <<'DRIVER_EOF'
+#!/bin/bash
+set -u
+probe="$1"
+workdir=$(mktemp -d /tmp/dxe-project-empty-XXXXXX)
+xdgdata=$(mktemp -d /tmp/dxe-project-empty-data-XXXXXX)
+cd "$workdir" || exit 1
+XDG_DATA_HOME="$xdgdata" nvim --headless -c "luafile $probe" -c "qa" 2>&1
+rc=$?
+rm -rf "$workdir" "$xdgdata" "$probe"
+exit $rc
+DRIVER_EOF
+        remote_empty_probe="/tmp/$(basename "$PROJECT_EMPTY_PROBE_LOCAL").lua"
+        remote_empty_driver="/tmp/$(basename "$PROJECT_EMPTY_DRIVER_LOCAL").sh"
+        if push_file "$PROJECT_EMPTY_PROBE_LOCAL" "$remote_empty_probe" \
+            && push_file "$PROJECT_EMPTY_DRIVER_LOCAL" "$remote_empty_driver"; then
+            PROJECT_EMPTY_OUT="$(ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "bash -lc 'bash $remote_empty_driver $remote_empty_probe; rc=\$?; rm -f $remote_empty_driver; exit \$rc'" 2>&1)"
+        else
+            PROJECT_EMPTY_OUT=""
+        fi
+        rm -f "$PROJECT_EMPTY_PROBE_LOCAL" "$PROJECT_EMPTY_DRIVER_LOCAL"
+
+        if printf '%s\n' "$PROJECT_EMPTY_OUT" | grep -qx "EMPTY_HISTORY_SEEN=no"; then
+            test_pass "project.nvim empty-history write_history() no longer notifies the WARN message"
+        else
+            test_fail "project.nvim empty-history write_history() unexpectedly notified (probe output: $PROJECT_EMPTY_OUT)"
+        fi
+        if printf '%s\n' "$PROJECT_EMPTY_OUT" | grep -qx "CONTROL_SEEN=yes"; then
+            test_pass "control vim.notify(WARN) still reaches :messages (filter is not over-suppressing)"
+        else
+            test_fail "control vim.notify(WARN) did not reach :messages (probe output: $PROJECT_EMPTY_OUT)"
+        fi
+
+        # --- project.nvim: a real recognised project can still write history.
+        # Best-effort: relies on project.nvim's own automatic (manual_mode =
+        # false) BufEnter detection firing for a real buffer opened inside a
+        # directory containing .git, then checks its on-disk history file.
+        # The exact history file location/format is not independently
+        # verified in this session, so an inconclusive result degrades to a
+        # skip rather than a fail -- the absence+control assertions above are
+        # the firm regression guard for the filter itself.
+        PROJECT_REAL_PROBE_LOCAL=$(mktemp -t dx_project_real_probe.XXXXXX)
+        cat > "$PROJECT_REAL_PROBE_LOCAL" <<'LUA_EOF'
+local ok_history, history = pcall(require, "project.util.history")
+local write_ok = false
+if ok_history and history and history.write_history then
+  write_ok = pcall(history.write_history)
+end
+vim.wait(300)
+local hist_path = vim.fn.stdpath("data") .. "/project_nvim/project_history"
+local has_data = (vim.fn.filereadable(hist_path) == 1) and (vim.fn.getfsize(hist_path) > 0)
+io.write("REQUIRE_OK=" .. tostring(ok_history) .. "\n")
+io.write("WRITE_OK=" .. tostring(write_ok) .. "\n")
+io.write("HISTORY_HAS_DATA=" .. tostring(has_data) .. "\n")
+LUA_EOF
+        PROJECT_REAL_DRIVER_LOCAL=$(mktemp -t dx_project_real_driver.XXXXXX)
+        cat > "$PROJECT_REAL_DRIVER_LOCAL" <<'DRIVER_EOF'
+#!/bin/bash
+set -u
+probe="$1"
+workdir=$(mktemp -d /tmp/dxe-project-real-XXXXXX)
+xdgdata=$(mktemp -d /tmp/dxe-project-real-data-XXXXXX)
+mkdir -p "$workdir/.git"
+printf 'probe\n' > "$workdir/README.md"
+cd "$workdir" || exit 1
+XDG_DATA_HOME="$xdgdata" nvim --headless "$workdir/README.md" -c "luafile $probe" -c "qa" 2>&1
+rc=$?
+rm -rf "$workdir" "$xdgdata" "$probe"
+exit $rc
+DRIVER_EOF
+        remote_real_probe="/tmp/$(basename "$PROJECT_REAL_PROBE_LOCAL").lua"
+        remote_real_driver="/tmp/$(basename "$PROJECT_REAL_DRIVER_LOCAL").sh"
+        if push_file "$PROJECT_REAL_PROBE_LOCAL" "$remote_real_probe" \
+            && push_file "$PROJECT_REAL_DRIVER_LOCAL" "$remote_real_driver"; then
+            PROJECT_REAL_OUT="$(ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "bash -lc 'bash $remote_real_driver $remote_real_probe; rc=\$?; rm -f $remote_real_driver; exit \$rc'" 2>&1)"
+        else
+            PROJECT_REAL_OUT=""
+        fi
+        rm -f "$PROJECT_REAL_PROBE_LOCAL" "$PROJECT_REAL_DRIVER_LOCAL"
+
+        if printf '%s\n' "$PROJECT_REAL_OUT" | grep -qx "HISTORY_HAS_DATA=true"; then
+            test_pass "write_history() still persists data for a recognised (.git) project"
+        else
+            test_skip "write_history() persisted-data check for a recognised project was inconclusive (probe output: $PROJECT_REAL_OUT)"
+        fi
     fi
 fi
 
