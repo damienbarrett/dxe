@@ -401,6 +401,19 @@ FROM nixos/nix:2.31.5@sha256:<manifest-list digest, re-queried at implementation
   in `setup_nix_volume`. Deliberately linked at `/usr/bin/bash`, not
   `/bin/bash`: the latter remains `guard_old_base`'s signature and must
   never be created by this payload.
+- **Canary finding #5 (2026-07-04, reboot path)**: `install_essentials`
+  re-runs on every container boot by design (its steps are idempotent), but
+  its skip-gate (`command -v useradd`) used to run *before*
+  `essentials_profile_path`'s output was put on `PATH`. On the official base
+  the per-user profile is never on the image's default PATH, so every
+  reboot missed the previous boot's already-installed essentials, fell into
+  the install branch again, and its `nix profile install` collided with
+  that same profile's own earlier contents once the registry-resolved
+  package revision had moved on — crashing a warm boot that a fresh boot
+  had passed. Fixed by resolving and exporting the essentials PATH before
+  the skip-gate, and re-resolving it once more after a fresh install so the
+  newly installed tools are usable for the rest of bootstrap without
+  requiring another restart.
 - **Temporary old-base guard (pass 1 / F-06, revised in pass 2) — two
   sites, one invariant**: fail fast with an explicit message when
   `/bin/bash` exists (`-e` or `-L`, catching a dangling symlink) — the

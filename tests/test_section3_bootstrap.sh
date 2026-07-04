@@ -137,6 +137,104 @@ rm -rf "$ESSENTIALS_ROOT_C"
 
 rm -f "$ESSENTIALS_FUNCTIONS"
 
+# -----------------------------------------------------------------------------
+# Fifth canary finding (reboot path, 2026-07-04): every container boot
+# re-runs install_essentials (idempotent by design), but its skip-gate used to
+# run `command -v useradd` BEFORE essentials_profile_path's output was put on
+# PATH. On the official base the essentials profile is never on the image's
+# default PATH, so every reboot missed the previous boot's already-installed
+# tools, fell into the install branch again, and its `nix profile install`
+# collided with that same profile's own earlier contents once the
+# registry-resolved revision had moved on -- crashing a warm boot. Fixed by
+# resolving/exporting the essentials PATH before the gate, and re-resolving it
+# after a fresh install so newly installed tools are usable without another
+# restart. See nix-base-plan.md.
+# -----------------------------------------------------------------------------
+
+INSTALL_FUNCTIONS="$(mktemp)"
+sed '/^# Main$/,$d' "$BOOTSTRAP" > "$INSTALL_FUNCTIONS"
+
+# (a) REBOOT-SKIP: useradd already exists in the fixture's per-user profile
+# (simulating a completed install from a prior boot) but is NOT on the
+# inherited PATH -> install_essentials must resolve the essentials PATH
+# before the skip-gate, find useradd there, and never invoke `nix` at all (no
+# marker file created). The root is canonicalized (readlink -f) up front for
+# the same reason as the essentials_profile_path fixtures above: mktemp -d can
+# hand back a path that is itself under a symlink (e.g. macOS /tmp ->
+# /private/tmp).
+INSTALL_ROOT_A="$(mktemp -d)"
+INSTALL_ROOT_A="$(readlink -f "$INSTALL_ROOT_A")"
+INSTALL_PROFILE_BIN_A="$INSTALL_ROOT_A/nix/var/nix/profiles/per-user/root/profile/bin"
+mkdir -p "$INSTALL_PROFILE_BIN_A"
+printf '#!/bin/sh\nexit 0\n' > "$INSTALL_PROFILE_BIN_A/useradd"
+chmod +x "$INSTALL_PROFILE_BIN_A/useradd"
+INSTALL_MARKER_A="$(mktemp -u)"
+set +e
+INSTALL_RESOLVED_A="$(
+    (
+        source "$INSTALL_FUNCTIONS"
+        DX_ESSENTIALS_ROOT="$INSTALL_ROOT_A"
+        PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+        marker="$INSTALL_MARKER_A"
+        nix() { echo INVOKED > "$marker"; }
+        install_essentials
+        command -v useradd
+    )
+)"
+INSTALL_STATUS_A=$?
+set -e
+if [ "$INSTALL_STATUS_A" -eq 0 ] \
+    && [ ! -e "$INSTALL_MARKER_A" ] \
+    && [ "$INSTALL_RESOLVED_A" = "$INSTALL_PROFILE_BIN_A/useradd" ]; then
+    test_pass "install_essentials sees a prior boot's essentials profile before the skip-gate and does not reinstall"
+else
+    test_fail "install_essentials sees a prior boot's essentials profile before the skip-gate and does not reinstall"
+fi
+rm -rf "$INSTALL_ROOT_A"
+rm -f "$INSTALL_MARKER_A"
+
+# (b) FRESH-INSTALL: no useradd anywhere in the fixture profile -> the
+# skip-gate's initial command -v fails, the stubbed `nix` is invoked (marker
+# file created) and simulates a completed install by placing useradd in the
+# fixture's per-user profile bin. install_essentials must re-resolve the
+# essentials PATH afterward so useradd is usable immediately, without
+# requiring another container restart.
+INSTALL_ROOT_B="$(mktemp -d)"
+INSTALL_ROOT_B="$(readlink -f "$INSTALL_ROOT_B")"
+INSTALL_PROFILE_BIN_B="$INSTALL_ROOT_B/nix/var/nix/profiles/per-user/root/profile/bin"
+mkdir -p "$INSTALL_PROFILE_BIN_B"
+INSTALL_MARKER_B="$(mktemp -u)"
+set +e
+INSTALL_RESOLVED_B="$(
+    (
+        source "$INSTALL_FUNCTIONS"
+        DX_ESSENTIALS_ROOT="$INSTALL_ROOT_B"
+        PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+        marker="$INSTALL_MARKER_B"
+        profile_bin="$INSTALL_PROFILE_BIN_B"
+        nix() {
+            echo INVOKED > "$marker"
+            printf '#!/bin/sh\nexit 0\n' > "$profile_bin/useradd"
+            chmod +x "$profile_bin/useradd"
+        }
+        install_essentials >/dev/null
+        command -v useradd
+    )
+)"
+INSTALL_STATUS_B=$?
+set -e
+if [ "$INSTALL_STATUS_B" -eq 0 ] \
+    && [ -e "$INSTALL_MARKER_B" ] \
+    && [ "$INSTALL_RESOLVED_B" = "$INSTALL_PROFILE_BIN_B/useradd" ]; then
+    test_pass "install_essentials re-resolves the essentials PATH after a fresh install so useradd is immediately usable"
+else
+    test_fail "install_essentials re-resolves the essentials PATH after a fresh install so useradd is immediately usable"
+fi
+rm -rf "$INSTALL_ROOT_B"
+rm -f "$INSTALL_MARKER_B"
+
+rm -f "$INSTALL_FUNCTIONS"
+
 # Test: Home Manager activation is bounded and retryable so Nix substitutes
 # cannot wedge the guest before sshd starts.
 assert_file_contains "$BOOTSTRAP" "DX_GUEST_ACTIVATION_TIMEOUT" "bootstrap exposes a guest activation timeout"

@@ -51,6 +51,18 @@ essentials_profile_path() {
 
 # 1. Bootstrapping dependencies (Section 2/3)
 install_essentials() {
+    # The essentials profile lives off the image's default PATH (see
+    # essentials_profile_path above), so it must be resolved and exported
+    # BEFORE the skip-gate below runs. Every container boot re-executes this
+    # function; if the gate ran first, it would never see a previous boot's
+    # already-installed essentials and would re-run `nix profile install` on
+    # every restart, which can conflict with that same profile's own earlier
+    # contents once the registry-resolved package revision has moved on.
+    local essentials_path
+    essentials_path="$(essentials_profile_path)"
+    if [ -n "$essentials_path" ]; then
+        export PATH="$essentials_path:$PATH"
+    fi
     # Only install if shadow tools (like useradd) aren't available
     if ! command -v useradd >/dev/null 2>&1; then
         echo "Installing essential tools..."
@@ -60,11 +72,12 @@ install_essentials() {
         # options mirror run_home_manager_activation so a stalled substituter
         # fetch aborts and retries instead of hanging the whole bootstrap.
         nix profile install nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#coreutils nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs nixpkgs#e2fsprogs --extra-experimental-features "nix-command flakes" --option connect-timeout 15 --option stalled-download-timeout 60 --option download-attempts 2
-    fi
-    local essentials_path
-    essentials_path="$(essentials_profile_path)"
-    if [ -n "$essentials_path" ]; then
-        export PATH="$essentials_path:$PATH"
+        # The install just created or extended a profile; resolve it (again)
+        # so the freshly installed tools are on PATH for the rest of bootstrap.
+        essentials_path="$(essentials_profile_path)"
+        if [ -n "$essentials_path" ]; then
+            export PATH="$essentials_path:$PATH"
+        fi
     fi
 }
 
