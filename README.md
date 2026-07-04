@@ -618,12 +618,16 @@ home-manager.url = "github:nix-community/home-manager/release-26.05";
 
 `flake.lock` records the concrete revisions those branches resolved to
 (`nixvim` and `home-manager` follow this flake's `nixpkgs` for their own
-package set), and everything in the resulting guest follows the lock:
+package set):
 
-- the full guest toolset — Home Manager activation builds from this flake;
-- the root bootstrap essentials — installed with
-  `--inputs-from /guest-bootstrap --no-update-lock-file`, so they resolve
-  to the locked `nixpkgs` revision, not the global flake registry.
+- the full guest toolset follows the lock — Home Manager activation builds
+  from this flake;
+- the root bootstrap essentials do **not** yet follow the lock —
+  `install_essentials` resolves `nixpkgs#…` through the **global flake
+  registry** (pinning them to the guest lock with
+  `--inputs-from /guest-bootstrap --no-update-lock-file` is a follow-up, not
+  yet implemented — see the caveat below and "Bootstrap nixpkgs pin and
+  provenance" tracking).
 
 The base image is release-agnostic: it contributes the Nix tool itself and
 a seed store that is merged once and then inert — after bootstrap, every
@@ -650,12 +654,19 @@ A release bump is therefore:
 
 ```bash
 # 1. One place: edit the three branch refs in flake.nix (one file, one commit).
-# 2. Re-lock — run in the guest, or anywhere with Nix; the macOS host needs none:
-nix flake update
+# 2. Re-lock the stable inputs only — run in the guest, or anywhere with Nix;
+#    the macOS host needs none. --flake targets the context dir (the repo root
+#    is not a flake); nixpkgs-unstable is left untouched so the optional AI set
+#    does not move during a stable release bump:
+nix flake update nixpkgs nixvim home-manager \
+    --flake container/aarch64-darwin-apple-container-dx-nixos-26.05
 # 3. Check the base-image alignment rule (below), then recreate and validate:
 ./bin/dx-recreate
 tests/run_all_tests.sh
 ```
+
+For the complete step-by-step procedure (image pre-flight, canary, and the
+destructive apply), follow [Upgrade / Bump](#upgrade--bump-new-nixos-release).
 
 The full release playbook, including the context-directory rename and the
 parallel validation instance, is in [plan.md](plan.md).
@@ -742,7 +753,7 @@ The step-by-step runbook for moving the pinned release, e.g. **26.05 →
 26.11**. This is the sequence validated on the 25.11 → 26.05 bump
 (2026-07-04); the reference policy it leans on lives in
 [Release and Pin Maintenance](#release-and-pin-maintenance) above, and the
-destructive apply in step 6 is [Base Image Changeover](#base-image-changeover-one-time)
+destructive apply in step 7 is [Base Image Changeover](#base-image-changeover-one-time)
 below. Throughout, **OLD** is the current release (e.g. `26.05`) and
 **NEW** is the target (e.g. `26.11`).
 
@@ -752,7 +763,7 @@ below. Throughout, **OLD** is the current release (e.g. `26.05`) and
   `nix flake check` catches *eval*-time breaks (a removed package). It does
   **not** catch `home-manager` buildEnv path conflicts or runtime shell/tool
   API changes — those surface only at **live Home Manager activation**, i.e.
-  at the canary in step 5. On the 26.05 bump, three separate breaks
+  at the canary in step 6. On the 26.05 bump, three separate breaks
   (`neofetch` removed, `ghostty.terminfo` colliding with ncurses, nushell's
   `$nu.home-path` renamed to `$nu.home-dir`) each slipped past the static
   suite and were caught only by rebuilding a real guest.
