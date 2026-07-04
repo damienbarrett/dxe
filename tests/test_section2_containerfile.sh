@@ -50,5 +50,26 @@ else
     test_fail "Containerfile only selects the base image"
 fi
 
+# Test: Containerfile's single non-blank line is EXACTLY the adopted
+# official base reference (nix-base-plan.md change 1). This is a fixed-
+# string, full-line equality check, not a pattern through
+# assert_file_contains (that helper runs plain `grep -q`, i.e. BASIC
+# regular expressions - an ERE like `+`/`{64}` could never match a
+# sha256 digest through it). One string comparison is sufficient to
+# catch every corruption mode: a wrong tag, a changed digest, a
+# digest-only reference (no tag), `latest`, an extra instruction line,
+# and an extra non-blank line all produce a captured value that differs
+# from the expected line below (the extra-line case also already fails
+# the one-non-blank-line check above, and is captured here as well
+# since `$(...)` would embed a newline that cannot equal the single-line
+# expectation).
+DX_EXPECTED_CONTAINERFILE_LINE="FROM nixos/nix:2.31.5@sha256:4ae3542b89e38bf739a98d9e1ffd082c3c7b8a6455ec0c2331560b9440aec442"
+actual_containerfile_line="$(grep -ve '^[[:space:]]*$' "$CONTAINERFILE")"
+if [ "$actual_containerfile_line" = "$DX_EXPECTED_CONTAINERFILE_LINE" ]; then
+    test_pass "Containerfile's non-blank line exactly matches the adopted official base reference"
+else
+    test_fail "Containerfile's non-blank line exactly matches the adopted official base reference (got: '$actual_containerfile_line')"
+fi
+
 print_summary
 exit_with_code

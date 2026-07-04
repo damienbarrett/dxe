@@ -1,5 +1,16 @@
 # Plan: Support Both Base Images (`nixpkgs/nix-flakes` and `nixos/nix`)
 
+> **Superseded (2026-07-04) by [`nix-base-plan.md`](nix-base-plan.md).** Both
+> of this plan's load-bearing requirements — dual-base support and in-place
+> migration of existing machines — were dropped in favor of a one-way,
+> single-base changeover (existing machines destroyed and rebuilt, no
+> `DX_BASE` selector, no coexistence). This document is retained as design
+> history: its confirmed-facts inventory and verification work are the
+> factual basis for `nix-base-plan.md` (with corrections noted there), and
+> its seven review passes are why that plan could stay small. Do not
+> implement anything below directly; see `nix-base-plan.md` for what
+> actually ships.
+
 ## Goal
 
 Allow the DX container to be built from either base image, selected at build

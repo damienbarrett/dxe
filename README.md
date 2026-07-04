@@ -596,12 +596,14 @@ container logs dx-host -f
 
 ## Release and Pin Maintenance
 
-> Status: this section is the agreed maintenance contract for the dual-base
-> feature ([flakes-to-nix.md](flakes-to-nix.md)), written ahead of
-> implementation. The `DX_BASE=nix` flavor and the bootstrap lock pin land
-> with that plan; once validated, `nix` becomes the default flavor.
-> Profiles with custom `DX_IMAGE`/`DX_NIX_VOLUME` names must pin
-> `DX_BASE` explicitly (or be deliberately migrated) before the flip.
+> Status: this section is the maintenance contract for the single official
+> `nixos/nix` base image. A dual-base flip was once proposed in
+> [flakes-to-nix.md](flakes-to-nix.md); that plan was superseded by
+> [nix-base-plan.md](nix-base-plan.md), which dropped both dual-base support
+> and in-place migration in favor of a one-time, one-way changeover: no
+> `DX_BASE` selector, no flavor names, no coexistence. See
+> [Base Image Changeover](#base-image-changeover-one-time) below for the
+> one-time cutover runbook that plan defines.
 
 ### One release pin
 
@@ -623,12 +625,26 @@ package set), and everything in the resulting guest follows the lock:
   `--inputs-from /guest-bootstrap --no-update-lock-file`, so they resolve
   to the locked `nixpkgs` revision, not the global flake registry.
 
-Under `DX_BASE=nix` the base image is release-agnostic: it contributes the
-Nix tool itself and a seed store that is merged once and then inert —
-after bootstrap, every tool in use resolves through the lock. The release
-string also appears in *names* (the context directory, the
-`dx-nixos-25.11*` image names); those are identity labels refreshed during
-a release bump, not additional pins.
+The base image is release-agnostic: it contributes the Nix tool itself and
+a seed store that is merged once and then inert — after bootstrap, every
+tool in use resolves through the lock. The release string also appears in
+*names* (the context directory, the `dx-nixos-25.11*` image names); those
+are identity labels refreshed during a release bump, not additional pins.
+The local image name (`dx-nixos-25.11`) is a **mutable local cache key,
+never provenance** — see "Build-cache trap" below; it says nothing about
+which `Containerfile` produced the image bits.
+
+After the base changeover (below), the docker-nixpkgs release-tag
+availability gate that previously blocked the 26.05 upgrade is **gone**.
+Release maintenance is **not** thereby reduced to two flake edits: it still
+includes lock regeneration, `home.stateVersion` review, the aligned Nix
+image-pin review (below — a release bump can change the correct image
+tag), identity-name updates (context directory, local image name),
+release-string test updates, and revalidation — see
+[plan.md](plan.md)'s playbook. And until the bootstrap lock pin lands (a
+follow-up, not yet implemented), root bootstrap essentials still resolve
+through the **global flake registry**, not the guest lock — this document
+must not claim otherwise.
 
 A release bump is therefore:
 
@@ -641,76 +657,387 @@ nix flake update
 tests/run_all_tests.sh
 ```
 
-Under the legacy `flakes` flavor, the base image itself is per-release
-(`nixpkgs/nix-flakes:nixos-XX.YY-aarch64-linux`) and third-party published —
-the extra pin and availability gate that motivated the `nix` flavor. The
-full release playbook, including the context-directory rename and the
+The full release playbook, including the context-directory rename and the
 parallel validation instance, is in [plan.md](plan.md).
 
-### Base-image alignment rule (`nix` flavor)
+### Base-image alignment rule
 
-`Containerfile.nix` pins the official image by Nix version and
-manifest-list digest:
+`Containerfile` pins the official image by Nix version and manifest-list
+digest:
 
 ```Dockerfile
 FROM nixos/nix:2.31.5@sha256:<manifest-list digest>
 ```
 
-The tag is not chosen freely — it follows the release pin. Policy: match
-the major.minor of the pinned release's default Nix (`nixpkgs#nix.version`
-at the locked revision, i.e. `nixVersions.stable`), taking the newest patch
-tag within that minor. Bumping the release therefore tells you the correct
-image tag mechanically, and the Nix-version bump folds into the same
-deliberate event instead of being an independent chore. A post-activation
-in-guest `nix --version` cannot verify the alignment — the guest toolset
-itself ships the locked `nix`, which shadows the image's on `PATH`. The
-alignment is asserted with two image-faithful checks instead:
+Policy:
+
+- match the major.minor of the pinned release's default Nix
+  (`nixpkgs#nix.version` at the locked revision, i.e. `nixVersions.stable`),
+  taking the newest patch tag within that minor. Bumping the release
+  therefore tells you the correct image tag mechanically, and the
+  Nix-version bump folds into the same deliberate event instead of being an
+  independent chore;
+- explicit tag **plus** the tag's multi-platform manifest-list digest (what
+  `container image pull nixos/nix:<tag>` resolves) — never `latest`; a
+  digest-only reference (no tag) is rejected;
+- **re-query the digest immediately before any change** — never copy a
+  previously recorded digest blind. Tags are mutable; a stale digest can
+  silently pin different content than the tag currently resolves to.
+
+A post-activation in-guest `nix --version` cannot verify the alignment —
+the guest toolset itself ships the locked `nix`, which shadows the image's
+on `PATH`. Verify against the pristine image directly instead:
 
 ```bash
-# Authoritative: the pristine image, against the exact pinned reference
 container run --rm nixos/nix:<tag>@sha256:<digest> nix --version
-# Bootstrap evidence: recorded pre-remount in the provenance artifact,
-# where nix still resolves to the image's own binary
-container exec dx-host cat /persist/.dx/essentials-provenance/meta.env
-# Both must match the tag's major.minor — and the release's (run in the
-# guest; the macOS host has no Nix):
-container exec dx-host nix eval --raw --inputs-from /guest-bootstrap nixpkgs#nix.version
+```
+
+This must match the tag's major.minor, and that in turn must match the
+release's default Nix — checked in the guest (the macOS host has no Nix):
+
+```bash
+container exec dx-host nix eval --raw --no-update-lock-file --inputs-from /guest-bootstrap nixpkgs#nix.version
 ```
 
 The alignment is test-enforced rather than templated into the
-Containerfile: each Containerfile is deliberately a single `FROM` line (no
+Containerfile: the Containerfile is deliberately a single `FROM` line (no
 `ARG` indirection), and the macOS host has no Nix with which to evaluate
 the version at build time.
 
-### Bumping the Nix image pin
+### Build-cache trap
 
-Deliberate and procedure-gated — never `latest`, never casual. Normally
-triggered by a release bump via the alignment rule; an out-of-band bump
-within the same minor (e.g. a security fix) uses the same procedure.
+`dx-create-image` skips the build whenever the local image name
+(`dx-nixos-25.11`) already exists — editing the Containerfile changes
+nothing until the old image is removed. `./bin/dx-destroy` removes
+container **and** image; `./bin/dx-factory-reset` additionally removes all
+three volumes and the SSH keypair (confirmation-gated, `--force` to skip).
+Both operate only on the resources the active profile resolves.
 
-1. Update the tag and digest in `Containerfile.nix` (the digest is the
-   tag's multi-platform manifest-list digest — what
-   `container image pull nixos/nix:<tag>` resolves).
-2. Stop or destroy every container referencing the official image
-   (dx-host and side containers), then
-   `container image rm dx-nixos-25.11-official`. Without this,
-   `dx-create-image` silently keeps using the old local image. The removal
-   fails while a running container references the image — resolve that,
-   don't work around it.
-3. Validate against a fresh throwaway volume in an isolated profile (full
-   test suite).
-4. Store-transition gate on a disposable volume: old image seeds the
-   volume → new image boots against it and mutates the store → old image
-   boots it again. Nix can migrate the store schema one-way; this proves
-   the forward *and rollback* paths before the real `dx-nix-official`
-   volume ever sees the new version. Release notes are advisory input;
-   this test is the gate.
-5. Rollback: revert the pin and repeat step 2. The persisted volume is
-   rollback-safe only if step 4's rollback stage passed.
+### Bumping the Nix image pin — unresolved pending store-reuse fixes
+
+**There is currently no valid, volume-reusing pin-bump procedure.**
+[nix-base-plan.md](nix-base-plan.md)'s "Future maintenance" section records
+two defects that block one, both rooted in `setup_nix_volume`'s store
+handling:
+
+- a reused `/nix` volume's profile paths can keep resolving `nix` to the
+  **old** image's binary even after a new image is built, so a naive
+  transition check can silently validate the wrong binary;
+- the store-seeding merge copies `/nix/store` paths onto the volume without
+  registering them in the volume's store database — copied paths exist on
+  disk but are invisible to `nix path-info` and unprotected from garbage
+  collection.
+
+Until both are fixed (their own design change, tracked as a follow-up),
+**the only safe way to bump the Nix image pin is a full destroy-and-rebuild
+with salvage** — the same one-time changeover procedure below (quiesce and
+salvage `/persist`, referrer-first inventoried cleanup, factory reset,
+rebuild, validate), not an in-place volume-reusing bump. What *is* safe to
+rely on today: the alignment rule above, this section's build-cache trap
+warning, and the digest re-query discipline.
+
+## Base Image Changeover (one-time)
+
+> This is a **one-time, destructive** cutover — not a recurring maintenance
+> task, and not a live flip. It replaces the (now removed) third-party,
+> per-release community-published base with the official, digest-pinned
+> `nixos/nix` base defined above. There is no in-place migration: existing machines are
+> destroyed and rebuilt from scratch, with an auditable one-time `/persist`
+> salvage step. Full rationale, review history, and the decisions behind
+> every step below live in [nix-base-plan.md](nix-base-plan.md); this
+> section transcribes its changeover procedure as guarded runbook steps —
+> each one copyable, with expected output, safe behavior when the resource
+> it targets is already absent, an abort condition, and a verification
+> before you continue to the next step.
+
+### Clean-configuration precondition — required before every destructive step below
+
+Two configuration surfaces can silently redirect a destructive command at
+the wrong (including default) resources. Verify both before step 1 of the
+changeover procedure, and re-verify before any later destructive step if
+you are not running the whole procedure in one sitting:
+
+- **`.env`** is sourced **as shell code** (`set -a`) by every child script,
+  *after* the parent script has already exported its own values — so *any*
+  line in it executes, and a `DX_*` line there silently re-overrides the
+  profile's or `dx-mount`'s own exports. `.env` must be **absent, or
+  reviewed line by line** — not merely free of `DX_*` entries.
+- **Inherited `DX_*` environment**: exported variables in your shell
+  survive into every resolution — `dx-mount` in particular captures
+  pre-set values as user-supplied before it even sources the shared
+  library. Confirm:
+
+  ```bash
+  env | grep '^DX_'
+  ```
+
+  Expected output: **nothing**. If anything prints, unset it, or print and
+  review every effective resource name immediately before each destructive
+  command below.
+
+Destroying under a clobbered or polluted resolution is strictly worse than
+validating under one — do not proceed past this point until both checks
+are clean.
+
+### Canary gate — required before the primary is touched
+
+Before anything on the real machine is destroyed, prove a full
+official-base bootstrap works, in isolation, on the exact commit that will
+land:
+
+1. Create a dedicated cutover profile (the `tests/profiles/dx-test.env`
+   pattern): a unique container name, image name, SSH port, all three
+   volume names, and its own key pair.
+2. Re-check the clean-configuration precondition above — an unisolated
+   `.env` or environment defeats canary isolation too.
+3. **Assert absence** — confirm the cutover profile's container, image,
+   volumes, and keys do not already exist:
+
+   ```bash
+   container list -a
+   container image ls
+   container volume ls
+   ```
+
+   Expected: nothing named after the cutover profile. **Abort condition**:
+   any of them already exist — pick different names or clean up first.
+4. Bring it up on the branch carrying the new `FROM` line:
+
+   ```bash
+   ./bin/dx-profile <cutover> ./bin/dx
+   ```
+
+   Expected: bootstrap completes and SSH is reachable under the profile.
+5. Run the full suite, profile-aware, from a **clean, committed tree** —
+   `test_section13_final_review.sh` fails on tracked modifications by
+   design, so this validates the changeover **commit**, never a dirty
+   working tree. Then run the same-base recreate cycle, to prove volume
+   reuse still works on the new base:
+
+   ```bash
+   ./bin/dx-profile <cutover> tests/run_all_tests.sh
+   ./bin/dx-profile <cutover> ./bin/dx-destroy
+   ./bin/dx-profile <cutover> ./bin/dx
+   ```
+6. Tear the canary down completely, in this order:
+
+   ```bash
+   ./bin/dx-profile <cutover> ./bin/dx-destroy
+   ./bin/dx-profile <cutover> ./bin/dx-destroy-volumes --force
+   ./bin/dx-profile <cutover> ./bin/dx-destroy-keys
+   ```
+
+   Verify: `container list -a` / `container image ls` / `container volume
+   ls` show nothing named after the cutover profile, and its key files are
+   gone.
+
+**Abort condition**: any canary step fails, or teardown leaves a resource
+behind. Do not start the changeover procedure until the canary passes
+cleanly end to end. The primary factory reset (step 4 below) is gated on
+this run passing.
+
+### Changeover procedure (per machine)
+
+**Ordering rule**: destroy referrers before resources. `container image
+rm` / `container volume rm` fail while any container still references the
+target, and that can strand a half-reset machine mid-procedure. Every step
+below is safe to re-run; **step 2 (inventory) is the re-entry point** if
+you stop partway, and nothing destroys the primary before step 4.
+
+1. **Quiesce and salvage `/persist`.** Stop active guest workloads; push
+   every repository and verify the remotes are up to date. Then:
+
+   ```bash
+   ./bin/dx-get /persist ./persist-backup-$(date +%Y%m%d)
+   ```
+
+   **Inspect the copied tree by eye before continuing — this is not
+   optional.** `dx-export` is **not** a substitute: it wraps `container
+   export`, which captures the root filesystem only, not named-volume
+   contents. Record what is deliberately not preserved (for example
+   gh/AI credentials — these are re-established in step 9, not salvaged).
+
+   **Abort condition**: the backup looks incomplete or wrong — stop and
+   investigate before touching anything else.
+
+2. **Inventory and deletion ledger.** Enumerate every resource that will be
+   removed, and write it down (a text file, a scratch note — anything you
+   check step 5 against):
+
+   ```bash
+   container list -a
+   ls ~/.dx-cache/mount-identities/ 2>/dev/null   # absent is fine — no side containers
+   ```
+
+   For **every** profile file — `tests/profiles/*.env` and any
+   user-maintained profiles — read its image, volume, and key values into
+   the ledger **even when no container currently exists for it**:
+   container inspection alone cannot discover an orphaned profile's image,
+   volumes, or keys. Cross-check for unaccounted `dx-*` strays:
+
+   ```bash
+   container image ls
+   container volume ls
+   ```
+
+   Then run `container inspect <name>` on **each** container in the list
+   and read the output yourself — `container list -a` shows images but
+   **not** volume mounts, so volume referrers are visible only this way.
+   While reading, add to the ledger every container, image, and volume
+   (persist/bootstrap, custom-profile, and side-container volumes alike),
+   key file, and identity marker that is slated for removal.
+
+   Any container referencing a ledgered image or volume **must** be
+   destroyed in step 3 — it cannot be deferred, since the resource removal
+   later fails while it is still referenced. Leave alone only containers
+   referencing nothing ledgered (for example Apple's own `buildkit`
+   builder).
+
+   **Abort condition**: you cannot account for a `dx-*` resource — stop
+   here, not mid-reset.
+
+3. **Destroy non-default referrers, staged globally referrer-first.** Do
+   this in three stages, not per-unit — the per-unit tools interleave
+   container and resource removal, so staging avoids a resource shared
+   *across* units (the default image every side container references, or
+   an override-shared volume) failing mid-unit:
+
+   - **3a — containers only**, every ledgered container:
+
+     ```bash
+     ./bin/dx-profile dx-test ./bin/dx-destroy-container
+     ./bin/dx-profile dx-tinty ./bin/dx-destroy-container
+     # ... and any custom profiles
+     DX_CONTAINER_NAME=<name> ./bin/dx-destroy-container   # per side container
+     ```
+
+   - **3b — verify**: `container list -a` shows no ledgered container.
+     **Abort condition**: any survives — stop and resolve before 3c.
+
+   - **3c — resources**, through the same guarded tools (each is verified
+     idempotent on already-missing resources, so re-running any of these is
+     always safe):
+
+     - side containers still attached to their checkout:
+
+       ```bash
+       ./bin/dx-mount <source-dir> --destroy
+       ```
+
+     - an **orphaned** side container (checkout moved or deleted) — do
+       **not** try to recreate the directory to make the normal form work;
+       `dx-mount` resolves identity via `git rev-parse --show-toplevel`,
+       so a recreated empty directory can resolve into an *enclosing* Git
+       root and derive the wrong identity. Instead, in two separate
+       invocations:
+
+       ```bash
+       ./bin/dx-mount --container <name> --print-destroy-plan
+       # reconcile the printed plan against your ledger, THEN:
+       ./bin/dx-mount --container <name> --destroy
+       ```
+
+     - shipped profiles:
+
+       ```bash
+       ./bin/dx-profile dx-test ./bin/dx-destroy
+       ./bin/dx-profile dx-test ./bin/dx-destroy-volumes --force
+       ./bin/dx-profile dx-test ./bin/dx-destroy-keys
+       # repeat the same triple for dx-tinty and any custom profiles
+       ```
+
+4. **Factory-reset the primary** — gated on the canary gate above having
+   passed:
+
+   ```bash
+   ./bin/dx-factory-reset
+   ```
+
+   Removes the primary container, image, all three volumes, and keys
+   (confirmation-gated).
+
+5. **Verify the ledger, not a hardcoded list.** Every entry recorded in
+   step 2 must now be absent: containers via `container list -a`, images
+   via `container image ls`, **all** volumes via `container volume ls`
+   (persist/bootstrap, custom-profile, and side-container volumes alike),
+   key files, and identity markers on the host filesystem.
+
+   **Abort condition**: any ledger entry survives — return to step 2.
+
+6. **Rebuild:**
+
+   ```bash
+   ./bin/dx
+   ```
+
+   Fresh image from the edited Containerfile, fresh volume seed, fresh
+   bootstrap.
+
+7. **Old-base exclusion gate.** `/bin/bash` absence **excludes** the known
+   flakes base — it does not by itself prove the image is `nixos/nix` at
+   the pinned digest. Positive provenance instead comes from the
+   digest-pinned `FROM`, the ledger-verified image removal in step 5, and
+   the fresh rebuild in step 6 — exact-content provenance only under the
+   digest pin; base-family only under a tag-only waiver. Run exactly this
+   — it fails closed on any `container exec` error, and treats absence as
+   a positive token, never as the fallback branch of a failed probe:
+
+   ```bash
+   state="$(container exec dx-host sh -c \
+       'if [ -e /bin/bash ] || [ -L /bin/bash ]; then echo OLD_BASE; else echo OLD_BASE_ABSENT; fi')" \
+       || { echo "FAIL: could not verify (container exec error)"; exit 1; }
+   case "$state" in
+       OLD_BASE_ABSENT) echo "OK: old flakes base excluded (no /bin/bash)" ;;
+       OLD_BASE)        echo "FAIL: /bin/bash present — still the old flakes base"; exit 1 ;;
+       *)               echo "FAIL: unexpected verification output: $state"; exit 1 ;;
+   esac
+   ```
+
+   Expected output: `OK: old flakes base excluded (no /bin/bash)`. Any
+   other output is a hard stop. The same invariant is also enforced by a
+   pair of temporary guards on every container boot and every
+   `dx-start-container` bring-up, for as long as they remain in the tree
+   (see `nix-base-plan.md` change 2) — this manual gate exists because a
+   bring-up against an **already-running** container only re-syncs the
+   bootstrap payload; it does not by itself prove which image is running.
+
+   **Accepted residual window**: `dx-ssh` and `dx-enter` bypass
+   `dx-start-container`, so a direct session against an
+   **already-running old container**, between pulling this change and that
+   container's next start or restart, is caught by no guard. The window
+   closes at the next lifecycle touch; it does not exempt you from running
+   this gate.
+
+8. **Validate:**
+
+   - [ ] `./bin/dx` completed bootstrap; sshd reachable; `dx-enter` works.
+   - [ ] Full test suite passes.
+   - [ ] Old-base exclusion gate (step 7) passes; neither temporary guard
+         fired during the rebuild.
+   - [ ] AI-tools opt-in path (`dx-ai`, keyring, persistence links) works.
+   - [ ] Timezone, persist links, and `gh` persistence are intact after a
+         `dx-destroy && dx` cycle — same-base volume reuse is revalidated,
+         not assumed, on the new base.
+   - [ ] Both shipped profiles (`dx-test`, `dx-tinty`) rebuild from scratch
+         and pass their suites (their old images/volumes were removed in
+         step 3).
+
+9. **Re-establish intentional state — last, only after validation
+   passes:** `gh auth login`, `dx-ai` opt-in, re-clone into `/persist`.
+   Anything deliberately not salvaged in step 1 is re-created here, not
+   before.
+
+**Rollback**: `git revert` the changeover commit, then repeat this same
+procedure in reverse. Fresh volumes both directions, so no store-schema
+compatibility proof is needed — but the flakes tag is **mutable**:
+rollback restores the old base family and release label, not necessarily
+byte-identical content (mitigate by recording the pulled flakes digest
+during pre-flight if that matters), and it presumes the flakes `25.11` tag
+is still published.
 
 ## Planned Work
 
-- **[NixOS 26.05 upgrade & code-review fixes](plan.md)** — the release-bump playbook (waiting on the official 26.05 base image) plus eight consolidated code-review fixes against the current 25.11 codebase. See [Consolidated Code-Review Fixes](plan.md#consolidated-code-review-fixes) for the per-item status.
-- **[Dual base-image support](flakes-to-nix.md)** — allow building from the official `nixos/nix` image as an alternative to `nixpkgs/nix-flakes`, selected via `DX_BASE`. Removes the third-party base-image dependency that gates the 26.05 upgrade. Implementation-ready after seven review passes; all decisions resolved, and `nix` is slated to become the default flavor after validation (staged flip). Maintenance contract: [Release and Pin Maintenance](#release-and-pin-maintenance).
+- **[NixOS 26.05 upgrade & code-review fixes](plan.md)** — the release-bump playbook (previously gated on a third-party base-image tag; that gate is gone, see [Base Image Changeover](#base-image-changeover-one-time) — now waiting only on the target release's flake input branches) plus eight consolidated code-review fixes against the current 25.11 codebase. See [Consolidated Code-Review Fixes](plan.md#consolidated-code-review-fixes) for the per-item status.
+- ~~**Dual base-image support**~~ ([flakes-to-nix.md](flakes-to-nix.md), superseded) — **done, differently**: [nix-base-plan.md](nix-base-plan.md) replaced the plan to select between two base images with a one-time, one-way changeover onto the single official, digest-pinned `nixos/nix` image — no `DX_BASE`, no flavors, no coexistence. The third-party, per-release community-published base-image dependency that gated the 26.05 upgrade is **removed**. Maintenance contract: [Release and Pin Maintenance](#release-and-pin-maintenance); one-time cutover runbook: [Base Image Changeover](#base-image-changeover-one-time).
 - **[Tmux configuration improvements](tmux-plan.md)** — migrate option-shaped tmux settings to typed Home Manager options and add resurrect/continuum persistence. Not started; sliced for TDD with manual validation gates.
 - **[Git-access follow-ups](mount-git.md)** — the `dx-mount` side-container workflow has shipped; remaining items are the `dx-branch` self-dev helper, seeded Nix base for faster side-container cold starts, credential propagation, and worktree/submodule validation.

@@ -1163,6 +1163,114 @@ assert_file_contains "$BIN_DIR/dx-start-container" "dx-sync-bootstrap" "dx-start
 assert_file_contains "$BIN_DIR/dx-stop-container" "container_stop_bounded" "dx-stop-container uses bounded stop helper"
 
 # -----------------------------------------------------------------------------
+# dx-start-container: host-site old-base guard (nix-base-plan.md change 2)
+#
+# Temporary coverage, removed together with bootstrap.sh's guard_old_base
+# (see tests/test_section3_bootstrap.sh) once every machine has changed over.
+# This machine has a real, live dx-host container -- these tests stub
+# `container` on PATH so no real container is ever touched.
+# -----------------------------------------------------------------------------
+
+DX_START_CONTAINER="$BIN_DIR/dx-start-container"
+
+DX_STARTC_TMP="$(mktemp -d)"
+DX_STARTC_STUB_BIN="$DX_STARTC_TMP/bin"
+mkdir -p "$DX_STARTC_STUB_BIN"
+
+cat > "$DX_STARTC_STUB_BIN/container" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+    list)
+        if [ "${2:-}" = "-a" ]; then
+            printf 'ID STATE\n'
+            printf '%s stopped\n' "${DX_CONTAINER_NAME:-dx-host}"
+        else
+            printf 'ID STATE\n'
+            printf '%s running\n' "${DX_CONTAINER_NAME:-dx-host}"
+        fi
+        ;;
+    start)
+        exit 0
+        ;;
+    exec)
+        shift
+        if [ "${1:-}" = "-i" ]; then
+            # container exec -i <name> tar -xf - -C <path>: drain the payload
+            # tarball dx-sync-bootstrap streams in; this stub does not need to
+            # actually extract it.
+            cat >/dev/null
+            exit 0
+        fi
+        args="$*"
+        case "$args" in
+            # Only guard_old_base's own probe script embeds this literal
+            # token (its OLD_BASE_ABSENT branch); every other `container exec
+            # ... sh -c` call made by dx-sync-bootstrap should just succeed.
+            *OLD_BASE_ABSENT*)
+                if [ "${DX_STUB_GUARD_EXEC_FAIL:-false}" = "true" ]; then
+                    exit 1
+                fi
+                printf '%s\n' "${DX_STUB_GUARD_RESPONSE:-OLD_BASE_ABSENT}"
+                ;;
+            *)
+                exit 0
+                ;;
+        esac
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+EOF
+chmod +x "$DX_STARTC_STUB_BIN/container"
+
+dx_startc_behavior() {
+    local output_file="$1"
+    shift
+    env \
+        PATH="$DX_STARTC_STUB_BIN:$PATH" \
+        DX_CONTAINER_NAME=dx-startc-test \
+        DX_BOOTSTRAP_WAIT_TIMEOUT=1 \
+        "$@" \
+        "$DX_START_CONTAINER" >"$output_file" 2>&1
+}
+
+DX_STARTC_OUT="$(mktemp)"
+
+if dx_startc_behavior "$DX_STARTC_OUT" DX_STUB_GUARD_RESPONSE=OLD_BASE_ABSENT; then
+    test_pass "dx-start-container exits 0 when the guest guard reports OLD_BASE_ABSENT"
+else
+    test_fail "dx-start-container exits 0 when the guest guard reports OLD_BASE_ABSENT"
+fi
+
+set +e
+dx_startc_behavior "$DX_STARTC_OUT" DX_STUB_GUARD_RESPONSE=OLD_BASE
+DX_STARTC_OLDBASE_STATUS=$?
+set -e
+if [ "$DX_STARTC_OLDBASE_STATUS" -ne 0 ] \
+    && grep -qi "nix-base-plan.md" "$DX_STARTC_OUT" \
+    && grep -qi "flakes-base" "$DX_STARTC_OUT"; then
+    test_pass "dx-start-container fails and names the changeover procedure when the guest guard reports OLD_BASE"
+else
+    test_fail "dx-start-container fails and names the changeover procedure when the guest guard reports OLD_BASE"
+fi
+
+set +e
+dx_startc_behavior "$DX_STARTC_OUT" DX_STUB_GUARD_EXEC_FAIL=true
+DX_STARTC_EXECFAIL_STATUS=$?
+set -e
+if [ "$DX_STARTC_EXECFAIL_STATUS" -ne 0 ] && grep -qi "could not verify" "$DX_STARTC_OUT"; then
+    test_pass "dx-start-container fails closed when the guest guard's container exec fails"
+else
+    test_fail "dx-start-container fails closed when the guest guard's container exec fails"
+fi
+
+rm -f "$DX_STARTC_OUT"
+rm -rf "$DX_STARTC_TMP"
+
+# -----------------------------------------------------------------------------
 # dx-destroy-container: bounded stop with force fallback
 # -----------------------------------------------------------------------------
 

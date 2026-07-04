@@ -52,11 +52,10 @@ design rationale, not derivable from the code:
    base remains a desirable optimization. The mechanism is undecided
    (host-side volume clone, export/import of a populated store, or a
    read-only shared mount) and must not violate the single-writer constraint
-   on the default `dx-nix` volume.
-   *Interaction with [`flakes-to-nix.md`](flakes-to-nix.md):* side-container
-   volume names (`<container>-nix`) do not encode the base-image flavor, so
-   any seeding mechanism must seed from the matching flavor's store (see that
-   plan's open decision on side-container flavor identity).
+   on the default `dx-nix` volume. With the single official base image
+   ([nix-base-plan.md](nix-base-plan.md)), there is exactly one possible seed
+   source for side-container volumes — no flavor-identity interaction to
+   track.
 
 3. **Credential propagation for side containers.** Intentionally out of
    scope so far; side containers currently require explicit re-auth. If

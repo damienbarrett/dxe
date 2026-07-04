@@ -17,3 +17,28 @@ else
 fi
 
 "$SCRIPT_DIR/dx-sync-bootstrap"
+
+# Temporary old-base guard for the nix-base-plan.md changeover: the official
+# base image never provides /bin/bash (regular file or dangling symlink), so
+# its presence matches the known flakes-base signature. This is the host-site
+# twin of guard_old_base in bootstrap.sh -- it closes the window where a
+# bring-up against an already-running container syncs the payload but never
+# re-executes bootstrap.sh. TEMPORARY: remove this block, together with
+# bootstrap.sh's guard_old_base, once every machine (primary, side
+# containers, profiles) has changed over.
+state="$(container exec "$DX_CONTAINER_NAME" sh -c \
+    'if [ -e /bin/bash ] || [ -L /bin/bash ]; then echo OLD_BASE; else echo OLD_BASE_ABSENT; fi')" \
+    || { echo "Error: could not verify the guest base (container exec failed)." >&2; exit 1; }
+case "$state" in
+    OLD_BASE_ABSENT) : ;;
+    OLD_BASE)
+        echo "Error: /bin/bash is present in $DX_CONTAINER_NAME, matching the known flakes-base signature (nixpkgs/nix-flakes)." >&2
+        echo "This container was built from the old flakes base and must be rebuilt under the official base." >&2
+        echo "Follow the changeover procedure in nix-base-plan.md before retrying." >&2
+        exit 1
+        ;;
+    *)
+        echo "Error: unexpected guest base verification output: $state" >&2
+        exit 1
+        ;;
+esac

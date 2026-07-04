@@ -182,5 +182,130 @@ else
     test_fail "bootstrap.sh passes bash syntax check"
 fi
 
+# -----------------------------------------------------------------------------
+# nix-base-plan.md change 2: bootstrap.sh edits + temporary old-base guard.
+# The guard assertions below (both the regression checks and the behavioral
+# fixtures) land in the same commit as the base-image FROM flip and are
+# removed together with guard_old_base and dx-start-container's host-site
+# guard once every machine (primary, side containers, profiles) has changed
+# over -- see nix-base-plan.md's Decisions section.
+# -----------------------------------------------------------------------------
+
+# Test: shebang is the portable form. The official base's entrypoint loop
+# execs this script directly; a hardcoded #!/bin/bash fails with ENOENT
+# because the official image has no /bin/bash.
+if [ "$(head -n1 "$BOOTSTRAP")" = "#!/usr/bin/env bash" ]; then
+    test_pass "bootstrap.sh shebang is exactly #!/usr/bin/env bash"
+else
+    test_fail "bootstrap.sh shebang is exactly #!/usr/bin/env bash"
+fi
+
+# Test: create_user requests /bin/sh, not /bin/bash, for the dx login shell
+# (nushell replaces it at the end of configure_guest anyway).
+assert_file_contains "$BOOTSTRAP" "useradd -m -g dx -s /bin/sh dx" "bootstrap.sh creates dx with -s /bin/sh"
+if grep "useradd" "$BOOTSTRAP" | grep -q -- "-s /bin/bash"; then
+    test_fail "no useradd line in bootstrap.sh requests -s /bin/bash"
+else
+    test_pass "no useradd line in bootstrap.sh requests -s /bin/bash"
+fi
+
+# Test: no /bin/bash reference survives in bootstrap.sh outside guard_old_base
+# itself (the guard necessarily contains the string it tests for -- pass 5).
+GUARD_DEF_LINE="$(grep -n '^guard_old_base()' "$BOOTSTRAP" | head -1 | cut -d: -f1 || echo "")"
+GUARD_END_LINE=""
+if [ -n "$GUARD_DEF_LINE" ]; then
+    GUARD_END_LINE="$(awk -v start="$GUARD_DEF_LINE" 'NR > start && /^}/ { print NR; exit }' "$BOOTSTRAP")"
+fi
+
+if [ -n "$GUARD_DEF_LINE" ] && [ -n "$GUARD_END_LINE" ]; then
+    BOOTSTRAP_SANS_GUARD="$(mktemp)"
+    sed "${GUARD_DEF_LINE},${GUARD_END_LINE}d" "$BOOTSTRAP" > "$BOOTSTRAP_SANS_GUARD"
+    if ! grep -q "/bin/bash" "$BOOTSTRAP_SANS_GUARD"; then
+        test_pass "bootstrap.sh has no /bin/bash reference outside guard_old_base"
+    else
+        test_fail "bootstrap.sh has no /bin/bash reference outside guard_old_base"
+    fi
+    rm -f "$BOOTSTRAP_SANS_GUARD"
+else
+    test_fail "bootstrap.sh has no /bin/bash reference outside guard_old_base"
+fi
+
+# The rest of the guest payload directory (Containerfile, flake.nix, home/,
+# scripts/, etc.) must carry no /bin/bash reference at all.
+PAYLOAD_BASH_HITS="$(grep -rl "/bin/bash" "$CONTAINER_DIR" 2>/dev/null | grep -vx "$BOOTSTRAP" || true)"
+if [ -z "$PAYLOAD_BASH_HITS" ]; then
+    test_pass "no /bin/bash reference elsewhere in the guest payload directory"
+else
+    test_fail "no /bin/bash reference elsewhere in the guest payload directory"
+fi
+
+# Test: both temporary guard sites are present -- bootstrap.sh defines
+# guard_old_base above # Main and invokes it inside # Main (a top-level
+# invocation above # Main would explode when this file's BOOTSTRAP_FUNCTIONS
+# is sourced above, since /bin/bash exists on this macOS test host).
+MAIN_SECTION_LINE="$(grep -n '^# Main$' "$BOOTSTRAP" | head -1 | cut -d: -f1 || echo "")"
+GUARD_CALL_LINE="$(grep -n '^guard_old_base$' "$BOOTSTRAP" | head -1 | cut -d: -f1 || echo "")"
+if [ -n "$GUARD_DEF_LINE" ] && [ -n "$MAIN_SECTION_LINE" ] && [ -n "$GUARD_CALL_LINE" ] \
+    && [ "$GUARD_DEF_LINE" -lt "$MAIN_SECTION_LINE" ] && [ "$GUARD_CALL_LINE" -gt "$MAIN_SECTION_LINE" ]; then
+    test_pass "bootstrap.sh defines guard_old_base above Main and invokes it only inside Main"
+else
+    test_fail "bootstrap.sh defines guard_old_base above Main and invokes it only inside Main"
+fi
+
+assert_file_contains "$BASE_DIR/bin/dx-start-container" "OLD_BASE" \
+    "dx-start-container carries the host-site old-base guard (OLD_BASE token check)"
+
+# Test: guard_old_base's guard-only test-mode entry point exits before any
+# bootstrap step, and its filesystem check reads DX_GUARD_ROOT so behavioral
+# coverage needs no disposable containers (pass 4/5 harness).
+DX_GUARD_TEST_TMP="$(mktemp -d)"
+DX_GUARD_ROOT_ABSENT="$DX_GUARD_TEST_TMP/absent-base"
+DX_GUARD_ROOT_REGULAR="$DX_GUARD_TEST_TMP/regular-file-base"
+DX_GUARD_ROOT_DANGLING="$DX_GUARD_TEST_TMP/dangling-symlink-base"
+mkdir -p "$DX_GUARD_ROOT_ABSENT" "$DX_GUARD_ROOT_REGULAR/bin" "$DX_GUARD_ROOT_DANGLING/bin"
+: > "$DX_GUARD_ROOT_REGULAR/bin/bash"
+ln -s /nonexistent-dx-guard-test-target "$DX_GUARD_ROOT_DANGLING/bin/bash"
+
+DX_GUARD_PASS_OUT="$(mktemp)"
+set +e
+DX_GUARD_ROOT="$DX_GUARD_ROOT_ABSENT" DX_BOOTSTRAP_TEST_MODE=guard bash "$BOOTSTRAP" >"$DX_GUARD_PASS_OUT" 2>&1
+DX_GUARD_PASS_STATUS=$?
+set -e
+if [ "$DX_GUARD_PASS_STATUS" -eq 0 ] \
+    && ! grep -qE "Installing essential tools|Setting up dedicated Nix volume|Configuring Nix daemon|Creating user dx" "$DX_GUARD_PASS_OUT"; then
+    test_pass "guard_old_base passes when DX_GUARD_ROOT/bin/bash is absent, and DX_BOOTSTRAP_TEST_MODE=guard exits before any bootstrap step runs"
+else
+    test_fail "guard_old_base passes when DX_GUARD_ROOT/bin/bash is absent, and DX_BOOTSTRAP_TEST_MODE=guard exits before any bootstrap step runs"
+fi
+
+DX_GUARD_REGULAR_OUT="$(mktemp)"
+set +e
+DX_GUARD_ROOT="$DX_GUARD_ROOT_REGULAR" DX_BOOTSTRAP_TEST_MODE=guard bash "$BOOTSTRAP" >"$DX_GUARD_REGULAR_OUT" 2>&1
+DX_GUARD_REGULAR_STATUS=$?
+set -e
+if [ "$DX_GUARD_REGULAR_STATUS" -ne 0 ] \
+    && grep -qi "nix-base-plan.md" "$DX_GUARD_REGULAR_OUT" \
+    && grep -qi "flakes-base" "$DX_GUARD_REGULAR_OUT"; then
+    test_pass "guard_old_base fails closed on a regular DX_GUARD_ROOT/bin/bash file, naming the changeover procedure"
+else
+    test_fail "guard_old_base fails closed on a regular DX_GUARD_ROOT/bin/bash file, naming the changeover procedure"
+fi
+
+DX_GUARD_DANGLING_OUT="$(mktemp)"
+set +e
+DX_GUARD_ROOT="$DX_GUARD_ROOT_DANGLING" DX_BOOTSTRAP_TEST_MODE=guard bash "$BOOTSTRAP" >"$DX_GUARD_DANGLING_OUT" 2>&1
+DX_GUARD_DANGLING_STATUS=$?
+set -e
+if [ "$DX_GUARD_DANGLING_STATUS" -ne 0 ] \
+    && grep -qi "nix-base-plan.md" "$DX_GUARD_DANGLING_OUT" \
+    && grep -qi "flakes-base" "$DX_GUARD_DANGLING_OUT"; then
+    test_pass "guard_old_base fails closed on a dangling DX_GUARD_ROOT/bin/bash symlink, naming the changeover procedure"
+else
+    test_fail "guard_old_base fails closed on a dangling DX_GUARD_ROOT/bin/bash symlink, naming the changeover procedure"
+fi
+
+rm -f "$DX_GUARD_PASS_OUT" "$DX_GUARD_REGULAR_OUT" "$DX_GUARD_DANGLING_OUT"
+rm -rf "$DX_GUARD_TEST_TMP"
+
 print_summary
 exit_with_code

@@ -14,22 +14,37 @@ source "$SCRIPT_DIR/dx-lib.sh"
 
 usage() {
     cat >&2 <<EOF
-Usage: $(basename "$0") [DIR] [--container NAME] [--print-env] [--destroy]
+Usage: $(basename "$0") [DIR] [--container NAME] [--print-env] [--destroy] [--print-destroy-plan]
 
 Create or attach to an isolated side container with DIR bind-mounted at
 DX_GIT_MOUNT_TARGET (default: /workspace). Plain dx-host is never used.
 
-  DIR               Host directory to mount (default: current directory).
-                    Inside a git repo, the repo top-level is mounted and DIR
-                    becomes the initial guest workdir.
-  --container NAME  Use NAME instead of the derived dx-mount-<slug>-<hash>
-                    name. NAME must not be dx-host, and an existing container
-                    must match the recorded mount identity.
-  --print-env       Print the derived DX_* profile without creating or
-                    starting anything, then exit.
-  --destroy         Remove the derived side container, its private volumes,
-                    private key pair, and mount identity marker. Never removes
-                    the shared image or default dx-host resources.
+  DIR                  Host directory to mount (default: current directory).
+                       Inside a git repo, the repo top-level is mounted and
+                       DIR becomes the initial guest workdir.
+  --container NAME     Use NAME instead of the derived dx-mount-<slug>-<hash>
+                       name. NAME must not be dx-host, must match
+                       ^[A-Za-z0-9][A-Za-z0-9_.-]*\$ (no '/', no leading '-'
+                       or '.'), and an existing marker's recorded resources
+                       must match the current resolution.
+  --print-env          Print the derived DX_* profile without creating or
+                       starting anything, then exit.
+  --destroy            Remove the derived side container, its private
+                       volumes, private key pair, and mount identity marker.
+                       Never removes the shared image or default dx-host
+                       resources.
+                       With --container NAME, --destroy is a destroy-only
+                       path: the identity marker alone authorizes it, the
+                       recorded mount source is never compared and need not
+                       still exist, and a manifest marker's recorded
+                       resources are destroyed in place of any inherited
+                       environment.
+  --print-destroy-plan Resolve exactly what --destroy would remove and print
+                       it (container, volumes, key pair, marker file, and
+                       whether resolution came from the manifest or was
+                       name-derived/legacy) without deleting or writing
+                       anything. Mutually exclusive with --destroy and
+                       --print-env.
 EOF
 }
 
@@ -37,6 +52,7 @@ dir=""
 container_override=""
 print_env=false
 destroy=false
+print_destroy_plan=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -58,6 +74,10 @@ while [ $# -gt 0 ]; do
             ;;
         --destroy)
             destroy=true
+            shift
+            ;;
+        --print-destroy-plan)
+            print_destroy_plan=true
             shift
             ;;
         -h|--help)
@@ -96,6 +116,22 @@ if [ "$print_env" = true ] && [ "$destroy" = true ]; then
     exit 2
 fi
 
+if [ "$print_destroy_plan" = true ] && [ "$destroy" = true ]; then
+    echo "Error: --print-destroy-plan and --destroy cannot be combined." >&2
+    exit 2
+fi
+
+if [ "$print_destroy_plan" = true ] && [ "$print_env" = true ]; then
+    echo "Error: --print-destroy-plan and --print-env cannot be combined." >&2
+    exit 2
+fi
+
+# Container-safe name validation happens before NAME is used to build any
+# path (the identity marker file in particular) — see dx-lib.sh.
+if [ -n "$container_override" ]; then
+    dx_require_container_safe_name "$container_override"
+fi
+
 dir="${dir:-$PWD}"
 if [ ! -d "$dir" ]; then
     echo "Error: DIR is not a directory: $dir" >&2
@@ -128,30 +164,6 @@ dx_require_non_reserved_container_name "$DX_CONTAINER_NAME"
 mount_identity="$mount_source"
 identity_dir="${DX_MOUNT_IDENTITY_DIR:-$HOME/.dx-cache/mount-identities}"
 identity_file="$identity_dir/$DX_CONTAINER_NAME.env"
-
-if [ "$print_env" != true ] && [ -n "$container_override" ] && container_exists "$DX_CONTAINER_NAME"; then
-    if [ ! -f "$identity_file" ]; then
-        cat >&2 <<EOF
-Error: container $DX_CONTAINER_NAME already exists, but no mount identity marker was found.
-Refusing to attach because --container NAME overrides cannot be verified.
-To recreate it intentionally, run:
-  DX_CONTAINER_NAME=$DX_CONTAINER_NAME ./bin/dx-destroy-container
-EOF
-        exit 1
-    fi
-    # shellcheck disable=SC1090
-    source "$identity_file"
-    if [ "${DX_RECORDED_GIT_MOUNT_SOURCE:-}" != "$mount_identity" ]; then
-        cat >&2 <<EOF
-Error: container $DX_CONTAINER_NAME is recorded for a different mount source.
-Recorded: ${DX_RECORDED_GIT_MOUNT_SOURCE:-<unset>}
-Requested: $mount_identity
-To recreate it intentionally, run:
-  DX_CONTAINER_NAME=$DX_CONTAINER_NAME ./bin/dx-destroy-container
-EOF
-        exit 1
-    fi
-fi
 
 safe_name="$(dx_slugify "$DX_CONTAINER_NAME" mount 48)"
 export DX_CONTAINER_NAME
@@ -202,29 +214,193 @@ if [ "$print_env" = true ]; then
     exit 0
 fi
 
-if [ "$destroy" = true ]; then
-    # A leaked DX_NIX_VOLUME=dx-nix (or similar) in the caller's environment
-    # must never let a side-container cleanup take down dx-host's durable
-    # state. Only namespaced side-container resources may be destroyed.
-    refuse_default_destroy() {
-        local var="$1" value="$2" default_value="$3"
-        if [ "$value" = "$default_value" ]; then
-            echo "Error: refusing to destroy default dx-host resource ($var=$value)." >&2
-            echo "Unset $var so dx-mount can derive the private side-container value." >&2
+# Read any existing identity marker up front (destroy/plan resolution and
+# attach-time validation both need it; --print-env above never touches it).
+marker_present=false
+manifest_present=false
+if [ -f "$identity_file" ]; then
+    marker_present=true
+    # shellcheck disable=SC1090
+    source "$identity_file"
+    if [ -n "${DX_RECORDED_CONTAINER_NAME:-}" ]; then
+        manifest_present=true
+    fi
+fi
+
+# Pure derive-from-NAME resources, used for legacy-marker destroys/plans and
+# in the write-once manifest computed below; independent of any inherited
+# env override, unlike DX_NIX_VOLUME et al above.
+name_derived_nix_volume="$DX_CONTAINER_NAME-nix"
+name_derived_persist_volume="$DX_CONTAINER_NAME-persist"
+name_derived_bootstrap_volume="$DX_CONTAINER_NAME-bootstrap"
+name_derived_ssh_key="$DX_PROJECT_ROOT/${safe_name}_key"
+name_derived_ssh_key_pub="$DX_PROJECT_ROOT/${safe_name}_key.pub"
+
+# A leaked DX_NIX_VOLUME=dx-nix (or similar) in the caller's environment must
+# never let a side-container cleanup take down dx-host's durable state. Only
+# namespaced side-container resources may be destroyed.
+refuse_default_destroy() {
+    local var="$1" value="$2" default_value="$3"
+    if [ "$value" = "$default_value" ]; then
+        echo "Error: refusing to destroy default dx-host resource ($var=$value)." >&2
+        echo "Unset $var so dx-mount can derive the private side-container value." >&2
+        exit 1
+    fi
+}
+
+if [ "$destroy" = true ] || [ "$print_destroy_plan" = true ]; then
+    if [ -n "$container_override" ] && [ "$marker_present" != true ]; then
+        cat >&2 <<EOF
+Error: no mount identity marker found for container $DX_CONTAINER_NAME.
+Refusing to destroy because --container NAME requires a marker to authorize
+resource resolution for a destroy-only invocation.
+If you are certain of the exact resources this container used, remove them
+manually, e.g.:
+  DX_CONTAINER_NAME=$DX_CONTAINER_NAME $SCRIPT_DIR/dx-destroy-container
+  DX_NIX_VOLUME=... DX_PERSIST_VOLUME=... DX_BOOTSTRAP_VOLUME=... $SCRIPT_DIR/dx-destroy-volumes --force
+  DX_SSH_KEY=... DX_SSH_KEY_PUB=... $SCRIPT_DIR/dx-destroy-keys
+EOF
+        exit 1
+    fi
+
+    resolution_source=""
+    if [ "$manifest_present" = true ]; then
+        if [ "${DX_RECORDED_CONTAINER_NAME}" != "$DX_CONTAINER_NAME" ]; then
+            cat >&2 <<EOF
+Error: mount identity marker $identity_file records container name
+'${DX_RECORDED_CONTAINER_NAME}', not '$DX_CONTAINER_NAME'.
+This marker may have been copied or renamed; refusing to use it to authorize
+destruction of a different container.
+EOF
             exit 1
         fi
-    }
+        DX_IMAGE="$DX_RECORDED_IMAGE"
+        DX_NIX_VOLUME="$DX_RECORDED_NIX_VOLUME"
+        DX_PERSIST_VOLUME="$DX_RECORDED_PERSIST_VOLUME"
+        DX_BOOTSTRAP_VOLUME="$DX_RECORDED_BOOTSTRAP_VOLUME"
+        DX_SSH_KEY="$DX_RECORDED_SSH_KEY"
+        DX_SSH_KEY_PUB="$DX_RECORDED_SSH_KEY_PUB"
+        resolution_source="manifest"
+    elif [ -n "$container_override" ]; then
+        # A legacy marker (source/target only) under an explicit --container
+        # destroy-only invocation: derive purely from NAME so a stray
+        # inherited DX_* override can never redirect the destroy.
+        DX_NIX_VOLUME="$name_derived_nix_volume"
+        DX_PERSIST_VOLUME="$name_derived_persist_volume"
+        DX_BOOTSTRAP_VOLUME="$name_derived_bootstrap_volume"
+        DX_SSH_KEY="$name_derived_ssh_key"
+        DX_SSH_KEY_PUB="$name_derived_ssh_key_pub"
+        resolution_source="legacy"
+    else
+        # Plain dx-mount [DIR] --destroy with no --container: no marker, or a
+        # legacy marker, keeps today's environment-honoring resolution — the
+        # values already resolved above.
+        if [ "$marker_present" = true ]; then
+            resolution_source="legacy"
+        else
+            resolution_source="name-derived"
+        fi
+    fi
+
     refuse_default_destroy DX_NIX_VOLUME "$DX_NIX_VOLUME" dx-nix
     refuse_default_destroy DX_PERSIST_VOLUME "$DX_PERSIST_VOLUME" dx-persist
     refuse_default_destroy DX_BOOTSTRAP_VOLUME "$DX_BOOTSTRAP_VOLUME" dx-bootstrap
     refuse_default_destroy DX_SSH_KEY "$DX_SSH_KEY" "$DX_PROJECT_ROOT/dx_key"
     refuse_default_destroy DX_SSH_KEY_PUB "$DX_SSH_KEY_PUB" "$DX_PROJECT_ROOT/dx_key.pub"
+
+    if [ "$print_destroy_plan" = true ]; then
+        cat <<EOF
+Destroy plan for $DX_CONTAINER_NAME (resolution: $resolution_source):
+  container:          $DX_CONTAINER_NAME
+  image:               $DX_IMAGE
+  nix volume:          $DX_NIX_VOLUME
+  persist volume:      $DX_PERSIST_VOLUME
+  bootstrap volume:    $DX_BOOTSTRAP_VOLUME
+  ssh key:             $DX_SSH_KEY
+  ssh key (public):    $DX_SSH_KEY_PUB
+  identity marker:     $identity_file
+Nothing has been deleted or written.
+EOF
+        exit 0
+    fi
+
     echo "Destroying mount side container $DX_CONTAINER_NAME and private state..."
     "$SCRIPT_DIR/dx-destroy-container"
     "$SCRIPT_DIR/dx-destroy-volumes" --force
     "$SCRIPT_DIR/dx-destroy-keys"
     rm -f "$identity_file"
     exit 0
+fi
+
+# --- Attach/create path from here on (print-env, destroy, and
+# print-destroy-plan have all already exited above). ---
+
+if [ -n "$container_override" ] && container_exists "$DX_CONTAINER_NAME" && [ "$marker_present" != true ]; then
+    cat >&2 <<EOF
+Error: container $DX_CONTAINER_NAME already exists, but no mount identity marker was found.
+Refusing to attach because --container NAME overrides cannot be verified.
+To recreate it intentionally, run:
+  DX_CONTAINER_NAME=$DX_CONTAINER_NAME ./bin/dx-destroy-container
+EOF
+    exit 1
+fi
+
+if [ "$marker_present" = true ]; then
+    if [ "$manifest_present" = true ]; then
+        # New manifest markers validate every recorded field, regardless of
+        # --container or whether the container currently exists; a renamed
+        # or copied marker must never validate.
+        if [ "${DX_RECORDED_CONTAINER_NAME}" != "$DX_CONTAINER_NAME" ]; then
+            cat >&2 <<EOF
+Error: mount identity marker $identity_file records container name
+'${DX_RECORDED_CONTAINER_NAME}', not '$DX_CONTAINER_NAME'.
+This marker may have been copied or renamed; refusing to attach with it.
+EOF
+            exit 1
+        fi
+
+        mismatches=()
+        [ "${DX_RECORDED_GIT_MOUNT_SOURCE:-}" = "$mount_identity" ] \
+            || mismatches+=("mount source: recorded=${DX_RECORDED_GIT_MOUNT_SOURCE:-<unset>} requested=$mount_identity")
+        [ "${DX_RECORDED_IMAGE:-}" = "$DX_IMAGE" ] \
+            || mismatches+=("image: recorded=${DX_RECORDED_IMAGE:-<unset>} requested=$DX_IMAGE")
+        [ "${DX_RECORDED_NIX_VOLUME:-}" = "$DX_NIX_VOLUME" ] \
+            || mismatches+=("nix volume: recorded=${DX_RECORDED_NIX_VOLUME:-<unset>} requested=$DX_NIX_VOLUME")
+        [ "${DX_RECORDED_PERSIST_VOLUME:-}" = "$DX_PERSIST_VOLUME" ] \
+            || mismatches+=("persist volume: recorded=${DX_RECORDED_PERSIST_VOLUME:-<unset>} requested=$DX_PERSIST_VOLUME")
+        [ "${DX_RECORDED_BOOTSTRAP_VOLUME:-}" = "$DX_BOOTSTRAP_VOLUME" ] \
+            || mismatches+=("bootstrap volume: recorded=${DX_RECORDED_BOOTSTRAP_VOLUME:-<unset>} requested=$DX_BOOTSTRAP_VOLUME")
+        [ "${DX_RECORDED_SSH_KEY:-}" = "$DX_SSH_KEY" ] \
+            || mismatches+=("ssh key: recorded=${DX_RECORDED_SSH_KEY:-<unset>} requested=$DX_SSH_KEY")
+        [ "${DX_RECORDED_SSH_KEY_PUB:-}" = "$DX_SSH_KEY_PUB" ] \
+            || mismatches+=("ssh key (public): recorded=${DX_RECORDED_SSH_KEY_PUB:-<unset>} requested=$DX_SSH_KEY_PUB")
+
+        if [ "${#mismatches[@]}" -gt 0 ]; then
+            {
+                echo "Error: container $DX_CONTAINER_NAME's resolved resources do not match its recorded manifest:"
+                for m in "${mismatches[@]}"; do
+                    echo "  $m"
+                done
+                echo "Re-run with the original overrides, or destroy and recreate intentionally:"
+                echo "  $SCRIPT_DIR/dx-mount --container $DX_CONTAINER_NAME --destroy"
+            } >&2
+            exit 1
+        fi
+    elif [ -n "$container_override" ] && container_exists "$DX_CONTAINER_NAME"; then
+        # Legacy markers keep exactly today's semantics: a source-only check,
+        # gated on an explicit --container override against an existing
+        # container. Never auto-upgraded to manifest form.
+        if [ "${DX_RECORDED_GIT_MOUNT_SOURCE:-}" != "$mount_identity" ]; then
+            cat >&2 <<EOF
+Error: container $DX_CONTAINER_NAME is recorded for a different mount source.
+Recorded: ${DX_RECORDED_GIT_MOUNT_SOURCE:-<unset>}
+Requested: $mount_identity
+To recreate it intentionally, run:
+  DX_CONTAINER_NAME=$DX_CONTAINER_NAME ./bin/dx-destroy-container
+EOF
+            exit 1
+        fi
+    fi
 fi
 
 if ! container_exists "$DX_CONTAINER_NAME" && dx_port_in_use "$DX_SSH_PORT"; then
@@ -237,13 +413,29 @@ EOF
     exit 1
 fi
 
-mkdir -p "$identity_dir"
-{
-    printf 'DX_RECORDED_GIT_MOUNT_SOURCE=%q\n' "$mount_identity"
-    printf 'DX_RECORDED_GIT_MOUNT_TARGET=%q\n' "$DX_GIT_MOUNT_TARGET"
-} > "$identity_file"
+# The manifest is write-once: created in full on first attach, never
+# rewritten afterward. Legacy markers (no DX_RECORDED_CONTAINER_NAME) are
+# never auto-upgraded — they stay legacy until destroy-and-recreate.
+if [ "$marker_present" != true ]; then
+    mkdir -p "$identity_dir"
+    {
+        printf 'DX_RECORDED_CONTAINER_NAME=%q\n' "$DX_CONTAINER_NAME"
+        printf 'DX_RECORDED_GIT_MOUNT_SOURCE=%q\n' "$mount_identity"
+        printf 'DX_RECORDED_GIT_MOUNT_TARGET=%q\n' "$DX_GIT_MOUNT_TARGET"
+        printf 'DX_RECORDED_IMAGE=%q\n' "$DX_IMAGE"
+        printf 'DX_RECORDED_NIX_VOLUME=%q\n' "$DX_NIX_VOLUME"
+        printf 'DX_RECORDED_PERSIST_VOLUME=%q\n' "$DX_PERSIST_VOLUME"
+        printf 'DX_RECORDED_BOOTSTRAP_VOLUME=%q\n' "$DX_BOOTSTRAP_VOLUME"
+        printf 'DX_RECORDED_SSH_KEY=%q\n' "$DX_SSH_KEY"
+        printf 'DX_RECORDED_SSH_KEY_PUB=%q\n' "$DX_SSH_KEY_PUB"
+    } > "$identity_file"
+fi
 
 echo "Bringing up mount side container $DX_CONTAINER_NAME..."
 echo "Mounting $DX_GIT_MOUNT_SOURCE at $DX_GIT_MOUNT_TARGET"
+
+if [ "${DX_MOUNT_TEST_MODE:-}" = "resolve" ]; then
+    exit 0
+fi
 
 exec "$SCRIPT_DIR/dx"

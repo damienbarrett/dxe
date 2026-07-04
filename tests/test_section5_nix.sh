@@ -56,16 +56,34 @@ elif ! wait_for_ssh 60; then
     test_fail "SSH not reachable on localhost:$DX_SSH_PORT"
 else
     if guest_bash "grep -q '^VERSION_ID=\"$DX_EXPECTED_NIXOS_RELEASE\"' /etc/os-release"; then
-        test_pass "live guest reports NixOS $DX_EXPECTED_NIXOS_RELEASE in /etc/os-release"
+        test_pass "live guest publishes NixOS $DX_EXPECTED_NIXOS_RELEASE as its release identity in /etc/os-release"
     else
-        test_fail "live guest reports NixOS $DX_EXPECTED_NIXOS_RELEASE in /etc/os-release"
+        test_fail "live guest publishes NixOS $DX_EXPECTED_NIXOS_RELEASE as its release identity in /etc/os-release"
     fi
 
+    # Secondary/static: proves the branch string appears somewhere in the
+    # lock file, but any transitive input could satisfy that -- it is not the
+    # release oracle (see below) and is kept only as a cheap static check.
     if guest_bash "grep -q '$DX_EXPECTED_NIXOS_BRANCH' /guest-bootstrap/flake.lock"; then
-        test_pass "live guest bootstrap flake.lock points stable inputs at $DX_EXPECTED_NIXOS_BRANCH"
+        test_pass "secondary/static: live guest bootstrap flake.lock contains the string $DX_EXPECTED_NIXOS_BRANCH"
     else
-        test_fail "live guest bootstrap flake.lock points stable inputs at $DX_EXPECTED_NIXOS_BRANCH"
+        test_fail "secondary/static: live guest bootstrap flake.lock contains the string $DX_EXPECTED_NIXOS_BRANCH"
     fi
+
+    # Mandatory release oracle (nix-base-plan.md): resolve the guest's own
+    # locked flake inputs and assert the release they resolve to, rather than
+    # trusting a file the base image may not even provide.
+    # --no-update-lock-file so this check can never mutate the guest's lock.
+    DX_RELEASE_ORACLE_RAW="$(guest_bash "nix eval --raw --no-update-lock-file --inputs-from /guest-bootstrap nixpkgs#lib.version" 2>/dev/null || true)"
+    DX_RELEASE_ORACLE_OUTPUT="$(printf '%s\n' "$DX_RELEASE_ORACLE_RAW" | tail -1)"
+    case "$DX_RELEASE_ORACLE_OUTPUT" in
+        "$DX_EXPECTED_NIXOS_RELEASE"*)
+            test_pass "live guest's locked flake inputs resolve nixpkgs#lib.version starting with $DX_EXPECTED_NIXOS_RELEASE"
+            ;;
+        *)
+            test_fail "live guest's locked flake inputs resolve nixpkgs#lib.version starting with $DX_EXPECTED_NIXOS_RELEASE (got '$DX_RELEASE_ORACLE_OUTPUT')"
+            ;;
+    esac
 fi
 
 print_summary

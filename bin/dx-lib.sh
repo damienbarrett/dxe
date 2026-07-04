@@ -119,6 +119,18 @@ dx_require_non_reserved_container_name() {
     fi
 }
 
+# Reject container names before they are ever used to build a path (e.g. a
+# mount identity marker file). No slashes, no leading '-' or '.', no empty
+# string.
+dx_require_container_safe_name() {
+    local name="$1"
+    if ! [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+        echo "Error: --container name '$name' is not valid." >&2
+        echo "Names must match ^[A-Za-z0-9][A-Za-z0-9_.-]*\$ (no '/', no leading '-' or '.', not empty)." >&2
+        return 1
+    fi
+}
+
 dx_slugify() {
     local value="$1"
     local fallback="${2:-item}"

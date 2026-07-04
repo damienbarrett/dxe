@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Ensure SSL certificates are found
@@ -7,6 +7,26 @@ export NIX_SSL_CERT_FILE=${NIX_SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}
 DX_GUEST_ACTIVATION_TIMEOUT="${DX_GUEST_ACTIVATION_TIMEOUT:-1800}"
 DX_GUEST_ACTIVATION_ATTEMPTS="${DX_GUEST_ACTIVATION_ATTEMPTS:-2}"
 DX_GUEST_ACTIVATION_RETRY_DELAY="${DX_GUEST_ACTIVATION_RETRY_DELAY:-5}"
+
+# 0. Temporary old-base guard for the nix-base-plan.md changeover.
+#
+# The official nixos/nix base image never provides a bash binary at the path
+# checked below (regular file or symlink, including a dangling one), and
+# nothing in this guest payload creates it -- its presence matches the known
+# flakes-base signature. This is a TEMPORARY guard: remove this function and
+# its call in `# Main` below, together with the host-site twin in
+# bin/dx-start-container, once every machine (primary, side containers,
+# profiles) has changed over.
+guard_old_base() {
+    local bash_path="${DX_GUARD_ROOT:-}/bin/bash"
+
+    if [ -e "$bash_path" ] || [ -L "$bash_path" ]; then
+        echo "Error: $bash_path is present, matching the known flakes-base signature (nixpkgs/nix-flakes)." >&2
+        echo "This container was built from the old flakes base and must be rebuilt under the official base." >&2
+        echo "Follow the changeover procedure in nix-base-plan.md before retrying." >&2
+        return 1
+    fi
+}
 
 # 1. Bootstrapping dependencies (Section 2/3)
 install_essentials() {
@@ -234,7 +254,7 @@ create_user() {
     if ! id -u dx >/dev/null 2>&1; then
         echo "Creating user dx..."
         groupadd -f dx
-        useradd -m -g dx -s /bin/bash dx
+        useradd -m -g dx -s /bin/sh dx
         # Unlock the account for SSH access
         usermod -p '*' dx
     fi
@@ -608,6 +628,8 @@ start_ssh() {
 }
 
 # Main
+guard_old_base
+if [ "${DX_BOOTSTRAP_TEST_MODE:-}" = "guard" ]; then exit 0; fi
 install_essentials
 setup_nix_volume   # §2: Call BEFORE install_tools
 configure_nix_daemon # §3
