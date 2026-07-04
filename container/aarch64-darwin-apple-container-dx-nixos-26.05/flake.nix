@@ -63,7 +63,6 @@
         yazi
         btop
         fastfetch
-        ghostty.terminfo
         tzdata
       ];
 
