@@ -5,8 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
 echo "Waiting for guest SSH to become responsive..."
-MAX_RETRIES=120
-RETRY_COUNT=0
+WAIT_TIMEOUT="${DX_SSH_WAIT_TIMEOUT:-$(dx_default_ssh_wait_timeout)}"
+POLL_INTERVAL="${DX_SSH_POLL_INTERVAL:-5}"
+PROGRESS_INTERVAL="${DX_SSH_PROGRESS_INTERVAL:-30}"
+
+dx_require_positive_integer DX_SSH_WAIT_TIMEOUT "$WAIT_TIMEOUT"
+dx_require_positive_integer DX_SSH_POLL_INTERVAL "$POLL_INTERVAL"
+dx_require_positive_integer DX_SSH_PROGRESS_INTERVAL "$PROGRESS_INTERVAL"
+
+echo "Bootstrap wait limit: ${WAIT_TIMEOUT}s. A fresh factory-reset bootstrap can take several minutes."
 
 # Use a simple SSH command to check if the guest is actually ready to accept logins
 SSH_CHECK_OPTS=(
@@ -19,24 +26,45 @@ SSH_CHECK_OPTS=(
     "-o" "BatchMode=yes"
 )
 
+print_container_logs() {
+    local lines="$1"
+    if ! container logs -n "$lines" "$DX_CONTAINER_NAME" 2>&1 | sed 's/^/  /'; then
+        echo "  (container logs unavailable)"
+    fi
+}
+
+ELAPSED=0
+NEXT_PROGRESS="$PROGRESS_INTERVAL"
 while ! ssh "${SSH_CHECK_OPTS[@]}" dx@127.0.0.1 "bash -lc 'true'" 2>/dev/null; do
     if container_exists "$DX_CONTAINER_NAME" && ! container_is_running "$DX_CONTAINER_NAME"; then
         echo "Error: Container $DX_CONTAINER_NAME stopped before SSH became responsive." >&2
         echo "Last 80 container log lines:" >&2
-        container logs -n 80 "$DX_CONTAINER_NAME" 2>&1 | sed 's/^/  /' >&2
+        print_container_logs 80 >&2
         exit 1
     fi
-    if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-        echo "Error: Timed out waiting for guest SSH service to become responsive." >&2
+    if [ "$ELAPSED" -ge "$WAIT_TIMEOUT" ]; then
+        echo "Error: Timed out after ${WAIT_TIMEOUT}s waiting for guest SSH service to become responsive." >&2
         if container_exists "$DX_CONTAINER_NAME"; then
             echo "Last 80 container log lines:" >&2
-            container logs -n 80 "$DX_CONTAINER_NAME" 2>&1 | sed 's/^/  /' >&2
+            print_container_logs 80 >&2
         fi
         exit 1
     fi
-    RETRY_COUNT=$((RETRY_COUNT + 1))
-    # Provide a visual indicator
+
+    if [ "$ELAPSED" -ge "$NEXT_PROGRESS" ]; then
+        printf "\nBootstrap still running (%ss elapsed). Latest guest log:\n" "$ELAPSED"
+        print_container_logs 1
+        while [ "$NEXT_PROGRESS" -le "$ELAPSED" ]; do
+            NEXT_PROGRESS=$((NEXT_PROGRESS + PROGRESS_INTERVAL))
+        done
+    fi
+
     printf "."
-    sleep 5
+    SLEEP_INTERVAL="$POLL_INTERVAL"
+    if [ "$((ELAPSED + SLEEP_INTERVAL))" -gt "$WAIT_TIMEOUT" ]; then
+        SLEEP_INTERVAL=$((WAIT_TIMEOUT - ELAPSED))
+    fi
+    sleep "$SLEEP_INTERVAL"
+    ELAPSED=$((ELAPSED + SLEEP_INTERVAL))
 done
 printf "\nGuest is ready.\n"

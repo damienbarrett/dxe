@@ -219,6 +219,14 @@ else
     test_fail "dx user can write to /persist"
 fi
 
+# The ~/persist/home parent is user-visible and must not remain root-owned
+# after bootstrap creates /persist/home/dx.
+if guest 'bash -lc "probe=/persist/home/.dxe-write-probe-\$\$; mkdir \"\$probe\" && rmdir \"\$probe\""' 2>/dev/null; then
+    test_pass "dx user can create directories under /persist/home"
+else
+    test_fail "dx user can create directories under /persist/home"
+fi
+
 # GitHub CLI config/auth should live on the persistent volume.
 if guest 'bash -lc "test -L ~/.config/gh && test \"$(readlink ~/.config/gh)\" = /persist/home/dx/.config/gh && test -d /persist/home/dx/.config/gh"' 2>/dev/null; then
     test_pass "GitHub CLI config is linked to persistent storage"

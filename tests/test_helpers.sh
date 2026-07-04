@@ -171,14 +171,11 @@ GLOBAL_FAILED=0
 wait_for_ssh() {
     local timeout="${1:-180}"
     echo "  Waiting for guest bootstrap on localhost:$DX_SSH_PORT (up to ${timeout}s)..."
-    for i in $(seq 1 "$timeout"); do
-        if nc -z localhost "$DX_SSH_PORT" 2>/dev/null; then
-            echo "  Guest bootstrap complete (SSH port is open)."
-            return 0
-        fi
-        sleep 1
-    done
-    echo "  Timeout waiting for SSH."
+    if DX_SSH_WAIT_TIMEOUT="$timeout" "$BASE_DIR/bin/dx-wait-ssh"; then
+        echo "  Guest bootstrap complete (authenticated SSH is responsive)."
+        return 0
+    fi
+    echo "  Timeout waiting for authenticated SSH."
     return 1
 }
 

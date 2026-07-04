@@ -34,7 +34,7 @@ export DX_BOOTSTRAP_SOURCE="${DX_BOOTSTRAP_SOURCE:-$DX_CONTEXT_DIR}"
 export DX_BOOTSTRAP_VOLUME="${DX_BOOTSTRAP_VOLUME:-dx-bootstrap}"
 export DX_BOOTSTRAP_PATH="${DX_BOOTSTRAP_PATH:-/guest-bootstrap}"
 export DX_BOOTSTRAP_WAIT_TIMEOUT="${DX_BOOTSTRAP_WAIT_TIMEOUT:-30}"
-export DX_GUEST_ACTIVATION_TIMEOUT="${DX_GUEST_ACTIVATION_TIMEOUT:-600}"
+export DX_GUEST_ACTIVATION_TIMEOUT="${DX_GUEST_ACTIVATION_TIMEOUT:-1800}"
 export DX_GUEST_ACTIVATION_ATTEMPTS="${DX_GUEST_ACTIVATION_ATTEMPTS:-2}"
 export DX_GUEST_ACTIVATION_RETRY_DELAY="${DX_GUEST_ACTIVATION_RETRY_DELAY:-5}"
 export DX_NIX_VOLUME="${DX_NIX_VOLUME:-dx-nix}"
@@ -171,6 +171,36 @@ dx_port_in_use() {
     # A successful loopback connect means something already owns the port.
     # /dev/tcp avoids a dependency on nc/lsof; the fd closes with the subshell.
     (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null
+}
+
+dx_require_positive_integer() {
+    local name="$1"
+    local value="$2"
+
+    case "$value" in
+        ''|*[!0-9]*|0)
+            echo "Error: $name must be a positive integer, got '$value'." >&2
+            return 1
+            ;;
+    esac
+}
+
+dx_default_ssh_wait_timeout() {
+    local bootstrap_grace=1800
+    local wait_timeout
+
+    dx_require_positive_integer DX_GUEST_ACTIVATION_TIMEOUT "$DX_GUEST_ACTIVATION_TIMEOUT"
+    dx_require_positive_integer DX_GUEST_ACTIVATION_ATTEMPTS "$DX_GUEST_ACTIVATION_ATTEMPTS"
+    dx_require_positive_integer DX_GUEST_ACTIVATION_RETRY_DELAY "$DX_GUEST_ACTIVATION_RETRY_DELAY"
+
+    # Each activation attempt can consume its configured timeout plus the
+    # 30-second forced-kill grace in bootstrap.sh. Include every retry delay
+    # and a bounded allowance for rebuilding the root bootstrap toolchain on a
+    # clean image before the persistent Nix store can be mounted.
+    wait_timeout=$((DX_GUEST_ACTIVATION_ATTEMPTS * (DX_GUEST_ACTIVATION_TIMEOUT + 30)
+        + (DX_GUEST_ACTIVATION_ATTEMPTS - 1) * DX_GUEST_ACTIVATION_RETRY_DELAY
+        + bootstrap_grace))
+    printf '%s\n' "$wait_timeout"
 }
 
 run_with_timeout() {

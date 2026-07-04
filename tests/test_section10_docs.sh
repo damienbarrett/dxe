@@ -94,9 +94,10 @@ assert_file_contains "$README" "DX_BOOTSTRAP_VOLUME.*dx-bootstrap" "README docum
 assert_file_contains "$README" "DX_BOOTSTRAP_SOURCE.*DX_CONTEXT_DIR" "README documents DX_BOOTSTRAP_SOURCE default"
 assert_file_contains "$README" "DX_STOP_COMMAND_TIMEOUT.*15" "README documents stop command timeout"
 assert_file_contains "$README" "DX_SSH_CONNECT_TIMEOUT.*15" "README documents SSH connect timeout"
-assert_file_contains "$README" "DX_GUEST_ACTIVATION_TIMEOUT.*600" "README documents guest activation timeout"
+assert_file_contains "$README" "DX_GUEST_ACTIVATION_TIMEOUT.*1800" "README documents guest activation timeout"
 assert_file_contains "$README" "DX_GUEST_ACTIVATION_ATTEMPTS.*2" "README documents guest activation attempts"
 assert_file_contains "$README" "DX_GUEST_ACTIVATION_RETRY_DELAY.*5" "README documents guest activation retry delay"
+assert_file_contains "$README" "DX_SSH_WAIT_TIMEOUT.*complete guest activation retry budget" "README documents the derived SSH wait timeout"
 
 # Test: README documents rerunning guest bootstrap
 assert_file_contains "$README" "[Rr]erun\|[Rr]e-run\|[Rr]ebootstrap\|[Rr]e-bootstrap" "README documents rerunning guest bootstrap"

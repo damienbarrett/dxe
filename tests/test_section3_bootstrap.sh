@@ -58,6 +58,64 @@ assert_file_contains "$BOOTSTRAP" "run_home_manager_activation" "bootstrap centr
 assert_file_contains "$BOOTSTRAP" "stalled-download-timeout 60" "bootstrap bounds stalled Nix downloads during activation"
 assert_file_contains "$BOOTSTRAP" "Retrying Home Manager activation" "bootstrap retries failed activation before giving up"
 
+# A clean Nix store must have enough wall-clock time to download and activate
+# the complete Home Manager closure.
+BOOTSTRAP_FUNCTIONS="$(mktemp)"
+sed '/^# Main$/,$d' "$BOOTSTRAP" > "$BOOTSTRAP_FUNCTIONS"
+BOOTSTRAP_DEFAULT_TIMEOUT="$(
+    (
+        unset DX_GUEST_ACTIVATION_TIMEOUT
+        source "$BOOTSTRAP_FUNCTIONS"
+        DX_GUEST_ACTIVATION_ATTEMPTS=1
+        run_as_dx_with_timeout() {
+            printf '%s\n' "$1"
+            return 0
+        }
+        run_home_manager_activation
+    ) | tail -1
+)"
+if [ "$BOOTSTRAP_DEFAULT_TIMEOUT" = "1800" ]; then
+    test_pass "bootstrap gives a fresh Home Manager activation a 30-minute default window"
+else
+    test_fail "bootstrap gives a fresh Home Manager activation a 30-minute default window"
+fi
+
+# Exercise the activation retry function without running the bootstrap main
+# routine. A failed final attempt must retain the command's real status so the
+# container exits and the host can report the failure.
+BOOTSTRAP_ACTIVATION_OUTPUT="$(mktemp)"
+set +e
+(
+    source "$BOOTSTRAP_FUNCTIONS"
+    DX_GUEST_ACTIVATION_TIMEOUT=1
+    DX_GUEST_ACTIVATION_ATTEMPTS=1
+    DX_GUEST_ACTIVATION_RETRY_DELAY=1
+    run_as_dx_with_timeout() {
+        return 42
+    }
+    run_home_manager_activation
+) >"$BOOTSTRAP_ACTIVATION_OUTPUT" 2>&1
+BOOTSTRAP_ACTIVATION_STATUS=$?
+set -e
+if [ "$BOOTSTRAP_ACTIVATION_STATUS" -eq 42 ] \
+    && grep -q "failed with exit status 42" "$BOOTSTRAP_ACTIVATION_OUTPUT"; then
+    test_pass "bootstrap preserves the final Home Manager activation failure"
+else
+    test_fail "bootstrap preserves the final Home Manager activation failure"
+fi
+rm -f "$BOOTSTRAP_FUNCTIONS" "$BOOTSTRAP_ACTIVATION_OUTPUT"
+
+# The user-visible ~/persist/home path must remain writable after a fresh
+# volume creates its intermediate directories as root.
+assert_file_contains "$BOOTSTRAP" \
+    "install -d -o dx -g dx -m 0755 /persist/home /persist/home/dx" \
+    "bootstrap gives dx ownership of persistent home directories"
+
+# Minimal base images do not provide /etc/os-release; bootstrap must publish
+# the release identity declared by the pinned flake.
+assert_file_contains "$BOOTSTRAP" "configure_release_identity" "bootstrap centralizes guest release identity"
+assert_file_contains "$BOOTSTRAP" "VERSION_ID=\\\"\$release\\\"" "bootstrap writes the pinned release to os-release"
+
 # Test: bootstrap initializes persisted Claude config as valid JSON
 assert_file_not_contains "$BOOTSTRAP" "touch /persist/home/dx/.claude.json" "bootstrap does not create empty Claude JSON config"
 assert_file_contains "$BOOTSTRAP" "printf '%s\\\\n' '{}' > /persist/home/dx/.claude.json" "bootstrap initializes empty Claude config as JSON"

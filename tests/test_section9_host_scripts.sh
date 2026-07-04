@@ -94,7 +94,7 @@ fi
 assert_file_contains "$DX_SSH" "LogLevel=ERROR" "dx-ssh suppresses noisy known-host warnings"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_SSH_CONNECT_TIMEOUT=.*15" "dx-lib exposes 15s SSH connect timeout"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_BOOTSTRAP_WAIT_TIMEOUT=.*30" "dx-lib exposes bootstrap marker wait timeout"
-assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_GUEST_ACTIVATION_TIMEOUT=.*600" "dx-lib exposes guest activation timeout"
+assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_GUEST_ACTIVATION_TIMEOUT=.*1800" "dx-lib exposes a 30-minute guest activation timeout"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_GUEST_ACTIVATION_ATTEMPTS=.*2" "dx-lib exposes guest activation attempts"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_GUEST_ACTIVATION_RETRY_DELAY=.*5" "dx-lib exposes guest activation retry delay"
 assert_file_contains "$BIN_DIR/dx-lib.sh" "DX_GIT_MOUNT_SOURCE=.*:-" "dx-lib defaults git mount source to empty"
@@ -122,6 +122,147 @@ assert_file_contains "$DX_SSH" "DX_GUEST_WORKDIR" "dx-ssh supports optional prof
 DX_WAIT_SSH="$BIN_DIR/dx-wait-ssh"
 assert_file_contains "$DX_WAIT_SSH" "container_is_running" "dx-wait-ssh detects bootstrap container exits"
 assert_file_contains "$DX_WAIT_SSH" "Last 80 container log lines" "dx-wait-ssh prints recent container logs on SSH wait failure"
+
+# A factory-reset bootstrap may use every bounded activation attempt. The host
+# wait budget must cover that complete guest-side budget rather than expiring
+# after the first attempt.
+DX_DEFAULT_SSH_WAIT="$(
+    DX_GUEST_ACTIVATION_TIMEOUT=10 \
+    DX_GUEST_ACTIVATION_ATTEMPTS=2 \
+    DX_GUEST_ACTIVATION_RETRY_DELAY=3 \
+        bash -c 'source "$1"; dx_default_ssh_wait_timeout' _ "$BIN_DIR/dx-lib.sh" 2>/dev/null || true
+)"
+if [[ "$DX_DEFAULT_SSH_WAIT" =~ ^[0-9]+$ ]] && [ "$DX_DEFAULT_SSH_WAIT" -gt 1823 ]; then
+    test_pass "default SSH wait covers guest activation plus fresh bootstrap overhead"
+else
+    test_fail "default SSH wait covers guest activation plus fresh bootstrap overhead"
+fi
+
+# Behavioural coverage for dx-wait-ssh uses command stubs, so it cannot mutate
+# the real Apple container runtime or wait in real time.
+DX_WAIT_TEST_TMP="$(mktemp -d)"
+DX_WAIT_STUB_BIN="$DX_WAIT_TEST_TMP/bin"
+DX_WAIT_SSH_COUNT="$DX_WAIT_TEST_TMP/ssh-count"
+mkdir -p "$DX_WAIT_STUB_BIN"
+
+cat > "$DX_WAIT_STUB_BIN/container" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+case "${1:-} ${2:-}" in
+    "list -a")
+        printf 'ID STATE\n'
+        printf '%s stopped\n' "${DX_CONTAINER_NAME:-dx-host}"
+        ;;
+    "list ")
+        printf 'ID STATE\n'
+        if [ "${DX_STUB_CONTAINER_STATE:-running}" = "running" ]; then
+            printf '%s running\n' "${DX_CONTAINER_NAME:-dx-host}"
+        fi
+        ;;
+    "logs -n")
+        printf 'copying path test-package from cache.nixos.org\n'
+        ;;
+    *)
+        echo "Unexpected container stub arguments: $*" >&2
+        exit 2
+        ;;
+esac
+EOF
+
+cat > "$DX_WAIT_STUB_BIN/ssh" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+count=0
+if [ -f "$DX_WAIT_SSH_COUNT" ]; then
+    count="$(cat "$DX_WAIT_SSH_COUNT")"
+fi
+count=$((count + 1))
+printf '%s\n' "$count" > "$DX_WAIT_SSH_COUNT"
+
+if [ "$count" -le "${DX_STUB_SSH_FAILURES:-0}" ]; then
+    exit 255
+fi
+EOF
+
+cat > "$DX_WAIT_STUB_BIN/sleep" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "$DX_WAIT_STUB_BIN/container" "$DX_WAIT_STUB_BIN/ssh" "$DX_WAIT_STUB_BIN/sleep"
+
+dx_wait_behavior() {
+    local output_file="$1"
+    shift
+    rm -f "$DX_WAIT_SSH_COUNT"
+    env \
+        PATH="$DX_WAIT_STUB_BIN:$PATH" \
+        DX_WAIT_SSH_COUNT="$DX_WAIT_SSH_COUNT" \
+        DX_SSH_WAIT_TIMEOUT=3 \
+        DX_SSH_POLL_INTERVAL=1 \
+        DX_SSH_PROGRESS_INTERVAL=1 \
+        "$@" \
+        "$DX_WAIT_SSH" >"$output_file" 2>&1
+}
+
+DX_WAIT_OUTPUT="$DX_WAIT_TEST_TMP/output"
+if dx_wait_behavior "$DX_WAIT_OUTPUT" DX_STUB_SSH_FAILURES=0 \
+    && grep -q "Guest is ready" "$DX_WAIT_OUTPUT"; then
+    test_pass "dx-wait-ssh returns as soon as SSH is responsive"
+else
+    test_fail "dx-wait-ssh returns as soon as SSH is responsive"
+fi
+
+set +e
+dx_wait_behavior "$DX_WAIT_OUTPUT" DX_STUB_SSH_FAILURES=99
+DX_WAIT_TIMEOUT_STATUS=$?
+set -e
+DX_WAIT_TIMEOUT_POLLS="$(cat "$DX_WAIT_SSH_COUNT" 2>/dev/null || true)"
+if [ "$DX_WAIT_TIMEOUT_STATUS" -eq 1 ] \
+    && [ "$DX_WAIT_TIMEOUT_POLLS" = "4" ] \
+    && grep -q "after 3s" "$DX_WAIT_OUTPUT" \
+    && grep -q "copying path test-package" "$DX_WAIT_OUTPUT"; then
+    test_pass "dx-wait-ssh honors its timeout and reports recent guest progress"
+else
+    test_fail "dx-wait-ssh honors its timeout and reports recent guest progress"
+fi
+
+set +e
+dx_wait_behavior "$DX_WAIT_OUTPUT" \
+    DX_STUB_SSH_FAILURES=99 \
+    DX_STUB_CONTAINER_STATE=stopped
+DX_WAIT_STOPPED_STATUS=$?
+set -e
+if [ "$DX_WAIT_STOPPED_STATUS" -eq 1 ] \
+    && grep -q "stopped before SSH became responsive" "$DX_WAIT_OUTPUT" \
+    && grep -q "copying path test-package" "$DX_WAIT_OUTPUT"; then
+    test_pass "dx-wait-ssh reports a guest that stops during bootstrap"
+else
+    test_fail "dx-wait-ssh reports a guest that stops during bootstrap"
+fi
+
+if dx_wait_behavior "$DX_WAIT_OUTPUT" DX_STUB_SSH_FAILURES=2 \
+    && grep -q "Bootstrap still running" "$DX_WAIT_OUTPUT" \
+    && grep -q "copying path test-package" "$DX_WAIT_OUTPUT" \
+    && grep -q "Guest is ready" "$DX_WAIT_OUTPUT"; then
+    test_pass "dx-wait-ssh shows progress while a fresh bootstrap continues"
+else
+    test_fail "dx-wait-ssh shows progress while a fresh bootstrap continues"
+fi
+
+set +e
+dx_wait_behavior "$DX_WAIT_OUTPUT" DX_SSH_WAIT_TIMEOUT=invalid
+DX_WAIT_INVALID_STATUS=$?
+set -e
+if [ "$DX_WAIT_INVALID_STATUS" -eq 1 ] \
+    && grep -q "DX_SSH_WAIT_TIMEOUT must be a positive integer" "$DX_WAIT_OUTPUT"; then
+    test_pass "dx-wait-ssh rejects an invalid wait timeout"
+else
+    test_fail "dx-wait-ssh rejects an invalid wait timeout"
+fi
+
+rm -rf "$DX_WAIT_TEST_TMP"
 
 if grep -q "base64 -d | bash -l" "$DX_SSH"; then
     test_pass "dx-ssh wraps non-interactive commands for bash"
@@ -1079,6 +1220,23 @@ assert_file_contains "$DX_FACTORY_RESET" "dx-destroy-volumes" "dx-factory-reset 
 assert_file_contains "$DX_FACTORY_RESET" "dx-destroy-keys" "dx-factory-reset destroys the keys"
 assert_file_contains "$DX_FACTORY_RESET" 'dx-destroy-volumes" --force' "dx-factory-reset passes --force to dx-destroy-volumes to avoid double-prompting"
 assert_file_contains "$DX_FACTORY_RESET" "factory-reset" "dx-factory-reset requires typed confirmation"
+
+# The opt-in destructive regression must run unattended and prove the
+# permissions that previously broke immediately after a factory reset.
+DX_FACTORY_RESET_TEST="$BASE_DIR/tests/standalone_test_factory_reset.sh"
+assert_file_contains "$DX_FACTORY_RESET_TEST" 'dx-factory-reset" --force' "standalone factory-reset test runs non-interactively"
+assert_file_contains "$DX_FACTORY_RESET_TEST" "/persist/home/.dxe-write-probe" "standalone factory-reset test verifies persistent home writes"
+assert_file_not_contains "$DX_FACTORY_RESET_TEST" "exit_with_code 1" "standalone factory-reset test cannot swallow explicit failures"
+
+# Apple Container opens the published host port before guest sshd is ready.
+# Test helpers must perform the same authenticated readiness check as dx.
+assert_file_contains "$BASE_DIR/tests/test_helpers.sh" "dx-wait-ssh" "test readiness delegates to authenticated SSH waiting"
+assert_file_not_contains "$BASE_DIR/tests/test_helpers.sh" "nc -z localhost" "test readiness does not mistake a published port for SSH"
+if [ "$(grep -c "wait_for_ssh 180" "$BASE_DIR/tests/test_section11_validate_fresh.sh")" -ge 2 ]; then
+    test_pass "stop/start persistence test waits for authenticated SSH"
+else
+    test_fail "stop/start persistence test waits for authenticated SSH"
+fi
 
 # -----------------------------------------------------------------------------
 # Logging style: no Phase labels survive in the host scripts

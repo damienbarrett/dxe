@@ -280,9 +280,10 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_BOOTSTRAP_VOLUME` | `dx-bootstrap` | Named volume mounted at `/guest-bootstrap` by default. It stores the pushed bootstrap payload outside the image layer. |
 | `DX_BOOTSTRAP_PATH` | `/guest-bootstrap` | Guest path where the bootstrap payload is mounted and executed. |
 | `DX_BOOTSTRAP_WAIT_TIMEOUT` | `30` | Seconds `dx-sync-bootstrap` waits for the guest entrypoint to report bootstrap readiness before failing with a log hint. |
-| `DX_GUEST_ACTIVATION_TIMEOUT` | `600` | Seconds allowed for one guest Home Manager activation attempt before the bootstrap kills it and retries. |
+| `DX_GUEST_ACTIVATION_TIMEOUT` | `1800` | Seconds allowed for one guest Home Manager activation attempt before the bootstrap kills it and retries. A clean Nix store can require much of this window. |
 | `DX_GUEST_ACTIVATION_ATTEMPTS` | `2` | Total guest Home Manager activation attempts before bootstrap fails and the container exits with logs. |
 | `DX_GUEST_ACTIVATION_RETRY_DELAY` | `5` | Seconds to wait between guest Home Manager activation attempts. |
+| `DX_SSH_WAIT_TIMEOUT` | Derived from the complete guest activation retry budget | Maximum seconds `dx-wait-ssh` waits for bootstrap. The default covers all activation attempts, their kill/retry delays, and 30 minutes for rebuilding the root bootstrap toolchain on a clean image. |
 | `DX_NIX_VOLUME` | `dx-nix` | Named volume that backs the persistent Nix store. Apple Container surfaces it inside the guest at `/var/lib/dx-nix-raw`; the bootstrap reformats it as btrfs (or ext4 as a fallback) and remounts it at `/nix`. Override this for isolated test containers or parallel experiments so they do not share the default writable Nix store. |
 | `DX_NIX_MOUNT` | `/nix` | Guest mount point for the active Nix filesystem. Used by maintenance commands such as `dx-reclaim`. |
 | `DX_PERSIST_VOLUME` | `dx-persist` | Named volume mounted at the fixed guest path `/persist`. |
@@ -585,7 +586,10 @@ For a complete wipe (including `/persist` contents and SSH keys), use
 `./bin/dx-factory-reset` — it prompts for confirmation before removing anything.
 
 ### Checking Bootstrap Logs
-If you cannot connect via SSH, monitor the bootstrap progress on the host:
+After a factory reset, `./bin/dx` must repopulate the complete Nix store before
+SSH starts. The command waits for the full bounded retry period and prints a
+recent bootstrap log line every 30 seconds. To monitor the complete bootstrap
+output from another terminal:
 ```bash
 container logs dx-host -f
 ```

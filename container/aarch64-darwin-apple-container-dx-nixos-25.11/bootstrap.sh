@@ -4,7 +4,7 @@ set -euo pipefail
 # Ensure SSL certificates are found
 export SSL_CERT_FILE=${SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}
 export NIX_SSL_CERT_FILE=${NIX_SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}
-DX_GUEST_ACTIVATION_TIMEOUT="${DX_GUEST_ACTIVATION_TIMEOUT:-600}"
+DX_GUEST_ACTIVATION_TIMEOUT="${DX_GUEST_ACTIVATION_TIMEOUT:-1800}"
 DX_GUEST_ACTIVATION_ATTEMPTS="${DX_GUEST_ACTIVATION_ATTEMPTS:-2}"
 DX_GUEST_ACTIVATION_RETRY_DELAY="${DX_GUEST_ACTIVATION_RETRY_DELAY:-5}"
 
@@ -152,6 +152,29 @@ build-users-group =
 EOF
 }
 
+configure_release_identity() {
+    local release
+
+    release="$(sed -n \
+        's#^[[:space:]]*nixpkgs\.url[[:space:]]*=[[:space:]]*"github:nixos/nixpkgs/nixos-\([^"]*\)";.*#\1#p' \
+        /guest-bootstrap/flake.nix | head -1)"
+    case "$release" in
+        ''|*[!0-9.]*)
+            echo "Error: could not derive a numeric NixOS release from /guest-bootstrap/flake.nix." >&2
+            return 1
+            ;;
+    esac
+
+    cat > /etc/os-release <<EOF
+NAME="NixOS"
+ID=nixos
+VERSION="$release"
+VERSION_ID="$release"
+PRETTY_NAME="NixOS $release (DX guest)"
+HOME_URL="https://nixos.org/"
+EOF
+}
+
 # §4: Configure timezone
 resolve_timezone_file() {
     local timezone="$1"
@@ -236,6 +259,7 @@ setup_persist() {
     if [ -d /persist ]; then
         chown dx:dx /persist
         chmod 0755 /persist
+        install -d -o dx -g dx -m 0755 /persist/home /persist/home/dx
     fi
 }
 
@@ -338,9 +362,10 @@ run_home_manager_activation() {
         echo "Running Home Manager activation (attempt $attempt/$DX_GUEST_ACTIVATION_ATTEMPTS, timeout ${DX_GUEST_ACTIVATION_TIMEOUT}s)..."
         if run_as_dx_with_timeout "$DX_GUEST_ACTIVATION_TIMEOUT" "$activation_cmd"; then
             return 0
+        else
+            status=$?
         fi
 
-        status=$?
         if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
             echo "Warning: Home Manager activation timed out after ${DX_GUEST_ACTIVATION_TIMEOUT}s." >&2
         else
@@ -586,6 +611,7 @@ start_ssh() {
 install_essentials
 setup_nix_volume   # §2: Call BEFORE install_tools
 configure_nix_daemon # §3
+configure_release_identity
 create_user
 setup_persist
 configure_ssh
