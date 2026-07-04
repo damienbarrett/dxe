@@ -62,7 +62,7 @@
         lazygit
         yazi
         btop
-        neofetch
+        fastfetch
         ghostty.terminfo
         tzdata
       ];
