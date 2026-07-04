@@ -309,7 +309,12 @@ fi
 if [ -n "$GUARD_DEF_LINE" ] && [ -n "$GUARD_END_LINE" ]; then
     BOOTSTRAP_SANS_GUARD="$(mktemp)"
     sed "${GUARD_DEF_LINE},${GUARD_END_LINE}d" "$BOOTSTRAP" > "$BOOTSTRAP_SANS_GUARD"
-    if ! grep -q "/bin/bash" "$BOOTSTRAP_SANS_GUARD"; then
+    # link_system_bash (fourth canary finding) deliberately links
+    # /usr/bin/bash, which contains "/bin/bash" as a substring -- exclude
+    # those occurrences the same way the guard's own body is excluded above.
+    # A plain, non-substring /bin/bash reference anywhere else must still
+    # fail this sweep.
+    if ! grep -v "usr/bin/bash" "$BOOTSTRAP_SANS_GUARD" | grep -q "/bin/bash"; then
         test_pass "bootstrap.sh has no /bin/bash reference outside guard_old_base"
     else
         test_fail "bootstrap.sh has no /bin/bash reference outside guard_old_base"
@@ -551,6 +556,92 @@ if [ -n "$MATERIALIZE_CALL_LINE" ] && [ -n "$CREATE_USER_CALL_LINE" ] \
     test_pass "bootstrap.sh calls materialize_auth_files before create_user in Main"
 else
     test_fail "bootstrap.sh calls materialize_auth_files before create_user in Main"
+fi
+
+# -----------------------------------------------------------------------------
+# Fourth canary finding: non-interactive sshd sessions hand dx's nushell only
+# the bare default PATH, and both dx-ssh's command wrapper and dx-wait-ssh's
+# readiness probe bootstrap the guest environment via `bash -l`. The old base
+# satisfied that via the image's global /bin/bash; the official base ships
+# none. link_system_bash links the essentials bash at /usr/bin/bash -- on
+# sshd's default PATH -- deliberately not at /bin/bash, which remains
+# guard_old_base's signature. See nix-base-plan.md.
+# -----------------------------------------------------------------------------
+
+assert_file_contains "$BOOTSTRAP" "link_system_bash" "bootstrap centralizes linking the essentials bash onto sshd's default PATH"
+
+LINK_FUNCTIONS="$(mktemp)"
+sed '/^# Main$/,$d' "$BOOTSTRAP" > "$LINK_FUNCTIONS"
+LINK_EXPECTED_BASH="$(command -v bash)"
+
+# (a) Fresh fixture root (no usr/bin at all) -> after link_system_bash,
+# <root>/usr/bin/bash is a symlink whose target equals $(command -v bash) on
+# this test host. The root is canonicalized (readlink -f) up front for the
+# same reason as the essentials_profile_path/materialize_auth_files fixtures:
+# mktemp -d can hand back a path that is itself under a symlink.
+LINK_ROOT_A="$(mktemp -d)"
+LINK_ROOT_A="$(readlink -f "$LINK_ROOT_A")"
+set +e
+(
+    source "$LINK_FUNCTIONS"
+    DX_LINK_ROOT="$LINK_ROOT_A"
+    link_system_bash
+)
+LINK_STATUS_A=$?
+set -e
+if [ "$LINK_STATUS_A" -eq 0 ] \
+    && [ -L "$LINK_ROOT_A/usr/bin/bash" ] \
+    && [ "$(readlink "$LINK_ROOT_A/usr/bin/bash")" = "$LINK_EXPECTED_BASH" ]; then
+    test_pass "link_system_bash links a fresh root's /usr/bin/bash to \$(command -v bash)"
+else
+    test_fail "link_system_bash links a fresh root's /usr/bin/bash to \$(command -v bash)"
+fi
+rm -rf "$LINK_ROOT_A"
+
+# (b) Running it twice, the second time over a pre-existing stale symlink at
+# <root>/usr/bin/bash pointing elsewhere -> idempotent, ends pointing at
+# $(command -v bash).
+LINK_ROOT_B="$(mktemp -d)"
+LINK_ROOT_B="$(readlink -f "$LINK_ROOT_B")"
+mkdir -p "$LINK_ROOT_B/usr/bin"
+ln -s /nonexistent-dx-link-test-target "$LINK_ROOT_B/usr/bin/bash"
+set +e
+(
+    source "$LINK_FUNCTIONS"
+    DX_LINK_ROOT="$LINK_ROOT_B"
+    link_system_bash
+    link_system_bash
+)
+LINK_STATUS_B=$?
+set -e
+if [ "$LINK_STATUS_B" -eq 0 ] \
+    && [ -L "$LINK_ROOT_B/usr/bin/bash" ] \
+    && [ "$(readlink "$LINK_ROOT_B/usr/bin/bash")" = "$LINK_EXPECTED_BASH" ]; then
+    test_pass "link_system_bash is idempotent and repairs a stale /usr/bin/bash symlink"
+else
+    test_fail "link_system_bash is idempotent and repairs a stale /usr/bin/bash symlink"
+fi
+rm -rf "$LINK_ROOT_B"
+
+rm -f "$LINK_FUNCTIONS"
+
+# Static assertion: Main calls link_system_bash immediately after
+# install_essentials -- bash is on PATH from the essentials profile by then --
+# and before setup_nix_volume. No other bare function-call line may appear
+# between the two.
+INSTALL_ESSENTIALS_CALL_LINE="$(grep -n '^install_essentials$' "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")"
+LINK_SYSTEM_BASH_CALL_LINE="$(grep -n '^link_system_bash$' "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")"
+SETUP_NIX_VOLUME_CALL_LINE="$(grep -n '^setup_nix_volume' "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")"
+MAIN_BETWEEN=""
+if [ -n "$INSTALL_ESSENTIALS_CALL_LINE" ] && [ -n "$SETUP_NIX_VOLUME_CALL_LINE" ] \
+    && [ "$SETUP_NIX_VOLUME_CALL_LINE" -gt "$((INSTALL_ESSENTIALS_CALL_LINE + 1))" ]; then
+    MAIN_BETWEEN="$(sed -n "$((INSTALL_ESSENTIALS_CALL_LINE + 1)),$((SETUP_NIX_VOLUME_CALL_LINE - 1))p" "$BOOTSTRAP" | grep -E '^[A-Za-z_][A-Za-z0-9_]*$' || true)"
+fi
+if [ -n "$INSTALL_ESSENTIALS_CALL_LINE" ] && [ -n "$LINK_SYSTEM_BASH_CALL_LINE" ] && [ -n "$SETUP_NIX_VOLUME_CALL_LINE" ] \
+    && [ "$MAIN_BETWEEN" = "link_system_bash" ]; then
+    test_pass "bootstrap.sh calls link_system_bash immediately after install_essentials, before setup_nix_volume"
+else
+    test_fail "bootstrap.sh calls link_system_bash immediately after install_essentials, before setup_nix_volume"
 fi
 
 print_summary

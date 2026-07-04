@@ -385,6 +385,22 @@ FROM nixos/nix:2.31.5@sha256:<manifest-list digest, re-queried at implementation
   through `DX_AUTH_ROOT` for tests; a dangling symlink becomes an empty
   regular file rather than aborting bootstrap) immediately before
   `create_user` runs.
+- **Canary finding #4 (2026-07-04)**: a fourth canary bootstrap, past the
+  three fixes above, completed guest bootstrap, but every SSH command
+  against the guest then failed for the whole wait budget. `dx`'s login
+  shell is nushell, and a non-interactive sshd session hands it only the
+  bare default PATH (`/usr/bin:/bin:/usr/sbin:/sbin`). Both `dx-wait-ssh`'s
+  readiness probe and `dx-ssh`'s command wrapper (`base64 -d | bash -l`)
+  bootstrap the guest environment via `bash -l`, and on the old base that
+  worked only because the image shipped a global `/bin/bash`. The official
+  base ships none. Fixed by linking the essentials bash at `/usr/bin/bash`
+  (already on sshd's default PATH) — `link_system_bash`, seamed through
+  `DX_LINK_ROOT` for tests — called immediately after `install_essentials`
+  once bash is on `PATH`, and resolved via `command -v bash` so the linked
+  target is a concrete `/nix/store` path that survives the `/nix` remount
+  in `setup_nix_volume`. Deliberately linked at `/usr/bin/bash`, not
+  `/bin/bash`: the latter remains `guard_old_base`'s signature and must
+  never be created by this payload.
 - **Temporary old-base guard (pass 1 / F-06, revised in pass 2) — two
   sites, one invariant**: fail fast with an explicit message when
   `/bin/bash` exists (`-e` or `-L`, catching a dangling symlink) — the

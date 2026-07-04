@@ -68,6 +68,21 @@ install_essentials() {
     fi
 }
 
+# Non-interactive sshd sessions hand dx's nushell only the bare default
+# PATH, and both dx-ssh's command wrapper and dx-wait-ssh's readiness
+# probe bootstrap the guest environment via `bash -l`. The old base
+# satisfied that with a global /bin/bash; the official base ships none.
+# Link the essentials bash at /usr/bin/bash -- on the default PATH --
+# and deliberately NOT at /bin/bash, whose presence is the old-base
+# guard signature (guard_old_base above).
+link_system_bash() {
+    local root="${DX_LINK_ROOT:-}"
+    local bash_path
+    bash_path="$(command -v bash)"
+    mkdir -p "$root/usr/bin"
+    ln -sfn "$bash_path" "$root/usr/bin/bash"
+}
+
 # §2: Setup dedicated Nix volume.
 #
 # Apple Container mounts the dx-nix named volume at /var/lib/dx-nix-raw with
@@ -669,6 +684,7 @@ start_ssh() {
 guard_old_base
 if [ "${DX_BOOTSTRAP_TEST_MODE:-}" = "guard" ]; then exit 0; fi
 install_essentials
+link_system_bash
 setup_nix_volume   # §2: Call BEFORE install_tools
 configure_nix_daemon # §3
 configure_release_identity
