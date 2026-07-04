@@ -25,7 +25,7 @@ for arg in "$@"; do
             echo "Usage: $0 [--section=N] [--skip-integration]"
             echo ""
             echo "Options:"
-            echo "  --section=N         Run only section N (0-19)"
+            echo "  --section=N         Run only section N (0-20)"
             echo "  --skip-integration  Skip integration tests and live checks"
             echo "  --help              Show this help message"
             exit 0
@@ -77,6 +77,7 @@ run_test "$SCRIPT_DIR/test_section7_lazyvim.sh" "7"
 run_test "$SCRIPT_DIR/test_section8_nixvim_config.sh" "8"
 run_test "$SCRIPT_DIR/test_section9_host_scripts.sh" "9"
 run_test "$SCRIPT_DIR/test_section10_docs.sh" "10"
+run_test "$SCRIPT_DIR/test_section20_skip_integration.sh" "20"
 
 # Integration tests (require container or Linux)
 if [ "$SKIP_INTEGRATION" = false ]; then

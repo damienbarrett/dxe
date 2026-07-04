@@ -9,6 +9,12 @@ source "$SCRIPT_DIR/test_helpers.sh"
 
 test_section "Section 17: dx-ai Runtime"
 
+if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+    test_skip "dx-ai guest runtime checks (--skip-integration)"
+    print_summary
+    exit_with_code
+fi
+
 if ! requires_container; then
     print_summary
     exit_with_code

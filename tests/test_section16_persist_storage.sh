@@ -163,6 +163,12 @@ else
     run_migration_helper_tests
 fi
 
+if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+    test_skip "live persistence guest runtime checks (--skip-integration)"
+    print_summary
+    exit_with_code
+fi
+
 # ---------- Runtime checks (require running container + implementation) ----------
 
 if [ -z "${DX_PERSIST_VOLUME:-}" ]; then
