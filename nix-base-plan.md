@@ -355,6 +355,14 @@ FROM nixos/nix:2.31.5@sha256:<manifest-list digest, re-queried at implementation
 - `create_user` (`bootstrap.sh:214`): `useradd -m -g dx -s /bin/bash dx`
   → `-s /bin/sh`. `/bin/sh` exists in both images, and the shell is
   switched to nushell at the end of `configure_guest` anyway.
+- **Canary finding (2026-07-04)**: the first canary bootstrap failed in
+  `setup_nix_volume` — on the official image a plain root `nix profile install`
+  targets `/nix/var/nix/profiles/per-user/root/profile` (not on PATH, not what
+  `install_essentials`' `/root/.nix-profile` resolution sees), so the installed
+  essentials were unreachable; fixed by installing with an explicit
+  `--profile /nix/var/nix/profiles/default` (verified against the pinned image).
+  This falsifies the "shebang and useradd are the only hard breakages" hypothesis
+  exactly the way the canary gate was designed to catch.
 - **Temporary old-base guard (pass 1 / F-06, revised in pass 2) — two
   sites, one invariant**: fail fast with an explicit message when
   `/bin/bash` exists (`-e` or `-L`, catching a dangling symlink) — the

@@ -38,7 +38,11 @@ install_essentials() {
         # dedicated /nix volume managed in setup_nix_volume (§2). The download
         # options mirror run_home_manager_activation so a stalled substituter
         # fetch aborts and retries instead of hanging the whole bootstrap.
-        nix profile install nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#coreutils nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs nixpkgs#e2fsprogs --extra-experimental-features "nix-command flakes" --option connect-timeout 15 --option stalled-download-timeout 60 --option download-attempts 2
+        # On the official nixos/nix base image, a plain `nix profile install`
+        # targets /nix/var/nix/profiles/per-user/root/profile (not on PATH). The
+        # explicit --profile keeps the install aligned with the /root/.nix-profile
+        # symlink resolution below, which points to /nix/var/nix/profiles/default.
+        nix profile install --profile /nix/var/nix/profiles/default nixpkgs#bashInteractive nixpkgs#shadow nixpkgs#openssh nixpkgs#gnutar nixpkgs#gzip nixpkgs#sudo nixpkgs#coreutils nixpkgs#gnused nixpkgs#gnugrep nixpkgs#which nixpkgs#procps nixpkgs#util-linux nixpkgs#btrfs-progs nixpkgs#e2fsprogs --extra-experimental-features "nix-command flakes" --option connect-timeout 15 --option stalled-download-timeout 60 --option download-attempts 2
     fi
     # Put the essentials on PATH by their concrete /nix/store path, not via the
     # /root/.nix-profile symlink. setup_nix_volume (§2) remounts the persistent

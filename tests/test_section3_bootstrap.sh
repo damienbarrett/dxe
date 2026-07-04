@@ -48,6 +48,9 @@ assert_file_contains "$BOOTSTRAP" "ensure_nix_ownership" "bootstrap centralizes 
 assert_file_contains "$BOOTSTRAP" "stat -c '%u:%g'" "bootstrap verifies Nix ownership marker owner"
 assert_file_contains "$BOOTSTRAP" "chown dx:dx \"\$sentinel\"" "bootstrap marks repaired Nix ownership as dx-owned"
 
+# Test: bootstrap installs essentials into the default profile the image PATH resolves
+assert_file_contains "$BOOTSTRAP" "nix profile install --profile /nix/var/nix/profiles/default" "bootstrap installs essentials into the default profile the image PATH resolves"
+
 # Test: Home Manager activation is bounded and retryable so Nix substitutes
 # cannot wedge the guest before sshd starts.
 assert_file_contains "$BOOTSTRAP" "DX_GUEST_ACTIVATION_TIMEOUT" "bootstrap exposes a guest activation timeout"
