@@ -374,6 +374,17 @@ FROM nixos/nix:2.31.5@sha256:<manifest-list digest, re-queried at implementation
   might have used (per-user root profile, XDG state profile, legacy
   `~/.nix-profile`), resolving each existing one with `readlink -f` so the
   concrete `/nix/store` paths survive the `/nix` remount in `setup_nix_volume`.
+- **Canary finding #3 (2026-07-04)**: a third canary bootstrap, past the
+  first two `setup_nix_volume` fixes above, failed in `create_user`:
+  `groupadd: cannot open /etc/group: Too many levels of symbolic links`. On
+  the official image `/etc/passwd`, `/etc/group`, and `/etc/shadow` are
+  symlinks into the read-only base-system store path (`/etc/gshadow` does
+  not exist), and shadow-utils open these files with O_NOFOLLOW, so any
+  symlink there is ELOOP. Fixed by materializing each symlinked auth file as
+  a regular, writable copy of its content (`materialize_auth_files`, seamed
+  through `DX_AUTH_ROOT` for tests; a dangling symlink becomes an empty
+  regular file rather than aborting bootstrap) immediately before
+  `create_user` runs.
 - **Temporary old-base guard (pass 1 / F-06, revised in pass 2) — two
   sites, one invariant**: fail fast with an explicit message when
   `/bin/bash` exists (`-e` or `-L`, catching a dangling symlink) — the

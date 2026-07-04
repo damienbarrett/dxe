@@ -396,5 +396,162 @@ fi
 rm -f "$DX_GUARD_PASS_OUT" "$DX_GUARD_REGULAR_OUT" "$DX_GUARD_DANGLING_OUT"
 rm -rf "$DX_GUARD_TEST_TMP"
 
+# -----------------------------------------------------------------------------
+# Third canary finding: on the official image, /etc/passwd, /etc/group, and
+# /etc/shadow are symlinks into the read-only base-system store path.
+# shadow-utils open these with O_NOFOLLOW, so groupadd/useradd fail with ELOOP
+# ("Too many levels of symbolic links") in create_user. materialize_auth_files
+# replaces any symlinked auth file with a regular, writable copy of its
+# content before create_user runs; regular or absent files are untouched, and
+# a dangling symlink becomes an empty regular file rather than aborting
+# bootstrap. See nix-base-plan.md.
+# -----------------------------------------------------------------------------
+
+AUTH_FUNCTIONS="$(mktemp)"
+sed '/^# Main$/,$d' "$BOOTSTRAP" > "$AUTH_FUNCTIONS"
+
+# Portable (BSD or GNU) octal permission bits / inode number for a local file.
+auth_file_mode() {
+    stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null
+}
+auth_file_inode() {
+    stat -f '%i' "$1" 2>/dev/null || stat -c '%i' "$1" 2>/dev/null
+}
+
+# (a) /etc/group is a symlink to a real store-like file elsewhere in the
+# fixture -> after materialize_auth_files, it is a REGULAR file, content
+# byte-identical to the old symlink target, mode 0644. The root is
+# canonicalized (readlink -f) up front: mktemp -d can hand back a path that is
+# itself under a symlink (e.g. macOS /tmp -> /private/tmp).
+AUTH_ROOT_A="$(mktemp -d)"
+AUTH_ROOT_A="$(readlink -f "$AUTH_ROOT_A")"
+mkdir -p "$AUTH_ROOT_A/etc" "$AUTH_ROOT_A/store-like"
+printf 'root:x:0:\ndx:x:1000:\n' > "$AUTH_ROOT_A/store-like/group"
+ln -s "$AUTH_ROOT_A/store-like/group" "$AUTH_ROOT_A/etc/group"
+set +e
+(
+    source "$AUTH_FUNCTIONS"
+    DX_AUTH_ROOT="$AUTH_ROOT_A"
+    materialize_auth_files
+)
+AUTH_STATUS_A=$?
+set -e
+if [ "$AUTH_STATUS_A" -eq 0 ] \
+    && [ -f "$AUTH_ROOT_A/etc/group" ] && [ ! -L "$AUTH_ROOT_A/etc/group" ] \
+    && cmp -s "$AUTH_ROOT_A/etc/group" "$AUTH_ROOT_A/store-like/group" \
+    && [ "$(auth_file_mode "$AUTH_ROOT_A/etc/group")" = "644" ]; then
+    test_pass "materialize_auth_files replaces a symlinked /etc/group with an identical regular file, mode 0644"
+else
+    test_fail "materialize_auth_files replaces a symlinked /etc/group with an identical regular file, mode 0644"
+fi
+rm -rf "$AUTH_ROOT_A"
+
+# (b) /etc/shadow symlink -> regular file, mode 0600.
+AUTH_ROOT_B="$(mktemp -d)"
+AUTH_ROOT_B="$(readlink -f "$AUTH_ROOT_B")"
+mkdir -p "$AUTH_ROOT_B/etc" "$AUTH_ROOT_B/store-like"
+printf 'root:!:19000:0:99999:7:::\n' > "$AUTH_ROOT_B/store-like/shadow"
+ln -s "$AUTH_ROOT_B/store-like/shadow" "$AUTH_ROOT_B/etc/shadow"
+set +e
+(
+    source "$AUTH_FUNCTIONS"
+    DX_AUTH_ROOT="$AUTH_ROOT_B"
+    materialize_auth_files
+)
+AUTH_STATUS_B=$?
+set -e
+if [ "$AUTH_STATUS_B" -eq 0 ] \
+    && [ -f "$AUTH_ROOT_B/etc/shadow" ] && [ ! -L "$AUTH_ROOT_B/etc/shadow" ] \
+    && cmp -s "$AUTH_ROOT_B/etc/shadow" "$AUTH_ROOT_B/store-like/shadow" \
+    && [ "$(auth_file_mode "$AUTH_ROOT_B/etc/shadow")" = "600" ]; then
+    test_pass "materialize_auth_files replaces a symlinked /etc/shadow with an identical regular file, mode 0600"
+else
+    test_fail "materialize_auth_files replaces a symlinked /etc/shadow with an identical regular file, mode 0600"
+fi
+rm -rf "$AUTH_ROOT_B"
+
+# (c) /etc/passwd is already a REGULAR file with known content -> left
+# byte-identical and untouched (same inode; materialize_auth_files must skip
+# it entirely, not copy-and-replace it with an equivalent file).
+AUTH_ROOT_C="$(mktemp -d)"
+AUTH_ROOT_C="$(readlink -f "$AUTH_ROOT_C")"
+mkdir -p "$AUTH_ROOT_C/etc"
+printf 'root:x:0:0:root:/root:/bin/sh\n' > "$AUTH_ROOT_C/etc/passwd"
+AUTH_PASSWD_INODE_BEFORE="$(auth_file_inode "$AUTH_ROOT_C/etc/passwd")"
+set +e
+(
+    source "$AUTH_FUNCTIONS"
+    DX_AUTH_ROOT="$AUTH_ROOT_C"
+    materialize_auth_files
+)
+AUTH_STATUS_C=$?
+set -e
+if [ "$AUTH_STATUS_C" -eq 0 ] \
+    && [ -f "$AUTH_ROOT_C/etc/passwd" ] && [ ! -L "$AUTH_ROOT_C/etc/passwd" ] \
+    && [ "$(auth_file_inode "$AUTH_ROOT_C/etc/passwd")" = "$AUTH_PASSWD_INODE_BEFORE" ] \
+    && [ "$(cat "$AUTH_ROOT_C/etc/passwd")" = "root:x:0:0:root:/root:/bin/sh" ]; then
+    test_pass "materialize_auth_files leaves an already-regular /etc/passwd untouched"
+else
+    test_fail "materialize_auth_files leaves an already-regular /etc/passwd untouched"
+fi
+rm -rf "$AUTH_ROOT_C"
+
+# (d) Absent /etc/gshadow -> still absent afterward (no such file created).
+AUTH_ROOT_D="$(mktemp -d)"
+AUTH_ROOT_D="$(readlink -f "$AUTH_ROOT_D")"
+mkdir -p "$AUTH_ROOT_D/etc"
+set +e
+(
+    source "$AUTH_FUNCTIONS"
+    DX_AUTH_ROOT="$AUTH_ROOT_D"
+    materialize_auth_files
+)
+AUTH_STATUS_D=$?
+set -e
+if [ "$AUTH_STATUS_D" -eq 0 ] && [ ! -e "$AUTH_ROOT_D/etc/gshadow" ] && [ ! -L "$AUTH_ROOT_D/etc/gshadow" ]; then
+    test_pass "materialize_auth_files leaves an absent /etc/gshadow absent"
+else
+    test_fail "materialize_auth_files leaves an absent /etc/gshadow absent"
+fi
+rm -rf "$AUTH_ROOT_D"
+
+# (e) Dangling symlink /etc/group (target does not exist) -> becomes an empty
+# regular file rather than aborting bootstrap under set -euo pipefail.
+AUTH_ROOT_E="$(mktemp -d)"
+AUTH_ROOT_E="$(readlink -f "$AUTH_ROOT_E")"
+mkdir -p "$AUTH_ROOT_E/etc"
+ln -s "$AUTH_ROOT_E/nonexistent-auth-target" "$AUTH_ROOT_E/etc/group"
+set +e
+(
+    source "$AUTH_FUNCTIONS"
+    DX_AUTH_ROOT="$AUTH_ROOT_E"
+    materialize_auth_files
+)
+AUTH_STATUS_E=$?
+set -e
+if [ "$AUTH_STATUS_E" -eq 0 ] \
+    && [ -f "$AUTH_ROOT_E/etc/group" ] && [ ! -L "$AUTH_ROOT_E/etc/group" ] \
+    && [ ! -s "$AUTH_ROOT_E/etc/group" ]; then
+    test_pass "materialize_auth_files replaces a dangling /etc/group symlink with an empty regular file and exits 0"
+else
+    test_fail "materialize_auth_files replaces a dangling /etc/group symlink with an empty regular file and exits 0"
+fi
+rm -rf "$AUTH_ROOT_E"
+
+rm -f "$AUTH_FUNCTIONS"
+
+# Static assertion: the Main sequence calls materialize_auth_files before
+# create_user (auth files must be regular/writable before groupadd/useradd
+# touch them). Matches the bare call line inside Main, not the `_name() {`
+# definition above it.
+MATERIALIZE_CALL_LINE="$(grep -n '^materialize_auth_files$' "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")"
+CREATE_USER_CALL_LINE="$(grep -n '^create_user$' "$BOOTSTRAP" | tail -1 | cut -d: -f1 || echo "")"
+if [ -n "$MATERIALIZE_CALL_LINE" ] && [ -n "$CREATE_USER_CALL_LINE" ] \
+    && [ "$MATERIALIZE_CALL_LINE" -lt "$CREATE_USER_CALL_LINE" ]; then
+    test_pass "bootstrap.sh calls materialize_auth_files before create_user in Main"
+else
+    test_fail "bootstrap.sh calls materialize_auth_files before create_user in Main"
+fi
+
 print_summary
 exit_with_code

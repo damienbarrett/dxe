@@ -264,6 +264,29 @@ configure_timezone() {
     fi
 }
 
+# The official base ships /etc/passwd, /etc/group, and /etc/shadow as
+# symlinks into the read-only base-system store path. shadow-utils open
+# these files with O_NOFOLLOW (ELOOP on any symlink) and rewrite them in
+# place, so user management needs them to be regular, writable files.
+# Copy each symlinked file's content into place; regular or absent files
+# are left untouched.
+materialize_auth_files() {
+    local root="${DX_AUTH_ROOT:-}"
+    local name file tmp
+    for name in passwd group shadow gshadow; do
+        file="$root/etc/$name"
+        [ -L "$file" ] || continue
+        tmp="$(mktemp)"
+        cp "$file" "$tmp" 2>/dev/null || : > "$tmp"
+        rm "$file"
+        mv "$tmp" "$file"
+        case "$name" in
+            shadow|gshadow) chmod 0600 "$file" ;;
+            *) chmod 0644 "$file" ;;
+        esac
+    done
+}
+
 # 2. Create non-root guest user (Section 3)
 create_user() {
     if ! id -u dx >/dev/null 2>&1; then
@@ -649,6 +672,7 @@ install_essentials
 setup_nix_volume   # §2: Call BEFORE install_tools
 configure_nix_daemon # §3
 configure_release_identity
+materialize_auth_files
 create_user
 setup_persist
 configure_ssh
