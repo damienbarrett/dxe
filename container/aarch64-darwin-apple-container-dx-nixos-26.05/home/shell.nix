@@ -110,23 +110,23 @@
     '';
     envFile.text = ''
       # Source D-Bus keyring env for agy Secret Service compatibility
-      let keyring_env = $"($nu.home-path)/.dx-keyring-env"
+      let keyring_env = $"($nu.home-dir)/.dx-keyring-env"
       if ($keyring_env | path exists) {
         open $keyring_env | lines | where {|l| $l starts-with "export "} | parse "export {key}={val}" | each {|row|
           let val = ($row.val | str replace --all "'" "")
           load-env {($row.key): $val}
         }
       }
-      $env.PATH = ($env.PATH | split row (char esep) | append $"($nu.home-path)/.local/bin" | append $"($nu.home-path)/.nix-profile/bin")
+      $env.PATH = ($env.PATH | split row (char esep) | append $"($nu.home-dir)/.local/bin" | append $"($nu.home-dir)/.nix-profile/bin")
       $env.EDITOR = "nvim"
       $env.VISUAL = "nvim"
-      $env.SSL_CERT_FILE = $"($nu.home-path)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
-      $env.NIX_SSL_CERT_FILE = $"($nu.home-path)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
+      $env.SSL_CERT_FILE = $"($nu.home-dir)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
+      $env.NIX_SSL_CERT_FILE = $"($nu.home-dir)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
       $env.PERSIST = "/persist"
       $env.TZ = ":/etc/localtime"
       $env.TZDIR = "${pkgs.tzdata}/share/zoneinfo"
-      let lazygit_config = $"($nu.home-path)/.config/lazygit/config.yml"
-      let lazygit_theme = $"($nu.home-path)/.cache/dx/tinty/lazygit.yml"
+      let lazygit_config = $"($nu.home-dir)/.config/lazygit/config.yml"
+      let lazygit_theme = $"($nu.home-dir)/.cache/dx/tinty/lazygit.yml"
       $env.LG_CONFIG_FILE = if ($lazygit_theme | path exists) {
         $"($lazygit_config),($lazygit_theme)"
       } else {

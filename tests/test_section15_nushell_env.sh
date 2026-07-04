@@ -24,19 +24,19 @@ else
     test_pass "shell.nix avoids literal '(\$home) in nushell envFile"
 fi
 
-# Positive: SSL paths use $"($nu.home-path)/..." interpolation.
-if grep -E '\$env\.SSL_CERT_FILE.*\$"\(\$nu\.home-path\)' "$SHELL_NIX" >/dev/null 2>&1; then
-    test_pass "shell.nix SSL_CERT_FILE uses \$\"(\$nu.home-path)/...\" interpolation"
+# Positive: SSL paths use $"($nu.home-dir)/..." interpolation.
+if grep -E '\$env\.SSL_CERT_FILE.*\$"\(\$nu\.home-dir\)' "$SHELL_NIX" >/dev/null 2>&1; then
+    test_pass "shell.nix SSL_CERT_FILE uses \$\"(\$nu.home-dir)/...\" interpolation"
 else
-    test_fail "shell.nix SSL_CERT_FILE uses \$\"(\$nu.home-path)/...\" interpolation"
+    test_fail "shell.nix SSL_CERT_FILE uses \$\"(\$nu.home-dir)/...\" interpolation"
 fi
-if grep -E '\$env\.NIX_SSL_CERT_FILE.*\$"\(\$nu\.home-path\)' "$SHELL_NIX" >/dev/null 2>&1; then
-    test_pass "shell.nix NIX_SSL_CERT_FILE uses \$\"(\$nu.home-path)/...\" interpolation"
+if grep -E '\$env\.NIX_SSL_CERT_FILE.*\$"\(\$nu\.home-dir\)' "$SHELL_NIX" >/dev/null 2>&1; then
+    test_pass "shell.nix NIX_SSL_CERT_FILE uses \$\"(\$nu.home-dir)/...\" interpolation"
 else
-    test_fail "shell.nix NIX_SSL_CERT_FILE uses \$\"(\$nu.home-path)/...\" interpolation"
+    test_fail "shell.nix NIX_SSL_CERT_FILE uses \$\"(\$nu.home-dir)/...\" interpolation"
 fi
 
-if grep -E '\$env\.PATH.*\$"\(\$nu\.home-path\)/\.local/bin"' "$SHELL_NIX" >/dev/null 2>&1; then
+if grep -E '\$env\.PATH.*\$"\(\$nu\.home-dir\)/\.local/bin"' "$SHELL_NIX" >/dev/null 2>&1; then
     test_pass "shell.nix adds ~/.local/bin to nushell PATH"
 else
     test_fail "shell.nix adds ~/.local/bin to nushell PATH"
