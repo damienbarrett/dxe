@@ -4,7 +4,7 @@
   imports = [ ./home/shell.nix ./home/tools.nix ./home/theme.nix ];
   home.username = "dx";
   home.homeDirectory = "/home/dx";
-  home.stateVersion = "25.11";
+  home.stateVersion = "26.05";
   home.packages = with pkgs; [
     starship
     fish

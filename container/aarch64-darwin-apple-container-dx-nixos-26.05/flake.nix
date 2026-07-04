@@ -2,15 +2,15 @@
   description = "DX Experience Guest Tools";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.11";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
     # Pinned to master (not the nixos-unstable channel) so the AI CLI bundle tracks the freshest packaged versions; feeds ONLY aiPackages/packages.ai-tools.
     nixpkgs-unstable.url = "github:nixos/nixpkgs/master";
     nixvim = {
-      url = "github:nix-community/nixvim/nixos-25.11";
+      url = "github:nix-community/nixvim/nixos-26.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     home-manager = {
-      url = "github:nix-community/home-manager/release-25.11";
+      url = "github:nix-community/home-manager/release-26.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };

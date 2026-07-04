@@ -95,7 +95,7 @@ else
     test_fail "dx-mount maps original repo subdirectory to guest workdir"
 fi
 
-if printf '%s\n' "$repo_env" | grep -qx "export DX_IMAGE=dx-nixos-25.11"; then
+if printf '%s\n' "$repo_env" | grep -qx "export DX_IMAGE=dx-nixos-26.05"; then
     test_pass "dx-mount shares the default immutable image"
 else
     test_fail "dx-mount shares the default immutable image"
@@ -502,7 +502,7 @@ if [ "$t6_ok" = true ] \
     && grep -qF "DX_RECORDED_NIX_VOLUME=${t6_name}-nix" "$t6_idir/$t6_name.env" \
     && grep -qF "DX_RECORDED_PERSIST_VOLUME=${t6_name}-persist" "$t6_idir/$t6_name.env" \
     && grep -qF "DX_RECORDED_BOOTSTRAP_VOLUME=${t6_name}-bootstrap" "$t6_idir/$t6_name.env" \
-    && grep -qF "DX_RECORDED_IMAGE=dx-nixos-25.11" "$t6_idir/$t6_name.env" \
+    && grep -qF "DX_RECORDED_IMAGE=dx-nixos-26.05" "$t6_idir/$t6_name.env" \
     && grep -q "DX_RECORDED_SSH_KEY=" "$t6_idir/$t6_name.env"; then
     test_pass "dx-mount creates a full resource manifest on first attach"
 else

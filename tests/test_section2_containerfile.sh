@@ -63,7 +63,7 @@ fi
 # the one-non-blank-line check above, and is captured here as well
 # since `$(...)` would embed a newline that cannot equal the single-line
 # expectation).
-DX_EXPECTED_CONTAINERFILE_LINE="FROM nixos/nix:2.31.5@sha256:4ae3542b89e38bf739a98d9e1ffd082c3c7b8a6455ec0c2331560b9440aec442"
+DX_EXPECTED_CONTAINERFILE_LINE="FROM nixos/nix:2.34.7@sha256:bf1d938835ab96312f098fa6c2e9cab367728e0aad0646ee3e02a787c80d8fb8"
 actual_containerfile_line="$(grep -ve '^[[:space:]]*$' "$CONTAINERFILE")"
 if [ "$actual_containerfile_line" = "$DX_EXPECTED_CONTAINERFILE_LINE" ]; then
     test_pass "Containerfile's non-blank line exactly matches the adopted official base reference"

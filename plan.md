@@ -46,7 +46,7 @@ These phases apply to this upgrade and to future release bumps. Do not treat thi
    - **Gate:** no known baseline failures except explicitly documented pre-existing failures being fixed in Phase 1.
 
 1. **Phase 1 — test harness cleanup, still on 25.11.**
-   - Apply the [Test Harness Changes](#test-harness-changes): centralize test paths, remove the obsolete `todo.txt` check, and make live tests profile-aware. (Done and committed as of 2026-06-12 — shared path helpers exist in `tests/test_helpers.sh:23-27`, the `todo.txt` check is gone, `requires_container`/`wait_for_ssh` are profile-aware, and the runner help text now says `0-18`. Only the 26.05-specific release-string updates remain for Phase 2.)
+   - Apply the [Test Harness Changes](#test-harness-changes): centralize test paths, remove the obsolete `todo.txt` check, and make live tests profile-aware. (Done and committed as of 2026-06-12 — shared path helpers exist in `tests/test_helpers.sh:23-27`, the `todo.txt` check is gone, `requires_container`/`wait_for_ssh` are profile-aware, and the runner help text now says `0-18`. Only the 26.05-specific release-string updates remain for Phase 2.) **Status (2026-07-04):** those release-string updates landed with the Phase 2 channel-bump commit below.
    - Convert or extend tests toward live guest behavior where appropriate: SSH, Home Manager activation, shells, tmux, NixVim, Yazi, theming, persist storage, and optional AI tooling should be exercised in a running guest rather than only by grepping source.
    - Land the open [Consolidated Code-Review Fixes](#consolidated-code-review-fixes) (P5–P10) here, since they fix current 25.11 code that carries forward into 26.05. P3 is already done; P4 was dropped after review.
    - **Gate:** `tests/run_all_tests.sh --skip-integration` passes; live tests pass against the current 25.11 instance when Apple Container is available.
@@ -55,6 +55,7 @@ These phases apply to this upgrade and to future release bumps. Do not treat thi
    - In a branch or separate `git worktree`, apply the 26.05 context rename, flake input updates, lockfile regeneration, `stateVersion` review/bump, profile addition, docs, and release-string test updates (see [Implementation Changes](#implementation-changes)).
    - If doing the optional same-release lockfile drift refresh, complete and validate that before this phase as described in [Staging & Rollback](#staging--rollback).
    - **Gate:** stale-reference grep passes after lock regeneration; `nix flake check --no-write-lock-file` passes; the aarch64 build check passes on an aarch64 host or builder.
+   - **Status (2026-07-04):** executed in a dedicated worktree — context rename, flake input bump (`nixpkgs`/`nixvim`/`home-manager` → the `26.05`/`release-26.05` branches), targeted lockfile regeneration, `home.stateVersion` bump, the base-image alignment-rule Containerfile bump (`nixos/nix` `2.31.5` → `2.34.7`, re-verified digest), host defaults, and the doc/test release-string sweep all landed in one channel-bump commit. `nix flake check` surfaced a pre-existing-in-26.05 packaging break (`neofetch` removed from nixpkgs) unrelated to this bump's own changes; left for Phase 4 (compatibility fixes) rather than folded into this commit. Phase 3 (isolated live-guest validation) has not been run yet.
 
 3. **Phase 3 — isolated 26.05 live guest validation.**
    - Launch and exercise the isolated `nixos-2605` instance with unique image, container, port, volumes, and keys, then run the profile-aware full suite against it **before** touching the default instance. Commands: see [Parallel validation instance](#parallel-validation-instance).
@@ -135,7 +136,7 @@ References:
 
 These are the Phase 1 edits to the test suite. New assertions should use the shared path helpers (below) rather than re-deriving literal paths.
 
-**Status 2026-06-12:** the path centralization, `todo.txt` removal, profile-aware live helpers, and runner help-text fix are implemented and committed. The lists below are retained as the spec for the release-string parts (asserting `nixos-26.05`, `dx-nixos-26.05`, etc.), which can only land with the Phase 2 rename.
+**Status 2026-06-12:** the path centralization, `todo.txt` removal, profile-aware live helpers, and runner help-text fix are implemented and committed. The lists below are retained as the spec for the release-string parts (asserting `nixos-26.05`, `dx-nixos-26.05`, etc.), which can only land with the Phase 2 rename. **Status (2026-07-04):** the Phase 2 rename and release-string updates below have now landed in the channel-bump commit.
 
 **Centralize repeated test paths in `tests/test_helpers.sh` before updating release references:**
 

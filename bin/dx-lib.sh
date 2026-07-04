@@ -24,12 +24,12 @@ fi
 
 # Set defaults for common variables
 export DX_CONTAINER_NAME="${DX_CONTAINER_NAME:-dx-host}"
-export DX_IMAGE="${DX_IMAGE:-dx-nixos-25.11}"
+export DX_IMAGE="${DX_IMAGE:-dx-nixos-26.05}"
 export DX_SSH_PORT="${DX_SSH_PORT:-2222}"
 export DX_SSH_KEY="${DX_SSH_KEY:-$DX_PROJECT_ROOT/dx_key}"
 export DX_SSH_KEY_PUB="${DX_SSH_KEY_PUB:-$DX_PROJECT_ROOT/dx_key.pub}"
 export DX_SSH_CONNECT_TIMEOUT="${DX_SSH_CONNECT_TIMEOUT:-15}"
-export DX_CONTEXT_DIR="${DX_CONTEXT_DIR:-$DX_PROJECT_ROOT/container/aarch64-darwin-apple-container-dx-nixos-25.11}"
+export DX_CONTEXT_DIR="${DX_CONTEXT_DIR:-$DX_PROJECT_ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05}"
 export DX_BOOTSTRAP_SOURCE="${DX_BOOTSTRAP_SOURCE:-$DX_CONTEXT_DIR}"
 export DX_BOOTSTRAP_VOLUME="${DX_BOOTSTRAP_VOLUME:-dx-bootstrap}"
 export DX_BOOTSTRAP_PATH="${DX_BOOTSTRAP_PATH:-/guest-bootstrap}"

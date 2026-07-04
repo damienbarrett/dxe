@@ -199,7 +199,7 @@ or perform maintenance operations.
 | [`bin/dx-reclaim`](bin/dx-reclaim) | Reclaims host disk space by deleting old Nix generations in the guest and trimming persistent filesystems. |
 | [`bin/dx-export`](bin/dx-export) | Archives the container to a tar file. |
 | [`bin/dx-nix-disk`](bin/dx-nix-disk) | Prepares a sparse Nix disk image; lifecycle-adjacent storage prep. |
-| [`container/.../bootstrap.sh`](container/aarch64-darwin-apple-container-dx-nixos-25.11/bootstrap.sh) | Runs inside the guest from the synced payload; configures `/nix`, the `dx` user, SSH, Home Manager, shell, tmux, and tools. |
+| [`container/.../bootstrap.sh`](container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh) | Runs inside the guest from the synced payload; configures `/nix`, the `dx` user, SSH, Home Manager, shell, tmux, and tools. |
 
 ### Reclaiming host disk space
 
@@ -270,12 +270,12 @@ tests, parallel experiments, or multiple containers on the same host.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DX_CONTAINER_NAME` | `dx-host` | Apple container name. Change this to create a separate container without touching the default DXE instance. |
-| `DX_IMAGE` | `dx-nixos-25.11` | Image name used by `dx-create-image` and `dx-create-container`. |
+| `DX_IMAGE` | `dx-nixos-26.05` | Image name used by `dx-create-image` and `dx-create-container`. |
 | `DX_SSH_PORT` | `2222` | Host port forwarded to guest SSH port `2222`. Use a different port for a second running container. |
 | `DX_SSH_KEY` | `$DX_PROJECT_ROOT/dx_key` | Host private key used for SSH into the guest. |
 | `DX_SSH_KEY_PUB` | `$DX_PROJECT_ROOT/dx_key.pub` | Host public key provisioned into the guest on create. |
 | `DX_SSH_CONNECT_TIMEOUT` | `15` | Host-side SSH connection timeout in seconds for `dx-ssh`. |
-| `DX_CONTEXT_DIR` | `container/aarch64-darwin-apple-container-dx-nixos-25.11` | Directory used as the image build context and default bootstrap source. |
+| `DX_CONTEXT_DIR` | `container/aarch64-darwin-apple-container-dx-nixos-26.05` | Directory used as the image build context and default bootstrap source. |
 | `DX_BOOTSTRAP_SOURCE` | `$DX_CONTEXT_DIR` | Host directory pushed into the clean guest bootstrap volume. Override this to test a different bootstrap checkout without rebuilding the image. |
 | `DX_BOOTSTRAP_VOLUME` | `dx-bootstrap` | Named volume mounted at `/guest-bootstrap` by default. It stores the pushed bootstrap payload outside the image layer. |
 | `DX_BOOTSTRAP_PATH` | `/guest-bootstrap` | Guest path where the bootstrap payload is mounted and executed. |
@@ -350,7 +350,7 @@ How it behaves:
 - If the derived SSH port is already in use before the side container exists,
   `dx-mount` refuses and tells you to pick a free port with `DX_SSH_PORT`.
 - `--destroy` removes the derived side container, private volumes, private key
-  pair, and mount identity marker. It does not remove the shared `dx-nixos-25.11` image.
+  pair, and mount identity marker. It does not remove the shared `dx-nixos-26.05` image.
   It also refuses to destroy default dx-host resources (`dx-nix`, `dx-persist`,
   `dx-bootstrap`, `dx_key`) even if your environment leaks those names into the
   cleanup.
@@ -608,12 +608,12 @@ container logs dx-host -f
 ### One release pin
 
 The NixOS release is pinned in exactly one file — the flake inputs in
-`container/aarch64-darwin-apple-container-dx-nixos-25.11/flake.nix`:
+`container/aarch64-darwin-apple-container-dx-nixos-26.05/flake.nix`:
 
 ```nix
-nixpkgs.url      = "github:nixos/nixpkgs/nixos-25.11";
-nixvim.url       = "github:nix-community/nixvim/nixos-25.11";
-home-manager.url = "github:nix-community/home-manager/release-25.11";
+nixpkgs.url      = "github:nixos/nixpkgs/nixos-26.05";
+nixvim.url       = "github:nix-community/nixvim/nixos-26.05";
+home-manager.url = "github:nix-community/home-manager/release-26.05";
 ```
 
 `flake.lock` records the concrete revisions those branches resolved to
@@ -628,9 +628,9 @@ package set), and everything in the resulting guest follows the lock:
 The base image is release-agnostic: it contributes the Nix tool itself and
 a seed store that is merged once and then inert — after bootstrap, every
 tool in use resolves through the lock. The release string also appears in
-*names* (the context directory, the `dx-nixos-25.11*` image names); those
+*names* (the context directory, the `dx-nixos-26.05*` image names); those
 are identity labels refreshed during a release bump, not additional pins.
-The local image name (`dx-nixos-25.11`) is a **mutable local cache key,
+The local image name (`dx-nixos-26.05`) is a **mutable local cache key,
 never provenance** — see "Build-cache trap" below; it says nothing about
 which `Containerfile` produced the image bits.
 
@@ -666,7 +666,7 @@ parallel validation instance, is in [plan.md](plan.md).
 digest:
 
 ```Dockerfile
-FROM nixos/nix:2.31.5@sha256:<manifest-list digest>
+FROM nixos/nix:2.34.7@sha256:<manifest-list digest>
 ```
 
 Policy:
@@ -707,7 +707,7 @@ the version at build time.
 ### Build-cache trap
 
 `dx-create-image` skips the build whenever the local image name
-(`dx-nixos-25.11`) already exists — editing the Containerfile changes
+(`dx-nixos-26.05`) already exists — editing the Containerfile changes
 nothing until the old image is removed. `./bin/dx-destroy` removes
 container **and** image; `./bin/dx-factory-reset` additionally removes all
 three volumes and the SSH keypair (confirmation-gated, `--force` to skip).

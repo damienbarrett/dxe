@@ -167,7 +167,7 @@ identity_file="$identity_dir/$DX_CONTAINER_NAME.env"
 
 safe_name="$(dx_slugify "$DX_CONTAINER_NAME" mount 48)"
 export DX_CONTAINER_NAME
-export DX_IMAGE="${DX_IMAGE:-dx-nixos-25.11}"
+export DX_IMAGE="${DX_IMAGE:-dx-nixos-26.05}"
 export DX_GIT_MOUNT_SOURCE="$mount_source"
 export DX_GIT_MOUNT_TARGET
 export DX_GUEST_WORKDIR="$guest_workdir"

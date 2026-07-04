@@ -79,7 +79,7 @@ assert_file_contains "$README" "Migration" "README documents migration from prio
 assert_file_contains "$README" "Configuration Variables" "README documents configuration variables"
 assert_file_contains "$README" "All variables have defaults" "README states variables have defaults"
 assert_file_contains "$README" "DX_CONTAINER_NAME.*dx-host" "README documents DX_CONTAINER_NAME default"
-assert_file_contains "$README" "DX_IMAGE.*dx-nixos-25.11" "README documents DX_IMAGE default"
+assert_file_contains "$README" "DX_IMAGE.*dx-nixos-26.05" "README documents DX_IMAGE default"
 assert_file_contains "$README" "DX_NIX_VOLUME.*dx-nix" "README documents DX_NIX_VOLUME default"
 assert_file_contains "$README" "DX_PERSIST_VOLUME.*dx-persist" "README documents DX_PERSIST_VOLUME default"
 assert_file_contains "$README" "DX_GIT_MOUNT_SOURCE.*empty" "README documents empty git mount source default"
