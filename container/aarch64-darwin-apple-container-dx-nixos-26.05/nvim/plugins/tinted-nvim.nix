@@ -8,17 +8,19 @@
   extraConfigLua = ''
     vim.opt.termguicolors = true
 
-    require("tinted-colorscheme").setup(nil, {
-      supports = {
-        tinty = true,
-        tinted_shell = false,
-        live_reload = false,
+    require("tinted-nvim").setup({
+      -- Fallback only; the selector below normally resolves the live scheme.
+      -- Tracks dx-theme's `dark` default (home/theme.nix: dxThemes.dark).
+      default_scheme = "base16-mocha",
+      apply_scheme_on_startup = true,
+      selector = {
+        enabled = true,
+        mode = "file",
+        path = vim.fn.expand("~/.local/share/tinted-theming/tinty/current_scheme"),
+        watch = true,
       },
       highlights = {
-        telescope = true,
-        telescope_borders = true,
-        cmp = true,
-        lsp_semantic = true,
+        integrations = { telescope = true, cmp = true },
       },
     })
   '';

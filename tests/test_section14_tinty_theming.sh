@@ -369,8 +369,10 @@ fi
 
 assert_file_contains "$NIXVIM_NIX" "tinted-nvim.nix" "nixvim imports tinted-nvim plugin"
 assert_file_contains "$NIXVIM_PLUGIN" "pkgs.vimPlugins.tinted-nvim" "Neovim uses packaged tinted-nvim first"
-assert_file_contains "$NIXVIM_PLUGIN" "tinty = true" "tinted-nvim reads Tinty's current scheme"
-assert_file_contains "$NIXVIM_PLUGIN" "live_reload = false" "Neovim avoids unrequired live reload"
+assert_file_not_contains "$NIXVIM_PLUGIN" "tinted-colorscheme" "Neovim theming no longer uses the deprecated tinted-colorscheme module"
+assert_file_contains_literal "$NIXVIM_PLUGIN" 'require("tinted-nvim").setup' "Neovim uses the new tinted-nvim setup API"
+assert_file_contains_literal "$NIXVIM_PLUGIN" 'tinted-theming/tinty/current_scheme' "tinted-nvim selector reads Tinty's current scheme file"
+assert_file_contains_literal "$NIXVIM_PLUGIN" "watch = true" "tinted-nvim selector watches for live theme changes"
 assert_file_contains "$LUALINE_NIX" 'theme = "tinted"' "lualine uses tinted theme"
 assert_file_not_contains "$LUALINE_NIX" 'theme = "rose-pine"' "lualine no longer hard-codes rose-pine"
 assert_file_contains "$ROSE_PINE_NIX" "pkgs.vimPlugins.rose-pine" "Rose Pine remains packaged as fallback"
