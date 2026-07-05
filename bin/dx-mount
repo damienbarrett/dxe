@@ -236,6 +236,41 @@ name_derived_bootstrap_volume="$DX_CONTAINER_NAME-bootstrap"
 name_derived_ssh_key="$DX_PROJECT_ROOT/${safe_name}_key"
 name_derived_ssh_key_pub="$DX_PROJECT_ROOT/${safe_name}_key.pub"
 
+# --- Manifest field registry --------------------------------------------
+# Single source of truth for the write-once identity manifest: the fields
+# written at creation, validated at attach, and resolved at destroy/plan
+# time were previously three hand-kept lists that could (and did — see
+# DX_RECORDED_GIT_MOUNT_TARGET and DX_SSH_PORT) drift out of sync. All three
+# now walk these same-indexed parallel arrays instead.
+#
+# Plain indexed arrays, not `declare -A`: the system /bin/bash on macOS is
+# 3.2, which predates associative arrays.
+#
+# DX_RECORDED_CONTAINER_NAME is the manifest's identity key, not a resource
+# field; it is handled separately everywhere it appears (its own "copied or
+# renamed" refusal, checked before any of these fields), so it is
+# deliberately not part of this registry.
+DX_MANIFEST_FIELD_NAMES=(
+    GIT_MOUNT_SOURCE GIT_MOUNT_TARGET IMAGE NIX_VOLUME PERSIST_VOLUME
+    BOOTSTRAP_VOLUME SSH_KEY SSH_KEY_PUB SSH_PORT
+)
+# DX_MANIFEST_FIELD_NAMES[i]'s current-value variable.
+DX_MANIFEST_FIELD_VARS=(
+    mount_identity DX_GIT_MOUNT_TARGET DX_IMAGE DX_NIX_VOLUME
+    DX_PERSIST_VOLUME DX_BOOTSTRAP_VOLUME DX_SSH_KEY DX_SSH_KEY_PUB DX_SSH_PORT
+)
+# DX_MANIFEST_FIELD_NAMES[i]'s human label for mismatch/plan messages.
+DX_MANIFEST_FIELD_LABELS=(
+    "mount source" "mount target" "image" "nix volume" "persist volume"
+    "bootstrap volume" "ssh key" "ssh key (public)" "ssh port"
+)
+
+# Schema version written into every freshly-created manifest marker so a
+# future format change can be detected. Never written into, or used to
+# upgrade, an existing marker — legacy and manifest markers both stay
+# write-once regardless of this version.
+DX_MOUNT_MANIFEST_VERSION=1
+
 # A leaked DX_NIX_VOLUME=dx-nix (or similar) in the caller's environment must
 # never let a side-container cleanup take down dx-host's durable state. Only
 # namespaced side-container resources may be destroyed.
@@ -274,12 +309,22 @@ destruction of a different container.
 EOF
             exit 1
         fi
-        DX_IMAGE="$DX_RECORDED_IMAGE"
-        DX_NIX_VOLUME="$DX_RECORDED_NIX_VOLUME"
-        DX_PERSIST_VOLUME="$DX_RECORDED_PERSIST_VOLUME"
-        DX_BOOTSTRAP_VOLUME="$DX_RECORDED_BOOTSTRAP_VOLUME"
-        DX_SSH_KEY="$DX_RECORDED_SSH_KEY"
-        DX_SSH_KEY_PUB="$DX_RECORDED_SSH_KEY_PUB"
+        for i in "${!DX_MANIFEST_FIELD_NAMES[@]}"; do
+            field="${DX_MANIFEST_FIELD_NAMES[$i]}"
+            # GIT_MOUNT_SOURCE is validated at attach but is not a
+            # destroyable resource and has no place in the destroy plan;
+            # every other field is resolved from the manifest here.
+            [ "$field" = "GIT_MOUNT_SOURCE" ] && continue
+            var="${DX_MANIFEST_FIELD_VARS[$i]}"
+            recorded_var="DX_RECORDED_$field"
+            # A manifest marker written before this field existed (e.g. an
+            # older DX_RECORDED_SSH_PORT-less marker on an existing host)
+            # simply has nothing recorded for it; leave the already-resolved
+            # value in place rather than failing under set -u.
+            if [ -n "${!recorded_var:-}" ]; then
+                printf -v "$var" '%s' "${!recorded_var}"
+            fi
+        done
         resolution_source="manifest"
     elif [ -n "$container_override" ]; then
         # A legacy marker (source/target only) under an explicit --container
@@ -318,6 +363,8 @@ Destroy plan for $DX_CONTAINER_NAME (resolution: $resolution_source):
   bootstrap volume:    $DX_BOOTSTRAP_VOLUME
   ssh key:             $DX_SSH_KEY
   ssh key (public):    $DX_SSH_KEY_PUB
+  mount target:        $DX_GIT_MOUNT_TARGET
+  ssh port:            $DX_SSH_PORT
   identity marker:     $identity_file
 Nothing has been deleted or written.
 EOF
@@ -360,20 +407,21 @@ EOF
         fi
 
         mismatches=()
-        [ "${DX_RECORDED_GIT_MOUNT_SOURCE:-}" = "$mount_identity" ] \
-            || mismatches+=("mount source: recorded=${DX_RECORDED_GIT_MOUNT_SOURCE:-<unset>} requested=$mount_identity")
-        [ "${DX_RECORDED_IMAGE:-}" = "$DX_IMAGE" ] \
-            || mismatches+=("image: recorded=${DX_RECORDED_IMAGE:-<unset>} requested=$DX_IMAGE")
-        [ "${DX_RECORDED_NIX_VOLUME:-}" = "$DX_NIX_VOLUME" ] \
-            || mismatches+=("nix volume: recorded=${DX_RECORDED_NIX_VOLUME:-<unset>} requested=$DX_NIX_VOLUME")
-        [ "${DX_RECORDED_PERSIST_VOLUME:-}" = "$DX_PERSIST_VOLUME" ] \
-            || mismatches+=("persist volume: recorded=${DX_RECORDED_PERSIST_VOLUME:-<unset>} requested=$DX_PERSIST_VOLUME")
-        [ "${DX_RECORDED_BOOTSTRAP_VOLUME:-}" = "$DX_BOOTSTRAP_VOLUME" ] \
-            || mismatches+=("bootstrap volume: recorded=${DX_RECORDED_BOOTSTRAP_VOLUME:-<unset>} requested=$DX_BOOTSTRAP_VOLUME")
-        [ "${DX_RECORDED_SSH_KEY:-}" = "$DX_SSH_KEY" ] \
-            || mismatches+=("ssh key: recorded=${DX_RECORDED_SSH_KEY:-<unset>} requested=$DX_SSH_KEY")
-        [ "${DX_RECORDED_SSH_KEY_PUB:-}" = "$DX_SSH_KEY_PUB" ] \
-            || mismatches+=("ssh key (public): recorded=${DX_RECORDED_SSH_KEY_PUB:-<unset>} requested=$DX_SSH_KEY_PUB")
+        for i in "${!DX_MANIFEST_FIELD_NAMES[@]}"; do
+            field="${DX_MANIFEST_FIELD_NAMES[$i]}"
+            var="${DX_MANIFEST_FIELD_VARS[$i]}"
+            label="${DX_MANIFEST_FIELD_LABELS[$i]}"
+            recorded_var="DX_RECORDED_$field"
+            recorded_value="${!recorded_var:-}"
+            # An older version-less marker may lack newer fields (e.g. SSH_PORT).
+            # Validate only the fields it actually recorded, matching the
+            # destroy-resolution loop above; a write-once marker never stores an
+            # empty resource value, so empty here means "not recorded".
+            [ -n "$recorded_value" ] || continue
+            current_value="${!var}"
+            [ "$recorded_value" = "$current_value" ] \
+                || mismatches+=("$label: recorded=${recorded_value:-<unset>} requested=$current_value")
+        done
 
         if [ "${#mismatches[@]}" -gt 0 ]; then
             {
@@ -419,15 +467,13 @@ fi
 if [ "$marker_present" != true ]; then
     mkdir -p "$identity_dir"
     {
+        printf 'DX_MARKER_VERSION=%q\n' "$DX_MOUNT_MANIFEST_VERSION"
         printf 'DX_RECORDED_CONTAINER_NAME=%q\n' "$DX_CONTAINER_NAME"
-        printf 'DX_RECORDED_GIT_MOUNT_SOURCE=%q\n' "$mount_identity"
-        printf 'DX_RECORDED_GIT_MOUNT_TARGET=%q\n' "$DX_GIT_MOUNT_TARGET"
-        printf 'DX_RECORDED_IMAGE=%q\n' "$DX_IMAGE"
-        printf 'DX_RECORDED_NIX_VOLUME=%q\n' "$DX_NIX_VOLUME"
-        printf 'DX_RECORDED_PERSIST_VOLUME=%q\n' "$DX_PERSIST_VOLUME"
-        printf 'DX_RECORDED_BOOTSTRAP_VOLUME=%q\n' "$DX_BOOTSTRAP_VOLUME"
-        printf 'DX_RECORDED_SSH_KEY=%q\n' "$DX_SSH_KEY"
-        printf 'DX_RECORDED_SSH_KEY_PUB=%q\n' "$DX_SSH_KEY_PUB"
+        for i in "${!DX_MANIFEST_FIELD_NAMES[@]}"; do
+            field="${DX_MANIFEST_FIELD_NAMES[$i]}"
+            var="${DX_MANIFEST_FIELD_VARS[$i]}"
+            printf 'DX_RECORDED_%s=%q\n' "$field" "${!var}"
+        done
     } > "$identity_file"
 fi
 

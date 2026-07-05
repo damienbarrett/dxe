@@ -482,6 +482,28 @@ else
     test_fail "dx-mount re-attach with matching resolution (out5a: $out5a) (out5b: $out5b)"
 fi
 
+# 5c. Backward-compat: an older version-less marker (written before the
+#     refactor added DX_MARKER_VERSION / DX_RECORDED_SSH_PORT) must still
+#     attach when its recorded fields match — validation skips fields the
+#     marker never recorded, matching the destroy-resolution loop. Create a
+#     real (new-format) marker via dx-mount, strip the new fields to simulate
+#     the old format, then re-attach and require success.
+t5c_dir="$(mktemp -d "${TMPDIR:-/tmp}/dx-mount-oldmarker.XXXXXX")"
+t5c_idir="$(mktemp -d "${TMPDIR:-/tmp}/dx-mount-idir5c.XXXXXX")"
+t5c_log="$(mktemp "${TMPDIR:-/tmp}/dx-mount-log5c.XXXXXX")"
+t5c_name="dx-side-oldmarker1"
+mnt_run "$t5c_log" "$t5c_idir" DX_SSH_PORT="$resolve_free_port" DX_MOUNT_TEST_MODE=resolve \
+    -- --container "$t5c_name" "$t5c_dir" >/dev/null 2>&1 || true
+t5c_marker="$t5c_idir/$t5c_name.env"
+grep -vE '^(DX_MARKER_VERSION|DX_RECORDED_SSH_PORT)=' "$t5c_marker" > "$t5c_marker.tmp" \
+    && mv "$t5c_marker.tmp" "$t5c_marker"
+if out5c="$(mnt_run "$t5c_log" "$t5c_idir" DX_SSH_PORT="$resolve_free_port" DX_MOUNT_TEST_MODE=resolve \
+    -- --container "$t5c_name" "$t5c_dir" 2>&1)"; then
+    test_pass "dx-mount attaches an older version-less marker (missing SSH_PORT) when recorded fields match"
+else
+    test_fail "dx-mount wrongly refuses an older version-less marker despite matching fields (out: $out5c)"
+fi
+
 # 6. Fresh creation (resolve mode, no marker): marker created with the full
 #    manifest.
 t6_dir="$(mktemp -d "${TMPDIR:-/tmp}/dx-mount-fresh.XXXXXX")"
@@ -507,6 +529,17 @@ if [ "$t6_ok" = true ] \
     test_pass "dx-mount creates a full resource manifest on first attach"
 else
     test_fail "dx-mount creates a full resource manifest on first attach (out: $out6)"
+fi
+
+# 6b. Finding 3 / schema version: a fresh manifest marker also records a
+#     schema-version field and the resolved DX_SSH_PORT — both previously
+#     missing from the write-once manifest.
+if [ -f "$t6_idir/$t6_name.env" ] \
+    && grep -q '^DX_MARKER_VERSION=' "$t6_idir/$t6_name.env" \
+    && grep -qF "DX_RECORDED_SSH_PORT=$resolve_free_port" "$t6_idir/$t6_name.env"; then
+    test_pass "dx-mount records a schema-version field and DX_SSH_PORT in a fresh manifest marker"
+else
+    test_fail "dx-mount records a schema-version field and DX_SSH_PORT in a fresh manifest marker"
 fi
 
 # 7. Legacy marker + plain re-attach (resolve mode, matching source): still
@@ -708,6 +741,77 @@ if [ "$t15_ok" = false ] && [ "$before15" = "$after15" ]; then
     test_pass "dx-mount refuses to attach using a manifest marker whose recorded container name does not match"
 else
     test_fail "dx-mount refuses to attach using a mismatched-name manifest marker (out: $out15)"
+fi
+
+# 16. Finding 3: DX_GIT_MOUNT_TARGET is recorded in the manifest at creation,
+#     but must also be *validated* at attach. Create with one target-bearing
+#     manifest, then reattach with a different DX_GIT_MOUNT_TARGET; every
+#     other field (name, source dir, port) stays identical across both
+#     calls, so only the target can cause the refusal.
+t16_dir="$(mktemp -d "${TMPDIR:-/tmp}/dx-mount-target-mismatch.XXXXXX")"
+t16_idir="$(mktemp -d "${TMPDIR:-/tmp}/dx-mount-idir16.XXXXXX")"
+t16_log="$(mktemp "${TMPDIR:-/tmp}/dx-mount-log16.XXXXXX")"
+t16_name="dx-side-target-mismatch1"
+
+if out16a="$(mnt_run "$t16_log" "$t16_idir" DX_SSH_PORT="$resolve_free_port" DX_MOUNT_TEST_MODE=resolve \
+    -- --container "$t16_name" "$t16_dir" 2>&1)"; then
+    t16a_ok=true
+else
+    t16a_ok=false
+fi
+before16="$(checksum_of "$t16_idir/$t16_name.env")"
+
+if out16b="$(mnt_run "$t16_log" "$t16_idir" DX_GIT_MOUNT_TARGET=/workspace-changed \
+    DX_SSH_PORT="$resolve_free_port" DX_MOUNT_TEST_MODE=resolve \
+    -- --container "$t16_name" "$t16_dir" 2>&1)"; then
+    t16b_ok=true
+else
+    t16b_ok=false
+fi
+after16="$(checksum_of "$t16_idir/$t16_name.env")"
+
+if [ "$t16a_ok" = true ] && [ "$t16b_ok" = false ] && [ "$before16" = "$after16" ]; then
+    test_pass "dx-mount refuses to reattach when DX_GIT_MOUNT_TARGET differs from the recorded manifest (Finding 3)"
+else
+    test_fail "dx-mount refuses to reattach on mount-target mismatch (out16a: $out16a) (out16b: $out16b)"
+fi
+
+# 17. Finding 3: DX_SSH_PORT is neither recorded nor validated today. Create
+#     with an explicit port override, then reattach with a different
+#     (also-free) port; every other field stays identical across both calls,
+#     so only the port can cause the refusal.
+t17_dir="$(mktemp -d "${TMPDIR:-/tmp}/dx-mount-port-mismatch.XXXXXX")"
+t17_idir="$(mktemp -d "${TMPDIR:-/tmp}/dx-mount-idir17.XXXXXX")"
+t17_log="$(mktemp "${TMPDIR:-/tmp}/dx-mount-log17.XXXXXX")"
+t17_name="dx-side-port-mismatch1"
+t17_port_a="$resolve_free_port"
+t17_port_b=$((t17_port_a + 1))
+t17b_attempts=0
+while dx_port_in_use "$t17_port_b" 2>/dev/null && [ "$t17b_attempts" -lt 50 ]; do
+    t17_port_b=$((t17_port_b + 1))
+    t17b_attempts=$((t17b_attempts + 1))
+done
+
+if out17a="$(mnt_run "$t17_log" "$t17_idir" DX_SSH_PORT="$t17_port_a" DX_MOUNT_TEST_MODE=resolve \
+    -- --container "$t17_name" "$t17_dir" 2>&1)"; then
+    t17a_ok=true
+else
+    t17a_ok=false
+fi
+before17="$(checksum_of "$t17_idir/$t17_name.env")"
+
+if out17b="$(mnt_run "$t17_log" "$t17_idir" DX_SSH_PORT="$t17_port_b" DX_MOUNT_TEST_MODE=resolve \
+    -- --container "$t17_name" "$t17_dir" 2>&1)"; then
+    t17b_ok=true
+else
+    t17b_ok=false
+fi
+after17="$(checksum_of "$t17_idir/$t17_name.env")"
+
+if [ "$t17a_ok" = true ] && [ "$t17b_ok" = false ] && [ "$before17" = "$after17" ]; then
+    test_pass "dx-mount refuses to reattach when DX_SSH_PORT differs from the recorded manifest (Finding 3)"
+else
+    test_fail "dx-mount refuses to reattach on SSH port mismatch (out17a: $out17a) (out17b: $out17b)"
 fi
 
 print_summary
