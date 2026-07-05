@@ -533,8 +533,8 @@ shades-of-purple=base16-shades-of-purple'
     fi
 
     # --- Live Tinted Neovim + project.nvim runtime regression coverage -----
-    # (complete-bump-plan.md: "P1 -- Commit repeatable Tinted Neovim runtime
-    # coverage" and "P1 -- Remove project.nvim's empty-history warning".)
+    # Repeatable runtime coverage for the tinted-nvim migration and the
+    # project.nvim empty-history warning fix.
     # These load the guest's REAL baked nixvim config via headless Neovim, so
     # they only pass once the project-nvim.nix payload above is deployed.
     # Any guest state this mutates (the active Tinty scheme) is restored by
