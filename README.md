@@ -658,8 +658,13 @@ A release bump is therefore:
 #    does not move during a stable release bump:
 nix flake update nixpkgs nixvim home-manager \
     --flake container/aarch64-darwin-apple-container-dx-nixos-26.05
-# 3. Check the base-image alignment rule (below), then recreate and validate:
-./bin/dx-recreate
+# 3. Check the base-image alignment rule (below), then apply — MIND THE PIN:
+#    - if the recheck did NOT change the Nix image pin, dx-recreate (which
+#      reuses the /nix volume) is fine;
+#    - if it CHANGED the pin, volume reuse is currently INVALID (see "Bumping
+#      the Nix image pin" below) — do a full destroy-and-rebuild with salvage
+#      (Upgrade / Bump step 7), NOT dx-recreate.
+./bin/dx-recreate        # only when the Nix image pin is unchanged
 tests/run_all_tests.sh
 ```
 
