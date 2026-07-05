@@ -505,9 +505,15 @@ rm -rf "$DX_GUARD_TEST_TMP"
 # shadow-utils open these with O_NOFOLLOW, so groupadd/useradd fail with ELOOP
 # ("Too many levels of symbolic links") in create_user. materialize_auth_files
 # replaces any symlinked auth file with a regular, writable copy of its
-# content before create_user runs; regular or absent files are untouched, and
-# a dangling symlink becomes an empty regular file rather than aborting
-# bootstrap.
+# content before create_user runs; regular or absent files are untouched.
+#
+# Internal review Finding 5: a dangling symlink (or any unreadable copy
+# source -- e.g. F-10's unregistered store path) used to be papered over by
+# writing an empty regular file in place of the auth file. An empty
+# passwd/group/shadow wipes the root account and breaks sudo/login, so an
+# empty auth database is never a safe outcome. materialize_auth_files now
+# fails loudly (non-zero, explicit error) instead, which aborts bootstrap
+# under `set -euo pipefail` before create_user ever runs against it.
 # -----------------------------------------------------------------------------
 
 AUTH_FUNCTIONS="$(mktemp)"
@@ -618,8 +624,12 @@ else
 fi
 rm -rf "$AUTH_ROOT_D"
 
-# (e) Dangling symlink /etc/group (target does not exist) -> becomes an empty
-# regular file rather than aborting bootstrap under set -euo pipefail.
+# (e) Dangling symlink /etc/group (target does not exist, e.g. an
+# unregistered store path -- see F-10) -> an empty auth database is never a
+# safe outcome. materialize_auth_files must fail loudly (non-zero) and must
+# NOT leave an empty regular file (or any regular file at all) in its place;
+# under bootstrap's `set -euo pipefail` a non-zero return here aborts
+# bootstrap before create_user/groupadd ever run against a wiped passwd/group.
 AUTH_ROOT_E="$(mktemp -d)"
 AUTH_ROOT_E="$(readlink -f "$AUTH_ROOT_E")"
 mkdir -p "$AUTH_ROOT_E/etc"
@@ -632,16 +642,45 @@ set +e
 )
 AUTH_STATUS_E=$?
 set -e
-if [ "$AUTH_STATUS_E" -eq 0 ] \
-    && [ -f "$AUTH_ROOT_E/etc/group" ] && [ ! -L "$AUTH_ROOT_E/etc/group" ] \
-    && [ ! -s "$AUTH_ROOT_E/etc/group" ]; then
-    test_pass "materialize_auth_files replaces a dangling /etc/group symlink with an empty regular file and exits 0"
+if [ "$AUTH_STATUS_E" -ne 0 ] \
+    && [ ! -f "$AUTH_ROOT_E/etc/group" -o -L "$AUTH_ROOT_E/etc/group" ]; then
+    test_pass "materialize_auth_files fails loudly on a dangling /etc/group symlink instead of producing an empty auth file"
 else
-    test_fail "materialize_auth_files replaces a dangling /etc/group symlink with an empty regular file and exits 0"
+    test_fail "materialize_auth_files fails loudly on a dangling /etc/group symlink instead of producing an empty auth file"
 fi
 rm -rf "$AUTH_ROOT_E"
 
+# (f) Same dangling-symlink case: the failure must be loud, not silent -- the
+# function should print an error naming the affected file so operators can
+# diagnose the fatal bootstrap condition (e.g. F-10's unregistered store).
+AUTH_ROOT_F="$(mktemp -d)"
+AUTH_ROOT_F="$(readlink -f "$AUTH_ROOT_F")"
+mkdir -p "$AUTH_ROOT_F/etc"
+ln -s "$AUTH_ROOT_F/nonexistent-auth-target" "$AUTH_ROOT_F/etc/group"
+AUTH_ERR_OUT_F="$(mktemp)"
+set +e
+(
+    source "$AUTH_FUNCTIONS"
+    DX_AUTH_ROOT="$AUTH_ROOT_F"
+    materialize_auth_files
+) >"$AUTH_ERR_OUT_F" 2>&1
+AUTH_STATUS_F=$?
+set -e
+if [ "$AUTH_STATUS_F" -ne 0 ] && grep -qi "group" "$AUTH_ERR_OUT_F"; then
+    test_pass "materialize_auth_files prints an explicit error naming the file it could not materialize"
+else
+    test_fail "materialize_auth_files prints an explicit error naming the file it could not materialize"
+fi
+rm -rf "$AUTH_ROOT_F"
+rm -f "$AUTH_ERR_OUT_F"
+
 rm -f "$AUTH_FUNCTIONS"
+
+# Static assertion: the unsafe empty-file fallback must not silently return.
+# This is the exact pattern that used to paper over a failed cp by writing an
+# empty tmp file, which then got mv'd over the real auth file.
+assert_file_not_contains "$BOOTSTRAP" ': > "$tmp"' \
+    "materialize_auth_files no longer falls back to an empty file on copy failure"
 
 # Static assertion: the Main sequence calls materialize_auth_files before
 # create_user (auth files must be regular/writable before groupadd/useradd

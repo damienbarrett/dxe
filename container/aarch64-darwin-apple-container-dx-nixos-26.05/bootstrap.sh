@@ -305,7 +305,17 @@ materialize_auth_files() {
         file="$root/etc/$name"
         [ -L "$file" ] || continue
         tmp="$(mktemp)"
-        cp "$file" "$tmp" 2>/dev/null || : > "$tmp"
+        # The symlink is expected to point at a real, readable store target.
+        # If the copy fails (dangling symlink, or a target that is missing or
+        # unreadable -- e.g. an unregistered store path), do NOT paper over it
+        # with an empty file: an empty passwd/group/shadow wipes the root
+        # account and breaks sudo/login, which is never a safe outcome. Fail
+        # loudly and leave the original symlink in place.
+        if ! cp "$file" "$tmp"; then
+            echo "ERROR: materialize_auth_files: failed to copy $file (symlink target missing or unreadable); refusing to replace it with an empty file" >&2
+            rm -f "$tmp"
+            return 1
+        fi
         rm "$file"
         mv "$tmp" "$file"
         case "$name" in
