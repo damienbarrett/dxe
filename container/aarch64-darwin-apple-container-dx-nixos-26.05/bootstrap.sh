@@ -8,7 +8,7 @@ DX_GUEST_ACTIVATION_TIMEOUT="${DX_GUEST_ACTIVATION_TIMEOUT:-1800}"
 DX_GUEST_ACTIVATION_ATTEMPTS="${DX_GUEST_ACTIVATION_ATTEMPTS:-2}"
 DX_GUEST_ACTIVATION_RETRY_DELAY="${DX_GUEST_ACTIVATION_RETRY_DELAY:-5}"
 
-# 0. Temporary old-base guard for the nix-base-plan.md changeover.
+# 0. Temporary old-base guard for the base-image changeover (README.md, "Base Image Changeover").
 #
 # The official nixos/nix base image never provides a bash binary at the path
 # checked below (regular file or symlink, including a dangling one), and
@@ -23,7 +23,7 @@ guard_old_base() {
     if [ -e "$bash_path" ] || [ -L "$bash_path" ]; then
         echo "Error: $bash_path is present, matching the known flakes-base signature (nixpkgs/nix-flakes)." >&2
         echo "This container was built from the old flakes base and must be rebuilt under the official base." >&2
-        echo "Follow the changeover procedure in nix-base-plan.md before retrying." >&2
+        echo "Follow the Base Image Changeover procedure in README.md before retrying." >&2
         return 1
     fi
 }

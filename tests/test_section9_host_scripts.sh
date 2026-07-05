@@ -1386,7 +1386,7 @@ assert_file_contains "$BIN_DIR/dx-start-container" "dx-sync-bootstrap" "dx-start
 assert_file_contains "$BIN_DIR/dx-stop-container" "container_stop_bounded" "dx-stop-container uses bounded stop helper"
 
 # -----------------------------------------------------------------------------
-# dx-start-container: host-site old-base guard (nix-base-plan.md change 2)
+# dx-start-container: host-site old-base guard
 #
 # Temporary coverage, removed together with bootstrap.sh's guard_old_base
 # (see tests/test_section3_bootstrap.sh) once every machine has changed over.
@@ -1473,7 +1473,7 @@ dx_startc_behavior "$DX_STARTC_OUT" DX_STUB_GUARD_RESPONSE=OLD_BASE
 DX_STARTC_OLDBASE_STATUS=$?
 set -e
 if [ "$DX_STARTC_OLDBASE_STATUS" -ne 0 ] \
-    && grep -qi "nix-base-plan.md" "$DX_STARTC_OUT" \
+    && grep -qi "changeover" "$DX_STARTC_OUT" \
     && grep -qi "flakes-base" "$DX_STARTC_OUT"; then
     test_pass "dx-start-container fails and names the changeover procedure when the guest guard reports OLD_BASE"
 else

@@ -18,7 +18,7 @@ fi
 
 "$SCRIPT_DIR/dx-sync-bootstrap"
 
-# Temporary old-base guard for the nix-base-plan.md changeover: the official
+# Temporary old-base guard for the base-image changeover (README.md, "Base Image Changeover"): the official
 # base image never provides /bin/bash (regular file or dangling symlink), so
 # its presence matches the known flakes-base signature. This is the host-site
 # twin of guard_old_base in bootstrap.sh -- it closes the window where a
@@ -34,7 +34,7 @@ case "$state" in
     OLD_BASE)
         echo "Error: /bin/bash is present in $DX_CONTAINER_NAME, matching the known flakes-base signature (nixpkgs/nix-flakes)." >&2
         echo "This container was built from the old flakes base and must be rebuilt under the official base." >&2
-        echo "Follow the changeover procedure in nix-base-plan.md before retrying." >&2
+        echo "Follow the Base Image Changeover procedure in README.md before retrying." >&2
         exit 1
         ;;
     *)

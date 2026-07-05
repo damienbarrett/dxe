@@ -70,7 +70,7 @@ else
         test_fail "secondary/static: live guest bootstrap flake.lock contains the string $DX_EXPECTED_NIXOS_BRANCH"
     fi
 
-    # Mandatory release oracle (nix-base-plan.md): resolve the guest's own
+    # Mandatory release oracle: resolve the guest's own
     # locked flake inputs and assert the release they resolve to, rather than
     # trusting a file the base image may not even provide.
     # --no-update-lock-file so this check can never mutate the guest's lock.

@@ -24,7 +24,7 @@ Use this section as the playbook for future NixOS release bumps, such as 26.05 -
 
 Principles:
 
-- The base image is the official, digest-pinned `nixos/nix` image (see [nix-base-plan.md](nix-base-plan.md)); it is versioned by Nix release, not NixOS release, so it no longer gates the release bump on a third-party per-release tag. What still gates the bump: `NEW_RELEASE`'s flake input branches (`nixpkgs`, `home-manager`, `nixvim`) must exist and resolve, and the base-image alignment rule (README.md, "Release and Pin Maintenance") must be rechecked — a release bump can change which Nix image tag/digest is correct. Do not substitute `latest` for any pin.
+- The base image is the official, digest-pinned `nixos/nix` image; it is versioned by Nix release, not NixOS release, so it no longer gates the release bump on a third-party per-release tag. What still gates the bump: `NEW_RELEASE`'s flake input branches (`nixpkgs`, `home-manager`, `nixvim`) must exist and resolve, and the base-image alignment rule (README.md, "Release and Pin Maintenance") must be rechecked — a release bump can change which Nix image tag/digest is correct. Do not substitute `latest` for any pin.
 - Keep the stable flake inputs aligned: `nixpkgs`, `home-manager`, and `nixvim` should all move to the same target release together. Keep intentionally independent inputs, such as `nixpkgs-unstable` for optional AI tooling, on their documented track.
 - Separate routine drift from the release jump. If desired, first do a same-release lockfile update on `OLD_RELEASE`; then do the branch bump to `NEW_RELEASE` in a separate commit so the lock diff has one cause.
 - Keep image and context names versioned. This allows old and new images to coexist, makes rollback easier, and keeps upgrade state visible in `DX_IMAGE` and `DX_CONTEXT_DIR`.
@@ -69,10 +69,9 @@ These phases apply to this upgrade and to future release bumps. Do not treat thi
      oracle returning 26.05), followed by the destructive salvage-and-rebuild
      changeover of the primary (`OLD_BASE_ABSENT` gate, full suite green). The
      formal `nix-env --rollback` rehearsal above was not run; rollback relies
-     on the fresh-volume destroy-and-rebuild path (see
-     [nix-base-plan.md](nix-base-plan.md)), not an in-place Home Manager
-     generation rollback. Do not add a release-specific `nixos-2605.env`
-     profile after promotion.
+     on the fresh-volume destroy-and-rebuild path (see README.md, "Base Image
+     Changeover"), not an in-place Home Manager generation rollback. Do not
+     add a release-specific `nixos-2605.env` profile after promotion.
 
 4. **Phase 4 — compatibility fixes on 26.05, if needed.**
    - Make targeted fixes for package, NixVim, shell, theming, persistence, or optional AI behavior discovered in Phase 3.
@@ -88,7 +87,7 @@ These phases apply to this upgrade and to future release bumps. Do not treat thi
 
 This plan describes how to update the repo from NixOS 25.11 to NixOS 26.05. It is intentionally documentation-only until the target release's flake inputs are available.
 
-**Superseded gate (2026-07-04):** this plan previously waited on a third-party, per-release Docker Hub tag before the release bump could start. [nix-base-plan.md](nix-base-plan.md) replaced the base image outright with the official, digest-pinned `nixos/nix` image, which is versioned by Nix release rather than NixOS release — that availability gate is **gone**. As of 2026-05-31, the 26.05 flake branches (`nixpkgs`, `home-manager`, `nixvim`) resolve; the remaining preflight gate is simply that those branches exist and resolve (see [Implementation Changes](#implementation-changes)) plus a recheck of the base-image alignment rule, since a release bump can change the correct Nix image tag. Do not use `latest` for any pin in this migration.
+**Superseded gate (2026-07-04):** this plan previously waited on a third-party, per-release Docker Hub tag before the release bump could start. That base image was replaced outright with the official, digest-pinned `nixos/nix` image, which is versioned by Nix release rather than NixOS release — that availability gate is **gone**. As of 2026-05-31, the 26.05 flake branches (`nixpkgs`, `home-manager`, `nixvim`) resolve; the remaining preflight gate is simply that those branches exist and resolve (see [Implementation Changes](#implementation-changes)) plus a recheck of the base-image alignment rule, since a release bump can change the correct Nix image tag. Do not use `latest` for any pin in this migration.
 
 References:
 
@@ -106,7 +105,7 @@ References:
   - If `home-manager/release-26.05` or `nixvim/nixos-26.05` is not published yet, wait by default. Temporary explicit rev pins are acceptable only for isolated exploration and must be removed before promotion; do not promote a mixed stable/unstable release combination.
   - Recheck the base-image alignment rule (README.md, "Release and Pin Maintenance"): confirm the currently pinned Nix image tag still matches the major.minor of `NEW_RELEASE`'s default Nix (`nixpkgs#nix.version` at the newly locked revision). If not, that is a separate, procedure-gated Nix-image-pin bump (see the same README section) — do not fold an undeclared base-image change into the release bump.
 - Rename the container context directory from `container/aarch64-darwin-apple-container-dx-nixos-25.11` to `container/aarch64-darwin-apple-container-dx-nixos-26.05` (use `git mv`).
-- The `Containerfile` itself does **not** change for a release bump by default — the base image is release-agnostic (see [nix-base-plan.md](nix-base-plan.md)). Only touch it if the alignment-rule recheck above calls for a new Nix image tag/digest, and treat that as the same procedure-gated Nix-image-pin bump documented in README.md, not an implicit part of this rename.
+- The `Containerfile` itself does **not** change for a release bump by default — the base image is release-agnostic. Only touch it if the alignment-rule recheck above calls for a new Nix image tag/digest, and treat that as the same procedure-gated Nix-image-pin bump documented in README.md, not an implicit part of this rename.
 
 - Update `flake.nix` inputs:
   - `nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";`
@@ -300,13 +299,13 @@ The commands each phase gate depends on. Phases own *when* to run them (see [Pha
 
   Also confirm no active test redefines versioned `BOOTSTRAP`, `CONTAINERFILE`, `FLAKE_NIX`, or `FLAKE_LOCK` outside `test_helpers.sh`; that local `SHELL_NIX` definitions in sections 3, 6, 15, and 16 are gone; and that `test_section13_final_review.sh` no longer references `todo.txt`. Run `bash -n` on changed shell scripts.
 
-- **Base-image stale-reference grep** (this plan's own acceptance criterion, added by [nix-base-plan.md](nix-base-plan.md)'s doc sweep; re-run after any edit to this file):
+- **Base-image stale-reference grep** (this plan's own acceptance criterion; re-run after any edit to this file):
 
   ```bash
-  grep -rn 'nix-flakes' README.md plan.md mount-git.md tests bin container
+  grep -rn 'nix-flakes' README.md plan.md tests bin container
   ```
 
-  Any hit must be inside a design-history document (`flakes-to-nix.md`, or `nix-base-plan.md`'s own history/rollback sections) — never in this file, `README.md`, `mount-git.md`, or active test/bin/container sources. This file additionally must not reword the now-removed docker-nixpkgs release-tag availability gate as a live requirement anywhere (the base image is release-agnostic; see the Principles and Summary sections above).
+  This must now return **no hits at all** outside git history — the design-history documents that used to carry the only legitimate `nix-flakes` mentions have been deleted, so any hit in this file, `README.md`, or active test/bin/container sources is a live regression. This file additionally must not reword the now-removed docker-nixpkgs release-tag availability gate as a live requirement anywhere (the base image is release-agnostic; see the Principles and Summary sections above).
 
 - **Flake evaluation check** (Phase 2 gate):
 
@@ -340,7 +339,7 @@ The commands each phase gate depends on. Phases own *when* to run them (see [Pha
 
 ## Assumptions
 
-- The base image (official, digest-pinned `nixos/nix`) is decoupled from the NixOS release; the upgrade does not wait on a base-image tag (see [nix-base-plan.md](nix-base-plan.md)). It does still recheck the base-image alignment rule, and never switches to `latest`.
+- The base image (official, digest-pinned `nixos/nix`) is decoupled from the NixOS release; the upgrade does not wait on a base-image tag. It does still recheck the base-image alignment rule, and never switches to `latest`.
 - The target architecture remains `aarch64-linux` for Apple Container on Apple silicon hosts.
 - The persistent Nix, persist, and bootstrap volume model remains unchanged.
 - `nixpkgs-unstable` stays on `master` because it is intentionally scoped to the optional AI tools bundle.
@@ -451,4 +450,4 @@ An external review (`review.md`) checked this plan against the working tree. All
 4. **`--skip-integration` wording fuzzy + stale `--help`** → **accepted.** Documented the real runner surface (skips only 11–12; section 17 runs; help says `0-16`) in [Test Harness Changes](#test-harness-changes) and the [Command Reference](#command-reference).
 5. **Final-review gate fails on a dirty tree** → **accepted.** The section-13 clean-tree requirement (`git status -uno --short`, excluding `README.md`) is now called out in both sections above, with guidance to scope around it during in-flight work.
 
-The review's Confirmed Observations also align with this plan: the repo still defaults to 25.11; the `nixos-26.05` / `release-26.05` branches exist; P3 is implemented and P5–P10 remain open. **Note (2026-07-04):** the base-image release-tag gate this paragraph originally described as unchanged has since been removed entirely — [nix-base-plan.md](nix-base-plan.md) replaced the base with the official, digest-pinned `nixos/nix` image, which does not carry a per-NixOS-release tag.
+The review's Confirmed Observations also align with this plan: the repo still defaults to 25.11; the `nixos-26.05` / `release-26.05` branches exist; P3 is implemented and P5–P10 remain open. **Note (2026-07-04):** the base-image release-tag gate this paragraph originally described as unchanged has since been removed entirely — the base was replaced with the official, digest-pinned `nixos/nix` image, which does not carry a per-NixOS-release tag.

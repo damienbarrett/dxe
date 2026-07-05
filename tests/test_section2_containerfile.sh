@@ -51,7 +51,7 @@ else
 fi
 
 # Test: Containerfile's single non-blank line is EXACTLY the adopted
-# official base reference (nix-base-plan.md change 1). This is a fixed-
+# official base reference. This is a fixed-
 # string, full-line equality check, not a pattern through
 # assert_file_contains (that helper runs plain `grep -q`, i.e. BASIC
 # regular expressions - an ERE like `+`/`{64}` could never match a

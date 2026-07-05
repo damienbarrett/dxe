@@ -597,13 +597,11 @@ container logs dx-host -f
 ## Release and Pin Maintenance
 
 > Status: this section is the maintenance contract for the single official
-> `nixos/nix` base image. A dual-base flip was once proposed in
-> [flakes-to-nix.md](flakes-to-nix.md); that plan was superseded by
-> [nix-base-plan.md](nix-base-plan.md), which dropped both dual-base support
-> and in-place migration in favor of a one-time, one-way changeover: no
-> `DX_BASE` selector, no flavor names, no coexistence. See
+> `nixos/nix` base image. A dual-base flip was once considered and dropped
+> in favor of a one-time, one-way changeover onto the single official base
+> — no `DX_BASE` selector, no flavor names, no coexistence. See
 > [Base Image Changeover](#base-image-changeover-one-time) below for the
-> one-time cutover runbook that plan defines.
+> cutover runbook.
 
 ### One release pin
 
@@ -727,9 +725,7 @@ Both operate only on the resources the active profile resolves.
 ### Bumping the Nix image pin — unresolved pending store-reuse fixes
 
 **There is currently no valid, volume-reusing pin-bump procedure.**
-[nix-base-plan.md](nix-base-plan.md)'s "Future maintenance" section records
-two defects that block one, both rooted in `setup_nix_volume`'s store
-handling:
+Two defects block one, both rooted in `setup_nix_volume`'s store handling:
 
 - a reused `/nix` volume's profile paths can keep resolving `nix` to the
   **old** image's binary even after a new image is built, so a naive
@@ -867,8 +863,7 @@ line), watch it fail against OLD, then make it pass.
 
   Update `dx-nixos-OLD` image names, the `dx-nixos-OLD` assertions in
   `tests/test_section18_mount_git.sh`, profile `.env` comments, and this
-  file's examples. Leave `flake*-to-nix.md`, `nix-base-plan.md`, and
-  `plan.md`'s OLD/NEW playbook framing as history.
+  file's examples. Leave `plan.md`'s OLD/NEW playbook framing as history.
 - Static gate — all green, plus a roomy `flake check`:
 
   ```bash
@@ -946,10 +941,8 @@ for a bump that does **not** change the Nix image pin, would an in-place
 > per-release community-published base with the official, digest-pinned
 > `nixos/nix` base defined above. There is no in-place migration: existing machines are
 > destroyed and rebuilt from scratch, with an auditable one-time `/persist`
-> salvage step. Full rationale, review history, and the decisions behind
-> every step below live in [nix-base-plan.md](nix-base-plan.md); this
-> section transcribes its changeover procedure as guarded runbook steps —
-> each one copyable, with expected output, safe behavior when the resource
+> salvage step. This section is the guarded runbook for that changeover —
+> each step copyable, with expected output, safe behavior when the resource
 > it targets is already absent, an abort condition, and a verification
 > before you continue to the next step.
 
@@ -1200,7 +1193,7 @@ you stop partway, and nothing destroys the primary before step 4.
    other output is a hard stop. The same invariant is also enforced by a
    pair of temporary guards on every container boot and every
    `dx-start-container` bring-up, for as long as they remain in the tree
-   (see `nix-base-plan.md` change 2) — this manual gate exists because a
+   (see the temporary old-base guards described above) — this manual gate exists because a
    bring-up against an **already-running** container only re-syncs the
    bootstrap payload; it does not by itself prove which image is running.
 
@@ -1241,6 +1234,6 @@ is still published.
 ## Planned Work
 
 - **[NixOS 26.05 upgrade & code-review fixes](plan.md)** — the release-bump playbook (previously gated on a third-party base-image tag; that gate is gone, see [Base Image Changeover](#base-image-changeover-one-time) — now waiting only on the target release's flake input branches) plus eight consolidated code-review fixes against the current 25.11 codebase. See [Consolidated Code-Review Fixes](plan.md#consolidated-code-review-fixes) for the per-item status.
-- ~~**Dual base-image support**~~ ([flakes-to-nix.md](flakes-to-nix.md), superseded) — **done, differently**: [nix-base-plan.md](nix-base-plan.md) replaced the plan to select between two base images with a one-time, one-way changeover onto the single official, digest-pinned `nixos/nix` image — no `DX_BASE`, no flavors, no coexistence. The third-party, per-release community-published base-image dependency that gated the 26.05 upgrade is **removed**. Maintenance contract: [Release and Pin Maintenance](#release-and-pin-maintenance); one-time cutover runbook: [Base Image Changeover](#base-image-changeover-one-time).
+- ~~**Dual base-image support**~~ — **done, differently**: the plan to select between two base images was replaced with a one-time, one-way changeover onto the single official, digest-pinned `nixos/nix` image — no `DX_BASE`, no flavors, no coexistence; the third-party per-release base dependency is removed. Maintenance contract: [Release and Pin Maintenance](#release-and-pin-maintenance); cutover runbook: [Base Image Changeover](#base-image-changeover-one-time).
 - **[Tmux configuration improvements](tmux-plan.md)** — migrate option-shaped tmux settings to typed Home Manager options and add resurrect/continuum persistence. Not started; sliced for TDD with manual validation gates.
-- **[Git-access follow-ups](mount-git.md)** — the `dx-mount` side-container workflow has shipped; remaining items are the `dx-branch` self-dev helper, seeded Nix base for faster side-container cold starts, credential propagation, and worktree/submodule validation.
+- **Git-access follow-ups** — the `dx-mount` side-container workflow has shipped; remaining items are the `dx-branch` self-dev helper, seeded Nix base for faster side-container cold starts, credential propagation, and worktree/submodule validation.

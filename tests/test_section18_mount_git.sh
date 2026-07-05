@@ -226,7 +226,7 @@ assert_file_contains "$DX_MOUNT" "dx_port_in_use" "dx-mount probes for SSH port 
 assert_file_contains "$DX_MOUNT" "already in use" "dx-mount refuses to create a side container on a busy port"
 
 # --- Section 18b: destroy-only --container path, write-once manifest markers,
-# --print-destroy-plan, and unsafe-name rejection (nix-base-plan.md change 5).
+# --print-destroy-plan, and unsafe-name rejection.
 # All of these use a logging container stub and a private identity dir; never
 # the real Apple container runtime.
 

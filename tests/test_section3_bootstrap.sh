@@ -52,7 +52,7 @@ assert_file_contains "$BOOTSTRAP" "chown dx:dx \"\$sentinel\"" "bootstrap marks 
 # fix pinned --profile /nix/var/nix/profiles/default, but that profile already
 # holds the image's package env at priority 5, and a blanket --priority
 # override to break the tie broke nixpkgs' own meta-priority de-confliction
-# between packages in the essentials list (see nix-base-plan.md).
+# between packages in the essentials list.
 assert_file_not_contains "$BOOTSTRAP" "nix profile install --profile" "bootstrap keeps the stock conflict-free essentials install"
 
 # Behavioral tests: essentials_profile_path resolves whichever profile
@@ -148,7 +148,7 @@ rm -f "$ESSENTIALS_FUNCTIONS"
 # registry-resolved revision had moved on -- crashing a warm boot. Fixed by
 # resolving/exporting the essentials PATH before the gate, and re-resolving it
 # after a fresh install so newly installed tools are usable without another
-# restart. See nix-base-plan.md.
+# restart.
 # -----------------------------------------------------------------------------
 
 INSTALL_FUNCTIONS="$(mktemp)"
@@ -370,12 +370,12 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# nix-base-plan.md change 2: bootstrap.sh edits + temporary old-base guard.
+# Base-image changeover: bootstrap.sh edits + temporary old-base guard.
 # The guard assertions below (both the regression checks and the behavioral
 # fixtures) land in the same commit as the base-image FROM flip and are
 # removed together with guard_old_base and dx-start-container's host-site
 # guard once every machine (primary, side containers, profiles) has changed
-# over -- see nix-base-plan.md's Decisions section.
+# over -- see README.md, "Base Image Changeover".
 # -----------------------------------------------------------------------------
 
 # Test: shebang is the portable form. The official base's entrypoint loop
@@ -476,7 +476,7 @@ DX_GUARD_ROOT="$DX_GUARD_ROOT_REGULAR" DX_BOOTSTRAP_TEST_MODE=guard bash "$BOOTS
 DX_GUARD_REGULAR_STATUS=$?
 set -e
 if [ "$DX_GUARD_REGULAR_STATUS" -ne 0 ] \
-    && grep -qi "nix-base-plan.md" "$DX_GUARD_REGULAR_OUT" \
+    && grep -qi "changeover" "$DX_GUARD_REGULAR_OUT" \
     && grep -qi "flakes-base" "$DX_GUARD_REGULAR_OUT"; then
     test_pass "guard_old_base fails closed on a regular DX_GUARD_ROOT/bin/bash file, naming the changeover procedure"
 else
@@ -489,7 +489,7 @@ DX_GUARD_ROOT="$DX_GUARD_ROOT_DANGLING" DX_BOOTSTRAP_TEST_MODE=guard bash "$BOOT
 DX_GUARD_DANGLING_STATUS=$?
 set -e
 if [ "$DX_GUARD_DANGLING_STATUS" -ne 0 ] \
-    && grep -qi "nix-base-plan.md" "$DX_GUARD_DANGLING_OUT" \
+    && grep -qi "changeover" "$DX_GUARD_DANGLING_OUT" \
     && grep -qi "flakes-base" "$DX_GUARD_DANGLING_OUT"; then
     test_pass "guard_old_base fails closed on a dangling DX_GUARD_ROOT/bin/bash symlink, naming the changeover procedure"
 else
@@ -507,7 +507,7 @@ rm -rf "$DX_GUARD_TEST_TMP"
 # replaces any symlinked auth file with a regular, writable copy of its
 # content before create_user runs; regular or absent files are untouched, and
 # a dangling symlink becomes an empty regular file rather than aborting
-# bootstrap. See nix-base-plan.md.
+# bootstrap.
 # -----------------------------------------------------------------------------
 
 AUTH_FUNCTIONS="$(mktemp)"
@@ -663,7 +663,7 @@ fi
 # satisfied that via the image's global /bin/bash; the official base ships
 # none. link_system_bash links the essentials bash at /usr/bin/bash -- on
 # sshd's default PATH -- deliberately not at /bin/bash, which remains
-# guard_old_base's signature. See nix-base-plan.md.
+# guard_old_base's signature.
 # -----------------------------------------------------------------------------
 
 assert_file_contains "$BOOTSTRAP" "link_system_bash" "bootstrap centralizes linking the essentials bash onto sshd's default PATH"
