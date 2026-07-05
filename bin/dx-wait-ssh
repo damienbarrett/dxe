@@ -33,9 +33,14 @@ print_container_logs() {
     fi
 }
 
-ELAPSED=0
+# A monotonic wall-clock deadline: SECONDS is a bash builtin that reports
+# real elapsed seconds since it was last reset here, so ELAPSED below always
+# reflects total time actually spent waiting -- including a slow or hanging
+# ssh probe -- rather than only the time we ourselves spent sleeping.
+SECONDS=0
 NEXT_PROGRESS="$PROGRESS_INTERVAL"
 while ! ssh "${SSH_CHECK_OPTS[@]}" dx@127.0.0.1 "bash -lc 'true'" 2>/dev/null; do
+    ELAPSED=$SECONDS
     if container_exists "$DX_CONTAINER_NAME" && ! container_is_running "$DX_CONTAINER_NAME"; then
         echo "Error: Container $DX_CONTAINER_NAME stopped before SSH became responsive." >&2
         echo "Last 80 container log lines:" >&2
@@ -65,6 +70,5 @@ while ! ssh "${SSH_CHECK_OPTS[@]}" dx@127.0.0.1 "bash -lc 'true'" 2>/dev/null; d
         SLEEP_INTERVAL=$((WAIT_TIMEOUT - ELAPSED))
     fi
     sleep "$SLEEP_INTERVAL"
-    ELAPSED=$((ELAPSED + SLEEP_INTERVAL))
 done
 printf "\nGuest is ready.\n"

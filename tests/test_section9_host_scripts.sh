@@ -174,6 +174,12 @@ cat > "$DX_WAIT_STUB_BIN/ssh" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 
+# Optional artificial per-call delay so tests can simulate a slow/hanging SSH
+# probe. Defaults to 0 (no delay) so every existing behavioral test is
+# unaffected. `sleep` here is real (no stub overrides it below), so this
+# consumes actual wall-clock time -- exactly what a hanging ssh would do.
+sleep "${DX_STUB_SSH_DELAY:-0}"
+
 count=0
 if [ -f "$DX_WAIT_SSH_COUNT" ]; then
     count="$(cat "$DX_WAIT_SSH_COUNT")"
@@ -186,11 +192,11 @@ if [ "$count" -le "${DX_STUB_SSH_FAILURES:-0}" ]; then
 fi
 EOF
 
-cat > "$DX_WAIT_STUB_BIN/sleep" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-chmod +x "$DX_WAIT_STUB_BIN/container" "$DX_WAIT_STUB_BIN/ssh" "$DX_WAIT_STUB_BIN/sleep"
+# No `sleep` stub: dx-wait-ssh's monotonic deadline is measured against real
+# elapsed time (bash's SECONDS builtin), so its own `sleep "$SLEEP_INTERVAL"`
+# calls must actually consume wall-clock time for that accounting to mean
+# anything. Falls through to the real system `sleep` later in PATH.
+chmod +x "$DX_WAIT_STUB_BIN/container" "$DX_WAIT_STUB_BIN/ssh"
 
 dx_wait_behavior() {
     local output_file="$1"
@@ -219,13 +225,18 @@ dx_wait_behavior "$DX_WAIT_OUTPUT" DX_STUB_SSH_FAILURES=99
 DX_WAIT_TIMEOUT_STATUS=$?
 set -e
 DX_WAIT_TIMEOUT_POLLS="$(cat "$DX_WAIT_SSH_COUNT" 2>/dev/null || true)"
+# The wait loop's deadline is now real wall-clock time (bash's SECONDS
+# builtin), which -- unlike the old sleep-only counter -- truncates to whole
+# seconds from an integer epoch snapshot; a probe landing a few milliseconds
+# either side of a one-second boundary can shift the observed poll count by
+# one. Assert a tolerant range instead of an exact count.
 if [ "$DX_WAIT_TIMEOUT_STATUS" -eq 1 ] \
-    && [ "$DX_WAIT_TIMEOUT_POLLS" = "4" ] \
+    && [ "$DX_WAIT_TIMEOUT_POLLS" -ge 3 ] && [ "$DX_WAIT_TIMEOUT_POLLS" -le 5 ] \
     && grep -q "after 3s" "$DX_WAIT_OUTPUT" \
     && grep -q "copying path test-package" "$DX_WAIT_OUTPUT"; then
     test_pass "dx-wait-ssh honors its timeout and reports recent guest progress"
 else
-    test_fail "dx-wait-ssh honors its timeout and reports recent guest progress"
+    test_fail "dx-wait-ssh honors its timeout and reports recent guest progress (polls=$DX_WAIT_TIMEOUT_POLLS)"
 fi
 
 set +e
@@ -260,6 +271,25 @@ if [ "$DX_WAIT_INVALID_STATUS" -eq 1 ] \
     test_pass "dx-wait-ssh rejects an invalid wait timeout"
 else
     test_fail "dx-wait-ssh rejects an invalid wait timeout"
+fi
+
+# dx-wait-ssh must be bounded by real elapsed (wall-clock) time, not just the
+# time it itself spent sleeping. A slow/hanging ssh probe must not multiply
+# the effective wait far past DX_SSH_WAIT_TIMEOUT: with a ~2s ssh probe and a
+# 3s timeout, sleep-only accounting lets the loop run every poll to its full
+# ssh duration on top of every sleep (roughly 4 * 2s + 3 * 1s = 11s here),
+# while a correct monotonic deadline stops within about timeout + one poll
+# interval + one in-flight ssh overrun (roughly 5s here).
+set +e
+DX_WAIT_BOUND_START=$SECONDS
+dx_wait_behavior "$DX_WAIT_OUTPUT" DX_STUB_SSH_FAILURES=99 DX_STUB_SSH_DELAY=2
+DX_WAIT_BOUND_STATUS=$?
+DX_WAIT_BOUND_ELAPSED=$((SECONDS - DX_WAIT_BOUND_START))
+set -e
+if [ "$DX_WAIT_BOUND_STATUS" -ne 0 ] && [ "$DX_WAIT_BOUND_ELAPSED" -lt 7 ]; then
+    test_pass "dx-wait-ssh bounds total wait to wall-clock time despite a slow ssh probe"
+else
+    test_fail "dx-wait-ssh bounds total wait to wall-clock time despite a slow ssh probe (status=$DX_WAIT_BOUND_STATUS elapsed=${DX_WAIT_BOUND_ELAPSED}s)"
 fi
 
 rm -rf "$DX_WAIT_TEST_TMP"
@@ -1558,6 +1588,83 @@ DX_FACTORY_RESET_TEST="$BASE_DIR/tests/standalone_test_factory_reset.sh"
 assert_file_contains "$DX_FACTORY_RESET_TEST" 'dx-factory-reset" --force' "standalone factory-reset test runs non-interactively"
 assert_file_contains "$DX_FACTORY_RESET_TEST" "/persist/home/.dxe-write-probe" "standalone factory-reset test verifies persistent home writes"
 assert_file_not_contains "$DX_FACTORY_RESET_TEST" "exit_with_code 1" "standalone factory-reset test cannot swallow explicit failures"
+
+# -----------------------------------------------------------------------------
+# standalone_test_factory_reset.sh: destructive-test safety guard (Finding 1)
+#
+# This script CREATES then irreversibly DESTROYS whatever DX_CONTAINER_NAME /
+# DX_*_VOLUME / DX_SSH_KEY resolve to -- which default to the primary dx-host
+# resources. It must refuse to run unless DX_TEST_DESTRUCTIVE=1 is set, and
+# must still refuse if the resolved resources are the default/primary ones.
+#
+# Both scenarios below run a COPY of the script inside an isolated fake
+# project tree (its own bin/dx-lib.sh, bin/dx, and bin/dx-factory-reset), and
+# every DX_* override is cleared before invoking it. This way, even if the
+# guard under test were broken, "Step 1" would only ever reach the fake
+# stubs recorded in DX_GUARD_CALL_LOG -- never this machine's real, live
+# dx-host, whose bin/dx and bin/dx-factory-reset live at real absolute paths
+# that no amount of PATH stubbing alone could intercept.
+# -----------------------------------------------------------------------------
+
+DX_GUARD_TMP="$(mktemp -d)"
+mkdir -p "$DX_GUARD_TMP/bin" "$DX_GUARD_TMP/tests"
+cp "$BIN_DIR/dx-lib.sh" "$DX_GUARD_TMP/bin/dx-lib.sh"
+cp "$DX_FACTORY_RESET_TEST" "$DX_GUARD_TMP/tests/standalone_test_factory_reset.sh"
+chmod +x "$DX_GUARD_TMP/tests/standalone_test_factory_reset.sh"
+
+DX_GUARD_CALL_LOG="$DX_GUARD_TMP/calls.log"
+touch "$DX_GUARD_CALL_LOG"
+
+cat > "$DX_GUARD_TMP/bin/dx" <<EOF
+#!/bin/bash
+echo "dx \$*" >> "$DX_GUARD_CALL_LOG"
+exit 0
+EOF
+cat > "$DX_GUARD_TMP/bin/dx-factory-reset" <<EOF
+#!/bin/bash
+echo "dx-factory-reset \$*" >> "$DX_GUARD_CALL_LOG"
+exit 0
+EOF
+chmod +x "$DX_GUARD_TMP/bin/dx" "$DX_GUARD_TMP/bin/dx-factory-reset"
+
+dx_guard_run() {
+    : > "$DX_GUARD_CALL_LOG"
+    env \
+        -u DX_TEST_DESTRUCTIVE -u DX_CONTAINER_NAME -u DX_NIX_VOLUME \
+        -u DX_PERSIST_VOLUME -u DX_BOOTSTRAP_VOLUME -u DX_SSH_KEY -u DX_SSH_KEY_PUB \
+        "$@" bash "$DX_GUARD_TMP/tests/standalone_test_factory_reset.sh"
+}
+
+# (a) No DX_TEST_DESTRUCTIVE opt-in: must skip cleanly (exit 0) and invoke
+# neither dx nor dx-factory-reset.
+set +e
+dx_guard_run >"$DX_GUARD_TMP/no-optin.out" 2>&1
+DX_GUARD_NO_OPTIN_STATUS=$?
+set -e
+if [ "$DX_GUARD_NO_OPTIN_STATUS" -eq 0 ] \
+    && [ ! -s "$DX_GUARD_CALL_LOG" ] \
+    && grep -qi "DX_TEST_DESTRUCTIVE=1" "$DX_GUARD_TMP/no-optin.out"; then
+    test_pass "standalone factory-reset test skips without DX_TEST_DESTRUCTIVE and calls neither dx nor dx-factory-reset"
+else
+    test_fail "standalone factory-reset test skips without DX_TEST_DESTRUCTIVE and calls neither dx nor dx-factory-reset"
+fi
+
+# (b) DX_TEST_DESTRUCTIVE=1, but every DX_* resource is left at its default
+# (dx-host / dx-nix / dx-persist / dx-bootstrap / default dx_key): must
+# refuse (non-zero) and still invoke neither dx nor dx-factory-reset.
+set +e
+dx_guard_run DX_TEST_DESTRUCTIVE=1 >"$DX_GUARD_TMP/default-refuse.out" 2>&1
+DX_GUARD_DEFAULT_STATUS=$?
+set -e
+if [ "$DX_GUARD_DEFAULT_STATUS" -ne 0 ] \
+    && [ ! -s "$DX_GUARD_CALL_LOG" ] \
+    && grep -qi "refusing" "$DX_GUARD_TMP/default-refuse.out"; then
+    test_pass "standalone factory-reset test refuses default dx-host resources even with DX_TEST_DESTRUCTIVE=1"
+else
+    test_fail "standalone factory-reset test refuses default dx-host resources even with DX_TEST_DESTRUCTIVE=1"
+fi
+
+rm -rf "$DX_GUARD_TMP"
 
 # Apple Container opens the published host port before guest sshd is ready.
 # Test helpers must perform the same authenticated readiness check as dx.
