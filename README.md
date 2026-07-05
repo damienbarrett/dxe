@@ -872,7 +872,10 @@ line), watch it fail against OLD, then make it pass.
 - Static gate — all green, plus a roomy `flake check`:
 
   ```bash
-  for s in 0 1 2 3 5 9 10 18; do bash tests/test_section$s*.sh || break; done
+  # Note the underscore in the glob: test_section${s}_*.sh matches only
+  # section s. Bare test_section$s*.sh would let s=1 also match 10-19 and
+  # s=2 also match 20.
+  for s in 0 1 2 3 5 9 10 18 20; do bash tests/test_section${s}_*.sh || break; done
   container run --rm --memory 8g --cpus 4 \
       -v "$PWD/container/aarch64-darwin-apple-container-dx-nixos-NEW:/ctx" "$NEW_IMG" \
       nix --extra-experimental-features 'nix-command flakes' \
