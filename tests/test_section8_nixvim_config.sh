@@ -60,6 +60,22 @@ else
     test_fail "hashes for custom plugin sources present"
 fi
 
+# Test: render-markdown NixVim module enabled for in-buffer markdown rendering
+RENDER_MD=$(echo "$COMBINED_NIX" | grep -E "render-markdown.enable = true|render-markdown = \{" | wc -l | xargs)
+if [ "$RENDER_MD" -gt 0 ]; then
+    test_pass "render-markdown NixVim module is enabled for in-buffer markdown rendering"
+else
+    test_fail "render-markdown NixVim module is enabled for in-buffer markdown rendering"
+fi
+
+# Test: nixvim.nix imports the render-markdown plugin module
+RENDER_MD_IMPORT=$(echo "$COMBINED_NIX" | grep -c "nvim/plugins/render-markdown.nix")
+if [ "$RENDER_MD_IMPORT" -gt 0 ]; then
+    test_pass "nixvim.nix imports nvim/plugins/render-markdown.nix"
+else
+    test_fail "nixvim.nix imports nvim/plugins/render-markdown.nix"
+fi
+
 # Test: NixVim flake check (if nix available)
 if command -v nix >/dev/null 2>&1; then
     if nix flake check --no-write-lock-file "$CONTAINER_DIR" 2>/dev/null; then

@@ -16,6 +16,7 @@ nixvim.legacyPackages.${system}.makeNixvim {
     ./nvim/plugins/luasnip.nix
     ./nvim/plugins/oil.nix
     ./nvim/plugins/project-nvim.nix
+    ./nvim/plugins/render-markdown.nix
     ./nvim/plugins/rose-pine.nix
     ./nvim/plugins/telescope.nix
     ./nvim/plugins/tinted-nvim.nix
