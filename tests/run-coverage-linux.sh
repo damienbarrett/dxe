@@ -33,7 +33,14 @@ done < <(find \
 covered="$(sed -n 's/.*"percent_covered"[[:space:]]*:[[:space:]]*"\{0,1\}\([0-9.]*\).*/\1/p' "$summary" | tail -1)"
 case "$covered" in
     100|100.0|100.00) ;;
-    *) echo "Error: sourceable scope line coverage is ${covered:-unknown}%, expected 100%." >&2; exit 1 ;;
+    *)
+        echo "Error: sourceable scope line coverage is ${covered:-unknown}%, expected 100%." >&2
+        # Name the shortfall. A bare percentage is not actionable on a runner
+        # whose report artifact may not survive the failed step.
+        echo "Files below 100%:" >&2
+        grep '"file":' "$summary" | grep -v '"percent_covered": "100.00"' | sed 's/^[[:space:]]*/  /' >&2
+        exit 1
+        ;;
 esac
 
 scope_lines="$(find "$ROOT/bin/lib" "$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap" "$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib" -type f -name '*.sh' -exec wc -l {} + | awk 'END {print $1}')"
