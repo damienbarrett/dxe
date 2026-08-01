@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 source "$SCRIPT_DIR/lib/fake-tools.sh"
+# shellcheck source=../bin/lib/dx-ssh-common.sh
+source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
 test_section "Transactional Bootstrap Publication"
 
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bootstrap-publication.XXXXXX")"
@@ -130,6 +132,52 @@ fi
 
 assert_file_contains_literal "$BASE_DIR/bin/lib/dx-ssh-common.sh" 'acquire_publication_lock' "launcher creates its execution lease under the publication lock"
 assert_file_contains_literal "$BASE_DIR/bin/lib/dx-ssh-common.sh" 'payload="$root/generations/$generation"' "launcher executes the exact leased generation"
+
+# The execution lease is written under a restrictive umask, but that umask must
+# not survive the exec into the guest bootstrap. A leaked 077 silently strips
+# group and other bits from every file the bootstrap creates without an explicit
+# mode -- /etc/os-release among them, which then fails to be readable by dx.
+# This only affects the generation layout, so a flat-layout guest looks correct
+# while a generation guest does not. Executing the launcher is the point: the
+# two assertions above inspect its text and cannot observe an inherited umask.
+launch_root="$fixture/launch"
+mkdir -p "$launch_root/generations/gen-umask" "$launch_root/.locks/leases"
+cat > "$launch_root/generations/gen-umask/bootstrap.sh" <<'GUEST'
+#!/bin/sh
+umask > "$(dirname "$0")/../../recorded-umask"
+GUEST
+chmod 0755 "$launch_root/generations/gen-umask/bootstrap.sh"
+ln -sfn generations/gen-umask "$launch_root/current"
+
+# The launcher ensures /persist exists, which a test host will not permit.
+fake_tool_write "$fake_dir" mkdir '
+count=$#; index=0
+while [ "$index" -lt "$count" ]; do
+    argument=$1; shift
+    [ "$argument" = /persist ] || set -- "$@" "$argument"
+    index=$((index + 1))
+done
+exec /bin/mkdir "$@"
+'
+dx_bootstrap_launch_command > "$launch_root/launcher.sh"
+env PATH="$fake_dir:$PATH" sh "$launch_root/launcher.sh" "$launch_root" >/dev/null 2>&1 || true
+
+recorded="$(cat "$launch_root/recorded-umask" 2>/dev/null || true)"
+if [ -n "$recorded" ] && [ "$recorded" != 0077 ]; then
+    test_pass "launcher does not leak its lease umask into the guest bootstrap"
+else
+    test_fail "launcher does not leak its lease umask into the guest bootstrap (got ${recorded:-none})"
+fi
+
+# The other half of that contract: scoping the umask must not stop protecting
+# the lease it was introduced for.
+lease_file="$(find "$launch_root/.locks/leases" -type f -name 'gen-umask.*' -print 2>/dev/null | head -1)"
+lease_mode="$([ -n "$lease_file" ] && dx_path_mode "$lease_file" || true)"
+if [ "$lease_mode" = 600 ]; then
+    test_pass "execution lease is still written privately"
+else
+    test_fail "execution lease is still written privately (mode ${lease_mode:-none})"
+fi
 
 print_summary
 exit_with_code

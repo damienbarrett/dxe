@@ -22,6 +22,25 @@ guard_old_base() {
 # concrete /nix/store path -- setup_nix_volume (§2) remounts the persistent
 # volume over /nix, replacing /nix/var, so profile symlinks dangle afterwards
 # while resolved store paths survive the pre-remount store merge.
+# /etc/os-release is world-readable by specification, and unprivileged guest
+# tooling reads it. The mode is set explicitly rather than inherited from the
+# ambient umask: `cat >` leaves an existing file's mode untouched, so a guest
+# that was once written under a restrictive umask would otherwise keep an
+# unreadable file forever.
+write_release_identity() {
+    local target="$1" release="$2"
+
+    cat > "$target" <<EOF
+NAME="NixOS"
+ID=nixos
+VERSION="$release"
+VERSION_ID="$release"
+PRETTY_NAME="NixOS $release (DX guest)"
+HOME_URL="https://nixos.org/"
+EOF
+    chmod 0644 "$target"
+}
+
 configure_release_identity() {
     local release
 
@@ -33,14 +52,7 @@ configure_release_identity() {
             ;;
     esac
 
-    cat > /etc/os-release <<EOF
-NAME="NixOS"
-ID=nixos
-VERSION="$release"
-VERSION_ID="$release"
-PRETTY_NAME="NixOS $release (DX guest)"
-HOME_URL="https://nixos.org/"
-EOF
+    write_release_identity /etc/os-release "$release"
 }
 
 # §4: Configure timezone

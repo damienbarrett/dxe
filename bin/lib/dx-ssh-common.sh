@@ -65,9 +65,10 @@ if [ -L "$root/current" ]; then
     [ -f "$root/generations/$generation/bootstrap.sh" ] && [ ! -L "$root/generations/$generation/bootstrap.sh" ] || { echo "Error: incomplete bootstrap generation $generation" >&2; exit 1; }
     boot_id=$(cat /proc/sys/kernel/random/boot_id)
     start=$(process_start $$)
-    umask 077
     lease_tmp="$root/.locks/leases/.lease.$$.tmp"
-    printf '%s\t%s\t%s\t%s\n' "$generation" "$boot_id" "$$" "$start" > "$lease_tmp"
+    # Scope the restrictive umask to the lease write. It must not survive into
+    # the bootstrap exec'd below, which creates world-readable files.
+    (umask 077; printf '%s\t%s\t%s\t%s\n' "$generation" "$boot_id" "$$" "$start" > "$lease_tmp")
     mv "$lease_tmp" "$root/.locks/leases/$generation.$$"
     payload="$root/generations/$generation"
     release_publication_lock

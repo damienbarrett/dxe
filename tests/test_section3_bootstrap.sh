@@ -50,5 +50,38 @@ assert_file_not_contains "$BOOTSTRAP" 'DX_BOOTSTRAP_TEST_MODE' "bootstrap has no
 assert_file_not_contains "$BOOTSTRAP_DIR/activation.sh" 'chown -R dx:dx /guest-bootstrap' "bootstrap never hands published payload ownership to dx"
 assert_file_contains_literal "$BOOTSTRAP" 'exec "$(command -v sshd)" -D -e -p 2222' "foreground sshd remains the final bootstrap action"
 
+# /etc/os-release must be world-readable: unprivileged guest tooling reads it,
+# and dx cannot. Its mode is not allowed to depend on the ambient umask, which
+# the bootstrap launcher once leaked as 077. The repair case is the important
+# one -- `cat >` preserves an existing file's mode, so writing a fresh file
+# correctly is not enough to recover a guest that already has a private copy.
+release_file="$fixture/os-release"
+write_release_identity "$release_file" 26.05
+if [ "$(dx_path_mode "$release_file")" = 644 ]; then
+    test_pass "release identity is written world-readable"
+else
+    test_fail "release identity is written world-readable (mode $(dx_path_mode "$release_file"))"
+fi
+if grep -q '^VERSION_ID="26.05"$' "$release_file" && grep -q '^ID=nixos$' "$release_file"; then
+    test_pass "release identity records the derived release"
+else
+    test_fail "release identity records the derived release"
+fi
+chmod 0600 "$release_file"
+write_release_identity "$release_file" 26.05
+if [ "$(dx_path_mode "$release_file")" = 644 ]; then
+    test_pass "release identity repairs an existing unreadable file"
+else
+    test_fail "release identity repairs an existing unreadable file (mode $(dx_path_mode "$release_file"))"
+fi
+
+# Writing under a hostile umask must still produce a readable file.
+(umask 077; write_release_identity "$fixture/os-release-umask" 26.05)
+if [ "$(dx_path_mode "$fixture/os-release-umask")" = 644 ]; then
+    test_pass "release identity is readable even under a restrictive umask"
+else
+    test_fail "release identity is readable even under a restrictive umask (mode $(dx_path_mode "$fixture/os-release-umask"))"
+fi
+
 print_summary
 exit_with_code
