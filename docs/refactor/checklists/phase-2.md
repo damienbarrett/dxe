@@ -11,7 +11,7 @@ assertions and make them green before consolidating fixtures.
 
 ## Items
 
-- [ ] **1. Extract into `bin/lib/dx-tunnel.sh`:**
+- [x] **1. Extract into `bin/lib/dx-tunnel.sh`:**
   - port validation primitives;
   - state-directory and socket naming;
   - allowlisted metadata read/write;
@@ -21,7 +21,7 @@ assertions and make them green before consolidating fixtures.
   - one-stop and stop-all semantics;
   - prerequisite checks and shared SSH invocation assembly.
 
-- [ ] **2. Model direction with a closed `case`** (`forward` or `reverse`), not
+- [x] **2. Model direction with a closed `case`** (`forward` or `reverse`), not
   `eval` or dynamically named functions. Keep in the wrappers:
   - usage/examples;
   - mapping orientation;
@@ -30,20 +30,20 @@ assertions and make them green before consolidating fixtures.
   - `-L` versus `-R`;
   - direction-specific user messages.
 
-- [ ] **3. Use a bounded per-tunnel-key lock** around the complete state transition:
+- [x] **3. Use a bounded per-tunnel-key lock** around the complete state transition:
   inspect/check → start master → publish metadata, or inspect/check → stop
   master → remove metadata/socket. Lock ownership uses PID plus stable process
   start identity, not age or PID alone. A start and stop for the same key cannot
   interleave, and stop-all takes each discovered key lock before acting.
 
-- [ ] **4. Publish metadata atomically** (temporary file → fsync where practical →
+- [x] **4. Publish metadata atomically** (temporary file → fsync where practical →
   rename) while holding the key lock, and install a cleanup trap for "master
   started, metadata failed."
 
-- [ ] **5. Use a private, mode-0700 state directory** and bounded/hash-based socket
+- [x] **5. Use a private, mode-0700 state directory** and bounded/hash-based socket
   names so long `TMPDIR` or container names cannot exceed Unix socket limits.
 
-- [ ] **6. Read legacy state during migration.** Discover old
+- [x] **6. Read legacy state during migration.** Discover old
   `TMPDIR/dx-forward-*.sock` and `dx-reverse-*.sock` state as read-compatible
   legacy state. Write only the new format after the migration lands. Register the
   [legacy-state removal gate](../migration-gates.md#legacy-tunnel-state) at the same
@@ -53,14 +53,14 @@ assertions and make them green before consolidating fixtures.
   Per [risk controls](../risk-controls.md#reader-before-writer), the reader lands
   in a **strictly earlier commit** than the new-format writer.
 
-- [ ] **7. Remove the `DX_FORWARD_TEST_MODE`/`DX_REVERSE_TEST_MODE` production
+- [x] **7. Remove the `DX_FORWARD_TEST_MODE`/`DX_REVERSE_TEST_MODE` production
   branches** ([`bin/dx-forward`](../../../bin/dx-forward#L397),
   [`bin/dx-reverse`](../../../bin/dx-reverse#L382)) in favor of direct tests of
   sourceable parsing functions. Their eight call sites in
   [`test_section9_host_scripts.sh`](../../../tests/test_section9_host_scripts.sh#L335-L707)
   convert with them.
 
-- [ ] **8. Split the duplicated tunnel fixtures** into one contract matrix run for
+- [x] **8. Split the duplicated tunnel fixtures** into one contract matrix run for
   both directions, plus small direction-specific tests. These are not two separate
   files: the fixtures are two parallel blocks inside the 1,719-line
   [`test_section9_host_scripts.sh`](../../../tests/test_section9_host_scripts.sh),

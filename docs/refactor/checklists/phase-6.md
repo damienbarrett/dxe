@@ -20,16 +20,21 @@
   completed on 2026-07-05 behind an `OLD_BASE_ABSENT` gate with the full suite
   green. The remaining inventory is side containers and named profiles only.
 
-- [ ] **2. Reduce the 1,243-line README** to quick start, common workflows, safety,
+  **Open by design (2026-08-01).** The guards are still present in both files.
+  This item stays open until the
+  [old-base guard gate](../migration-gates.md#old-base-guards) is signed off; it
+  is deliberately retained, not an oversight.
+
+- [x] **2. Reduce the 1,243-line README** to quick start, common workflows, safety,
   and a documentation index. Move detailed lifecycle, forwarding, configuration,
   recovery, and release procedures into focused `docs/` pages.
 
-- [ ] **3. Generate or validate the documented environment-variable inventory** from
+- [x] **3. Generate or validate the documented environment-variable inventory** from
   the canonical config registry. Stop maintaining dozens of independent "README
   contains this variable" assertions — there are currently 69 doc assertions in
   [`test_section10_docs.sh`](../../../tests/test_section10_docs.sh) alone.
 
-- [ ] **4. Replace implementation-string documentation tests with:**
+- [x] **4. Replace implementation-string documentation tests with:**
   - command inventory coverage;
   - help/README link validation;
   - default-value consistency;
@@ -38,7 +43,11 @@
 - [ ] **5. Archive completed upgrade material from [`plan.md`](../../../plan.md)** only
   after its remaining status items are confirmed complete.
 
-- [ ] **6. Keep the theme writer structurally as-is** unless it is being changed for
+  **Open (2026-08-01).** `plan.md` is untouched by the refactor. Its remaining
+  status items have not been confirmed, so the precondition for archiving is not
+  met yet.
+
+- [x] **6. Keep the theme writer structurally as-is** unless it is being changed for
   a feature. It already has renderer functions and extensive behavior tests. If
   touched, prioritize atomic multi-file publication and golden renderer fixtures
   over further abstraction.

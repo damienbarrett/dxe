@@ -16,11 +16,11 @@ migration — see [D4's stopping point](../decisions/D4-mount-manifest.md#stoppi
 
 ## D4-core
 
-- [ ] **1. Start with red failure tests** for interrupted manifest publication,
+- [x] **1. Start with red failure tests** for interrupted manifest publication,
   malicious legacy tokens, and every Bash 3.2 `%q` fixture specified by
   [D4](../decisions/D4-mount-manifest.md#legacy-decoders).
 
-- [ ] **2. Extract pure functions** into `bin/lib/dx-mount-plan.sh` for:
+- [x] **2. Extract pure functions** into `bin/lib/dx-mount-plan.sh` for:
   - option conflict validation;
   - canonical repository/mount identity resolution;
   - side-container resource derivation;
@@ -29,41 +29,41 @@ migration — see [D4's stopping point](../decisions/D4-mount-manifest.md#stoppi
   - destroy-plan resolution;
   - default-resource refusal checks.
 
-- [ ] **3. Have the planner produce one complete resolved plan.** Both
+- [x] **3. Have the planner produce one complete resolved plan.** Both
   `--print-destroy-plan` and `--destroy` must consume the same plan; the latter
   must not re-resolve resources after confirmation. When normal attach hands off
   to `dx`, export the plan as [D2](../decisions/D2-config.md)'s complete resolved
   snapshot so no child can reapply root `.env` or accept a partial marker.
 
-- [ ] **4. Implement the [D4-core](../decisions/D4-mount-manifest.md#d4-core-mandatory)
+- [x] **4. Implement the [D4-core](../decisions/D4-mount-manifest.md#d4-core-mandatory)
   codec:** the version-2 header/allowlisted-record/base64 format, plus the exact
   non-evaluating decoders for versionless and version-1 Bash `%q` output already
   introduced in Phase 0.5. Reject every token outside the specified grammar; never
   evaluate manifest contents.
 
-- [ ] **5. Validate every decoded field by type:**
+- [x] **5. Validate every decoded field by type:**
   - safe container and volume/image identifiers;
   - absolute paths where required;
   - positive, in-range port;
   - exact known field names with duplicate/unknown-field rejection.
 
-- [ ] **6. Create the identity directory at mode 0700**, stage a mode-0600 manifest
+- [x] **6. Create the identity directory at mode 0700**, stage a mode-0600 manifest
   in the same directory, and publish with an atomic `rename`. Refuse symlinked or
   unexpectedly owned state paths. Inject failures at every boundary and prove no
   partial manifest becomes authoritative.
 
-- [ ] **7. Keep orchestration in `dx-mount` small:**
+- [x] **7. Keep orchestration in `dx-mount` small:**
 
   ```text
   parse -> resolve plan -> validate/print or execute -> exec dx
   ```
 
-- [ ] **8. Remove `DX_MOUNT_TEST_MODE=resolve`**
+- [x] **8. Remove `DX_MOUNT_TEST_MODE=resolve`**
   ([`bin/dx-mount`](../../../bin/dx-mount#L483-L485)). Convert its 14 section-18
   call sites to source and invoke the real planner with fake mutation
   dependencies, so no production-only test branch remains in `dx-mount`.
 
-- [ ] **9. Convert the 17 near-repeated manifest scenarios in section 18** into a
+- [x] **9. Convert the 17 near-repeated manifest scenarios in section 18** into a
   fixture table that varies marker version, overrides, container existence,
   expected status, and expected plan.
 
@@ -93,23 +93,23 @@ be satisfied.
 
 ## D4-hardening
 
-- [ ] **10. Red tests first:** concurrent first attach, concurrent attach/destroy,
+- [x] **10. Red tests first:** concurrent first attach, concurrent attach/destroy,
   and complete vs. incomplete legacy migration.
 
-- [ ] **11. Add the per-container lock** for attach, first-create, migration, and
+- [x] **11. Add the per-container lock** for attach, first-create, migration, and
   destroy. Record PID plus process start identity in lock metadata. Recheck
   absence while locked, and publish first-create with the atomic
   hard-link/no-replace operation rather than an overwriting `mv`. Test PID reuse,
   stale-lock reclamation, and bounded lock-wait failure.
 
-- [ ] **12. Implement the migration path.** `--migrate-manifests` previews every
+- [x] **12. Implement the migration path.** `--migrate-manifests` previews every
   legacy record and its eligibility; `--apply` converts only complete records that
   match the resolved plan, under lock and with an atomic format-only replacement.
   Refuse incomplete records with destroy/recreate remediation. Test interruption
   before and after staging and prove the old file remains authoritative until the
   v2 replacement is complete.
 
-- [ ] **13. Add `--audit-manifests`**, which walks every mount identity file
+- [x] **13. Add `--audit-manifests`**, which walks every mount identity file
   reachable from every profile parsed through [D2](../decisions/D2-config.md) and
   reports each one's format version, completeness, and migration eligibility. This
   is what makes deleting the decoders an evidence-backed step.

@@ -14,7 +14,7 @@ belongs here rather than in Phase 1b.
 
 ## Items
 
-- [ ] **1. Rework the test bootstrap before adding cases.**
+- [x] **1. Rework the test bootstrap before adding cases.**
   - stop sourcing the container adapter from `tests/test_helpers.sh`;
   - put reusable fakes under `tests/lib/` instead of embedding separate copies
     in large section files;
@@ -25,30 +25,30 @@ belongs here rather than in Phase 1b.
     [`test_section8_nixvim_config.sh`](../../../tests/test_section8_nixvim_config.sh#L5)
     that prints the shell option table because `-o` has no option name.
 
-- [ ] **2. Add the minimal CI job.** `bash -n` over every shell file plus
+- [x] **2. Add the minimal CI job.** `bash -n` over every shell file plus
   ShellCheck, on hosted Linux. This depends on nothing else in the plan and there
   is no `.github/` today, so it gives the cases below somewhere to run as they are
   written. The full matrix is [Phase 1a](phase-1a.md); see [D3](../decisions/D3-ci.md).
 
-- [ ] **3. Inventory the 14 current skips.** Classify each as **CI-required** (must
+- [x] **3. Inventory the 14 current skips.** Classify each as **CI-required** (must
   become a hard failure in Phase 1a), **mac-only** (legitimately unavailable on
   a Linux runner), or **delete**. Record the table in the repository; Phase 1a's
   "no silent skips" gate is checked against it.
 
-- [ ] **4. Inventory production-only test seams and command-code boundaries.** The
+- [x] **4. Inventory production-only test seams and command-code boundaries.** The
   baseline is four test-mode branches (`dx-forward`, `dx-reverse`, `dx-mount`,
   and `bootstrap.sh`), not three. Classify every production `sh -c`/`bash -lc`
   use as a fixed program with positional data, an intentional public
   user-command contract, or a Phase 1b/4 replacement under
   [D6](../decisions/D6-command-boundaries.md).
 
-- [ ] **5. Record the test-coupling baseline per file.** Count
+- [x] **5. Record the test-coupling baseline per file.** Count
   `assert_file_contains`/`assert_file_not_contains` calls and `sed`/`awk`
   extractions of production files. Current totals are 492 and 5; the per-file
   breakdown is what later phases are measured against. See
   [measurable targets](../../../refactor-plan.md#measurable-targets).
 
-- [ ] **6. Add table-driven contract cases for:**
+- [x] **6. Add table-driven contract cases for:**
   - the **current** config precedence and repeated-load behavior across caller
     environment, named profile, root `.env`, and defaults, captured in an
     isolated fixture without endorsing that behavior as the target contract;
@@ -65,7 +65,7 @@ belongs here rather than in Phase 1b.
   - versionless legacy and version-1 mount manifests with spaces and shell
     metacharacters in paths.
 
-- [ ] **7. Specify the missing failure-injection cases** and assign each to the phase
+- [x] **7. Specify the missing failure-injection cases** and assign each to the phase
   that will make it green:
   - exact process selection, PID-reuse refusal, and secure timeout cleanup
     (Phase 0.5);
@@ -99,10 +99,17 @@ belongs here rather than in Phase 1b.
   red safety case as the first commit of its owning phase, immediately before
   the fix, rather than carrying a known failure through unrelated phases.
 
-- [ ] **8. Capture public stdout/stderr separately.** Assert exact text only for stable
+- [x] **8. Capture public stdout/stderr separately.** Assert exact text only for stable
   user contracts and safety diagnostics; otherwise assert behavior and state.
 
 - [ ] **9. Record the existing live `dx-test` profile result** before structural changes.
+
+  **Open, and no longer satisfiable as written (2026-08-01).** The production
+  files have already moved, so a "before" baseline cannot be captured
+  retroactively. This does not block the other phases, but it does mean there is
+  no pre-refactor live comparison point. Discharge it instead as a
+  pre-promotion run of `./bin/dx-profile dx-test tests/run_all_tests.sh` and
+  record that result here.
 
 ## Red-test timing
 

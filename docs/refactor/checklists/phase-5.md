@@ -7,11 +7,11 @@ already made its data and mutation boundaries safe.
 
 ## Items
 
-- [ ] **1. Refactor `dx-ai` into a sourceable main** plus focused functions for pin
+- [x] **1. Refactor `dx-ai` into a sourceable main** plus focused functions for pin
   refresh, flake update, profile install/upgrade, credential persistence,
   statusline seeding, and verification.
 
-- [ ] **2. Keep the Phase 4 AI-generation protocol behind focused functions** for
+- [x] **2. Keep the Phase 4 AI-generation protocol behind focused functions** for
   stage, validate, publish-pointer, retain-predecessor, collect, and recover; do
   not reintroduce writes to `/guest-bootstrap/current` or a mutable live `flake/`
   directory.
@@ -20,11 +20,11 @@ already made its data and mutation boundaries safe.
   deferred, the retain-predecessor and collect functions are stubs with the same
   signatures — do not invent a second, parallel mechanism here.
 
-- [ ] **3. Reuse only the Home Manager-installed Phase 4 keyring library**; fail
+- [x] **3. Reuse only the Home Manager-installed Phase 4 keyring library**; fail
   clearly if packaging is broken rather than falling back to a copied
   implementation.
 
-- [ ] **4. Test** malformed upstream manifests, failed downloads, unchanged pins,
+- [x] **4. Test** malformed upstream manifests, failed downloads, unchanged pins,
   atomic generation/pointer failure, bootstrap-current changes, first install,
   upgrade, recovery through the retained predecessor generation, and pre-existing
   user configuration.

@@ -18,7 +18,7 @@ because the move is mechanical.
 
 ## Items
 
-- [ ] **1. Exact runtime-process identity.** Replace the substring match in
+- [x] **1. Exact runtime-process identity.** Replace the substring match in
   `container_runtime_pids` ([`bin/dx-lib.sh`](../../../bin/dx-lib.sh#L272-L279)) —
   currently `index($0, "--uuid " name)` — with an exact `--uuid` argument/value
   pair match. A fallback stop for `dx-host` must not select `dx-host-other`, which
@@ -32,14 +32,14 @@ because the move is mechanical.
   with behavioral fixtures covering exact, prefix-colliding (`dx-host` vs
   `dx-host-other`), missing, and malformed `ps` output.
 
-- [ ] **2. Private timeout bookkeeping.** `run_with_timeout`
+- [x] **2. Private timeout bookkeeping.** `run_with_timeout`
   ([`bin/dx-lib.sh`](../../../bin/dx-lib.sh#L218-L255)) writes its marker to
   `${TMPDIR:-/tmp}/dx-timeout.$$.<pid>`, a predictable path any other process can
   create or delete to force or mask exit 124. Move bookkeeping into a private
   `mktemp -d` directory and clean it on every signal and exit path. Refuse to
   signal a PID whose recorded start identity no longer matches.
 
-- [ ] **3. Stop sourcing the mount identity file.** Replace
+- [x] **3. Stop sourcing the mount identity file.** Replace
   `source "$identity_file"` ([`bin/dx-mount`](../../../bin/dx-mount#L217-L228)) with
   a non-evaluating reader for the versionless and version-1 formats, per
   [D4-core](../decisions/D4-mount-manifest.md#legacy-decoders). Accept only the

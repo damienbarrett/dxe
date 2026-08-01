@@ -26,6 +26,16 @@ the new writer ships — but it is satisfied by **observation, not assumption**.
 
 - [ ] Satisfied on \_\_\_\_ (date), machines: \_\_\_\_
 
+**Observed 2026-08-01 — NOT satisfied.** `./bin/dx-status --tunnel-state` on the
+development host reports one legacy entry:
+
+```text
+forward container=dx-host port=8420 layout=legacy socket=$TMPDIR/dx-forward-dx-host-8420.sock
+```
+
+The legacy reader is load-bearing today and must be retained. Re-run the sweep
+after the next reboot.
+
 ---
 
 ## Legacy mount manifests
@@ -53,6 +63,14 @@ deliberately rather than by oversight.
 
 - [ ] Satisfied on \_\_\_\_ (date), machines: \_\_\_\_
 
+**Observed 2026-08-01 — not yet satisfied, but now satisfiable.** D4-hardening
+shipped, so `--audit-manifests` and `--migrate-manifests --apply` both exist; the
+"unsatisfiable" caveat above no longer applies. `./bin/dx-mount
+--audit-manifests` on the development host reports `No mount manifests found.`
+— zero v0 and zero v1 records on this machine. The gate needs the same
+observation on every other machine that runs this repository before the decoders
+can be deleted.
+
 ---
 
 ## Flat bootstrap layout
@@ -69,6 +87,13 @@ and every named profile have each been started and re-synced at least once after
 the new writer ships.
 
 - [ ] Satisfied on \_\_\_\_ (date), containers: \_\_\_\_
+
+**Observed 2026-08-01 — NOT satisfied.** The running `dx-host` guest is still on
+the flat layout: `/guest-bootstrap` holds `bootstrap.sh`, `flake.nix`, `home/`,
+`nvim/` and friends directly, with no `current` symlink. The generation-layout
+writer has not yet run against any live container, so the flat compatibility
+path is load-bearing. Re-check after the first `dx-sync-bootstrap` run per
+container.
 
 ---
 

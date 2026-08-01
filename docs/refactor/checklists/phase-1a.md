@@ -15,24 +15,24 @@ which is the entire argument for doing this work early. Phase 1a depends only on
 
 ## Items
 
-- [ ] **1. Make the runner capability-aware.** Four tiers:
+- [x] **1. Make the runner capability-aware.** Four tiers:
   - `unit/static`: no Apple Container and no live guest;
   - `host-contract`: fake `container`, `ssh`, `scp`, and process commands;
   - `live`: isolated Apple Container profile;
   - `destructive`: explicit opt-in and non-default resources.
 
-- [ ] **2. Move the clean-worktree assertion** out of the behavior suite and into a
+- [x] **2. Move the clean-worktree assertion** out of the behavior suite and into a
   release/checklist command ([`test_section13_final_review.sh`](../../../tests/test_section13_final_review.sh#L12-L18)).
   Stop changing executable bits on every test run.
 
-- [ ] **3. Provide the host developer toolchain.** Add a native bootstrap or host
+- [x] **3. Provide the host developer toolchain.** Add a native bootstrap or host
   `devShell` for Bash, ShellCheck, and Nix, plus an optional pre-push hook for
   syntax and lint. Add a pinned Linux coverage image and local wrapper that
   can use a documented OCI provider on macOS, so the exact CI `kcov` command
   is reproducible even though `kcov` is not native to the host. The planned
   entrypoint is `tests/run-coverage-linux.sh`.
 
-- [ ] **4. Add the full CI matrix** per [D3](../decisions/D3-ci.md), extending
+- [x] **4. Add the full CI matrix** per [D3](../decisions/D3-ci.md), extending
   Phase 0's minimal job:
   - a primary hosted-Linux job for syntax, mandatory ShellCheck, the no-container
     suite, host contracts, coverage, and Nix evaluation;
@@ -46,7 +46,7 @@ which is the entire argument for doing this work early. Phase 1a depends only on
   which verifies its interpreter before running rather than silently using a newer
   Bash.
 
-- [ ] **5. Add executable-shell coverage reporting** with `kcov` over the stubbed
+- [x] **5. Add executable-shell coverage reporting** with `kcov` over the stubbed
   contract suite, scoped per [D1](../decisions/D1-coverage.md). Publish the
   exclusion file alongside the report and assert its contents. Publish **both**
   numbers: the gated 100% over declared scope and the ratcheted share of total

@@ -14,26 +14,26 @@ are D5-hardening — see
 
 ## D5-core
 
-- [ ] **1. Start with red tests** for partial transfer/extraction/permission
+- [x] **1. Start with red tests** for partial transfer/extraction/permission
   failure, malicious legacy keyring content, and failed AI generation/pointer
   publication.
 
-- [ ] **2. Add `bootstrap_main`** and call it only when the file is executed, not
+- [x] **2. Add `bootstrap_main`** and call it only when the file is executed, not
   sourced. Keep strict mode in the executable orchestrator; guest library modules
   do not set shell options, run commands, emit output, or mutate state when
   sourced.
 
-- [ ] **3. Move functions by responsibility while preserving the current explicit
+- [x] **3. Move functions by responsibility while preserving the current explicit
   call order.** Do not opportunistically reorder storage, ownership, Home Manager,
   timezone, or SSH startup. The rationale comments in `bootstrap.sh` move with the
   code they explain — they are not discarded during extraction.
 
-- [ ] **4. Replace the `# Main` extraction in tests** with direct library sourcing
+- [x] **4. Replace the `# Main` extraction in tests** with direct library sourcing
   and per-phase fakes. The `sed '/^# Main$/,$d'` pattern at
   [`test_section3_bootstrap.sh`](../../../tests/test_section3_bootstrap.sh#L62) is to
   be eliminated, not relocated.
 
-- [ ] **5. Remove the `DX_BOOTSTRAP_TEST_MODE=guard` branch** at
+- [x] **5. Remove the `DX_BOOTSTRAP_TEST_MODE=guard` branch** at
   [`bootstrap.sh`](../../../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh#L707).
   It is the same production test-mode anti-pattern Phase 2 removes from the
   tunnel commands, and once `guard_old_base` is a function in a sourceable
@@ -43,7 +43,7 @@ are D5-hardening — see
   [Phase 6](phase-6.md) item 1, so if Phase 6's operational sign-off lands first,
   this step collapses into that removal — do not do the work twice.
 
-- [ ] **6. Implement the [D5](../decisions/D5-bootstrap-state.md#keyring-state-is-data)
+- [x] **6. Implement the [D5](../decisions/D5-bootstrap-state.md#keyring-state-is-data)
   keyring data contract.** Share D-Bus address parsing, session-config discovery,
   liveness checks, exact legacy conversion, and raw address read/write in
   `scripts/lib/dx-keyring.sh`; keep root-vs-user startup policy in the callers.
@@ -52,30 +52,30 @@ are D5-hardening — see
   and update Bash/Fish/Nushell startup to parse the raw address as data. No
   consumer sources `.dx-keyring-env`.
 
-- [ ] **7. Split `configure_guest`** into persistence preparation, optional AI
+- [x] **7. Split `configure_guest`** into persistence preparation, optional AI
   persistence, Home Manager activation, and shell selection. Remove the broad
   `chown -R dx:dx /guest-bootstrap`; published generations remain root-owned and
   readable/executable, while only the explicit `/persist` state is writable by `dx`.
 
-- [ ] **8. Remove the unused `start_ssh` function**
+- [x] **8. Remove the unused `start_ssh` function**
   ([`bootstrap.sh`](../../../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh#L699-L704),
   no callers anywhere in the repository) after the main-path test proves the
   `exec sshd -D -e -p 2222` tail is the canonical SSH startup path.
 
-- [ ] **9. Move the Antigravity pin out of the derivation.** Put version, URL, and
+- [x] **9. Move the Antigravity pin out of the derivation.** Put version, URL, and
   hash into `pins/agy.json`, make the Nix derivation read that file, and remove the
   range-sensitive source editing at
   [`dx-ai.sh`](../../../container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/dx-ai.sh#L111-L142).
   Do this **before** making generations immutable.
 
-- [ ] **10. Implement mutable AI working generations under `/persist`.** Stage a new
+- [x] **10. Implement mutable AI working generations under `/persist`.** Stage a new
   generation from the current published bootstrap, refresh the pin and
   `flake.lock`, validate and install from staging, then atomically switch
   `current`. Never rename a staged directory over a non-empty live directory, and
   never let a failed switch change `current`. `dx-ai` must never write the
   published bootstrap generation.
 
-- [ ] **11. Change bootstrap sync to stage, validate, and publish:**
+- [x] **11. Change bootstrap sync to stage, validate, and publish:**
   - transfer into a fresh same-filesystem generation/staging directory;
   - validate required files and archive extraction;
   - normalize root ownership and read-only/executable modes in staging;
@@ -121,10 +121,10 @@ that in the migration checklist.
 
 ## D5-hardening
 
-- [ ] **12. Red tests first:** concurrent sync, collection while a generation is in
+- [x] **12. Red tests first:** concurrent sync, collection while a generation is in
   use, and a stale lease whose foreground PID 1 is reused after restart.
 
-- [ ] **13. Add the publication lock, leases, predecessor metadata, and collection.**
+- [x] **13. Add the publication lock, leases, predecessor metadata, and collection.**
   - a bounded publication lock serializes sync and garbage collection;
   - the staged generation records the old current as immutable predecessor
     metadata before publication;
