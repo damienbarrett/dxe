@@ -18,7 +18,12 @@ source "$ROOT/bin/lib/dx-config.sh"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-config-test.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 printf '%s\n' 'DX_CONTAINER_NAME=contract' 'DX_SSH_KEY=${DX_PROJECT_ROOT}/key' > "$fixture/good.env"
-DX_PROJECT_ROOT=$fixture; dx_parse_config_file "$fixture/good.env"
+# DX_PROJECT_ROOT is read by dx_parse_config_file to expand the ${DX_PROJECT_ROOT}
+# placeholder, which ShellCheck cannot see across the function boundary. Newer
+# ShellCheck releases report SC2034 here; 0.10.0 does not.
+# shellcheck disable=SC2034
+DX_PROJECT_ROOT=$fixture
+dx_parse_config_file "$fixture/good.env"
 check test "$DXE_PARSED_DX_CONTAINER_NAME" = contract
 check test "$DXE_PARSED_DX_SSH_KEY" = "$fixture/key"
 printf '%s\n' 'DX_CONTAINER_NAME=$(touch /tmp/never)' > "$fixture/hostile.env"
