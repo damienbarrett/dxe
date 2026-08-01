@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+dx_require_container_cli
 
 echo "Waiting for guest SSH to become responsive..."
 WAIT_TIMEOUT="${DX_SSH_WAIT_TIMEOUT:-$(dx_default_ssh_wait_timeout)}"

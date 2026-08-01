@@ -7,6 +7,7 @@ set -euo pipefail
 # to remove everything.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
 
 echo "Destroying DX container and image (volumes and keys preserved)..."
 

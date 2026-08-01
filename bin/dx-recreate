@@ -6,6 +6,7 @@ set -euo pipefail
 # (/nix and /persist) and the SSH keypair are preserved.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
 
 echo "Recreating DX environment (preserves /nix and /persist)..."
 

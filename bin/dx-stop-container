@@ -3,5 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+dx_require_container_cli
 
 container_stop_bounded "$DX_CONTAINER_NAME"

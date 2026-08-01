@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+dx_require_container_cli
 
 if ! container_exists "$DX_CONTAINER_NAME"; then
     echo "Container $DX_CONTAINER_NAME does not exist; nothing to destroy."

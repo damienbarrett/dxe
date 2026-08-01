@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+dx_require_container_cli
 
 if ! container_exists "$DX_CONTAINER_NAME"; then
     echo "Error: Container $DX_CONTAINER_NAME does not exist. Run ./bin/dx-create-container first." >&2
@@ -34,7 +35,7 @@ case "$state" in
     OLD_BASE)
         echo "Error: /bin/bash is present in $DX_CONTAINER_NAME, matching the known flakes-base signature (nixpkgs/nix-flakes)." >&2
         echo "This container was built from the old flakes base and must be rebuilt under the official base." >&2
-        echo "Follow the Base Image Changeover procedure in README.md before retrying." >&2
+        echo "Follow the Base Image Changeover procedure in docs/release-maintenance.md before retrying." >&2
         exit 1
         ;;
     *)

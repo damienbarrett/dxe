@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+dx_require_container_cli
 
 legacy_volume="${DX_LEGACY_WORKSPACE_VOLUME:-dx-workspace}"
 persist_volume="$DX_PERSIST_VOLUME"
@@ -33,7 +34,7 @@ container_ensure_volume "$persist_volume"
 sentinel_value="$(container run --rm \
     --volume "$persist_volume:/new:rw" \
     --entrypoint sh \
-    "$DX_IMAGE" -lc "cat /new/$sentinel 2>/dev/null || true")"
+    "$DX_IMAGE" -lc 'cat "/new/$1" 2>/dev/null || true' -- "$sentinel")"
 if [ "$sentinel_value" = "$legacy_volume" ]; then
     echo "Persist volume $persist_volume was already migrated from $legacy_volume."
     exit 0
@@ -42,7 +43,7 @@ fi
 dest_listing="$(container run --rm \
     --volume "$persist_volume:/new:rw" \
     --entrypoint sh \
-    "$DX_IMAGE" -lc "for path in /new/* /new/.[!.]* /new/..?*; do [ -e \"\$path\" ] || continue; name=\"\${path##*/}\"; [ \"\$name\" = '$sentinel' ] && continue; [ \"\$name\" = lost+found ] && continue; printf '%s\n' \"\$path\"; break; done")"
+    "$DX_IMAGE" -lc 'sentinel=$1; for path in /new/* /new/.[!.]* /new/..?*; do [ -e "$path" ] || continue; name=${path##*/}; [ "$name" = "$sentinel" ] && continue; [ "$name" = lost+found ] && continue; printf "%s\n" "$path"; break; done' -- "$sentinel")"
 if [ -n "$dest_listing" ]; then
     echo "Error: destination volume $persist_volume is not empty and has no matching migration sentinel." >&2
     echo "Refusing to merge automatically. Inspect it or choose a different DX_PERSIST_VOLUME." >&2
@@ -54,7 +55,7 @@ container run --rm \
     --volume "$legacy_volume:/old:ro" \
     --volume "$persist_volume:/new:rw" \
     --entrypoint sh \
-    "$DX_IMAGE" -lc "cp -a /old/. /new/ && printf '%s\n' '$legacy_volume' > /new/$sentinel"
+    "$DX_IMAGE" -lc 'legacy=$1; sentinel=$2; cp -a /old/. /new/ && printf "%s\n" "$legacy" > "/new/$sentinel"' -- "$legacy_volume" "$sentinel"
 
 echo "Migration complete."
 echo "Verify your data through /persist before deleting the legacy volume."

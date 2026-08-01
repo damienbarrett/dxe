@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+dx_require_container_cli
 
 # Ensures every persistent volume exists. container_ensure_volume is itself
 # idempotent: it inspects the volume and returns early when it is already there.

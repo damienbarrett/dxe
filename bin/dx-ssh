@@ -9,14 +9,15 @@ if [ ! -f "$DX_SSH_KEY" ]; then
     exit 1
 fi
 
-echo "Connecting to DX guest via SSH..."
+echo "Connecting to DX guest via SSH..." >&2
 HOST_TZ="$(dx_get_host_timezone)"
 
 # Ensure TERM is compatible with the guest
 export TERM=${TERM:-xterm-256color}
 
-# Revert terminal colors to host defaults upon exit
-trap 'printf "\033]110\033\\\\\033]111\033\\\\\033]104\033\\\\"' EXIT
+# Revert terminal colors to host defaults upon exit. Keep terminal-control
+# diagnostics off stdout so `dx-ssh <command>` remains safe to capture.
+trap 'printf "\033]110\033\\\\\033]111\033\\\\\033]104\033\\\\" >&2' EXIT
 
 # Use a bash array for SSH options to handle quoting correctly
 SSH_OPTS=(
