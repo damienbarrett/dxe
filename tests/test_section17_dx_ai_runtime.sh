@@ -9,6 +9,92 @@ source "$SCRIPT_DIR/test_helpers.sh"
 
 test_section "Section 17: dx-ai Runtime"
 
+AI_SCRIPT="$CONTAINER_DIR/scripts/dx-ai.sh"
+before_flags=$-
+# shellcheck source=/dev/null
+source "$AI_SCRIPT"
+if [ "$before_flags" = "$-" ] \
+    && declare -F dx_ai_refresh_pin >/dev/null && declare -F dx_ai_stage_generation >/dev/null \
+    && declare -F dx_ai_validate_generation >/dev/null && declare -F dx_ai_publish_generation >/dev/null \
+    && declare -F dx_ai_recover_generation >/dev/null; then
+    test_pass "dx-ai is a sourceable main with focused generation functions"
+else
+    test_fail "dx-ai is a sourceable main with focused generation functions"
+fi
+assert_file_not_contains "$AI_SCRIPT" 'cd /guest-bootstrap' "dx-ai never changes into the published payload"
+assert_file_not_contains "$AI_SCRIPT" 'sed -i' "dx-ai pin refresh is independent of Nix source formatting"
+assert_file_contains_literal "$AI_SCRIPT" '/persist/home/dx/.local/state/dx-ai' "dx-ai mutable generations live under persist"
+
+ai_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-ai-generations.XXXXXX")"
+trap 'chmod -R u+w "$ai_fixture" 2>/dev/null || true; rm -rf "$ai_fixture"' EXIT
+published="$ai_fixture/published"; state="$ai_fixture/state"
+mkdir -p "$published/pins" "$state/generations/previous"
+printf '%s\n' '{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"}' > "$published/pins/agy.json"
+printf '%s\n' fixture > "$published/flake.nix"
+printf '%s\n' fixture > "$published/flake.lock"
+seed_ai_profile() {
+    local generation="$1" tool
+    mkdir -p "$generation/profile/bin"
+    for tool in codex gemini claude agy; do printf '#!/bin/sh\n' > "$generation/profile/bin/$tool"; chmod 0755 "$generation/profile/bin/$tool"; done
+}
+cp -a "$published/." "$state/generations/previous/"
+printf '%s\n' '' > "$state/generations/previous/.predecessor"
+seed_ai_profile "$state/generations/previous"
+ln -s generations/previous "$state/current"
+real_mv="$(command -v mv)"
+mv() {
+    if [ "${1:-}" = -Tf ]; then rm -f "$3"; "$real_mv" -f "$2" "$3"; else "$real_mv" "$@"; fi
+}
+stage="$(dx_ai_stage_generation "$published" "$state" next)"
+if [ "$(cat "$stage/.predecessor")" = previous ] && [ "$(cat "$published/flake.nix")" = fixture ]; then
+    test_pass "AI staging records predecessor without mutating published bootstrap"
+else
+    test_fail "AI staging records predecessor without mutating published bootstrap"
+fi
+seed_ai_profile "$stage"
+dx_ai_publish_generation "$state" next "$stage"
+if [ "$(readlink "$state/current")" = generations/next ] && [ -d "$state/generations/previous" ]; then
+    test_pass "AI publication atomically advances current and retains predecessor"
+else
+    test_fail "AI publication atomically advances current and retains predecessor"
+fi
+
+failed_stage="$(dx_ai_stage_generation "$published" "$state" failed)"
+seed_ai_profile "$failed_stage"
+if (
+    set -e
+    mv() { [ "${1:-}" != -Tf ] || return 1; "$real_mv" "$@"; }
+    dx_ai_publish_generation "$state" failed "$failed_stage"
+); then
+    test_fail "AI pointer publication failure is reported"
+else
+    test_pass "AI pointer publication failure is reported"
+fi
+if [ "$(readlink "$state/current")" = generations/next ] && [ -d "$state/generations/previous" ]; then
+    test_pass "failed AI pointer switch preserves current and predecessor"
+else
+    test_fail "failed AI pointer switch preserves current and predecessor"
+fi
+
+if dx_ai_recover_generation "$state" >/dev/null && [ "$(readlink "$state/current")" = generations/previous ]; then
+    test_pass "AI recovery atomically selects the retained predecessor"
+else
+    test_fail "AI recovery atomically selects the retained predecessor"
+fi
+
+pin_before="$(shasum -a 256 "$published/pins/agy.json")"
+if (
+    curl() { printf '%s\n' '{}'; }
+    jq() { printf '%s' ''; }
+    dx_ai_refresh_pin "$published"
+); then
+    test_pass "malformed upstream AI manifest is non-destructive"
+else
+    test_fail "malformed upstream AI manifest is non-destructive"
+fi
+if [ "$pin_before" = "$(shasum -a 256 "$published/pins/agy.json")" ]; then test_pass "malformed AI manifest leaves pin unchanged"; else test_fail "malformed AI manifest leaves pin unchanged"; fi
+unset -f mv
+
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
     test_skip "dx-ai guest runtime checks (--skip-integration)"
     print_summary
@@ -76,10 +162,10 @@ else
     test_fail "agy persisted state path is writable through ~/.gemini"
 fi
 
-if run_guest 'test -s "$HOME/.dx-keyring-env" && . "$HOME/.dx-keyring-env" && test -n "${DBUS_SESSION_BUS_ADDRESS:-}"' >/dev/null 2>&1; then
-    test_pass "dx-ai writes a sourceable D-Bus keyring environment"
+if run_guest 'address_file=/persist/home/dx/.local/state/dx/keyring-address; test -s "$address_file" && IFS= read -r address < "$address_file" && case "$address" in unix:path=/*) exit 0 ;; *) exit 1 ;; esac' >/dev/null 2>&1; then
+    test_pass "dx-ai writes one validated raw D-Bus keyring address"
 else
-    test_fail "dx-ai writes a sourceable D-Bus keyring environment"
+    test_fail "dx-ai writes one validated raw D-Bus keyring address"
 fi
 
 print_summary
