@@ -47,6 +47,13 @@ link_system_bash() {
     ln -sfn "$bash_path" "$root/usr/bin/bash"
 }
 
+# Wraps the `-b` test so the block-device path below can be exercised without a
+# real block device. Coverage probes shadow this the same way they shadow
+# findmnt and blkid; creating one with mknod needs CAP_MKNOD, which a rootless
+# container runner does not have, and that made this branch's coverage depend on
+# which container runtime happened to run the suite.
+is_block_device() { [ -b "$1" ]; }
+
 # §2: Setup dedicated Nix volume.
 #
 # Apple Container mounts the dx-nix named volume at /var/lib/dx-nix-raw with
@@ -83,7 +90,7 @@ setup_nix_volume() {
     local backing_dev
     backing_dev=$(findmnt -n -o SOURCE "$raw_path" || true)
 
-    if [ -b "$backing_dev" ]; then
+    if is_block_device "$backing_dev"; then
         echo "Detected block device backing $raw_path: $backing_dev"
         dev="$backing_dev"
         # mkfs idempotent: skip if blkid -L dx-nix already resolves

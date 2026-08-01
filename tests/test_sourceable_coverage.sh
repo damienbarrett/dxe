@@ -312,36 +312,48 @@ rm -f /var/lib/dx-nix-raw/nix-store.btrfs
     blkid() { return 0; }
     setup_nix_volume
 )
+# The block-device path is driven by shadowing is_block_device rather than by
+# creating a real device node. mknod for a block device needs CAP_MKNOD, which a
+# rootless container runner does not have, so the previous `if mknod ...` form
+# silently skipped these three probes and dropped this file to 85% -- the gate's
+# result depended on whether docker or podman happened to run it.
 fake_block="$fixture/fake-block"
-if mknod "$fake_block" b 7 250 2>/dev/null; then
-    (
-        grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
-        findmnt() { case "$*" in *SOURCE*) printf '%s\n' "$fake_block" ;; *) return 1 ;; esac; }
-        blkid() { return 1; }
-        umount() { return 0; }
-        mkfs.btrfs() { :; }
-        mount() { :; }
-        cp() { :; }
-        setup_nix_volume
-    )
-    (
-        grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 1; fi; command grep "$@"; }
-        findmnt() { case "$*" in *SOURCE*) printf '%s\n' "$fake_block" ;; *) return 1 ;; esac; }
-        blkid() { return 1; }
-        umount() { return 0; }
-        mkfs.ext4() { :; }
-        mount() { :; }
-        cp() { :; }
-        setup_nix_volume
-    )
-    (
-        grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
-        findmnt() { case "$*" in *SOURCE*) printf '%s\n' "$fake_block" ;; *) return 1 ;; esac; }
-        blkid() { return 1; }
-        umount() { return 1; }
-        setup_nix_volume
-    ) >/dev/null 2>&1 || true
-fi
+: > "$fake_block"
+(
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
+    findmnt() { case "$*" in *SOURCE*) printf '%s\n' "$fake_block" ;; *) return 1 ;; esac; }
+    is_block_device() { return 0; }
+    blkid() { return 1; }
+    umount() { return 0; }
+    mkfs.btrfs() { :; }
+    mount() { :; }
+    cp() { :; }
+    setup_nix_volume
+)
+(
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 1; fi; command grep "$@"; }
+    findmnt() { case "$*" in *SOURCE*) printf '%s\n' "$fake_block" ;; *) return 1 ;; esac; }
+    is_block_device() { return 0; }
+    blkid() { return 1; }
+    umount() { return 0; }
+    mkfs.ext4() { :; }
+    mount() { :; }
+    cp() { :; }
+    setup_nix_volume
+)
+(
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
+    findmnt() { case "$*" in *SOURCE*) printf '%s\n' "$fake_block" ;; *) return 1 ;; esac; }
+    is_block_device() { return 0; }
+    blkid() { return 1; }
+    umount() { return 1; }
+    setup_nix_volume
+) >/dev/null 2>&1 || true
+
+# is_block_device itself must still be exercised for real, both ways.
+is_block_device /dev/null && exit 1
+is_block_device "$fake_block" && exit 1
+if [ -b /dev/loop0 ]; then is_block_device /dev/loop0 || exit 1; fi
 configure_nix_daemon
 
 # System phase data resolution and root-mutating paths are safe in this runner.
