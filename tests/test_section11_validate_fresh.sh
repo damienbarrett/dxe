@@ -7,15 +7,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
+source "$BASE_DIR/bin/lib/dx-container.sh"
 
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIN_DIR="$BASE_DIR/bin"
 
 test_section "Section 11: Validate From Fresh Apple Container"
 
-# Check if container CLI is available
-if ! command -v container >/dev/null 2>&1; then
-    test_skip "container CLI not available, skipping all Section 11 tests"
+# Check if the selected profile is available before using container adapters.
+if ! requires_container; then
     exit 0
 fi
 

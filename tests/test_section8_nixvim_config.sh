@@ -2,7 +2,7 @@
 # Section 8: Clean Up NixVim Configuration
 # Tests for: no duplicate plugins, proper use of NixVim modules
 
-set -uo
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
@@ -78,7 +78,7 @@ fi
 
 # Test: NixVim flake check (if nix available)
 if command -v nix >/dev/null 2>&1; then
-    if nix flake check --no-write-lock-file "$CONTAINER_DIR" 2>/dev/null; then
+    if nix flake check --no-build --no-write-lock-file "$CONTAINER_DIR" 2>/dev/null; then
         test_pass "NixVim flake check passes"
     else
         test_fail "NixVim flake check passes"

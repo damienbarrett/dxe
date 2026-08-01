@@ -12,3 +12,4 @@ dx-host-export*.tar
 *.raw
 .antigravitycli/
 .claude/settings.local.json
+tests/coverage/out/

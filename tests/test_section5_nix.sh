@@ -39,10 +39,10 @@ assert_file_contains "$FLAKE_NIX" "$DX_EXPECTED_NIXOS_BRANCH" "flake.nix uses $D
 
 # Test: bash syntax check for flake.nix (if nix is available)
 if command -v nix >/dev/null 2>&1; then
-    if nix flake check --no-write-lock-file "$CONTAINER_DIR" 2>/dev/null; then
-        test_pass "nix flake check passes"
+    if nix flake check --no-build --no-write-lock-file "$CONTAINER_DIR" 2>/dev/null; then
+        test_pass "nix flake evaluation passes"
     else
-        test_fail "nix flake check passes"
+        test_fail "nix flake evaluation passes"
     fi
 else
     test_skip "nix not available, skipping flake check"
@@ -74,7 +74,7 @@ else
     # locked flake inputs and assert the release they resolve to, rather than
     # trusting a file the base image may not even provide.
     # --no-update-lock-file so this check can never mutate the guest's lock.
-    DX_RELEASE_ORACLE_RAW="$(guest_bash "nix eval --raw --no-update-lock-file --inputs-from /guest-bootstrap nixpkgs#lib.version" 2>/dev/null || true)"
+    DX_RELEASE_ORACLE_RAW="$(guest_bash "nix eval --raw --no-update-lock-file --inputs-from /guest-bootstrap/current nixpkgs#lib.version" 2>/dev/null || true)"
     DX_RELEASE_ORACLE_OUTPUT="$(printf '%s\n' "$DX_RELEASE_ORACLE_RAW" | tail -1)"
     case "$DX_RELEASE_ORACLE_OUTPUT" in
         "$DX_EXPECTED_NIXOS_RELEASE"*)

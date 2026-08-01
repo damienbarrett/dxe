@@ -1,0 +1,6 @@
+# Reviewed D1 exclusions. One production path/pattern and justification per line.
+bin/dx* | Executable entrypoints are covered by host behavior contracts; pure logic lives in bin/lib.
+container/**/bootstrap.sh | The executable orchestrator is covered by phase-order behavior tests.
+container/**/scripts/*.sh | Guest commands are covered by guest behavior contracts; shared primitives live in scripts/lib.
+tests/*.sh | Tests are not production coverage subjects.
+*.nix | Declarative Nix is checked by evaluation/build, not shell line coverage.

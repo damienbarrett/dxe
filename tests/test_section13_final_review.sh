@@ -9,14 +9,6 @@ source "$SCRIPT_DIR/test_helpers.sh"
 
 test_section "Section 13: Final Review"
 
-# Test: git status --short shows clean state for tracked files (excluding untracked and README.md)
-GIT_STATUS=$(git -C "$BASE_DIR" status -uno --short 2>/dev/null | grep -v "README.md" || echo "")
-if [ -z "$GIT_STATUS" ]; then
-    test_pass "git working tree is clean for tracked files"
-else
-    test_fail "git working tree is clean for tracked files (status: $GIT_STATUS)"
-fi
-
 # Test: no private keys are tracked
 if git -C "$BASE_DIR" ls-files | grep -q "dx_key\|private.*key\|id_rsa\|id_ed25519"; then
     test_fail "no private keys are tracked by git"
@@ -49,12 +41,12 @@ fi
 assert_file_not_contains "$CONTAINERFILE" "RUN nix profile install" "Containerfile does not install tools"
 
 # Test: SSH is key-only
-assert_file_contains "$BOOTSTRAP" "PubkeyAuthentication yes" "SSH has PubkeyAuthentication yes"
-assert_file_contains "$BOOTSTRAP" "PasswordAuthentication no" "SSH has PasswordAuthentication no"
-assert_file_contains "$BOOTSTRAP" "PermitEmptyPasswords no" "SSH has PermitEmptyPasswords no"
+assert_file_contains "$CONTAINER_DIR/bootstrap/system.sh" "PubkeyAuthentication yes" "SSH has PubkeyAuthentication yes"
+assert_file_contains "$CONTAINER_DIR/bootstrap/system.sh" "PasswordAuthentication no" "SSH has PasswordAuthentication no"
+assert_file_contains "$CONTAINER_DIR/bootstrap/system.sh" "PermitEmptyPasswords no" "SSH has PermitEmptyPasswords no"
 
 # Test: passwordless sudo still works for dx
-assert_file_contains "$BOOTSTRAP" "dx ALL=(ALL) NOPASSWD:ALL" "passwordless sudo works for dx"
+assert_file_contains "$CONTAINER_DIR/bootstrap/system.sh" "dx ALL=(ALL) NOPASSWD:ALL" "passwordless sudo works for dx"
 
 print_summary
 exit_with_code

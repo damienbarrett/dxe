@@ -388,16 +388,14 @@ assert_file_contains "$LUALINE_NIX" 'theme = "tinted"' "lualine uses tinted them
 assert_file_not_contains "$LUALINE_NIX" 'theme = "rose-pine"' "lualine no longer hard-codes rose-pine"
 assert_file_contains "$ROSE_PINE_NIX" "pkgs.vimPlugins.rose-pine" "Rose Pine remains packaged as fallback"
 
-assert_file_contains "$RUNNER" "0-20" "test runner help advertises current section range"
+assert_file_contains "$RUNNER" "0-22" "test runner help advertises current section range"
 assert_file_contains "$RUNNER" 'run_test "$SCRIPT_DIR/test_section14_tinty_theming.sh" "14"' "test runner explicitly runs section 14"
 assert_file_not_contains "$FLAKE_NIX" "stylix" "Stylix dependency was not added"
 
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
     test_skip "Tinty integration skipped by --skip-integration"
-elif ! command -v container >/dev/null 2>&1; then
-    test_skip "container CLI not available, skipping Tinty integration"
-elif ! container_is_running "$DX_CONTAINER_NAME"; then
-    test_skip "Container '$DX_CONTAINER_NAME' is not running, skipping Tinty integration"
+elif ! requires_container; then
+    : # requires_container records the skip reason.
 elif ! container_exec_dx_bash 'command -v tinty >/dev/null 2>&1 && command -v dx-theme >/dev/null 2>&1'; then
     test_skip "running container has not been rebuilt or activated with Tinty yet"
 else
