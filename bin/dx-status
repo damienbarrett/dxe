@@ -4,17 +4,49 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
+if [ "${1:-}" = "--tunnel-state" ]; then
+    [ "$#" -eq 1 ] || { echo "Usage: $(basename "$0") --tunnel-state" >&2; exit 2; }
+    original_container=$DX_CONTAINER_NAME
+    containers=" $DX_CONTAINER_NAME "
+    profiles_dir="${DX_PROFILES_DIR:-$DX_PROJECT_ROOT/tests/profiles}"
+    if [ -d "$profiles_dir" ]; then
+        for profile_file in "$profiles_dir"/*.env; do
+            [ -f "$profile_file" ] || continue
+            dx_parse_config_file "$profile_file" >/dev/null
+            profile_container=${DXE_PARSED_DX_CONTAINER_NAME:-$original_container}
+            case "$containers" in *" $profile_container "*) ;; *) containers="$containers$profile_container " ;; esac
+        done
+    fi
+    total=0
+    for DX_CONTAINER_NAME in $containers; do
+        for direction in forward reverse; do
+            while IFS="$(printf '\t')" read -r key socket; do
+                [ -n "$key" ] || continue
+                case "$socket" in "$(dx_tunnel_state_dir)"/*) layout=v1 ;; *) layout=legacy ;; esac
+                printf '%s container=%s port=%s layout=%s socket=%s\n' "$direction" "$DX_CONTAINER_NAME" "$key" "$layout" "$socket"
+                total=$((total + 1))
+            done < <(dx_tunnel_discover "$direction")
+        done
+    done
+    DX_CONTAINER_NAME=$original_container
+    [ "$total" -gt 0 ] || echo "No tunnel state found for configured profiles."
+    exit 0
+fi
+
+[ "$#" -eq 0 ] || { echo "Usage: $(basename "$0") [--tunnel-state]" >&2; exit 2; }
+dx_require_container_cli
+
 echo "=== DX Status ==="
 echo "--- Image ($DX_IMAGE) ---"
 if container_image_exists "$DX_IMAGE"; then
-    container image list | grep "^$DX_IMAGE[[:space:]]"
+    container image list | grep "^${DX_IMAGE}[[:space:]]"
 else
     echo "Not found"
 fi
 
 echo -e "\n--- Container ($DX_CONTAINER_NAME) ---"
 if container_exists "$DX_CONTAINER_NAME"; then
-    container list -a | grep "^$DX_CONTAINER_NAME[[:space:]]"
+    container list -a | grep "^${DX_CONTAINER_NAME}[[:space:]]"
     if ! container_is_running "$DX_CONTAINER_NAME"; then
         echo
         echo "Container is not running. Last 40 log lines:"
