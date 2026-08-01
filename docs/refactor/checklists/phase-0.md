@@ -102,14 +102,23 @@ belongs here rather than in Phase 1b.
 - [x] **8. Capture public stdout/stderr separately.** Assert exact text only for stable
   user contracts and safety diagnostics; otherwise assert behavior and state.
 
-- [ ] **9. Record the existing live `dx-test` profile result** before structural changes.
+- [x] **9. Record the existing live `dx-test` profile result** before structural changes.
 
-  **Open, and no longer satisfiable as written (2026-08-01).** The production
-  files have already moved, so a "before" baseline cannot be captured
-  retroactively. This does not block the other phases, but it does mean there is
-  no pre-refactor live comparison point. Discharge it instead as a
-  pre-promotion run of `./bin/dx-profile dx-test tests/run_all_tests.sh` and
-  record that result here.
+  **Not satisfiable as written; discharged as a post-refactor live run
+  (2026-08-01).** The production files had already moved, so no "before"
+  baseline could be captured retroactively — there is no pre-refactor live
+  comparison point, and that limitation is permanent.
+
+  `./bin/dx-profile dx-test tests/run_all_tests.sh` now reports **718 passed,
+  0 failed, 7 skipped**. It took three runs:
+
+  1. 711 passed, 1 failed — `/etc/os-release` unreadable by `dx`.
+  2. 713 passed, 1 failed — the umask fix alone did not repair an existing file.
+  3. 718 passed, 0 failed — after the release identity write sets its mode
+     explicitly.
+
+  That defect was invisible to every container-free tier, which is the
+  argument for keeping this tier mandatory before promotion.
 
 ## Red-test timing
 

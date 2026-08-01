@@ -88,12 +88,16 @@ the new writer ships.
 
 - [ ] Satisfied on \_\_\_\_ (date), containers: \_\_\_\_
 
-**Observed 2026-08-01 — NOT satisfied.** The running `dx-host` guest is still on
-the flat layout: `/guest-bootstrap` holds `bootstrap.sh`, `flake.nix`, `home/`,
-`nvim/` and friends directly, with no `current` symlink. The generation-layout
-writer has not yet run against any live container, so the flat compatibility
-path is load-bearing. Re-check after the first `dx-sync-bootstrap` run per
-container.
+**Observed 2026-08-01 — partially satisfied, gate NOT met.** Per-container:
+
+| Container | Layout | Evidence |
+| --- | --- | --- |
+| `dx-test` | generations | `current -> generations/…`, predecessor retained across repeated publications |
+| `dx-host` | flat | no `current` symlink; payload sits directly in `/guest-bootstrap` |
+
+The generation writer is proven against a live container, but the gate is
+per-container and `dx-host` has not been re-synced, so the flat compatibility
+path remains load-bearing. Re-check after the default guest is re-synced.
 
 ---
 
