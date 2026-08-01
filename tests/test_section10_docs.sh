@@ -1,106 +1,52 @@
 #!/bin/bash
-# Section 10: Update Documentation
-# Tests for: README.md explains principles, workflow, configuration
-
 set -euo pipefail
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
-
-BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 README="$BASE_DIR/README.md"
+CONFIG_DOC="$BASE_DIR/docs/configuration.md"
+test_section "Section 10: Documentation Contracts"
 
-test_section "Section 10: Update Documentation"
+assert_file_exists "$README" "README exists"
+if [ "$(wc -l < "$README")" -lt 250 ]; then test_pass "README is a focused quick start and index"; else test_fail "README is a focused quick start and index"; fi
+for doc in lifecycle configuration guest troubleshooting release-maintenance; do
+    assert_file_exists "$BASE_DIR/docs/$doc.md" "focused $doc documentation exists"
+    assert_file_contains_literal "$README" "docs/$doc.md" "README links $doc documentation"
+done
 
-# Test: README.md exists
-assert_file_exists "$README" "README.md exists"
+broken_links=""
+while IFS= read -r markdown_file; do
+    while IFS= read -r reference; do
+        target=${reference#']('}; target=${target%%#*}
+        case "$target" in ''|http:*|https:*|mailto:*) continue ;; esac
+        if [ ! -e "$(dirname "$markdown_file")/$target" ]; then broken_links="$broken_links$markdown_file -> $target
+"; fi
+    done < <(grep -oE '\]\([^)]+' "$markdown_file" || true)
+done < <(find "$BASE_DIR" -maxdepth 4 -type f -name '*.md' -not -path '*/.git/*' | sort)
+if [ -z "$broken_links" ]; then test_pass "local Markdown links resolve"; else test_fail "local Markdown links resolve:$broken_links"; fi
 
-# Test: README explains lightweight Containerfile rule
-assert_file_contains "$README" "[Ll]ightweight\|[Cc]ontainerfile" "README explains lightweight Containerfile rule"
-assert_file_contains "$README" "[Cc]lean-image host-push bootstrap" "README documents clean-image host-push bootstrap principle"
-assert_file_contains "$README" "insufficient guest tools" "README limits host-push bootstrap to clean images"
+all_docs="$README $BASE_DIR/docs/lifecycle.md $CONFIG_DOC $BASE_DIR/docs/guest.md $BASE_DIR/docs/troubleshooting.md $BASE_DIR/docs/release-maintenance.md"
+for command in "$BASE_DIR"/bin/dx*; do
+    [ -f "$command" ] || continue
+    name="$(basename "$command")"
+    [ "$name" = dx-lib.sh ] && continue
+    if grep -Fq -- "$name" $all_docs; then test_pass "$name is discoverable"; else test_fail "$name is discoverable"; fi
+done
 
-# Test: README documents guest bootstrap owns installation
-assert_file_contains "$README" "[Bb]ootstrap\|[Gg]uest.*install\|[Gg]uest.*config" "README documents guest bootstrap responsibility"
+source "$BASE_DIR/bin/lib/dx-config.sh"
+for name in $DXE_CONFIG_FIELDS; do
+    if grep -Fq -- "$name" "$CONFIG_DOC"; then test_pass "$name is generated/validated from the config registry"; else test_fail "$name is generated/validated from the config registry"; fi
+done
+for pair in 'DX_CONTAINER_NAME|dx-host' 'DX_IMAGE|dx-nixos-26.05' 'DX_SSH_PORT|2222' 'DX_NIX_VOLUME|dx-nix' 'DX_PERSIST_VOLUME|dx-persist' 'DX_BOOTSTRAP_VOLUME|dx-bootstrap' 'DX_CONTAINER_MEMORY|12G' 'DX_CONTAINER_CPUS|4'; do
+    name=${pair%%|*}; value=${pair#*|}
+    if grep -F -- "$name" "$CONFIG_DOC" | grep -Fq -- "$value"; then test_pass "$name documented default matches registry"; else test_fail "$name documented default matches registry"; fi
+done
 
-# Test: README documents SSH key creation/providing
-assert_file_contains "$README" "[Ss][Ss][Hh].*[Kk]ey\|[Cc]reate.*key\|[Pp]rovide.*key" "README documents SSH key creation"
-
-# Test: README documents passwordless sudo for dx user
-assert_file_contains "$README" "[Pp]asswordless.*sudo\|sudo.*NOPASSWD\|dx.*sudo" "README documents passwordless sudo for dx"
-
-# Test: README documents SSH password and root login disabled
-assert_file_contains "$README" "[Pp]assword.*[Ll]ogin.*disable\|[Rr]oot.*[Ll]ogin.*disable\|PasswordAuthentication no" "README documents SSH password login disabled"
-
-# Test: README documents NixVim as only editor config path
-assert_file_contains "$README" "[Nn]ix[Vv]im\|[Ee]ditor.*[Cc]onfig.*[Nn]ix[Vv]im" "README documents NixVim as editor config"
-
-# Test: README documents the layered lifecycle model
-assert_file_contains "$README" "Lifecycle Layers" "README documents the lifecycle layer model"
-assert_file_contains "$README" "[Ss]tate-driven" "README documents state-driven dx entrypoint"
-assert_file_contains "$README" "[Ii]dempoten" "README documents idempotence as a principle"
-assert_file_contains "$README" "dx-create-image" "README documents dx-create-image"
-assert_file_contains "$README" "dx-destroy-image" "README documents dx-destroy-image"
-assert_file_contains "$README" "dx-create-container" "README documents dx-create-container"
-assert_file_contains "$README" "dx-destroy-container" "README documents dx-destroy-container"
-assert_file_contains "$README" "dx-create-volumes" "README documents dx-create-volumes"
-assert_file_contains "$README" "dx-destroy-volumes" "README documents dx-destroy-volumes"
-assert_file_contains "$README" "dx-create-keys" "README documents dx-create-keys"
-assert_file_contains "$README" "dx-destroy-keys" "README documents dx-destroy-keys"
-assert_file_contains "$README" "dx-start-container" "README documents dx-start-container"
-assert_file_contains "$README" "dx-stop-container" "README documents dx-stop-container"
-assert_file_contains "$README" "[Ss][Ss][Hh]\|dx-ssh" "README documents ssh workflow"
-assert_file_contains "$README" "[Ss]tatus\|dx-status" "README documents status workflow"
-assert_file_contains "$README" "[Pp]ut\|dx-put" "README documents put workflow"
-assert_file_contains "$README" "Forwarding guest web ports" "README documents guest web port forwarding"
-assert_file_contains "$README" "dx-forward" "README documents dx-forward"
-assert_file_contains "$README" "127.0.0.1" "README documents loopback browser forwarding"
-assert_file_contains "$README" "ssh -R" "README distinguishes reverse forwarding from browser access"
-assert_file_contains "$README" "Accessing host ports from the guest" "README documents guest-to-host reverse forwarding"
-assert_file_contains "$README" "dx-reverse" "README documents dx-reverse"
-assert_file_contains "$README" "[Ss]tale.*[Oo]rphan\|[Oo]rphan.*[Ss]tale" "README documents stale and orphan forwarding state"
-assert_file_contains "$README" "exits non-zero" "README documents partial stop-all failure status"
-assert_file_contains "$README" "could not be stopped" "README documents retained state after stop failure"
-assert_file_contains "$README" "dx-mount" "README documents explicit mount side-container workflow"
-assert_file_contains "$README" "refuses.*dx-host\|dx-host.*refuses" "README documents dx-mount refuses dx-host"
-assert_file_contains "$README" "dx-mount.*--destroy" "README documents dx-mount side-container cleanup"
-assert_file_contains "$README" "does not remove.*image" "README documents dx-mount cleanup preserves shared image"
-assert_file_contains "$README" "dx-mount.*--print-env\|--print-env" "README documents non-destructive dx-mount inspection"
-assert_file_contains "$README" "already in use" "README documents dx-mount port collision refusal"
-assert_file_contains "$README" "refuses to destroy default" "README documents dx-mount destroy guard for default resources"
-assert_file_contains "$README" "dx-recreate" "README documents dx-recreate"
-assert_file_contains "$README" "dx-factory-reset" "README documents dx-factory-reset"
-assert_file_contains "$README" "dx-ai" "README documents optional AI tool workflow"
-assert_file_contains "$README" "gh auth login" "README documents GitHub CLI auth workflow"
-assert_file_contains "$README" "/persist/home/dx/.config/gh" "README documents persisted GitHub CLI config path"
-assert_file_contains "$README" "Migration" "README documents migration from prior script names"
-
-# Test: README documents host configuration variables and defaults
-assert_file_contains "$README" "Configuration Variables" "README documents configuration variables"
-assert_file_contains "$README" "All variables have defaults" "README states variables have defaults"
-assert_file_contains "$README" "DX_CONTAINER_NAME.*dx-host" "README documents DX_CONTAINER_NAME default"
-assert_file_contains "$README" "DX_IMAGE.*dx-nixos-26.05" "README documents DX_IMAGE default"
-assert_file_contains "$README" "DX_NIX_VOLUME.*dx-nix" "README documents DX_NIX_VOLUME default"
-assert_file_contains "$README" "DX_PERSIST_VOLUME.*dx-persist" "README documents DX_PERSIST_VOLUME default"
-assert_file_contains "$README" "DX_GIT_MOUNT_SOURCE.*empty" "README documents empty git mount source default"
-assert_file_contains "$README" "DX_GIT_MOUNT_TARGET.*/workspace" "README documents git mount target default"
-assert_file_contains "$README" "DX_GUEST_WORKDIR.*empty" "README documents optional guest workdir"
-assert_file_contains "$README" "DX_CONTAINER_MEMORY.*12G" "README documents container memory default"
-assert_file_contains "$README" "DX_CONTAINER_CPUS.*4" "README documents container CPU default"
-assert_file_contains "$README" "/persist.*fixed supported guest path" "README documents fixed /persist path"
-assert_file_not_contains "$README" "DX_PERSIST_PATH.*Default" "README does not document DX_PERSIST_PATH as a supported variable"
-assert_file_contains "$README" "DX_WORKSPACE_VOLUME.*DX_WORKSPACE_PATH" "README documents retired workspace variable failure"
-assert_file_contains "$README" "DX_BOOTSTRAP_VOLUME.*dx-bootstrap" "README documents DX_BOOTSTRAP_VOLUME default"
-assert_file_contains "$README" "DX_BOOTSTRAP_SOURCE.*DX_CONTEXT_DIR" "README documents DX_BOOTSTRAP_SOURCE default"
-assert_file_contains "$README" "DX_STOP_COMMAND_TIMEOUT.*15" "README documents stop command timeout"
-assert_file_contains "$README" "DX_SSH_CONNECT_TIMEOUT.*15" "README documents SSH connect timeout"
-assert_file_contains "$README" "DX_GUEST_ACTIVATION_TIMEOUT.*1800" "README documents guest activation timeout"
-assert_file_contains "$README" "DX_GUEST_ACTIVATION_ATTEMPTS.*2" "README documents guest activation attempts"
-assert_file_contains "$README" "DX_GUEST_ACTIVATION_RETRY_DELAY.*5" "README documents guest activation retry delay"
-assert_file_contains "$README" "DX_SSH_WAIT_TIMEOUT.*complete guest activation retry budget" "README documents the derived SSH wait timeout"
-
-# Test: README documents rerunning guest bootstrap
-assert_file_contains "$README" "[Rr]erun\|[Rr]e-run\|[Rr]ebootstrap\|[Rr]e-bootstrap" "README documents rerunning guest bootstrap"
+assert_file_contains_literal "$CONFIG_DOC" 'Root `.env` and profiles are data files' "configuration trust boundary is explicit"
+assert_file_contains_literal "$CONFIG_DOC" 'Do not source a profile' "profiles are not advertised as sourceable code"
+assert_file_contains_literal "$CONFIG_DOC" '${DX_PROJECT_ROOT}' "the sole data expansion is documented"
+assert_file_contains "$CONFIG_DOC" 'partial, stale, wrong-root' "snapshot failure modes are documented"
+assert_file_contains "$BASE_DIR/docs/lifecycle.md" 'refus' "destructive refusal behavior remains documented"
+assert_file_contains "$BASE_DIR/docs/release-maintenance.md" 'Base Image Changeover' "temporary guard procedure remains discoverable"
 
 print_summary
 exit_with_code
