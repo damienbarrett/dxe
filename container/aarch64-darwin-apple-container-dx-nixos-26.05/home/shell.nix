@@ -4,10 +4,14 @@
   programs.bash = {
     enable = true;
     profileExtra = ''
-      export PATH=$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH
-      # Source D-Bus keyring env for agy Secret Service compatibility
-      if [ -f "$HOME/.dx-keyring-env" ]; then
-        . "$HOME/.dx-keyring-env"
+      export PATH=/persist/home/dx/.local/state/dx-ai/current/profile/bin:$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH
+      # Read the validated raw D-Bus address as data.
+      keyring_address_file=/persist/home/dx/.local/state/dx/keyring-address
+      keyring_library="$HOME/.local/lib/dx/dx-keyring.sh"
+      if [ -f "$keyring_library" ] && [ -f "$keyring_address_file" ]; then
+        . "$keyring_library"
+        DBUS_SESSION_BUS_ADDRESS="$(dx_keyring_read_address "$keyring_address_file" 2>/dev/null || true)"
+        if [ -n "$DBUS_SESSION_BUS_ADDRESS" ]; then export DBUS_SESSION_BUS_ADDRESS; else unset DBUS_SESSION_BUS_ADDRESS; fi
       fi
     '';
     initExtra = ''
@@ -45,16 +49,16 @@
   programs.fish = {
     enable = true;
     interactiveShellInit = ''
-      # Source D-Bus keyring env for agy Secret Service compatibility
-      if test -f "$HOME/.dx-keyring-env"
-        for line in (grep '^export ' "$HOME/.dx-keyring-env")
-          set -l kv (string replace 'export ' "" -- $line)
-          set -l key (string replace -r '=.*' "" -- $kv)
-          set -l val (string replace -r '^[^=]+=' "" -- $kv | string trim --chars="'")
-          set -gx $key $val
+      # Read the raw D-Bus address as one bounded data record.
+      set -l keyring_address_file /persist/home/dx/.local/state/dx/keyring-address
+      if test -f "$keyring_address_file"
+        read -l keyring_address < "$keyring_address_file"
+        if string match -rq '^unix:path=/' -- "$keyring_address"
+          set -gx DBUS_SESSION_BUS_ADDRESS "$keyring_address"
         end
       end
       set -g fish_greeting
+      fish_add_path --prepend /persist/home/dx/.local/state/dx-ai/current/profile/bin
       fish_vi_key_bindings
 
       function y
@@ -109,15 +113,15 @@
       try { ^/home/dx/.local/bin/dx-theme-restore }
     '';
     envFile.text = ''
-      # Source D-Bus keyring env for agy Secret Service compatibility
-      let keyring_env = $"($nu.home-dir)/.dx-keyring-env"
-      if ($keyring_env | path exists) {
-        open $keyring_env | lines | where {|l| $l starts-with "export "} | parse "export {key}={val}" | each {|row|
-          let val = ($row.val | str replace --all "'" "")
-          load-env {($row.key): $val}
+      # Read the raw D-Bus address as data.
+      let keyring_address_file = "/persist/home/dx/.local/state/dx/keyring-address"
+      if ($keyring_address_file | path exists) {
+        let address = (open $keyring_address_file | str trim)
+        if ($address | str starts-with "unix:path=/") {
+          $env.DBUS_SESSION_BUS_ADDRESS = $address
         }
       }
-      $env.PATH = ($env.PATH | split row (char esep) | append $"($nu.home-dir)/.local/bin" | append $"($nu.home-dir)/.nix-profile/bin")
+      $env.PATH = ($env.PATH | split row (char esep) | prepend "/persist/home/dx/.local/state/dx-ai/current/profile/bin" | append $"($nu.home-dir)/.local/bin" | append $"($nu.home-dir)/.nix-profile/bin")
       $env.EDITOR = "nvim"
       $env.VISUAL = "nvim"
       $env.SSL_CERT_FILE = $"($nu.home-dir)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
@@ -136,7 +140,7 @@
   };
 
   home.sessionVariables = {
-    PATH = "$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH";
+    PATH = "/persist/home/dx/.local/state/dx-ai/current/profile/bin:$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH";
     EDITOR = "nvim";
     VISUAL = "nvim";
     SSL_CERT_FILE = "$HOME/.nix-profile/etc/ssl/certs/ca-bundle.crt";

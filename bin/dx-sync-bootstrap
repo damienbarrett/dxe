@@ -3,85 +3,135 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+dx_require_container_cli
 
-if ! container_exists "$DX_CONTAINER_NAME"; then
-    echo "Error: Container $DX_CONTAINER_NAME does not exist. Run ./bin/dx-create-container first." >&2
-    exit 1
-fi
+container_exists "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME does not exist. Run ./bin/dx-create-container first." >&2; exit 1; }
+for _ in {1..30}; do container_is_running "$DX_CONTAINER_NAME" && break; sleep 1; done
+container_is_running "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start-container first." >&2; exit 1; }
+case "$DX_BOOTSTRAP_PATH" in ''|/) echo "Error: Unsafe DX_BOOTSTRAP_PATH: $DX_BOOTSTRAP_PATH" >&2; exit 1 ;; esac
 
-for _ in {1..30}; do
-    if container_is_running "$DX_CONTAINER_NAME"; then
-        break
-    fi
-    sleep 1
-done
-
-if ! container_is_running "$DX_CONTAINER_NAME"; then
-    echo "Error: Container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start-container first." >&2
-    exit 1
-fi
-
-if [ -z "$DX_BOOTSTRAP_PATH" ] || [ "$DX_BOOTSTRAP_PATH" = "/" ]; then
-    echo "Error: Unsafe DX_BOOTSTRAP_PATH: $DX_BOOTSTRAP_PATH" >&2
-    exit 1
-fi
-
-# Self-detect bootstrap state. A freshly-started container needs a moment to
-# enter its "waiting for payload" state before the payload can be pushed. An
-# already-warm container that has already received a payload will have the
-# .dx-bootstrap-ready marker present. Wait for either marker before proceeding
-# so the script works whether called right after start or against a long-running
-# container, with no env-var coordination required.
 for _ in $(seq 1 "$DX_BOOTSTRAP_WAIT_TIMEOUT"); do
-    if container exec "$DX_CONTAINER_NAME" sh -c \
-        'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready"' \
-        -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1; then
-        break
-    fi
+    container exec "$DX_CONTAINER_NAME" sh -c 'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready" || test -L "$1/current"' -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1 && break
     sleep 1
 done
-
-if ! container exec "$DX_CONTAINER_NAME" sh -c \
-    'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready"' \
-    -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1; then
-    echo "Error: Container $DX_CONTAINER_NAME entrypoint never became ready after ${DX_BOOTSTRAP_WAIT_TIMEOUT}s." >&2
-    echo "  The container may have crashed. Check with: container logs $DX_CONTAINER_NAME" >&2
-    exit 1
-fi
-
-if [ ! -f "$DX_BOOTSTRAP_SOURCE/bootstrap.sh" ]; then
-    echo "Error: Bootstrap source $DX_BOOTSTRAP_SOURCE/bootstrap.sh does not exist." >&2
-    exit 1
-fi
+container exec "$DX_CONTAINER_NAME" sh -c 'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready" || test -L "$1/current"' -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1 || {
+    echo "Error: Container $DX_CONTAINER_NAME entrypoint never became ready after ${DX_BOOTSTRAP_WAIT_TIMEOUT}s." >&2; exit 1;
+}
+[ -f "$DX_BOOTSTRAP_SOURCE/bootstrap.sh" ] || { echo "Error: Bootstrap source $DX_BOOTSTRAP_SOURCE/bootstrap.sh does not exist." >&2; exit 1; }
 
 tar_create_args=()
-if tar --no-xattrs -C "$DX_BOOTSTRAP_SOURCE" -cf /dev/null . >/dev/null 2>&1; then
-    tar_create_args+=(--no-xattrs)
-fi
-if tar --no-mac-metadata -C "$DX_BOOTSTRAP_SOURCE" -cf /dev/null . >/dev/null 2>&1; then
-    tar_create_args+=(--no-mac-metadata)
-fi
+tar --no-xattrs -C "$DX_BOOTSTRAP_SOURCE" -cf /dev/null . >/dev/null 2>&1 && tar_create_args+=(--no-xattrs)
+tar --no-mac-metadata -C "$DX_BOOTSTRAP_SOURCE" -cf /dev/null . >/dev/null 2>&1 && tar_create_args+=(--no-mac-metadata)
+generation_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+echo "Syncing bootstrap generation $generation_id from $DX_BOOTSTRAP_SOURCE to $DX_CONTAINER_NAME:$DX_BOOTSTRAP_PATH..."
 
-echo "Syncing bootstrap payload from $DX_BOOTSTRAP_SOURCE to $DX_CONTAINER_NAME:$DX_BOOTSTRAP_PATH..."
-
-container exec "$DX_CONTAINER_NAME" sh -c '
+COPYFILE_DISABLE=1 tar "${tar_create_args[@]}" -C "$DX_BOOTSTRAP_SOURCE" -cf - . | container exec -i "$DX_CONTAINER_NAME" sh -c '
 set -eu
-dest="$1"
-mkdir -p "$dest"
-rm -rf "$dest"/* "$dest"/.[!.]* "$dest"/..?* 2>/dev/null || true
-' -- "$DX_BOOTSTRAP_PATH"
-
-COPYFILE_DISABLE=1 tar "${tar_create_args[@]}" -C "$DX_BOOTSTRAP_SOURCE" -cf - . | container exec -i "$DX_CONTAINER_NAME" tar -xf - -C "$DX_BOOTSTRAP_PATH"
-
-container exec "$DX_CONTAINER_NAME" sh -c '
-set -eu
-dest="$1"
-chmod -R a+rX "$dest"
-if id -u dx >/dev/null 2>&1; then
-    chown -R dx:dx "$dest"
+root=$1
+generation=$2
+generations=$root/generations
+locks=$root/.locks
+lock=$locks/publication
+stage=$generations/.staging-$generation
+process_start() {
+    stat_line=$(cat "/proc/${1:-0}/stat" 2>/dev/null) || return 1
+    stat_fields=${stat_line##*) }
+    set -- $stat_fields
+    [ "$#" -ge 20 ] || return 1
+    shift 19
+    printf "%s\n" "$1"
+}
+[ -d "$root" ] && [ ! -L "$root" ] || { echo "Error: unsafe bootstrap root $root." >&2; exit 1; }
+for path in "$generations" "$locks" "$locks/leases"; do [ ! -L "$path" ] || { echo "Error: refusing symlinked bootstrap state path $path." >&2; exit 1; }; done
+mkdir -p "$generations" "$locks/leases"
+chown root:root "$root" "$generations" "$locks" "$locks/leases"
+chmod 0755 "$root" "$generations"
+chmod 0700 "$locks" "$locks/leases"
+elapsed=0
+while ! mkdir "$lock" 2>/dev/null; do
+    if [ -f "$lock/owner" ]; then
+        tab=$(printf "\t")
+        IFS="$tab" read -r owner_boot owner_pid owner_start < "$lock/owner" || true
+        boot=$(cat /proc/sys/kernel/random/boot_id)
+        live_start=$(process_start "${owner_pid:-0}" || true)
+        if [ -z "${owner_boot:-}" ] || [ -z "${owner_pid:-}" ] || [ -z "${owner_start:-}" ] \
+            || [ "$owner_boot" != "$boot" ] || [ "$owner_start" != "$live_start" ]; then
+            rm -f "$lock/owner"; rmdir "$lock" 2>/dev/null || true; continue
+        fi
+    elif [ "$elapsed" -ge 2 ] && rmdir "$lock" 2>/dev/null; then
+        elapsed=0
+        continue
+    fi
+    [ "$elapsed" -lt 30 ] || { echo "Error: timed out waiting for bootstrap publication lock." >&2; exit 1; }
+    sleep 1; elapsed=$((elapsed + 1))
+done
+boot=$(cat /proc/sys/kernel/random/boot_id)
+start=$(process_start $$) || { rmdir "$lock" 2>/dev/null || true; exit 1; }
+owner_tmp="$locks/.owner.$$.tmp"
+if ! printf "%s\t%s\t%s\n" "$boot" "$$" "$start" > "$owner_tmp" || ! mv "$owner_tmp" "$lock/owner"; then
+    rm -f "$owner_tmp"; rmdir "$lock" 2>/dev/null || true; exit 1
 fi
-chmod +x "$dest/bootstrap.sh"
-touch "$dest/.dx-bootstrap-ready"
-' -- "$DX_BOOTSTRAP_PATH"
+cleanup() { rm -rf "$stage"; rm -f "$lock/owner"; rmdir "$lock" 2>/dev/null || true; }
+trap cleanup EXIT
+trap "exit 129" HUP
+trap "exit 130" INT
+trap "exit 143" TERM
+mkdir "$stage"
+tar -xf - -C "$stage"
+for required in bootstrap.sh flake.nix flake.lock; do [ -f "$stage/$required" ] && [ ! -L "$stage/$required" ] || { echo "Error: staged bootstrap is missing a regular $required." >&2; exit 1; }; done
+predecessor=""
+if [ -L "$root/current" ]; then
+    predecessor=$(readlink "$root/current")
+    case "$predecessor" in generations/*) predecessor=${predecessor#generations/} ;; *) echo "Error: invalid bootstrap current pointer." >&2; exit 1 ;; esac
+    case "$predecessor" in ""|*/*|[.-]*|*[!A-Za-z0-9_.-]*) echo "Error: invalid bootstrap predecessor generation." >&2; exit 1 ;; esac
+fi
+printf "%s\n" "$predecessor" > "$stage/.predecessor"
+chown -R root:root "$stage"
+find "$stage" -type d -exec chmod 0555 {} +
+find "$stage" -type f -exec chmod 0444 {} +
+find "$stage" -type f \( -name "*.sh" -o -name bootstrap.sh \) -exec chmod 0555 {} +
+[ ! -e "$generations/$generation" ] && [ ! -L "$generations/$generation" ] || { echo "Error: bootstrap generation already exists: $generation." >&2; exit 1; }
+mv "$stage" "$generations/$generation"
+current_tmp="$root/.current.$$.tmp"
+[ ! -e "$current_tmp" ] && [ ! -L "$current_tmp" ] || { echo "Error: bootstrap pointer staging path already exists." >&2; exit 1; }
+ln -s "generations/$generation" "$current_tmp"
+mv -Tf "$current_tmp" "$root/current"
+for item in bootstrap.sh flake.nix flake.lock home.nix nixvim.nix home nvim scripts pins bootstrap; do
+    [ -e "$root/current/$item" ] || continue
+    rm -rf "$root/$item"
+    ln -s "current/$item" "$root/$item"
+done
+touch "$root/.dx-bootstrap-ready"
+rm -f "$root/.dx-bootstrap-waiting"
 
-echo "Bootstrap payload is ready."
+# Retain current, its immutable predecessor, and generations with a fully
+# matching boot/PID/start-time lease. Stale leases are removed.
+current=$generation
+for lease in "$locks/leases"/*; do
+    [ -f "$lease" ] || continue
+    tab=$(printf "\t"); IFS="$tab" read -r lease_gen lease_boot lease_pid lease_start < "$lease" || true
+    lease_name=${lease##*/}
+    case "$lease_gen" in ""|[.-]*|*[!A-Za-z0-9_.-]*) rm -f "$lease"; continue ;; esac
+    case "$lease_boot" in ""|*[!A-Za-z0-9-]*) rm -f "$lease"; continue ;; esac
+    case "$lease_pid" in ""|*[!0-9]*) rm -f "$lease"; continue ;; esac
+    case "$lease_start" in ""|*[!0-9]*) rm -f "$lease"; continue ;; esac
+    [ "$lease_name" = "$lease_gen.$lease_pid" ] || { rm -f "$lease"; continue; }
+    live_start=$(process_start "${lease_pid:-0}" || true)
+    if [ "$lease_boot" != "$boot" ] || [ -z "$live_start" ] || [ "$lease_start" != "$live_start" ]; then rm -f "$lease"; fi
+done
+for candidate in "$generations"/*; do
+    [ -d "$candidate" ] || continue; id=${candidate##*/}
+    [ "$id" = "$current" ] && continue
+    [ -n "$predecessor" ] && [ "$id" = "$predecessor" ] && continue
+    leased=false
+    for lease in "$locks/leases/$id".*; do [ -f "$lease" ] && leased=true; done
+    if [ "$leased" = false ]; then
+        chmod -R u+w "$candidate"
+        rm -rf "$candidate"
+    fi
+done
+trap - EXIT HUP INT TERM
+rm -f "$lock/owner"; rmdir "$lock"
+' -- "$DX_BOOTSTRAP_PATH" "$generation_id"
+
+echo "Bootstrap generation $generation_id is ready."

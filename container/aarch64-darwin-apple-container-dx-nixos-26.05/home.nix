@@ -18,6 +18,8 @@
   xdg.stateFile."nvim/.keep".text = "";
   xdg.cacheFile."nvim/.keep".text = "";
 
+  home.file.".local/lib/dx/dx-keyring.sh".source = ./scripts/lib/dx-keyring.sh;
+
   # Declaratively place the test image in the home directory
   home.file."test-image.png".source = testImage;
 }

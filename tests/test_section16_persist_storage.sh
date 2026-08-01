@@ -11,8 +11,12 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
+source "$BASE_DIR/bin/lib/dx-container.sh"
 
 LIB_SH="$BASE_DIR/bin/dx-lib.sh"
+CONFIG_LIB="$BASE_DIR/bin/lib/dx-config.sh"
+SSH_COMMON_LIB="$BASE_DIR/bin/lib/dx-ssh-common.sh"
+BOOTSTRAP_ACTIVATION="$CONTAINER_DIR/bootstrap/activation.sh"
 DX_CREATE="$BASE_DIR/bin/dx-create-container"
 DX_CREATE_VOLUMES="$BASE_DIR/bin/dx-create-volumes"
 DX_MIGRATE="$BASE_DIR/bin/dx-migrate-persist"
@@ -27,19 +31,19 @@ assert_file_exists "$DX_CREATE_VOLUMES" "bin/dx-create-volumes exists"
 assert_file_exists "$DX_MIGRATE" "bin/dx-migrate-persist exists"
 assert_file_exists "$SHELL_NIX" "home/shell.nix exists"
 
-assert_grep_in_file "$LIB_SH" \
-    "DX_PERSIST_VOLUME=.*dx-persist" \
-    "dx-lib.sh declares DX_PERSIST_VOLUME (default dx-persist)"
+assert_grep_in_file "$CONFIG_LIB" \
+    "DX_PERSIST_VOLUME.*printf.*dx-persist" \
+    "config registry declares DX_PERSIST_VOLUME (default dx-persist)"
 assert_file_not_contains "$LIB_SH" \
     "DX_PERSIST_PATH" \
     "dx-lib.sh does not declare DX_PERSIST_PATH"
-assert_grep_in_file "$LIB_SH" \
+assert_grep_in_file "$CONFIG_LIB" \
     "DX_WORKSPACE_VOLUME" \
     "dx-lib.sh rejects DX_WORKSPACE_VOLUME"
-assert_grep_in_file "$LIB_SH" \
+assert_grep_in_file "$CONFIG_LIB" \
     "DX_WORKSPACE_PATH" \
     "dx-lib.sh rejects DX_WORKSPACE_PATH"
-assert_grep_in_file "$LIB_SH" \
+assert_grep_in_file "$SSH_COMMON_LIB" \
     "mkdir -p /persist" \
     "bootstrap launch command creates fixed /persist path"
 
@@ -71,10 +75,10 @@ assert_grep_in_file "$SHELL_NIX" \
 assert_file_not_contains "$SHELL_NIX" \
     "WORKSPACE[[:space:]]*=" \
     "shell.nix does not declare WORKSPACE"
-assert_grep_in_file "$BOOTSTRAP" \
+assert_grep_in_file "$BOOTSTRAP_ACTIVATION" \
     "ln -sfnT /persist /home/dx/persist" \
     "bootstrap creates /home/dx/persist"
-assert_file_not_contains "$BOOTSTRAP" \
+assert_file_not_contains "$BOOTSTRAP_ACTIVATION" \
     "/home/dx/workspace" \
     "bootstrap does not create /home/dx/workspace"
 
@@ -94,7 +98,7 @@ assert_grep_in_file "$DX_MIGRATE" \
 STALE_MATCHES=$(rg -n '/workspace|DX_WORKSPACE|WORKSPACE|~/workspace|DX_PERSIST_PATH' \
     --hidden -g '!.git' -g '!workspace-persist.md' "$BASE_DIR" 2>/dev/null || true)
 UNEXPECTED_STALE=$(printf '%s\n' "$STALE_MATCHES" | grep -vE \
-    'bin/dx-lib.sh|bin/dx-create-volumes|bin/dx-migrate-persist|bin/dx-mount|README.md|tests/test_section9_host_scripts.sh|tests/test_section10_docs.sh|tests/test_section16_persist_storage.sh|tests/test_section18_mount_git.sh' || true)
+    'bin/dx-lib.sh|bin/lib/dx-config.sh|bin/dx-create-volumes|bin/dx-migrate-persist|bin/dx-mount|README.md|refactor-plan.md|docs/|tests/test_section9_host_scripts.sh|tests/test_section10_docs.sh|tests/test_section16_persist_storage.sh|tests/test_section18_mount_git.sh' || true)
 if [ -z "$UNEXPECTED_STALE" ]; then
     test_pass "no stale workspace runtime references outside explicit legacy docs/tests"
 else

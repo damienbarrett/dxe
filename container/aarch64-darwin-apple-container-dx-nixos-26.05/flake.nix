@@ -27,6 +27,7 @@
         inherit system;
         config.allowUnfree = true;
       };
+      agyPin = builtins.fromJSON (builtins.readFile ./pins/agy.json);
 
       # Shared package list for devShell and default tools profile
       dxPackages = with pkgs; [
@@ -73,11 +74,11 @@
       # | bash` would do, but pinned and autoPatchelf'd for NixOS.
       agy = pkgs.stdenv.mkDerivation rec {
         pname = "antigravity-cli";
-        version = "1.0.5";
+        version = agyPin.version;
 
         src = pkgs.fetchurl {
-          url = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.0.5-5009297080451072/linux-arm/cli_linux_arm64.tar.gz";
-          hash = "sha512-j5LtbiYWbdq1lbOXXkfpH90cC/c7OTviUodjHMrgcCpjcuvqJej71Jl6v22budIzaIaKW/oMeifL0hEJgcUBmA==";
+          url = agyPin.url;
+          hash = agyPin.hash;
         };
 
         nativeBuildInputs = [ pkgs.autoPatchelfHook ];
