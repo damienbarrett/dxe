@@ -88,16 +88,20 @@ the new writer ships.
 
 - [ ] Satisfied on \_\_\_\_ (date), containers: \_\_\_\_
 
-**Observed 2026-08-01 — partially satisfied, gate NOT met.** Per-container:
+**Observed 2026-08-01 — satisfied on this machine.** Every container that this
+repository can start has been re-synced under the generation layout:
 
 | Container | Layout | Evidence |
 | --- | --- | --- |
-| `dx-test` | generations | `current -> generations/…`, predecessor retained across repeated publications |
-| `dx-host` | flat | no `current` symlink; payload sits directly in `/guest-bootstrap` |
+| `dx-host` | generations | `current -> generations/20260801T092700Z-82346`, after a full `./bin/dx-recreate` |
+| `dx-test` | generations | `current -> generations/20260801T085318Z-10228`, predecessor retained across repeated publications |
 
-The generation writer is proven against a live container, but the gate is
-per-container and `dx-host` has not been re-synced, so the flat compatibility
-path remains load-bearing. Re-check after the default guest is re-synced.
+The `dx-tinty` profile has no container, so there is nothing to migrate for it.
+
+This satisfies the gate **for this machine only**. The flat-layout reader is
+removed by [Phase 4](checklists/phase-4.md) item 11 once the same holds on every
+machine that runs this repository, so it is retained until that inventory is
+recorded here.
 
 ---
 

@@ -128,5 +128,25 @@ run_section_under_skip "$SCRIPT_DIR/test_section15_nushell_env.sh" "section 15"
 run_section_under_skip "$SCRIPT_DIR/test_section16_persist_storage.sh" "section 16"
 run_section_under_skip "$SCRIPT_DIR/test_section17_dx_ai_runtime.sh" "section 17"
 
+# A --section the runner cannot dispatch must fail, not report success over an
+# empty run. tests/run-tier.sh selects whole tiers by section number, so a
+# silent no-op would let a tier shrink to nothing while CI still went green --
+# the same "reports success without doing the work" failure this section exists
+# to catch.
+unknown_output="$("$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=nonexistent 2>&1)"
+unknown_status=$?
+if [ "$unknown_status" -ne 0 ] && ! printf '%s' "$unknown_output" | grep -q 'All tests PASSED'; then
+    test_pass "unknown --section fails instead of reporting an empty success"
+else
+    test_fail "unknown --section fails instead of reporting an empty success (status $unknown_status)"
+fi
+
+# The guard must not reject sections the runner really does dispatch.
+if "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=1 >/dev/null 2>&1; then
+    test_pass "a dispatchable --section still runs"
+else
+    test_fail "a dispatchable --section still runs"
+fi
+
 print_summary
 exit_with_code
