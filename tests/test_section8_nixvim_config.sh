@@ -14,6 +14,13 @@ test_section "Section 8: Clean Up NixVim Configuration"
 assert_file_exists "$FLAKE_NIX" "flake.nix exists"
 assert_file_exists "$NIXVIM_NIX" "nixvim.nix exists"
 
+HERDR_NAV_LUA="$CONTAINER_DIR/nvim/extra_plugins/herdr-navigator.lua"
+assert_file_exists "$HERDR_NAV_LUA" "Herdr-aware Neovim navigator exists"
+assert_file_contains "$HERDR_NAV_LUA" "HERDR_PANE_ID" "Neovim navigator targets its containing Herdr pane"
+assert_file_contains "$HERDR_NAV_LUA" 'vim.cmd("wincmd "' "Neovim navigator tries editor splits first"
+assert_file_contains "$HERDR_NAV_LUA" '"pane",' "Neovim navigator invokes the Herdr pane API at an editor edge"
+assert_file_contains "$HERDR_NAV_LUA" '"focus",' "Neovim navigator focuses an adjacent Herdr pane at an editor edge"
+
 # Combined content for easier checking
 # Including nvim directory for decomposed config
 COMBINED_NIX=$(find "$CONTAINER_DIR"/nvim -name "*.nix" -print0 | xargs -0 cat)

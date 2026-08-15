@@ -11,6 +11,7 @@ test_section "Section 6: Improve Guest Tooling"
 
 TOOLS_NIX="$CONTAINER_DIR/home/tools.nix"
 DX_AI_SCRIPT="$CONTAINER_DIR/scripts/dx-ai.sh"
+DX_HERDR_NAV_SCRIPT="$CONTAINER_DIR/scripts/dx-herdr-navigate.sh"
 
 # Test: flake.nix exists
 assert_file_exists "$FLAKE_NIX" "flake.nix exists"
@@ -103,6 +104,17 @@ assert_file_contains "$TOOLS_NIX" "vim-tmux-navigator" "tmux side of vim-tmux-na
 assert_file_exists "$NAV_NVIM_NIX" "Neovim side of vim-tmux-navigator is a self-contained module"
 assert_file_contains "$NAV_NVIM_NIX" "TmuxNavigateLeft" "Neovim navigator maps Ctrl-h to TmuxNavigateLeft"
 assert_file_contains "$NIXVIM_NIX" "vim-tmux-navigator.nix" "Neovim navigator module is imported by nixvim"
+assert_file_exists "$DX_HERDR_NAV_SCRIPT" "Herdr pane navigator helper exists"
+assert_file_contains "$DX_HERDR_NAV_SCRIPT" "pane process-info" "Herdr navigator inspects the foreground pane process"
+assert_file_contains "$DX_HERDR_NAV_SCRIPT" "pane send-keys" "Herdr navigator forwards Ctrl navigation into Neovim"
+assert_file_contains "$DX_HERDR_NAV_SCRIPT" "pane focus" "Herdr navigator focuses adjacent Herdr panes"
+assert_file_contains "$TOOLS_NIX" ".local/bin/dx-herdr-navigate" "Herdr navigator helper is installed by Home Manager"
+assert_file_contains "$TOOLS_NIX" "dx-herdr-navigator.lua" "Herdr-aware Neovim edge navigation is installed by Home Manager"
+if bash -n "$DX_HERDR_NAV_SCRIPT" 2>/dev/null; then
+    test_pass "Herdr navigator helper passes bash syntax check"
+else
+    test_fail "Herdr navigator helper passes bash syntax check"
+fi
 assert_file_contains "$CONTAINER_DIR/bootstrap/persistence.sh" "/persist/home/dx/.local/share/tmux/resurrect" "bootstrap creates the persisted resurrect directory"
 assert_file_contains "$TOOLS_NIX" "set -g renumber-windows on" "tmux renumbers windows on close"
 assert_file_contains "$TOOLS_NIX" "set-option -g main-pane-width 50%" "tmux main pane width is 50 percent"
