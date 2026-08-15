@@ -140,4 +140,12 @@
     executable = true;
     source = ../scripts/dx-claude-statusline.sh;
   };
+
+  home.file.".local/bin/dx-herdr-navigate" = {
+    executable = true;
+    source = ../scripts/dx-herdr-navigate.sh;
+  };
+
+  home.file.".local/share/nvim/site/after/plugin/dx-herdr-navigator.lua".source =
+    ../nvim/extra_plugins/herdr-navigator.lua;
 }
