@@ -136,7 +136,7 @@ legacy_manifest="$migrate_state/migrate-side.env"
 } > "$legacy_manifest"
 legacy_hash="$(shasum -a 256 "$legacy_manifest")"
 dry_run="$(mount_clean "$migrate_repo" --container migrate-side --migrate-manifests)"
-if printf '%s\n' "$dry_run" | grep -q 'migration-eligible=true' && [ "$legacy_hash" = "$(shasum -a 256 "$legacy_manifest")" ]; then
+if printf '%s\n' "$dry_run" | stdin_matches 'migration-eligible=true' && [ "$legacy_hash" = "$(shasum -a 256 "$legacy_manifest")" ]; then
     test_pass "legacy migration dry run is report-only"
 else
     test_fail "legacy migration dry run is report-only"
@@ -216,7 +216,7 @@ printf '%s\n' 'DX_CONTAINER_NAME=profile-side' > "$profile_dir/profile-side.env"
 : > "$fixture/dx-forward-profile-side-17000.sock"
 tunnel_audit="$(env -u DXE_CONFIG_RESOLVED -u DXE_CONFIG_SNAPSHOT_VERSION \
     DX_PROFILES_DIR="$profile_dir" TMPDIR="$fixture" "$BASE_DIR/bin/dx-status" --tunnel-state)"
-if printf '%s\n' "$tunnel_audit" | grep -q 'container=profile-side port=17000 layout=legacy'; then
+if printf '%s\n' "$tunnel_audit" | stdin_matches 'container=profile-side port=17000 layout=legacy'; then
     test_pass "tunnel-state audit sweeps safely parsed named profiles"
 else
     test_fail "tunnel-state audit sweeps safely parsed named profiles"

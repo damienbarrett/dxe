@@ -5,6 +5,11 @@
 # disposable pinned coverage environment.
 set -euo pipefail
 
+# This probe script runs standalone (it never sources tests/test_helpers.sh),
+# so it carries its own copy. See the helper there for why `| grep -q` under
+# `set -o pipefail` reports a successful match as a failure.
+stdin_matches() { grep "$@" >/dev/null; }
+
 [ "${DXE_COVERAGE_ISOLATED:-}" = 1 ] || { echo "Error: sourceable coverage probes require the isolated coverage environment." >&2; exit 1; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GUEST="$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05"
@@ -217,11 +222,11 @@ DX_SSH_PORT=2222; dx_ssh_endpoint >/dev/null; dx_bootstrap_launch_command >/dev/
     # actually land in the environment of whatever it feeds -- run the
     # generated prefix against real `env` and inspect the table it produces.
     actual_env="$(eval "$(dx_guest_env_prefix TestZone) env")"
-    printf '%s\n' "$actual_env" | grep -qxF 'HOST_TZ=TestZone'
-    printf '%s\n' "$actual_env" | grep -qxF "PATH=$(dx_guest_path)"
-    printf '%s\n' "$actual_env" | grep -qxF 'SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt'
-    printf '%s\n' "$actual_env" | grep -qxF 'NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt'
-    printf '%s\n' "$actual_env" | grep -qxF 'TERM=xterm-256color'
+    printf '%s\n' "$actual_env" | stdin_matches -xF 'HOST_TZ=TestZone'
+    printf '%s\n' "$actual_env" | stdin_matches -xF "PATH=$(dx_guest_path)"
+    printf '%s\n' "$actual_env" | stdin_matches -xF 'SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt'
+    printf '%s\n' "$actual_env" | stdin_matches -xF 'NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt'
+    printf '%s\n' "$actual_env" | stdin_matches -xF 'TERM=xterm-256color'
 
     # dx_guest_bash_command composes the env prefix, workdir snippet, and the
     # bash -l -c boundary into one runnable string, with and without a workdir.
@@ -877,17 +882,17 @@ if [ "$rc" -ne 0 ]; then
     printf '%s\n' "$output" >&2
     exit 1
 fi
-if ! printf '%s\n' "$output" | grep -qF 'PROBE: dbus-daemon lookup attempted with hm_ran=1'; then
+if ! printf '%s\n' "$output" | stdin_matches -F 'PROBE: dbus-daemon lookup attempted with hm_ran=1'; then
     echo "Error: dbus-daemon was never looked up after Home Manager activation ran. Output:" >&2
     printf '%s\n' "$output" >&2
     exit 1
 fi
-if printf '%s\n' "$output" | grep -qF 'hm_ran=0'; then
+if printf '%s\n' "$output" | stdin_matches -F 'hm_ran=0'; then
     echo "Error: setup_keyring_service looked up dbus-daemon before Home Manager activation ran. Output:" >&2
     printf '%s\n' "$output" >&2
     exit 1
 fi
-if ! printf '%s\n' "$output" | grep -qF 'STUB: configure_guest returned normally'; then
+if ! printf '%s\n' "$output" | stdin_matches -F 'STUB: configure_guest returned normally'; then
     echo "Error: configure_guest did not return normally after the keyring service ran. Output:" >&2
     printf '%s\n' "$output" >&2
     exit 1

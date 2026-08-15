@@ -119,7 +119,7 @@ INNER
 rc=0
 output="$(DXE_TEST_CONTAINER_DIR="$CONTAINER_DIR" DXE_TEST_BOOTSTRAP_DIR="$BOOTSTRAP_DIR" bash "$dbus_probe_script" 2>&1)" || rc=$?
 rm -f "$dbus_probe_script"
-if [ "$rc" -ne 0 ] && printf '%s\n' "$output" | grep -qi 'dbus-daemon'; then
+if [ "$rc" -ne 0 ] && printf '%s\n' "$output" | stdin_matches -i 'dbus-daemon'; then
     test_pass "setup_keyring_service reports an explicit diagnostic when dbus-daemon is missing, instead of dying silently"
 else
     test_fail "setup_keyring_service reports an explicit diagnostic when dbus-daemon is missing, instead of dying silently (rc=$rc, output=[$output])"

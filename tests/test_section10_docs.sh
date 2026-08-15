@@ -38,7 +38,7 @@ for name in $DXE_CONFIG_FIELDS; do
 done
 for pair in 'DX_CONTAINER_NAME|dx-host' 'DX_IMAGE|dx-nixos-26.05' 'DX_SSH_PORT|2222' 'DX_NIX_VOLUME|dx-nix' 'DX_PERSIST_VOLUME|dx-persist' 'DX_BOOTSTRAP_VOLUME|dx-bootstrap' 'DX_CONTAINER_MEMORY|12G' 'DX_CONTAINER_CPUS|4'; do
     name=${pair%%|*}; value=${pair#*|}
-    if grep -F -- "$name" "$CONFIG_DOC" | grep -Fq -- "$value"; then test_pass "$name documented default matches registry"; else test_fail "$name documented default matches registry"; fi
+    if grep -F -- "$name" "$CONFIG_DOC" | stdin_matches -F -- "$value"; then test_pass "$name documented default matches registry"; else test_fail "$name documented default matches registry"; fi
 done
 
 assert_file_contains_literal "$CONFIG_DOC" 'Root `.env` and profiles are data files' "configuration trust boundary is explicit"

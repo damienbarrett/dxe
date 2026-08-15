@@ -10,14 +10,14 @@ source "$SCRIPT_DIR/test_helpers.sh"
 test_section "Section 13: Final Review"
 
 # Test: no private keys are tracked
-if git -C "$BASE_DIR" ls-files | grep -q "dx_key\|private.*key\|id_rsa\|id_ed25519"; then
+if git -C "$BASE_DIR" ls-files | stdin_matches "dx_key\|private.*key\|id_rsa\|id_ed25519"; then
     test_fail "no private keys are tracked by git"
 else
     test_pass "no private keys are tracked by git"
 fi
 
 # Test: no .DS_Store files are tracked
-if git -C "$BASE_DIR" ls-files | grep -q "\.DS_Store"; then
+if git -C "$BASE_DIR" ls-files | stdin_matches "\.DS_Store"; then
     test_fail "no .DS_Store files are tracked by git"
 else
     test_pass "no .DS_Store files are tracked by git"
@@ -31,7 +31,7 @@ else
 fi
 
 # Test: nvim/ lazy.nvim runtime config removed or quarantined
-if git -C "$BASE_DIR" ls-files | grep -q "nvim/lua/core/lazy.lua\|nvim/lazy-lock.json"; then
+if git -C "$BASE_DIR" ls-files | stdin_matches "nvim/lua/core/lazy.lua\|nvim/lazy-lock.json"; then
     test_fail "nvim/ lazy.nvim runtime config removed or quarantined"
 else
     test_pass "nvim/ lazy.nvim runtime config removed or quarantined"

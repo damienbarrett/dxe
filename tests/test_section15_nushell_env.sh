@@ -131,14 +131,14 @@ print $"NIX_EXISTS=($n | path exists)"'
 
 PROBE_OUT=$(run_nu "$PROBE" 2>&1 || true)
 
-if echo "$PROBE_OUT" | grep -q "^SSL_EXISTS=true$"; then
+if echo "$PROBE_OUT" | stdin_matches "^SSL_EXISTS=true$"; then
     test_pass "nushell SSL_CERT_FILE resolves to an existing file after sourcing env.nu"
 else
     line=$(echo "$PROBE_OUT" | grep -E "^SSL=" | head -1)
     test_fail "nushell SSL_CERT_FILE does not resolve to an existing file (${line:-no output})"
 fi
 
-if echo "$PROBE_OUT" | grep -q "^NIX_EXISTS=true$"; then
+if echo "$PROBE_OUT" | stdin_matches "^NIX_EXISTS=true$"; then
     test_pass "nushell NIX_SSL_CERT_FILE resolves to an existing file after sourcing env.nu"
 else
     line=$(echo "$PROBE_OUT" | grep -E "^NIX=" | head -1)
@@ -155,7 +155,7 @@ print $"LG_STDERR=($result.stderr)"'
 
 LAZYGIT_PROBE_OUT=$(run_nu "$LAZYGIT_PROBE" 2>&1 || true)
 
-if echo "$LAZYGIT_PROBE_OUT" | grep -q "stat /home/dx/.cache/dx/tinty/lazygit.yml"; then
+if echo "$LAZYGIT_PROBE_OUT" | stdin_matches "stat /home/dx/.cache/dx/tinty/lazygit.yml"; then
     test_fail "nushell still points lazygit at a missing tinted theme file"
 else
     test_pass "nushell can launch lazygit without the missing tinted theme file"

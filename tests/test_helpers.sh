@@ -3,6 +3,27 @@
 
 set -uo pipefail
 
+# Match stdin against a pattern without short-circuiting the writer.
+#
+# `writer | grep -q PATTERN` is unsafe in any script with `set -o pipefail`:
+# grep -q exits at its *first* match, closing the pipe while the writer is
+# still writing, so the writer dies of SIGPIPE (141) and pipefail promotes
+# that to the pipeline's exit status. A *successful* match is then reported
+# as failure. Whether it fires depends on the race between writer and reader,
+# so the construct can pass for months and then fail deterministically after
+# an unrelated environment change -- which is exactly what happened here,
+# taking 16 assertions across four sections with it on an unmodified tree.
+#
+# Dropping -q keeps the exit status identical while making grep consume all
+# of its input, so the writer is never signalled. Output is discarded here so
+# callers need no redirection of their own and the fix is a drop-in rename.
+#
+# Guest-side probe scripts (tests/lib/tmux-probes.sh, container_exec_dx_bash
+# blocks, run_guest strings) deliberately keep plain `grep -q`: they run in a
+# fresh guest shell under `set -u` with no pipefail, so they are immune, and
+# this helper does not exist over there.
+stdin_matches() { grep "$@" >/dev/null; }
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -206,7 +227,7 @@ assert_tmux_runtime_contains() {
     local blob="$1" key="$2" needle="$3" message="$4"
     local got
     got="$(probe_value "$blob" "$key")"
-    if printf '%s' "$got" | grep -qF "$needle"; then
+    if printf '%s' "$got" | stdin_matches -F "$needle"; then
         test_pass "$message (runtime $key=$got)"
     else
         test_fail "$message (expected $key to contain '$needle', got '$got')"
@@ -219,7 +240,7 @@ assert_tmux_runtime_not_contains() {
     local blob="$1" key="$2" needle="$3" message="$4"
     local got
     got="$(probe_value "$blob" "$key")"
-    if printf '%s' "$got" | grep -qF "$needle"; then
+    if printf '%s' "$got" | stdin_matches -F "$needle"; then
         test_fail "$message (expected $key to omit '$needle', got '$got')"
     else
         test_pass "$message (runtime $key=$got)"

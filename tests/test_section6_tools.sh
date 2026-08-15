@@ -70,7 +70,7 @@ assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?ripgrep" "ripgrep preserved in flake.
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?fd" "fd preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?curl" "curl preserved in flake.nix"
 assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?jq" "jq preserved in flake.nix"
-if printf '%s\n' "$DX_PACKAGES_BLOCK" | grep -Eq "^[[:space:]]*(pkgs\.)?gh[[:space:]]*$"; then
+if printf '%s\n' "$DX_PACKAGES_BLOCK" | stdin_matches -E "^[[:space:]]*(pkgs\.)?gh[[:space:]]*$"; then
     test_pass "GitHub CLI is in default dxPackages"
 else
     test_fail "GitHub CLI is in default dxPackages"
@@ -123,7 +123,7 @@ assert_file_contains "$SHELL_NIX" '\^yazi ...$args --cwd-file $tmp' "nushell yaz
 assert_file_contains "$SHELL_NIX" 'str replace --all (char nul) ""' "nushell yazi cwd helper strips cwd file NUL terminator"
 
 # Test: AI CLI tools are excluded from the default dxPackages list
-if printf '%s\n' "$DX_PACKAGES_BLOCK" | grep -Eq "codex|gemini-cli|claude-code|antigravity-cli"; then
+if printf '%s\n' "$DX_PACKAGES_BLOCK" | stdin_matches -E "codex|gemini-cli|claude-code|antigravity-cli"; then
     test_fail "AI CLI tools excluded from default dxPackages"
 else
     test_pass "AI CLI tools excluded from default dxPackages"
@@ -175,31 +175,31 @@ assert_file_not_contains "$FLAKE_NIX" 'version = "1.0.0";' "agy derivation is no
 assert_file_contains_literal "$DX_AI_SCRIPT" '$persist_home/.gemini/antigravity-cli' "guest dx-ai prepares persisted agy state directory"
 assert_file_contains "$CONTAINER_DIR/bootstrap/activation.sh" "/persist/home/dx/.gemini/antigravity-cli" "bootstrap prepares persisted agy state directory"
 
-if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "codex"; then
+if printf '%s\n' "$AI_PACKAGES_BLOCK" | stdin_matches -E "codex"; then
     test_pass "codex is in aiPackages"
 else
     test_fail "codex is in aiPackages"
 fi
 
-if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "gemini-cli"; then
+if printf '%s\n' "$AI_PACKAGES_BLOCK" | stdin_matches -E "gemini-cli"; then
     test_pass "gemini-cli is in aiPackages"
 else
     test_fail "gemini-cli is in aiPackages"
 fi
 
-if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "claude-code"; then
+if printf '%s\n' "$AI_PACKAGES_BLOCK" | stdin_matches -E "claude-code"; then
     test_pass "claude-code is in aiPackages"
 else
     test_fail "claude-code is in aiPackages"
 fi
 
-if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "\bagy\b"; then
+if printf '%s\n' "$AI_PACKAGES_BLOCK" | stdin_matches -E "\bagy\b"; then
     test_pass "agy (Antigravity CLI) is in aiPackages"
 else
     test_fail "agy (Antigravity CLI) is in aiPackages"
 fi
 
-if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "\bherdr\b"; then
+if printf '%s\n' "$AI_PACKAGES_BLOCK" | stdin_matches -E "\bherdr\b"; then
     test_pass "herdr is in aiPackages"
 else
     test_fail "herdr is in aiPackages"
@@ -243,7 +243,7 @@ else
     # the guest, proving the typed Home Manager options actually take effect at
     # runtime (not merely that strings exist in tools.nix).
     TMUX_PROBE="$(tmux_guest_probe || true)"
-    if printf '%s\n' "$TMUX_PROBE" | grep -q "__PROBE_FAILED__" || [ -z "$TMUX_PROBE" ]; then
+    if printf '%s\n' "$TMUX_PROBE" | stdin_matches "__PROBE_FAILED__" || [ -z "$TMUX_PROBE" ]; then
         test_fail "tmux runtime probe started a server in the guest"
     else
         test_pass "tmux runtime probe started a server in the guest"
@@ -261,7 +261,7 @@ else
 
     # Behaviour: query the live prefix key table and pane-navigation effects.
     TMUX_KEYS="$(tmux_guest_keys_probe || true)"
-    if printf '%s\n' "$TMUX_KEYS" | grep -q "__PROBE_FAILED__" || [ -z "$TMUX_KEYS" ]; then
+    if printf '%s\n' "$TMUX_KEYS" | stdin_matches "__PROBE_FAILED__" || [ -z "$TMUX_KEYS" ]; then
         test_fail "tmux key-table probe started a server in the guest"
     else
         test_pass "tmux key-table probe started a server in the guest"
@@ -297,7 +297,7 @@ else
 
     # Behaviour: tmux-resurrect wiring and a real save/restore round trip.
     TMUX_RSR="$(tmux_guest_resurrect_probe || true)"
-    if printf '%s\n' "$TMUX_RSR" | grep -q "__PROBE_FAILED__" || [ -z "$TMUX_RSR" ]; then
+    if printf '%s\n' "$TMUX_RSR" | stdin_matches "__PROBE_FAILED__" || [ -z "$TMUX_RSR" ]; then
         test_fail "tmux resurrect probe started a server in the guest"
     else
         test_pass "tmux resurrect probe started a server in the guest"
@@ -329,7 +329,7 @@ else
     # maps them in Neovim to the TmuxNavigate commands (seamless cross-nav itself
     # is a manual gate). Reads the live key table and headless nvim maps.
     TMUX_NAV="$(tmux_guest_navigator_probe || true)"
-    if printf '%s\n' "$TMUX_NAV" | grep -q "__PROBE_FAILED__" || [ -z "$TMUX_NAV" ]; then
+    if printf '%s\n' "$TMUX_NAV" | stdin_matches "__PROBE_FAILED__" || [ -z "$TMUX_NAV" ]; then
         test_fail "tmux navigator probe started a server in the guest"
     else
         test_pass "tmux navigator probe started a server in the guest"

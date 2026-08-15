@@ -11,7 +11,7 @@ test_section "Section 18: Mount Plans And Manifests"
 
 help="$($MOUNT --help 2>&1)"
 for option in '--container NAME' '--print-env' '--destroy' '--print-destroy-plan' '--audit-manifests' '--migrate-manifests' '--apply'; do
-    if printf '%s\n' "$help" | grep -q -- "$option"; then test_pass "dx-mount help documents $option"; else test_fail "dx-mount help documents $option"; fi
+    if printf '%s\n' "$help" | stdin_matches -- "$option"; then test_pass "dx-mount help documents $option"; else test_fail "dx-mount help documents $option"; fi
 done
 if "$MOUNT" --print-env --destroy >/dev/null 2>&1; then test_fail "mount modes are mutually exclusive"; else test_pass "mount modes are mutually exclusive"; fi
 if "$MOUNT" --container ../unsafe --print-env >/dev/null 2>&1; then test_fail "unsafe container names are rejected before path construction"; else test_pass "unsafe container names are rejected before path construction"; fi
@@ -23,8 +23,8 @@ git -C "$repo" init -q; mkdir -p "$repo/sub dir"
 env_out="$(env -u DX_CONTAINER_NAME -u DX_NIX_VOLUME -u DX_PERSIST_VOLUME -u DX_BOOTSTRAP_VOLUME -u DX_SSH_KEY -u DX_SSH_KEY_PUB -u DX_SSH_PORT \
     -u DXE_CONFIG_RESOLVED -u DXE_CONFIG_SNAPSHOT_VERSION "$MOUNT" "$repo/sub dir" --print-env)"
 name="$(printf '%s\n' "$env_out" | sed -n 's/^export DX_CONTAINER_NAME=//p')"
-if printf '%s\n' "$env_out" | grep -q '^export DX_GIT_MOUNT_SOURCE=' && printf '%s\n' "$env_out" | grep -q 'DX_GUEST_WORKDIR=/workspace/sub\\ dir'; then test_pass "planner canonicalizes repository source and guest workdir"; else test_fail "planner canonicalizes repository source and guest workdir"; fi
-for suffix in nix persist bootstrap; do printf '%s\n' "$env_out" | grep -q "export DX_.*VOLUME=${name}-${suffix}" && test_pass "planner derives private $suffix volume" || test_fail "planner derives private $suffix volume"; done
+if printf '%s\n' "$env_out" | stdin_matches '^export DX_GIT_MOUNT_SOURCE=' && printf '%s\n' "$env_out" | stdin_matches 'DX_GUEST_WORKDIR=/workspace/sub\\ dir'; then test_pass "planner canonicalizes repository source and guest workdir"; else test_fail "planner canonicalizes repository source and guest workdir"; fi
+for suffix in nix persist bootstrap; do printf '%s\n' "$env_out" | stdin_matches "export DX_.*VOLUME=${name}-${suffix}" && test_pass "planner derives private $suffix volume" || test_fail "planner derives private $suffix volume"; done
 
 source "$BASE_DIR/bin/lib/dx-mount-plan.sh"
 legacy="$state/legacy.env"
@@ -60,7 +60,7 @@ if dx_mount_manifest_publish_new "$v2" >/dev/null 2>&1; then test_fail "first pu
 [ "$before" = "$(shasum -a 256 "$v2")" ] && test_pass "failed publication preserves authoritative manifest" || test_fail "failed publication preserves authoritative manifest"
 
 audit="$(DX_MOUNT_IDENTITY_DIR="$state" "$MOUNT" --audit-manifests)"
-if printf '%s\n' "$audit" | grep -q 'v2.env format=v2 complete=true'; then test_pass "manifest audit reports v2 completeness"; else test_fail "manifest audit reports v2 completeness"; fi
+if printf '%s\n' "$audit" | stdin_matches 'v2.env format=v2 complete=true'; then test_pass "manifest audit reports v2 completeness"; else test_fail "manifest audit reports v2 completeness"; fi
 assert_file_not_contains "$MOUNT" 'DX_MOUNT_TEST_MODE' "dx-mount has no production test seam"
 assert_file_not_contains "$MOUNT" 'source "$identity_file"' "dx-mount never sources persisted identity data"
 

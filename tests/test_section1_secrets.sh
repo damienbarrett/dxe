@@ -36,7 +36,7 @@ assert_git_not_tracked "$BASE_DIR/dx_key" "dx_key is not tracked by git"
 assert_git_not_tracked "$BASE_DIR/dx_key.pub" "dx_key.pub is not tracked by git"
 
 # Test: No .DS_Store files in working tree
-if find "$BASE_DIR" -name ".DS_Store" 2>/dev/null | grep -q .; then
+if find "$BASE_DIR" -name ".DS_Store" 2>/dev/null | stdin_matches .; then
     test_fail "No .DS_Store files in working tree"
 else
     test_pass "No .DS_Store files in working tree"
@@ -44,17 +44,17 @@ fi
 
 # Test: git status does not show dx_key, dx_key.pub, or .DS_Store
 GIT_STATUS=$(git -C "$BASE_DIR" status --short 2>/dev/null || echo "")
-if echo "$GIT_STATUS" | grep -q "dx_key"; then
+if echo "$GIT_STATUS" | stdin_matches "dx_key"; then
     test_fail "git status does not show dx_key"
 else
     test_pass "git status does not show dx_key"
 fi
-if echo "$GIT_STATUS" | grep -q "dx_key.pub"; then
+if echo "$GIT_STATUS" | stdin_matches "dx_key.pub"; then
     test_fail "git status does not show dx_key.pub"
 else
     test_pass "git status does not show dx_key.pub"
 fi
-if echo "$GIT_STATUS" | grep -q "\.DS_Store"; then
+if echo "$GIT_STATUS" | stdin_matches "\.DS_Store"; then
     test_fail "git status does not show .DS_Store"
 else
     test_pass "git status does not show .DS_Store"

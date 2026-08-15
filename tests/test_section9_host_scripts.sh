@@ -71,14 +71,14 @@ assert_file_contains_literal "$BASE_DIR/bin/dx-migrate-persist" "-- \"\$legacy_v
 # subshell (test_pass/test_fail increment counters local to the calling
 # shell, and would be silently lost if this ran inside `( … )`).
 out="$("$BASE_DIR/bin/dx-herdr" --help 2>&1)"
-if echo "$out" | grep -q "Usage: dx-herdr"; then test_pass "dx-herdr --help prints usage"; else test_fail "dx-herdr --help prints usage"; fi
+if echo "$out" | stdin_matches "Usage: dx-herdr"; then test_pass "dx-herdr --help prints usage"; else test_fail "dx-herdr --help prints usage"; fi
 out="$("$BASE_DIR/bin/dx-herdr" -h 2>&1)"
-if echo "$out" | grep -q "Usage: dx-herdr"; then test_pass "dx-herdr -h prints usage"; else test_fail "dx-herdr -h prints usage"; fi
+if echo "$out" | stdin_matches "Usage: dx-herdr"; then test_pass "dx-herdr -h prints usage"; else test_fail "dx-herdr -h prints usage"; fi
 set +e
 out="$("$BASE_DIR/bin/dx-herdr" invalid_arg 2>&1)"
 rc=$?
 set -e
-if [ "$rc" -eq 64 ] && echo "$out" | grep -q "does not accept arguments"; then
+if [ "$rc" -eq 64 ] && echo "$out" | stdin_matches "does not accept arguments"; then
     test_pass "dx-herdr rejects arguments in v1 (exit 64)"
 else
     test_fail "dx-herdr rejects arguments in v1 (exit 64, got rc=$rc)"
@@ -87,7 +87,7 @@ set +e
 out="$("$BASE_DIR/bin/dx-herdr" --help trailing 2>&1)"
 rc=$?
 set -e
-if [ "$rc" -eq 64 ] && echo "$out" | grep -q "does not accept arguments"; then
+if [ "$rc" -eq 64 ] && echo "$out" | stdin_matches "does not accept arguments"; then
     test_pass "dx-herdr rejects trailing arguments after --help (R6)"
 else
     test_fail "dx-herdr rejects trailing arguments after --help (R6, got rc=$rc)"
@@ -200,8 +200,8 @@ if (
     DX_GUEST_WORKDIR=$'/tmp/-dxe workdir with an apostrophe \' and\na newline'
     remote_cmd="$(dx_guest_bash_command UTC true)"
     printf '%s\n' "$remote_cmd" | bash -n \
-        && printf '%s\n' "$remote_cmd" | grep -q 'DX_GUEST_WORKDIR_B64=' \
-        && ! printf '%s\n' "$remote_cmd" | grep -Fq "$DX_GUEST_WORKDIR"
+        && printf '%s\n' "$remote_cmd" | stdin_matches 'DX_GUEST_WORKDIR_B64=' \
+        && ! printf '%s\n' "$remote_cmd" | stdin_matches -F "$DX_GUEST_WORKDIR"
 ); then
     test_pass "shared SSH boundary transports complex workdirs without nested-quote breakage (R4)"
 else
@@ -224,7 +224,7 @@ if (
     encoded="$(printf '%s\n' "$remote_cmd" | sed -n 's/.*DX_GUEST_CMD_B64=\([A-Za-z0-9+/=]*\).*/\1/p')"
     printf '%s\n' "$remote_cmd" | bash -n \
         && [ -n "$encoded" ] \
-        && ! printf '%s\n' "$remote_cmd" | grep -Fq "it's fine" \
+        && ! printf '%s\n' "$remote_cmd" | stdin_matches -F "it's fine" \
         && [ "$(printf '%s' "$encoded" | base64 -d)" = "$body" ]
 ); then
     test_pass "shared SSH boundary transports a command body opaquely, apostrophes included (R4)"

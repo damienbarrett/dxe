@@ -513,7 +513,7 @@ shades-of-purple=base16-shades-of-purple'
     # interval auto-save dies after any theme apply. Behaviour-check the live
     # status-right after a real server start.
     SR_PROBE="$(tmux_guest_statusright_probe || true)"
-    if printf '%s\n' "$SR_PROBE" | grep -q "__PROBE_FAILED__" || [ -z "$SR_PROBE" ]; then
+    if printf '%s\n' "$SR_PROBE" | stdin_matches "__PROBE_FAILED__" || [ -z "$SR_PROBE" ]; then
         test_fail "status-right probe started a server in the guest"
     else
         test_pass "status-right probe started a server in the guest"
@@ -582,7 +582,7 @@ LUA_EOF
         fi
         rm -f "$TINTED_STARTUP_PROBE_LOCAL"
 
-        if printf '%s\n' "$TINTED_PROBE_OUT" | grep -qx "DEPRECATION_SEEN=no"; then
+        if printf '%s\n' "$TINTED_PROBE_OUT" | stdin_matches -x "DEPRECATION_SEEN=no"; then
             test_pass "headless nvim startup emits no tinted-colorscheme deprecation message"
         else
             test_fail "headless nvim startup emits no tinted-colorscheme deprecation message (probe output: $TINTED_PROBE_OUT)"
@@ -689,12 +689,12 @@ DRIVER_EOF
         fi
         rm -f "$PROJECT_EMPTY_PROBE_LOCAL" "$PROJECT_EMPTY_DRIVER_LOCAL"
 
-        if printf '%s\n' "$PROJECT_EMPTY_OUT" | grep -qx "EMPTY_HISTORY_SEEN=no"; then
+        if printf '%s\n' "$PROJECT_EMPTY_OUT" | stdin_matches -x "EMPTY_HISTORY_SEEN=no"; then
             test_pass "project.nvim empty-history write_history() no longer notifies the WARN message"
         else
             test_fail "project.nvim empty-history write_history() unexpectedly notified (probe output: $PROJECT_EMPTY_OUT)"
         fi
-        if printf '%s\n' "$PROJECT_EMPTY_OUT" | grep -qx "CONTROL_SEEN=yes"; then
+        if printf '%s\n' "$PROJECT_EMPTY_OUT" | stdin_matches -x "CONTROL_SEEN=yes"; then
             test_pass "control vim.notify(WARN) still reaches :messages (filter is not over-suppressing)"
         else
             test_fail "control vim.notify(WARN) did not reach :messages (probe output: $PROJECT_EMPTY_OUT)"
@@ -747,7 +747,7 @@ DRIVER_EOF
         fi
         rm -f "$PROJECT_REAL_PROBE_LOCAL" "$PROJECT_REAL_DRIVER_LOCAL"
 
-        if printf '%s\n' "$PROJECT_REAL_OUT" | grep -qx "HISTORY_HAS_DATA=true"; then
+        if printf '%s\n' "$PROJECT_REAL_OUT" | stdin_matches -x "HISTORY_HAS_DATA=true"; then
             test_pass "write_history() still persists data for a recognised (.git) project"
         else
             test_skip "write_history() persisted-data check for a recognised project was inconclusive (probe output: $PROJECT_REAL_OUT)"

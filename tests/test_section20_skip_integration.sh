@@ -135,7 +135,7 @@ run_section_under_skip "$SCRIPT_DIR/test_section17_dx_ai_runtime.sh" "section 17
 # to catch.
 unknown_output="$("$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=nonexistent 2>&1)"
 unknown_status=$?
-if [ "$unknown_status" -ne 0 ] && ! printf '%s' "$unknown_output" | grep -q 'All tests PASSED'; then
+if [ "$unknown_status" -ne 0 ] && ! printf '%s' "$unknown_output" | stdin_matches 'All tests PASSED'; then
     test_pass "unknown --section fails instead of reporting an empty success"
 else
     test_fail "unknown --section fails instead of reporting an empty success (status $unknown_status)"

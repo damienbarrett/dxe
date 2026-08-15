@@ -82,7 +82,7 @@ if [ "$(readlink "$root/current")" = "$first_target" ] && [ "$(cat "$root/curren
 else
     test_fail "failed extraction/validation preserves last-known-good current"
 fi
-if find "$root/generations" -maxdepth 1 -name '.staging-*' -print | grep -q .; then
+if find "$root/generations" -maxdepth 1 -name '.staging-*' -print | stdin_matches .; then
     test_fail "failed bootstrap staging is collected"
 else
     test_pass "failed bootstrap staging is collected"

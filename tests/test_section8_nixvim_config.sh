@@ -46,7 +46,7 @@ else
 fi
 
 # Test: plugins in extraPlugins pinned to commit, not main
-if echo "$COMBINED_NIX" | grep -q 'rev = "main"'; then
+if echo "$COMBINED_NIX" | stdin_matches 'rev = "main"'; then
     test_fail "plugins in extraPlugins pinned to commit, not main"
 else
     test_pass "plugins in extraPlugins pinned to commit, not main"
@@ -54,7 +54,7 @@ fi
 
 # Test: hashes for custom plugin sources
 CUSTOM_PLUGINS=$(echo "$COMBINED_NIX" | grep -A10 "vimUtils.buildVimPlugin" || echo "")
-if echo "$CUSTOM_PLUGINS" | grep -q "hash = "; then
+if echo "$CUSTOM_PLUGINS" | stdin_matches "hash = "; then
     test_pass "hashes for custom plugin sources present"
 else
     test_fail "hashes for custom plugin sources present"

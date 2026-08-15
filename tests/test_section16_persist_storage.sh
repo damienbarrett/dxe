@@ -255,7 +255,7 @@ SCP_OPTS=("${SSH_BASE_OPTS[@]}" "-P" "$DX_SSH_PORT")
 scp "${SCP_OPTS[@]}" "$local_tmp" "dx@127.0.0.1:$remote_path" >/dev/null 2>&1
 rm -f "$local_tmp"
 NU_OUT=$(ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "bash -lc 'nu $remote_path; rc=\$?; rm -f $remote_path; exit \$rc'" 2>&1 || true)
-if echo "$NU_OUT" | grep -qx "PERSIST=/persist"; then
+if echo "$NU_OUT" | stdin_matches -x "PERSIST=/persist"; then
     test_pass "nushell exposes \$env.PERSIST=/persist"
 else
     test_fail "nushell exposes \$env.PERSIST=/persist (got: $(echo "$NU_OUT" | grep -E "^PERSIST=" | head -1))"

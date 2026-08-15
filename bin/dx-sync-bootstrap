@@ -78,6 +78,14 @@ trap "exit 130" INT
 trap "exit 143" TERM
 mkdir "$stage"
 tar -xf - -C "$stage"
+# Consume anything the extractor left unread. tar stops at the end-of-archive
+# marker and does not necessarily drain the trailing padding the creator writes
+# to fill its final block, so the host-side `tar -cf -` can take EPIPE on that
+# last write. The host runs the pipeline under `set -o pipefail`, which would
+# then report a complete, correct publication as a failed sync. Whether it
+# fires depends on the tar implementations at both ends, so it presents as an
+# intermittent sync failure rather than a reproducible one.
+cat >/dev/null
 for required in bootstrap.sh flake.nix flake.lock; do [ -f "$stage/$required" ] && [ ! -L "$stage/$required" ] || { echo "Error: staged bootstrap is missing a regular $required." >&2; exit 1; }; done
 predecessor=""
 if [ -L "$root/current" ]; then

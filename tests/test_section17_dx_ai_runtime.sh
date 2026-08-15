@@ -106,7 +106,7 @@ if (
     out="$(dx_ai_lock_acquire "$lock" "$proc_root" 2>&1)"
     rc=$?
     set -e
-    [ "$rc" -eq 1 ] && [ -d "$lock" ] && [ "$(cat "$lock/owner")" = $'old-boot\t999\t123' ] && printf '%s\n' "$out" | grep -q "cannot identify lock owner process"
+    [ "$rc" -eq 1 ] && [ -d "$lock" ] && [ "$(cat "$lock/owner")" = $'old-boot\t999\t123' ] && printf '%s\n' "$out" | stdin_matches "cannot identify lock owner process"
 ); then
     test_pass "dx-ai refuses lock acquisition when all process identities are unavailable (R5)"
 else
@@ -261,7 +261,7 @@ else
     exit_with_code
 fi
 
-if printf '%s\n' "$DX_AI_OUT" | grep -Eq "D-Bus keyring service (started|already available)"; then
+if printf '%s\n' "$DX_AI_OUT" | stdin_matches -E "D-Bus keyring service (started|already available)"; then
     test_pass "dx-ai ensures D-Bus keyring service"
 else
     test_fail "dx-ai ensures D-Bus keyring service"

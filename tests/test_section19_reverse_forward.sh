@@ -179,14 +179,14 @@ else
 fi
 
 reverse_list="$(dx_reverse --list 2>&1 || true)"
-if printf '%s\n' "$reverse_list" | grep -q "Active $DX_CONTAINER_NAME 127.0.0.1:$guest_port -> host 127.0.0.1:$host_port"; then
+if printf '%s\n' "$reverse_list" | stdin_matches "Active $DX_CONTAINER_NAME 127.0.0.1:$guest_port -> host 127.0.0.1:$host_port"; then
     test_pass "dx-reverse --list shows the live reverse forward"
 else
     test_fail "dx-reverse --list shows the live reverse forward"
 fi
 
 guest_fetch="$(guest_bash "curl -fsS --max-time 5 http://127.0.0.1:$guest_port/reverse-test.txt" 2>&1 || true)"
-if printf '%s\n' "$guest_fetch" | grep -q "$marker"; then
+if printf '%s\n' "$guest_fetch" | stdin_matches "$marker"; then
     test_pass "guest reaches the host HTTP fixture through dx-reverse"
 else
     test_fail "guest reaches the host HTTP fixture through dx-reverse"

@@ -44,7 +44,7 @@ if (
     rc=$?
     set -e
     rm -rf "$fake_dir"
-    [ "$rc" -ne 0 ] && echo "$out" | grep -q "not running"
+    [ "$rc" -ne 0 ] && echo "$out" | stdin_matches "not running"
 ); then
     test_pass "dx-herdr fails when container is not running"
 else
@@ -71,7 +71,7 @@ if diag="$(
     attached=no; [ -e "$attach_marker" ] && attached=yes
     rm -rf "$fake_dir"
     printf 'rc=%s attached=%s out=%s' "$rc" "$attached" "$out"
-    [ "$rc" -eq 1 ] && [ "$attached" = no ] && echo "$out" | grep -q "persistence is not ready" && echo "$out" | grep -q "dx-recreate"
+    [ "$rc" -eq 1 ] && [ "$attached" = no ] && echo "$out" | stdin_matches "persistence is not ready" && echo "$out" | stdin_matches "dx-recreate"
 )"; then
     test_pass "dx-herdr refuses an unready persistence layout before attaching (R3)"
 else
@@ -108,7 +108,7 @@ if diag="$(
     attached=no; [ -e "$attach_marker" ] && attached=yes
     rm -rf "$fake_dir"
     printf 'rc=%s attached=%s out=%s' "$rc" "$attached" "$out"
-    [ "$rc" -eq 1 ] && [ "$attached" = no ] && echo "$out" | grep -q "persistence is not ready"
+    [ "$rc" -eq 1 ] && [ "$attached" = no ] && echo "$out" | stdin_matches "persistence is not ready"
 )"; then
     test_pass "dx-herdr rejects unsafe persistent targets or readiness markers (R3)"
 else
@@ -132,7 +132,7 @@ if diag="$(
     set -e
     rm -rf "$fake_dir"
     printf 'rc=%s out=%s' "$rc" "$out"
-    [ "$rc" -eq 1 ] && echo "$out" | grep -q "lacks Herdr capability" && echo "$out" | grep -q "dx-recreate"
+    [ "$rc" -eq 1 ] && echo "$out" | stdin_matches "lacks Herdr capability" && echo "$out" | stdin_matches "dx-recreate"
 )"; then
     test_pass "dx-herdr gives dx-recreate diagnostic when helper lacks Herdr capability"
 else
@@ -168,7 +168,7 @@ if diag="$(
     set -e
     rm -rf "$fake_dir"
     printf 'out=%s' "$out"
-    [ "$rc" -eq 0 ] && echo "$out" | grep -q "Installing optional AI tools bundle" && echo "$out" | grep -q "BUNDLE_INSTALLED" && echo "$out" | grep -q "ATTACHED_HERDR"
+    [ "$rc" -eq 0 ] && echo "$out" | stdin_matches "Installing optional AI tools bundle" && echo "$out" | stdin_matches "BUNDLE_INSTALLED" && echo "$out" | stdin_matches "ATTACHED_HERDR"
 )"; then
     test_pass "dx-herdr auto-installs Herdr via dx-ai when supported and attaches"
 else
@@ -232,8 +232,8 @@ if diag="$(
     set -e
     rm -rf "$fake_dir"
     printf 'rc=%s out=%s' "$rc" "$out"
-    [ "$rc" -eq 0 ] && echo "$out" | grep -q "BUNDLE_INSTALLED" && echo "$out" | grep -q "ATTACHED_HERDR" \
-        && ! echo "$out" | grep -q "FAKE_SSH_REJECTED_RAW_COMMAND"
+    [ "$rc" -eq 0 ] && echo "$out" | stdin_matches "BUNDLE_INSTALLED" && echo "$out" | stdin_matches "ATTACHED_HERDR" \
+        && ! echo "$out" | stdin_matches "FAKE_SSH_REJECTED_RAW_COMMAND"
 )"; then
     test_pass "dx-herdr crosses the bash -lc boundary for every guest command (F1 regression guard)"
 else
@@ -253,7 +253,7 @@ if diag="$(
     set -e
     rm -rf "$fake_dir"
     printf 'rc=%s out=%s' "$rc" "$out"
-    [ "$rc" -eq 1 ] && ! echo "$out" | grep -q "lacks Herdr capability" && ! echo "$out" | grep -q "dx-recreate"
+    [ "$rc" -eq 1 ] && ! echo "$out" | stdin_matches "lacks Herdr capability" && ! echo "$out" | stdin_matches "dx-recreate"
 )"; then
     test_pass "dx-herdr reports an SSH transport failure distinctly from a missing-capability diagnostic (F2)"
 else
@@ -276,7 +276,7 @@ if diag="$(
     [ -f "$ssh_marker" ] && invoked=present
     rm -rf "$fake_dir"
     printf 'rc=%s invoked=%s out=%s' "$rc" "$invoked" "$out"
-    [ "$rc" -eq 1 ] && [ "$invoked" = absent ] && echo "$out" | grep -q "SSH key file not found"
+    [ "$rc" -eq 1 ] && [ "$invoked" = absent ] && echo "$out" | stdin_matches "SSH key file not found"
 )"; then
     test_pass "dx-herdr checks \$DX_SSH_KEY before probing, not after (F2)"
 else
