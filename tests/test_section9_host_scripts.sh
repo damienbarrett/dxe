@@ -232,6 +232,26 @@ else
     test_fail "shared SSH boundary transports a command body opaquely, apostrophes included (R4)"
 fi
 
+# --- SIGPIPE contract: a match must survive `set -o pipefail` ---
+#
+# `writer | grep -q PATTERN` reports a *successful* match as a failure under
+# pipefail: grep -q exits at the first match, the writer dies of SIGPIPE (141),
+# and pipefail promotes that to the pipeline's status. It is a race, so it
+# passed for months and then began failing deterministically after an unrelated
+# environment change, taking 16 assertions across four sections with it.
+#
+# Asserting that the *broken* form fails would itself be environment-dependent,
+# so this pins the property that matters: the helper returns 0 for a match whose
+# input is large enough to have triggered the bug. The input is generated rather
+# than fixed so the writer is still writing when a short-circuiting reader would
+# already have exited. Verified against both BSD grep and GNU grep 3.11 -- GNU
+# grep optimises `>/dev/null` output, so this is not a given on either.
+if seq 1 200000 | sed '1s/^/MATCH/' | stdin_matches MATCH; then
+    test_pass "a successful match survives pipefail on a long-running writer"
+else
+    test_fail "a successful match survives pipefail on a long-running writer"
+fi
+
 # --- Bootstrap generation drift (dx-start-plan.md) ---
 #
 # dx-start-container must start the container before it can sync, because the

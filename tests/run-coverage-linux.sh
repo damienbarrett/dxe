@@ -7,10 +7,25 @@ OUT="$SCRIPT_DIR/coverage/out"
 SCOPE="$ROOT/bin/lib,$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap,$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib"
 
 if [ "${DXE_COVERAGE_ISOLATED:-}" != 1 ]; then
+    # Pick the first runtime that is actually usable, not merely installed. An
+    # installed docker whose daemon is down used to be selected and then fail
+    # at the build, reporting a missing socket instead of trying the next
+    # candidate -- which is how the gate came to look unrunnable on a machine
+    # that had a working runtime all along. Apple's `container` is included
+    # because this repo targets it: it accepts the same build/run flags used
+    # below and produces an identical result.
     provider=""
-    command -v docker >/dev/null 2>&1 && provider=docker
-    command -v podman >/dev/null 2>&1 && provider=podman
-    [ -n "$provider" ] || { echo "Error: coverage needs Docker or Podman for the isolated pinned runner." >&2; exit 1; }
+    for candidate in docker podman container; do
+        command -v "$candidate" >/dev/null 2>&1 || continue
+        case "$candidate" in
+            container) container system status >/dev/null 2>&1 || continue ;;
+            *) "$candidate" info >/dev/null 2>&1 || continue ;;
+        esac
+        provider="$candidate"
+        break
+    done
+    [ -n "$provider" ] || { echo "Error: coverage needs a usable Docker, Podman, or Apple container runtime for the isolated pinned runner." >&2; exit 1; }
+    echo "Using $provider for the isolated coverage runner."
     "$provider" build -t dxe-kcov:ubuntu-24.04 -f "$SCRIPT_DIR/coverage/Dockerfile" "$ROOT"
     exec "$provider" run --rm -e DXE_COVERAGE_ISOLATED=1 -v "$ROOT:/work" -w /work dxe-kcov:ubuntu-24.04 tests/run-coverage-linux.sh
 fi

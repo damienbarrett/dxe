@@ -151,28 +151,12 @@ done
 herdr_message_tools="$(sed -n 's/.*Installing optional AI tools bundle (\([^)]*\)).*/\1/p' "$ROOT/bin/dx-herdr" | tr -d ',')"
 check test "$herdr_message_tools" = "$declared_tools"
 
-# --- SIGPIPE contract: a match must survive `set -o pipefail`.
+# The SIGPIPE behavior probe deliberately lives in Section 9 rather than here.
+# This file runs under kcov, and kcov's bash instrumentation leaves BASH_SOURCE
+# unset inside a nested `bash -c`, so sourcing test_helpers.sh from one dies on
+# `set -u` before reaching the assertion. Section 9 sources the helpers
+# normally and is not part of the coverage run.
 #
-# `writer | grep -q PATTERN` reports a *successful* match as a failure under
-# pipefail: grep -q exits at the first match, the writer dies of SIGPIPE (141),
-# and pipefail promotes that to the pipeline's status. It is a race, so it
-# passed for months and then began failing deterministically after an unrelated
-# environment change, taking 16 assertions across four sections with it.
-#
-# Asserting the *broken* form fails would itself be environment-dependent, so
-# this pins the property that matters instead: the helper returns 0 for a match
-# whose input is large enough to have triggered the bug. Input is generated
-# rather than fixed so the writer is still writing when a short-circuiting
-# reader would have exited.
-sigpipe_probe() {
-    ROOT="$ROOT" bash -c '
-        set -euo pipefail
-        source "$ROOT/tests/test_helpers.sh"
-        seq 1 200000 | sed "1s/^/MATCH/" | stdin_matches MATCH
-    ' >/dev/null 2>&1
-}
-check sigpipe_probe
-
 # The same defect in a different shape: `tar -cf - | ... tar -xf -`. tar stops
 # at the end-of-archive marker without necessarily draining the creator's
 # trailing padding, so the creator takes EPIPE and pipefail fails a complete,
