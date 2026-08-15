@@ -19,6 +19,17 @@ fi
 
 "$SCRIPT_DIR/dx-sync-bootstrap"
 
+# Report, in the terminal that just published, when the guest is still running
+# an older generation than the one now current. Failures here are swallowed on
+# purpose: this is a diagnostic about the start that just happened, and it must
+# never be the reason a start fails.
+dx_running_generation=""
+dx_published_generation="$(container exec "$DX_CONTAINER_NAME" readlink "$DX_BOOTSTRAP_PATH/current" 2>/dev/null || true)"
+dx_published_generation="${dx_published_generation#generations/}"
+dx_lease_listing="$(container exec "$DX_CONTAINER_NAME" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$DX_BOOTSTRAP_PATH" 2>/dev/null || true)"
+[ -z "$dx_lease_listing" ] || dx_running_generation="$(dx_bootstrap_lease_generation "$dx_lease_listing" || true)"
+dx_bootstrap_report_drift "$dx_running_generation" "$dx_published_generation" "$DX_CONTAINER_NAME"
+
 # Temporary old-base guard for the base-image changeover (README.md, "Base Image Changeover"): the official
 # base image never provides /bin/bash (regular file or dangling symlink), so
 # its presence matches the known flakes-base signature. This is the host-site

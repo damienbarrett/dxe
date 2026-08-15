@@ -189,6 +189,15 @@ dx_get_host_timezone >/dev/null
     container_stop_bounded stuck >/dev/null 2>&1 || true
 )
 
+# Bootstrap generation drift reporting: the launcher-lease hit and miss paths,
+# and the reporter's drifted and quiet branches. Behavior for these lives in
+# Section 9; these probes exist so every branch is executed under the gate.
+dx_bootstrap_lease_generation 'gen-a.4242 gen-b.1' >/dev/null
+dx_bootstrap_lease_generation 'gen-a.4242' >/dev/null 2>&1 || true
+dx_bootstrap_report_drift old new probe 2>/dev/null
+dx_bootstrap_report_drift same same probe 2>/dev/null
+dx_bootstrap_report_drift '' new probe 2>/dev/null
+
 # SSH assembly and generated launcher are data-producing helpers.
 DX_SSH_PORT=2222; dx_ssh_endpoint >/dev/null; dx_bootstrap_launch_command >/dev/null
 

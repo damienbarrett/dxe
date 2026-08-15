@@ -117,3 +117,41 @@ container_stop_bounded() {
     echo "Container $name is still running after runtime-process fallback." >&2
     return 1
 }
+
+# The bootstrap generation the running guest is actually executing, read from
+# the launcher's execution lease.
+#
+# Leases are named "<generation>.<pid>". PID 1 is the launcher: it is the
+# container entrypoint and execs that generation's bootstrap.sh, so its lease
+# alone names the code that is running. Other PIDs' leases are from earlier
+# boots on this volume and must never be mistaken for it. Takes the lease
+# listing as data (generation ids are restricted to [A-Za-z0-9_.-], so word
+# splitting is safe) and returns non-zero when no launcher lease is present,
+# which is the normal state of a guest that has never been synced.
+dx_bootstrap_lease_generation() {
+    local lease
+    for lease in $1; do
+        case "$lease" in
+            *.1) printf '%s\n' "${lease%.1}"; return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# Announce that the guest is running an older generation than the published
+# one. dx-start-container has to start the container before it can sync -- the
+# payload crosses `container exec`, which needs a running container -- and the
+# guest's launcher proceeds as soon as a `current` pointer exists, so a start
+# following a bootstrap edit boots the previous generation. This does not fix
+# that (see dx-start-plan.md); it makes the condition visible at the moment it
+# happens instead of leaving it to be rediscovered as "my fix did nothing".
+# Silent unless both generations are known and differ: an unsynced guest has no
+# lease, and an unchanged tree republishes the same id.
+dx_bootstrap_report_drift() {
+    local running="$1" published="$2" name="$3"
+    [ -n "$running" ] && [ -n "$published" ] && [ "$running" != "$published" ] || return 0
+    echo "Warning: $name is running bootstrap generation $running, but $published is now published." >&2
+    echo "The guest boots whichever generation was current when it started, so a bootstrap change needs one more start to take effect." >&2
+    echo "Run dx-start-container again to pick it up." >&2
+    return 0
+}

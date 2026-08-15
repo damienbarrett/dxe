@@ -204,6 +204,10 @@ if [ -L "$root/current" ]; then
     case "$generation" in generations/*) generation=${generation#generations/} ;; *) echo "Error: invalid bootstrap current pointer" >&2; exit 1 ;; esac
     case "$generation" in ""|*/*|[.-]*|*[!A-Za-z0-9_.-]*) echo "Error: invalid bootstrap generation" >&2; exit 1 ;; esac
     [ -f "$root/generations/$generation/bootstrap.sh" ] && [ ! -L "$root/generations/$generation/bootstrap.sh" ] || { echo "Error: incomplete bootstrap generation $generation" >&2; exit 1; }
+    # Name the resolved generation before executing it. This is the only record
+    # of which payload a boot actually ran that survives the guest dying:
+    # `container exec` needs a live container, but `container logs` does not.
+    echo "Using bootstrap generation $generation"
     boot_id=$(cat /proc/sys/kernel/random/boot_id)
     start=$(process_start $$)
     lease_tmp="$root/.locks/leases/.lease.$$.tmp"

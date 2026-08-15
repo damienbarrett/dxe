@@ -160,7 +160,18 @@ done
 exec /bin/mkdir "$@"
 '
 dx_bootstrap_launch_command > "$launch_root/launcher.sh"
-env PATH="$fake_dir:$PATH" sh "$launch_root/launcher.sh" "$launch_root" >/dev/null 2>&1 || true
+env PATH="$fake_dir:$PATH" sh "$launch_root/launcher.sh" "$launch_root" >"$launch_root/launcher.out" 2>&1 || true
+
+# The generation a guest boots is otherwise unobservable. `container exec` is
+# unavailable on a guest whose bootstrap died -- which is exactly when the
+# question "is this even the code I published?" matters -- but `container logs`
+# still works, so the launcher must name its resolved generation on the way
+# past. See dx-start-plan.md.
+if grep -q 'gen-umask' "$launch_root/launcher.out" 2>/dev/null; then
+    test_pass "launcher logs the bootstrap generation it resolved"
+else
+    test_fail "launcher logs the bootstrap generation it resolved (got '$(cat "$launch_root/launcher.out" 2>/dev/null || true)')"
+fi
 
 recorded="$(cat "$launch_root/recorded-umask" 2>/dev/null || true)"
 if [ -n "$recorded" ] && [ "$recorded" != 0077 ]; then

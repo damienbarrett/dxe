@@ -232,6 +232,56 @@ else
     test_fail "shared SSH boundary transports a command body opaquely, apostrophes included (R4)"
 fi
 
+# --- Bootstrap generation drift (dx-start-plan.md) ---
+#
+# dx-start-container must start the container before it can sync, because the
+# payload crosses `container exec`, which needs a running container. The guest's
+# launcher proceeds the moment a `current` pointer exists, so a start that
+# follows a bootstrap edit boots the *previous* generation and nothing says so.
+# These cover the reporting half: the guest's running generation is read from
+# the launcher's execution lease, and a mismatch against the published pointer
+# is announced rather than left silent.
+if [ "$(dx_bootstrap_lease_generation '20260815T044707Z-70118.1')" = 20260815T044707Z-70118 ]; then
+    test_pass "running generation is read from the launcher's PID 1 lease"
+else
+    test_fail "running generation is read from the launcher's PID 1 lease"
+fi
+# Only PID 1's lease names the running code: it is the container entrypoint and
+# execs that generation's bootstrap.sh. Other PIDs' leases must not be mistaken
+# for it, whichever order the listing arrives in.
+if [ "$(dx_bootstrap_lease_generation 'gen-a.4242
+gen-b.1
+gen-c.99')" = gen-b ]; then
+    test_pass "a non-launcher lease is never mistaken for the running generation"
+else
+    test_fail "a non-launcher lease is never mistaken for the running generation"
+fi
+if dx_bootstrap_lease_generation 'gen-a.4242' >/dev/null 2>&1; then
+    test_fail "an absent launcher lease reports no running generation"
+else
+    test_pass "an absent launcher lease reports no running generation"
+fi
+drift_out="$(dx_bootstrap_report_drift old-gen new-gen dx-probe 2>&1 >/dev/null || true)"
+if printf '%s\n' "$drift_out" | stdin_matches -F old-gen \
+    && printf '%s\n' "$drift_out" | stdin_matches -F new-gen \
+    && printf '%s\n' "$drift_out" | stdin_matches -F dx-probe; then
+    test_pass "a drifted guest is reported with both generations and the container"
+else
+    test_fail "a drifted guest is reported with both generations and the container (got '$drift_out')"
+fi
+# Silence is the contract for the ordinary case: an unchanged tree republishes
+# an identical generation id only when nothing was edited, and a guest that has
+# never been synced has no lease at all. Neither is a drift.
+for pair in 'same-gen same-gen' ' new-gen' 'old-gen '; do
+    set -- $pair
+    quiet_out="$(dx_bootstrap_report_drift "${1:-}" "${2:-}" dx-probe 2>&1 >/dev/null || true)"
+    if [ -z "$quiet_out" ]; then
+        test_pass "no drift warning for '$pair'"
+    else
+        test_fail "no drift warning for '$pair' (got '$quiet_out')"
+    fi
+done
+
 # F12: cleanup_osc used to be defined without a dx_ namespace, leaking into
 # the caller's global namespace; and export TERM had no effect since the
 # remote env prefix hardcodes TERM=xterm-256color.
