@@ -1,0 +1,96 @@
+# DXE Herdr defaults. Bootstrap merges missing values into the mutable,
+# persisted config; explicit user values and occupied key bindings win.
+[keys]
+prefix = "ctrl+space"
+detach = "prefix+d"
+reload_config = "prefix+r"
+goto = "prefix+f"
+close_tab = "prefix+ampersand"
+rename_pane = "prefix+comma"
+split_horizontal = "prefix+percent"
+split_vertical = "prefix+double_quote"
+resize_mode = "prefix+shift+r"
+swap_pane_left = "prefix+alt+h"
+swap_pane_down = "prefix+alt+j"
+swap_pane_up = "prefix+alt+k"
+swap_pane_right = "prefix+alt+l"
+previous_agent = "prefix+shift+up"
+next_agent = "prefix+shift+down"
+focus_agent = "prefix+alt+1..9"
+
+[[keys.command]]
+key = "ctrl+h"
+type = "shell"
+command = "$HOME/.local/bin/dx-herdr-navigate left ctrl+h"
+description = "navigate left across Herdr and Neovim panes"
+
+[[keys.command]]
+key = "ctrl+j"
+type = "shell"
+command = "$HOME/.local/bin/dx-herdr-navigate down ctrl+j"
+description = "navigate down across Herdr and Neovim panes"
+
+[[keys.command]]
+key = "ctrl+k"
+type = "shell"
+command = "$HOME/.local/bin/dx-herdr-navigate up ctrl+k"
+description = "navigate up across Herdr and Neovim panes"
+
+[[keys.command]]
+key = "ctrl+l"
+type = "shell"
+command = "$HOME/.local/bin/dx-herdr-navigate right ctrl+l"
+description = "navigate right across Herdr and Neovim panes"
+
+[[keys.command]]
+key = "prefix+shift+h"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" pane resize --pane \"$HERDR_ACTIVE_PANE_ID\" --direction left"
+description = "resize pane left"
+
+[[keys.command]]
+key = "prefix+shift+j"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" pane resize --pane \"$HERDR_ACTIVE_PANE_ID\" --direction down"
+description = "resize pane down"
+
+[[keys.command]]
+key = "prefix+shift+k"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" pane resize --pane \"$HERDR_ACTIVE_PANE_ID\" --direction up"
+description = "resize pane up"
+
+[[keys.command]]
+key = "prefix+shift+l"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" pane resize --pane \"$HERDR_ACTIVE_PANE_ID\" --direction right"
+description = "resize pane right"
+
+[[keys.command]]
+key = "prefix+g"
+type = "popup"
+command = "lazygit"
+description = "open lazygit"
+width = "90%"
+height = "90%"
+
+[[keys.command]]
+key = "prefix+shift+p"
+type = "popup"
+command = "exec \"${SHELL:-/bin/sh}\" -l"
+description = "open scratch shell"
+width = "80%"
+height = "80%"
+
+[ui]
+agent_panel_sort = "priority"
+show_agent_labels_on_pane_borders = true
+
+[ui.sidebar.agents]
+rows = [["state_icon", "agent", "state_text"], ["workspace", "tab"]]
+
+[experimental]
+pane_history = true
+
+[advanced]
+scrollback_limit_bytes = 10000000

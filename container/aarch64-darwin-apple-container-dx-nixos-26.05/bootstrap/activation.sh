@@ -89,6 +89,12 @@ configure_guest() {
     # Persist tmux-resurrect save data across container rebuilds.
     setup_tmux_persistence
 
+    # Herdr is optional, but its layout is a guest invariant: create the
+    # persistent config/session paths before Home Manager or Herdr can create
+    # ephemeral replacements. A bad optional config must not prevent SSH from
+    # starting, so activation is deliberately non-fatal and loud.
+    dx_activate_herdr || echo "Warning: Herdr activation failed; continuing bootstrap without it." >&2
+
     # Persist AI CLI tool credentials/configuration across container rebuilds
     # Only restore these links if the user has opted into the AI tools
     if [ -x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex ] \
@@ -129,4 +135,37 @@ verify_guest_tools() {
         echo "Error: DX guest tools are not available in the dx login shell." >&2
         exit 1
     fi
+}
+
+dx_seed_herdr_config() {
+    local config_file="$1"
+    local template="${2:-}"
+    local bootstrap_root merger
+
+    bootstrap_root="${DX_BOOTSTRAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+    [ -n "$template" ] || template="$bootstrap_root/bootstrap/herdr-config.toml"
+    merger="$bootstrap_root/scripts/dx-herdr-config.sh"
+    [ -x "$merger" ] || {
+        echo "Error: Herdr config merger is unavailable: $merger" >&2
+        return 1
+    }
+    "$merger" seed "$template" "$config_file"
+}
+
+dx_activate_herdr() {
+    local persist_home="${1:-/persist/home/dx}"
+    local home="${2:-/home/dx}"
+    local template="${3:-}"
+    local config_file="$persist_home/.config/herdr/config.toml"
+
+    setup_herdr_persistence "$persist_home" "$home" || return 1
+    dx_seed_herdr_config "$config_file" "$template" || return 1
+    chown dx:dx "$config_file"
+    chmod 0600 "$config_file"
+
+    [ -L "$home/.config/herdr" ] \
+        && [ "$(readlink "$home/.config/herdr")" = "$persist_home/.config/herdr" ] \
+        && [ -L "$home/.local/state/herdr" ] \
+        && [ "$(readlink "$home/.local/state/herdr")" = "$persist_home/.local/state/herdr" ] \
+        && [ -f "$config_file" ]
 }

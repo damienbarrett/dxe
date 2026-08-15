@@ -58,6 +58,79 @@ setup_tmux_persistence() {
     install -d -o dx -g dx -m 0755 /persist/home/dx/.local/share/tmux/resurrect
 }
 
+# Keep Herdr's mutable configuration and session state on /persist. Home
+# Manager deliberately does not own these paths: Herdr and dx-theme both write
+# config.toml at runtime, while the server writes session data continuously.
+dx_link_persistent_herdr_directory() {
+    local persistent="$1" home_path="$2" label="$3"
+    local parent timestamp backup
+
+    parent="${persistent%/*}"
+    if [ -L "$persistent" ]; then
+        echo "Error: refusing symlinked persistent Herdr $label target: $persistent" >&2
+        return 1
+    fi
+    if [ -e "$persistent" ] && [ ! -d "$persistent" ]; then
+        timestamp="$(date +%Y%m%d%H%M%S)"
+        backup="$parent/herdr-$label.non-directory-backup.$timestamp"
+        mv "$persistent" "$backup"
+        chmod 0600 "$backup"
+        echo "Moved non-directory persistent Herdr $label to $backup"
+    fi
+    if [ -L "$home_path" ]; then
+        rm -f "$home_path"
+    elif [ -e "$home_path" ]; then
+        if [ ! -e "$persistent" ]; then
+            mv "$home_path" "$persistent"
+        else
+            timestamp="$(date +%Y%m%d%H%M%S)"
+            backup="$parent/herdr-$label.ephemeral-backup.$timestamp"
+            mv "$home_path" "$backup"
+            echo "Moved ephemeral Herdr $label to $backup"
+        fi
+    fi
+
+    mkdir -p "$persistent"
+    chown -R dx:dx "$persistent"
+    chmod 0700 "$persistent"
+    run_as_dx "ln -sfnT '$persistent' '$home_path'"
+}
+
+setup_herdr_persistence() {
+    local persist_home="${1:-/persist/home/dx}"
+    local home="${2:-/home/dx}"
+    local persist_home_parent="${persist_home%/*}"
+    local persist_mount="${persist_home_parent%/*}"
+    local home_parent="${home%/*}"
+    local path
+    local persistent_config="$persist_home/.config/herdr"
+    local persistent_state="$persist_home/.local/state/herdr"
+    local home_config="$home/.config/herdr"
+    local home_state="$home/.local/state/herdr"
+
+    for path in \
+        "$persist_mount" "$persist_home_parent" "$persist_home" \
+        "$persist_home/.config" "$persist_home/.local" \
+        "$persist_home/.local/state" "$home_parent" "$home" "$home/.config" \
+        "$home/.local" "$home/.local/state"
+    do
+        if [ -L "$path" ]; then
+            echo "Error: refusing Herdr persistence through symlinked parent: $path" >&2
+            return 1
+        fi
+    done
+
+    mkdir -p \
+        "$persist_home/.config" "$persist_home/.local/state" \
+        "$home/.config" "$home/.local/state"
+    chown dx:dx \
+        "$persist_home/.config" "$persist_home/.local" "$persist_home/.local/state" \
+        "$home/.config" "$home/.local" "$home/.local/state"
+
+    dx_link_persistent_herdr_directory "$persistent_config" "$home_config" config
+    dx_link_persistent_herdr_directory "$persistent_state" "$home_state" state
+}
+
 # agy stores its known CLI state under ~/.gemini/antigravity-cli, which is
 # persisted with ~/.gemini. Also provide D-Bus + gnome-keyring Secret Service
 # compatibility for auth flows that request it; keyring data is linked to
