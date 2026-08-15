@@ -16,6 +16,7 @@ for module in common base-and-storage system persistence activation; do
     fi
 done
 
+source "$CONTAINER_DIR/scripts/lib/dx-keyring.sh"
 source "$BOOTSTRAP_DIR/common.sh"
 source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
@@ -81,6 +82,47 @@ if [ "$(dx_path_mode "$fixture/os-release-umask")" = 644 ]; then
     test_pass "release identity is readable even under a restrictive umask"
 else
     test_fail "release identity is readable even under a restrictive umask (mode $(dx_path_mode "$fixture/os-release-umask"))"
+fi
+
+# Bootstrap ordering defect: setup_keyring_service must report an explicit
+# diagnostic if dbus-daemon is still not found on dx's PATH, rather than
+# dying silently. Historically `dbus_bin="$(run_as_dx 'command -v
+# dbus-daemon')"` was a bare assignment: under `set -euo pipefail` a failed
+# command substitution there killed the whole (sourced-into-bootstrap.sh)
+# script with zero output -- the defect's signature was total silence, so
+# this assertion is about outcome (a message mentioning dbus-daemon reaches
+# the caller), not about matching text that used to not exist at all.
+#
+# This must run as a genuinely separate bash process, not a nested command
+# substitution within this already-running script: bash's `errexit` does not
+# reliably propagate out of a failing bare-assignment command substitution
+# that occurs inside a function which is itself being captured by another
+# `$(...)` in the same interpreter (verified empirically -- execution quietly
+# continues past the failure instead of aborting). The real bootstrap runs
+# `configure_guest`/`setup_keyring_service` as the top-level script of its own
+# bash process, so a fresh `bash` subprocess is what actually reproduces the
+# silent-death signature this test is asserting has been fixed.
+dbus_probe_script="$(mktemp "${TMPDIR:-/tmp}/dxe-keyring-diagnostic.XXXXXX")"
+cat > "$dbus_probe_script" <<'INNER'
+set -euo pipefail
+source "$DXE_TEST_CONTAINER_DIR/scripts/lib/dx-keyring.sh"
+source "$DXE_TEST_BOOTSTRAP_DIR/common.sh"
+source "$DXE_TEST_BOOTSTRAP_DIR/base-and-storage.sh"
+source "$DXE_TEST_BOOTSTRAP_DIR/system.sh"
+source "$DXE_TEST_BOOTSTRAP_DIR/persistence.sh"
+source "$DXE_TEST_BOOTSTRAP_DIR/activation.sh"
+mkdir() { :; }
+chown() { :; }
+run_as_dx() { case "$1" in (*'command -v dbus-daemon'*) return 1 ;; (*) return 0 ;; esac; }
+setup_keyring_service
+INNER
+rc=0
+output="$(DXE_TEST_CONTAINER_DIR="$CONTAINER_DIR" DXE_TEST_BOOTSTRAP_DIR="$BOOTSTRAP_DIR" bash "$dbus_probe_script" 2>&1)" || rc=$?
+rm -f "$dbus_probe_script"
+if [ "$rc" -ne 0 ] && printf '%s\n' "$output" | grep -qi 'dbus-daemon'; then
+    test_pass "setup_keyring_service reports an explicit diagnostic when dbus-daemon is missing, instead of dying silently"
+else
+    test_fail "setup_keyring_service reports an explicit diagnostic when dbus-daemon is missing, instead of dying silently (rc=$rc, output=[$output])"
 fi
 
 print_summary

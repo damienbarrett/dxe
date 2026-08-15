@@ -1,0 +1,130 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/dx-lib.sh
+source "$SCRIPT_DIR/dx-lib.sh"
+
+dx_herdr_usage() {
+    cat <<'EOF'
+Usage: dx-herdr [--help]
+
+Connect to the default Herdr session in the DX guest.
+Starts the background Herdr server lazily if not already running.
+EOF
+}
+
+if [ "$#" -eq 0 ]; then
+    :
+elif [ "$#" -eq 1 ] && { [ "$1" = -h ] || [ "$1" = --help ]; }; then
+    dx_herdr_usage
+    exit 0
+else
+    echo "Error: dx-herdr does not accept arguments in v1 (got '$1')." >&2
+    dx_herdr_usage >&2
+    exit 64
+fi
+
+if ! container_is_running "$DX_CONTAINER_NAME"; then
+    echo "Error: Container $DX_CONTAINER_NAME is not running." >&2
+    echo "Start it with: dx-start-container" >&2
+    exit 1
+fi
+
+# Check the key before any guest command is attempted (F2): a missing key is
+# a local, immediately-diagnosable problem, not evidence about Herdr.
+if [ ! -f "$DX_SSH_KEY" ]; then
+    echo "Error: SSH key file not found at $DX_SSH_KEY." >&2
+    exit 1
+fi
+
+# Probe a guest capability over the shared bash -lc boundary (F1): the dx
+# user's login shell may be Nushell, which parses a raw command string itself
+# and rejects POSIX-only syntax (e.g. `2>&1`) or the `command` builtin at
+# parse time -- so a raw, unwrapped probe fails unconditionally regardless of
+# the real answer. Every probe below crosses that boundary via
+# dx_ssh_run_guest_command, which owns the transport end to end; dx-herdr
+# never dials out on its own.
+#
+# The guest side always either prints a known success token or exits 1, so a
+# clean negative answer (1) can be told apart from a transport failure or a
+# garbled/unexpected response (folded into 255, alongside the real OpenSSH
+# convention of exiting 255 on a transport failure) -- see F2. A transport
+# problem is never reported as "Herdr is missing".
+dx_herdr_probe() {
+    local guest_test="$1" out rc=0
+    out="$(dx_ssh_run_guest_command "if $guest_test; then printf %s DX_HERDR_PRESENT; else exit 1; fi" 2>&1)" || rc=$?
+    case "$rc" in
+        0)
+            case "$out" in
+                *DX_HERDR_PRESENT*) return 0 ;;
+            esac
+            echo "Error: unexpected response from the DX guest while checking for Herdr: $out" >&2
+            return 255
+            ;;
+        1) return 1 ;;
+        *) return 255 ;;
+    esac
+}
+
+dx_herdr_report_unreachable() {
+    echo "Error: could not reach the DX guest over SSH to check for Herdr." >&2
+    echo "Check that the guest's sshd is up and that the configured port and key are correct, then try again." >&2
+    exit 1
+}
+
+# Bootstrap leaves Herdr activation non-fatal so SSH can still start when an
+# optional-tool setup fails. The feature entry point must nevertheless fail
+# closed: attaching without the persisted links can silently create an
+# ephemeral session and lose data at the next recreation.
+dx_herdr_require_persistence_ready() {
+    local ready=0
+    dx_herdr_probe '[ -d /persist/home/dx/.config/herdr ] && [ ! -L /persist/home/dx/.config/herdr ] && [ -d /persist/home/dx/.local/state/herdr ] && [ ! -L /persist/home/dx/.local/state/herdr ] && [ -L /home/dx/.config/herdr ] && [ "$(readlink /home/dx/.config/herdr)" = /persist/home/dx/.config/herdr ] && [ -L /home/dx/.local/state/herdr ] && [ "$(readlink /home/dx/.local/state/herdr)" = /persist/home/dx/.local/state/herdr ] && [ -f /persist/home/dx/.config/herdr/config.toml ] && [ -f /persist/home/dx/.config/herdr/.dxe-persistence-ready ] && [ ! -L /persist/home/dx/.config/herdr/.dxe-persistence-ready ]' || ready=$?
+    [ "$ready" -ne 255 ] || dx_herdr_report_unreachable
+    if [ "$ready" -ne 0 ]; then
+        echo "Error: Herdr persistence is not ready in the DX guest." >&2
+        echo "Run: dx-recreate" >&2
+        exit 1
+    fi
+}
+
+dx_herdr_require_persistence_ready
+
+herdr_present=0
+dx_herdr_probe "command -v herdr >/dev/null 2>&1" || herdr_present=$?
+[ "$herdr_present" -ne 255 ] || dx_herdr_report_unreachable
+
+if [ "$herdr_present" -ne 0 ]; then
+    supports_herdr=0
+    dx_herdr_probe "dx-ai --supports herdr >/dev/null 2>&1" || supports_herdr=$?
+    [ "$supports_herdr" -ne 255 ] || dx_herdr_report_unreachable
+
+    if [ "$supports_herdr" -ne 0 ]; then
+        echo "Error: Herdr is not installed in the guest, and the installed dx-ai helper lacks Herdr capability." >&2
+        echo "Please update your guest environment by running: dx-recreate" >&2
+        exit 1
+    fi
+
+    echo "Herdr is not installed in the guest."
+    echo "Installing optional AI tools bundle (codex, gemini, claude, agy, herdr)..."
+    echo "This may take a while on first install."
+
+    # Stream the dx-ai install attempt (not captured, so progress output
+    # reaches the user live, same as before this refactor).
+    if ! dx_ssh_run_guest_command "dx-ai"; then
+        echo "Error: failed to install AI tools bundle containing Herdr." >&2
+        exit 1
+    fi
+
+    # Re-probe herdr after installation
+    reprobe=0
+    dx_herdr_probe "command -v herdr >/dev/null 2>&1" || reprobe=$?
+    [ "$reprobe" -ne 255 ] || dx_herdr_report_unreachable
+    if [ "$reprobe" -ne 0 ]; then
+        echo "Error: Herdr was still not found after dx-ai installation." >&2
+        exit 1
+    fi
+fi
+
+# Attach default herdr session via shared interactive SSH contract
+dx_run_interactive_ssh "herdr"

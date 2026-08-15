@@ -48,5 +48,16 @@ assert_file_contains "$CONFIG_DOC" 'partial, stale, wrong-root' "snapshot failur
 assert_file_contains "$BASE_DIR/docs/lifecycle.md" 'refus' "destructive refusal behavior remains documented"
 assert_file_contains "$BASE_DIR/docs/release-maintenance.md" 'Base Image Changeover' "temporary guard procedure remains discoverable"
 
+GUEST_DOC="$BASE_DIR/docs/guest.md"
+assert_file_contains_literal "$GUEST_DOC" 'without prompting for confirmation' "dx-herdr install-without-confirming behavior is documented accurately"
+assert_file_contains_literal "$GUEST_DOC" 'session-history.json' "the sensitive pane-history file is named for the documented cleanup path"
+assert_file_contains "$GUEST_DOC" 'ends its pane processes' "history cleanup warns it ends live pane processes"
+assert_file_contains_literal "$GUEST_DOC" 'no live upgrade' "cold-upgrade workflow states no live upgrade exists"
+assert_file_contains_literal "$GUEST_DOC" 'never refreshes an already-present bundle' "ordinary dx-herdr launches are documented as never refreshing an installed bundle"
+assert_file_contains_literal "$GUEST_DOC" 'It never modifies the published' "dx-ai's immutable bootstrap/source boundary is documented accurately (R6)"
+assert_file_contains_literal "$GUEST_DOC" 'verifies the persistent Herdr configuration and state links' "dx-herdr's persistence-ready preflight is documented (R3)"
+assert_file_contains_literal "$GUEST_DOC" 'AGPL-3.0-or-later' "the packaged herdr license is documented"
+assert_file_contains_literal "$GUEST_DOC" 'meta.license.spdxId' "the license claim cites its nixpkgs source"
+
 print_summary
 exit_with_code

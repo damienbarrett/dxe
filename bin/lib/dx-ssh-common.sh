@@ -1,12 +1,153 @@
 #!/bin/bash
-# Shared SSH endpoint and option assembly. Safe to source.
+# Shared SSH endpoint, option assembly, and guest execution boundary. Safe to source.
 
 dx_ssh_endpoint() { printf '%s\n' dx@127.0.0.1; }
 
-dx_ssh_append_common_options() {
-    # The caller names an indexed array. Bash 3.2-compatible printf -v appends
-    # are deliberately avoided; callers use this newline form with read loops.
-    printf '%s\n' -p "$DX_SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+# Single source of truth for the SSH connection options shared by every DX SSH
+# entry point: dx-ssh's interactive branch, its argument branch, and dx-herdr
+# (F10). Bash 3.2 cannot return an array from a function, so callers build
+# their own indexed array from this newline-per-token stream -- one token per
+# line so a value containing whitespace (in principle, $DX_SSH_KEY) still
+# round-trips intact:
+#   local ssh_opts=() opt
+#   while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$(dx_ssh_common_options)"
+dx_ssh_common_options() {
+    printf '%s\n' \
+        -i "$DX_SSH_KEY" \
+        -p "$DX_SSH_PORT" \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -o IdentitiesOnly=yes \
+        -o LogLevel=ERROR \
+        -o ConnectTimeout="$DX_SSH_CONNECT_TIMEOUT"
+}
+
+# Guest PATH baseline so Nix-installed tools resolve regardless of the dx
+# user's login shell. Single source of truth for F10.
+dx_guest_path() { printf '%s' "/home/dx/.nix-profile/bin:/home/dx/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin"; }
+
+# CA trust roots so Nix-built network tools (curl, nix, dx-ai, ...) find a
+# certificate bundle. Single source of truth for F10.
+dx_guest_ssl_env() { printf '%s' "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"; }
+
+# `cd` prefix into $DX_GUEST_WORKDIR, or empty when unset. This is used only
+# by dx-ssh's already-base64-encoded argument transport; callers that use the
+# shared bash -lc command builder below must use the base64 helper instead.
+dx_guest_workdir_snippet() {
+    if [ -n "${DX_GUEST_WORKDIR:-}" ]; then
+        printf 'cd %s && ' "$(printf '%q' "$DX_GUEST_WORKDIR")"
+    fi
+}
+
+# Opaque, login-shell-safe transport for arbitrary bytes crossing into the
+# guest. The outer command is parsed by dx's configured login shell before
+# bash ever receives it, so a `%q`-escaped shell token is not sufficient when
+# it is then embedded in the single-quoted bash -c program: `%q` protects a
+# token for direct Bash parsing, not for insertion into an already-open
+# quoted string. Base64's alphabet survives any login shell's quoting rules
+# intact, so the inner bash decodes it into a quoted variable instead.
+dx_guest_base64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+
+# Keep arbitrary workdir bytes out of the outer remote command string (R4).
+dx_guest_workdir_base64() {
+    if [ -n "${DX_GUEST_WORKDIR:-}" ]; then
+        dx_guest_base64 "$DX_GUEST_WORKDIR"
+    fi
+}
+
+# The env prefix that must precede every guest-side command body. Every guest
+# command has to cross into a POSIX bash login shell explicitly, regardless of
+# the dx user's actual login shell (nushell/fish): Nushell accepts
+# `env NAME=value... prog -c '<opaque>'` as a plain external-command
+# invocation (each NAME=value token and the single-quoted string are just
+# arguments to `env`/`bash`), but it chokes the moment it has to parse
+# POSIX-only syntax such as `2>&1` or the `command` builtin itself (F1).
+# Callers must nest the actual command inside the single-quoted
+# `bash -l -c '...'` boundary this feeds -- see dx_guest_bash_command below --
+# never hand a raw command string to ssh.
+dx_guest_env_prefix() {
+    local host_tz="$1"
+    printf 'env HOST_TZ="%s" PATH="%s" %s TERM=xterm-256color' "$host_tz" "$(dx_guest_path)" "$(dx_guest_ssl_env)"
+}
+
+# Build the full remote command: the env prefix above, feeding a POSIX bash
+# login shell that decodes and enters the workdir, then decodes and runs the
+# command body. Single source of truth for F10; used by dx-ssh's interactive
+# branch and by dx-herdr's probes/install/attach.
+#
+# The body is transported base64-encoded for the same reason the workdir is
+# (R4): interpolating it into the single-quoted `bash -l -c '...'` program
+# breaks the moment it contains an apostrophe. `eval` rather than a pipe into
+# another `bash -l` is deliberate -- the interactive callers (tmux, herdr)
+# need the body to inherit the pty on stdin, which a pipe would consume.
+dx_guest_bash_command() {
+    local host_tz="$1" body="$2" workdir_b64="" body_b64=""
+    workdir_b64="$(dx_guest_workdir_base64)" || return 1
+    body_b64="$(dx_guest_base64 "$body")" || return 1
+    printf "%s DX_GUEST_WORKDIR_B64=%s DX_GUEST_CMD_B64=%s bash -l -c 'if [ -n \"\${DX_GUEST_WORKDIR_B64:-}\" ]; then DX_GUEST_WORKDIR=\"\$(printf %%s \"\$DX_GUEST_WORKDIR_B64\" | base64 -d)\" || exit 1; cd \"\$DX_GUEST_WORKDIR\" || exit 1; fi; DX_GUEST_CMD=\"\$(printf %%s \"\$DX_GUEST_CMD_B64\" | base64 -d)\" || exit 1; eval \"\$DX_GUEST_CMD\"'" \
+        "$(dx_guest_env_prefix "$host_tz")" "$workdir_b64" "$body_b64"
+}
+
+# Run a non-interactive guest command over the boundary above, with no pty.
+# Prints whatever the remote command prints and returns ssh's own exit status
+# unmodified: OpenSSH exits 255 when the *transport* fails (auth, connect, bad
+# host key, ...) and otherwise forwards the remote command's own exit status,
+# so a caller can distinguish "SSH could not run this" from "the guest said
+# no" (F2). Checks $DX_SSH_KEY before dialing out, not after.
+dx_ssh_run_guest_command() {
+    local remote_cmd_body="$1"
+
+    if [ ! -f "$DX_SSH_KEY" ]; then
+        echo "Error: SSH key file not found at $DX_SSH_KEY." >&2
+        return 255
+    fi
+
+    local host_tz
+    host_tz="$(dx_get_host_timezone)"
+
+    local ssh_opts=() opt
+    while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$(dx_ssh_common_options)"
+
+    ssh "${ssh_opts[@]}" "$(dx_ssh_endpoint)" "$(dx_guest_bash_command "$host_tz" "$remote_cmd_body")"
+}
+
+# Attach an interactive (pty) guest session running $1 inside the boundary
+# above. Prints the "Connecting..." banner once, installs the Apple Terminal
+# colour-restore cleanup, and always returns the real ssh exit status -- it
+# must never `exec` (F3): a successful exec replaces this process image
+# before the EXIT trap could ever run, silently discarding the cleanup.
+dx_run_interactive_ssh() {
+    local remote_cmd_body="$1"
+
+    if [ ! -f "$DX_SSH_KEY" ]; then
+        echo "Error: SSH key file not found at $DX_SSH_KEY." >&2
+        return 1
+    fi
+
+    echo "Connecting to DX guest via SSH..." >&2
+
+    local host_tz
+    host_tz="$(dx_get_host_timezone)"
+
+    local osc_reset=""
+    if [ "${TERM_PROGRAM:-}" = "Apple_Terminal" ]; then
+        osc_reset=$'\033]110\033\\\033]111\033\\\033]104\033\\'
+    fi
+    dx_ssh_cleanup_osc() {
+        if [ -n "$osc_reset" ]; then
+            printf '%s' "$osc_reset" >&2
+        fi
+    }
+    trap dx_ssh_cleanup_osc EXIT
+
+    local ssh_opts=() opt
+    while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$(dx_ssh_common_options)"
+
+    local status=0
+    ssh -t "${ssh_opts[@]}" "$(dx_ssh_endpoint)" "$(dx_guest_bash_command "$host_tz" "$remote_cmd_body")" || status=$?
+    dx_ssh_cleanup_osc
+    trap - EXIT
+    return "$status"
 }
 
 dx_bootstrap_launch_command() {

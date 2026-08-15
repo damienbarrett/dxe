@@ -70,7 +70,8 @@ ensure_nix_ownership() {
 
 configure_guest() {
     echo "Configuring guest environment with Home Manager..."
-    
+    local ai_tools_enabled=false
+
     # Hand over Nix ownership to dx for true single-user operation (§7)
     ensure_nix_ownership
     chown -R dx:dx /home/dx
@@ -103,13 +104,40 @@ configure_guest() {
         run_as_dx "ln -sfn /persist/home/dx/.claude.json ~/.claude.json"
         run_as_dx "ln -sfn /persist/home/dx/.codex ~/.codex"
 
-        # Start D-Bus + gnome-keyring so agy can persist OAuth tokens
-        setup_keyring_service
+        # D-Bus + gnome-keyring (so agy can persist OAuth tokens) start below,
+        # once Home Manager activation has installed dbus-daemon into dx's
+        # profile: setup_keyring_service looks it up on dx's PATH, and on a
+        # fresh recreate /home/dx is ephemeral, so calling it here -- before
+        # Home Manager has run -- would find no dbus-daemon at all.
+        ai_tools_enabled=true
     fi
+
+    # Activate Herdr persistence and seed config unconditionally (F4). This is
+    # a guest-invariant layout (herdr-plan.md H4/H9), not an AI-tools opt-in
+    # side effect: gating it on the AI-tools guard above meant a fresh guest's
+    # first Herdr session wrote into ordinary /home/dx directories, and the
+    # *next* bootstrap would then migrate or relocate them into a timestamped
+    # backup, silently changing where the user's first session lived.
+    # Non-fatal by design. Seeding an optional tool's configuration must never
+    # stop the guest from booting: sshd runs as the foreground process, so an
+    # aborted bootstrap means no guest at all. A failure here is loud in the
+    # log and leaves Herdr unconfigured, which is strictly better than a guest
+    # that will not start. (Live defect: awk was absent from the early
+    # essentials profile, so seeding failed, the failure propagated, and
+    # bootstrap died.)
+    dx_activate_herdr || echo "Warning: Herdr activation failed; continuing bootstrap without it." >&2
 
     # Use Home Manager to manage dotfiles and user profile. This is bounded so
     # a wedged Nix substitute cannot leave the container alive but pre-SSH.
     run_home_manager_activation
+
+    # Start D-Bus + gnome-keyring so agy can persist OAuth tokens. Must run
+    # after run_home_manager_activation (above): dbus-daemon is only installed
+    # into dx's profile by Home Manager, so calling this any earlier finds
+    # nothing on dx's PATH to start.
+    if [ "$ai_tools_enabled" = true ]; then
+        setup_keyring_service
+    fi
 
     # Set nushell as default shell
     NU_PATH="/home/dx/.nix-profile/bin/nu"
@@ -128,5 +156,164 @@ verify_guest_tools() {
     if ! run_as_dx 'command -v nvim >/dev/null && command -v tmux >/dev/null && command -v nix >/dev/null && command -v yazi >/dev/null'; then
         echo "Error: DX guest tools are not available in the dx login shell." >&2
         exit 1
+    fi
+}
+
+# Seed default Herdr settings into config.toml when missing (H10). Table-scope
+# aware: adds `experimental.pane_history = true` and
+# `advanced.scrollback_limit_bytes = 10000000` only when the exact top-level
+# table is missing that key, preserving unrelated tables, keys, comments, and
+# any explicit user value already present. Idempotent: a second run produces a
+# byte-identical file (F7). Publication is atomic -- the complete file is
+# assembled in a temp file in the same directory, permissioned, then `mv`'d
+# into place; there is no in-place `>>` append, and no partially-seeded file
+# is ever visible at the real path, nor left behind on failure. TOML this
+# function cannot parse conservatively (quoted or dotted keys, array tables,
+# multi-line values, ...) is left completely untouched: the function fails
+# closed with a diagnostic rather than risk a partial rewrite.
+dx_seed_herdr_config() {
+    local config_file="$1"
+
+    local dir tmp_file
+
+    dir="$(dirname "$config_file")"
+
+    if [ ! -s "$config_file" ]; then
+        mkdir -p "$dir"
+        tmp_file="$(mktemp "$dir/.dxe-herdr-config.XXXXXX")" || {
+            echo "Error: could not create a temp file to seed $config_file." >&2
+            return 1
+        }
+        cat > "$tmp_file" <<'EOF'
+[experimental]
+pane_history = true
+
+[advanced]
+scrollback_limit_bytes = 10000000
+EOF
+        if ! chmod 0600 "$tmp_file"; then
+            rm -f "$tmp_file"
+            echo "Error: could not set permissions on $config_file." >&2
+            return 1
+        fi
+        mv -f "$tmp_file" "$config_file"
+        return 0
+    fi
+
+    tmp_file="$(mktemp "$dir/.dxe-herdr-config.XXXXXX")" || {
+        echo "Error: could not create a temp file to seed $config_file." >&2
+        return 1
+    }
+
+    # Pure-bash, no external interpreter. This function runs during bootstrap,
+    # where the essentials profile provides coreutils/sed/grep but NOT awk --
+    # and the essentials install is skipped entirely on a guest that already
+    # has one, so adding a package there cannot fix it retroactively. The
+    # bootstrap launcher avoids awk for the same reason (its process_start is
+    # pure sh). Depending on awk here cost a live guest its boot.
+    local header_re='^[[:space:]]*\[([A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*)\][[:space:]]*(#.*)?$'
+    local key_re='^[[:space:]]*([A-Za-z0-9_-]+)[[:space:]]*='
+    local blank_re='^[[:space:]]*$'
+    local comment_re='^[[:space:]]*#'
+
+    # Pass 1: validate that every line is a construct this seeder understands,
+    # and record which of the two target tables and keys already exist. Any
+    # other construct (quoted or dotted keys, array tables, multi-line values)
+    # marks the file unsafe and we leave it entirely alone.
+    local ok=1 cur_table="" line key
+    local exp_seen=0 adv_seen=0 exp_has_key=0 adv_has_key=0
+    # Explicit fd rather than `done < "$file"`: kcov's bash tracer credits only
+    # simple commands, so a `done` carrying a redirection is reported as
+    # executable-but-never-hit and permanently blocks the 100% gate. Same
+    # constraint that forced the previous awk program onto one line.
+    exec 3< "$config_file"
+    while IFS= read -r line <&3 || [ -n "$line" ]; do
+        if [[ $line =~ $blank_re ]] || [[ $line =~ $comment_re ]]; then
+            continue
+        elif [[ $line =~ $header_re ]]; then
+            cur_table="${BASH_REMATCH[1]}"
+            [ "$cur_table" != experimental ] || exp_seen=1
+            [ "$cur_table" != advanced ] || adv_seen=1
+        elif [[ $line =~ $key_re ]]; then
+            key="${BASH_REMATCH[1]}"
+            if [ "$cur_table" = experimental ] && [ "$key" = pane_history ]; then exp_has_key=1; fi
+            if [ "$cur_table" = advanced ] && [ "$key" = scrollback_limit_bytes ]; then adv_has_key=1; fi
+        else
+            ok=0
+            break
+        fi
+    done
+    exec 3<&-
+
+    if [ "$ok" -ne 1 ]; then
+        rm -f "$tmp_file"
+        echo "Error: $config_file has TOML this seeder cannot update safely (quoted/dotted keys, array tables, or multi-line values); left unmodified." >&2
+        return 1
+    fi
+
+    # Pass 2: publish, inserting each missing key directly after its table
+    # header, and appending any table that is absent entirely.
+    local exp_inserted=0 adv_inserted=0
+    exec 3< "$config_file"
+    exec 4> "$tmp_file"
+    while IFS= read -r line <&3 || [ -n "$line" ]; do
+        printf '%s\n' "$line" >&4
+        if [[ $line =~ $header_re ]]; then
+            cur_table="${BASH_REMATCH[1]}"
+            if [ "$cur_table" = experimental ] && [ "$exp_has_key" -eq 0 ] && [ "$exp_inserted" -eq 0 ]; then
+                printf '%s\n' 'pane_history = true' >&4
+                exp_inserted=1
+            fi
+            if [ "$cur_table" = advanced ] && [ "$adv_has_key" -eq 0 ] && [ "$adv_inserted" -eq 0 ]; then
+                printf '%s\n' 'scrollback_limit_bytes = 10000000' >&4
+                adv_inserted=1
+            fi
+        fi
+    done
+    exec 3<&-
+    exec 4>&-
+
+    if [ "$exp_seen" -eq 0 ]; then
+        printf '\n%s\n%s\n' '[experimental]' 'pane_history = true' >> "$tmp_file"
+    fi
+    if [ "$adv_seen" -eq 0 ]; then
+        printf '\n%s\n%s\n' '[advanced]' 'scrollback_limit_bytes = 10000000' >> "$tmp_file"
+    fi
+
+    if ! chmod 0600 "$tmp_file"; then
+        rm -f "$tmp_file"
+        echo "Error: could not set permissions on $config_file." >&2
+        return 1
+    fi
+    mv -f "$tmp_file" "$config_file"
+}
+
+dx_activate_herdr() {
+    local persist_home="${1:-/persist/home/dx}"
+    local home="${2:-/home/dx}"
+    local persistent_config_file="$persist_home/.config/herdr/config.toml"
+    local persistent_config_dir="$persist_home/.config/herdr"
+    local persistent_state_dir="$persist_home/.local/state/herdr"
+    local ready_marker="$persistent_config_dir/.dxe-persistence-ready"
+    local ready_tmp=""
+
+    setup_herdr_persistence "$persist_home" "$home" || return 1
+    dx_seed_herdr_config "$persistent_config_file" || return 1
+    if ! chown -R dx:dx "$persistent_config_dir" "$persistent_state_dir"; then
+        echo "Error: could not set dx:dx ownership on Herdr's persisted config/state directories; refusing to leave a root-owned config.toml the dx user cannot read." >&2
+        return 1
+    fi
+    if ! [ -L "$home/.config/herdr" ] \
+        || ! [ "$(readlink "$home/.config/herdr")" = "$persistent_config_dir" ] \
+        || ! [ -L "$home/.local/state/herdr" ] \
+        || ! [ "$(readlink "$home/.local/state/herdr")" = "$persistent_state_dir" ] \
+        || ! [ -f "$persistent_config_file" ]; then
+        echo "Error: Herdr persistence links or configuration did not verify after activation." >&2
+        return 1
+    fi
+    ready_tmp="$(mktemp "$persistent_config_dir/.dxe-persistence-ready.XXXXXX")" || return 1
+    if ! chown dx:dx "$ready_tmp" || ! chmod 0600 "$ready_tmp" || ! mv -f "$ready_tmp" "$ready_marker"; then
+        rm -f "$ready_tmp"
+        return 1
     fi
 }

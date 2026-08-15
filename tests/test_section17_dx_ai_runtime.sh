@@ -35,7 +35,7 @@ printf '%s\n' fixture > "$published/flake.lock"
 seed_ai_profile() {
     local generation="$1" tool
     mkdir -p "$generation/profile/bin"
-    for tool in codex gemini claude agy; do printf '#!/bin/sh\n' > "$generation/profile/bin/$tool"; chmod 0755 "$generation/profile/bin/$tool"; done
+    for tool in codex gemini claude agy herdr; do printf '#!/bin/sh\n' > "$generation/profile/bin/$tool"; chmod 0755 "$generation/profile/bin/$tool"; done
 }
 cp -a "$published/." "$state/generations/previous/"
 printf '%s\n' '' > "$state/generations/previous/.predecessor"
@@ -93,7 +93,138 @@ else
     test_fail "malformed upstream AI manifest is non-destructive"
 fi
 if [ "$pin_before" = "$(shasum -a 256 "$published/pins/agy.json")" ]; then test_pass "malformed AI manifest leaves pin unchanged"; else test_fail "malformed AI manifest leaves pin unchanged"; fi
-unset -f mv
+
+# R5: an unavailable boot ID is not an identity. In that environment dx-ai
+# must fail before touching a live owner's lock rather than parse an empty
+# first TSV field and reclaim it as stale.
+if (
+    proc_root="$ai_fixture/no-identity-proc"
+    lock="$ai_fixture/missing-identity.lock"
+    mkdir -p "$proc_root" "$lock"
+    printf 'old-boot\t999\t123\n' > "$lock/owner"
+    set +e
+    out="$(dx_ai_lock_acquire "$lock" "$proc_root" 2>&1)"
+    rc=$?
+    set -e
+    [ "$rc" -eq 1 ] && [ -d "$lock" ] && [ "$(cat "$lock/owner")" = $'old-boot\t999\t123' ] && printf '%s\n' "$out" | grep -q "cannot identify lock owner process"
+); then
+    test_pass "dx-ai refuses lock acquisition when all process identities are unavailable (R5)"
+else
+    test_fail "dx-ai refuses lock acquisition when all process identities are unavailable (R5)"
+fi
+
+# R5: parse field 22 in Bash, including a comm field containing a closing
+# parenthesis and spaces. This runs before the lock code needs the identity,
+# so no external awk can be required in the early guest bootstrap path.
+proc_root="$ai_fixture/proc-identity"
+mkdir -p "$proc_root/sys/kernel/random" "$proc_root/4242"
+printf '%s\n' '4242 (worker ) with spaces) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 424242' > "$proc_root/4242/stat"
+printf '%s\n' 'btime 1785827572' > "$proc_root/stat"
+printf '%s\n' 'a1b2c3d4-e5f6-7890-abcd-ef0123456789' > "$proc_root/sys/kernel/random/boot_id"
+if [ "$(dx_ai_process_start 4242 "$proc_root")" = 424242 ]; then
+    test_pass "dx-ai parses proc stat starttime in Bash with a complex comm field (R5)"
+else
+    test_fail "dx-ai parses proc stat starttime in Bash with a complex comm field (R5)"
+fi
+if [ "$(dx_ai_boot_id "$proc_root")" = a1b2c3d4-e5f6-7890-abcd-ef0123456789 ]; then
+    test_pass "dx-ai preserves raw UUID boot identities for existing owner records (R5)"
+else
+    test_fail "dx-ai preserves raw UUID boot identities for existing owner records (R5)"
+fi
+rm -f "$proc_root/sys/kernel/random/boot_id"
+if [ "$(dx_ai_boot_id "$proc_root")" = btime:1785827572 ]; then
+    test_pass "dx-ai falls back to an explicit proc btime boot identity (R5)"
+else
+    test_fail "dx-ai falls back to an explicit proc btime boot identity (R5)"
+fi
+mkdir -p "$proc_root/$$"
+printf '%s\n' "$$ (dx-ai) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 777" > "$proc_root/$$/stat"
+btime_lock="$ai_fixture/btime.lock"
+if dx_ai_lock_acquire "$btime_lock" "$proc_root" && [ "$(cut -f1 "$btime_lock/owner")" = btime:1785827572 ]; then
+    dx_ai_lock_release "$btime_lock"
+    test_pass "dx-ai acquires a lock with the btime fallback identity (R5)"
+else
+    dx_ai_lock_release "$btime_lock" 2>/dev/null || true
+    test_fail "dx-ai acquires a lock with the btime fallback identity (R5)"
+fi
+
+# --- F8: a successful sourced dx_ai_main must release its lock and clear its EXIT trap ---
+# Reuses the mv() wrapper above (still active) to translate publish's `mv -Tf`
+# for hosts whose real mv lacks GNU's -T.
+f8_published="$ai_fixture/f8-published"; f8_state="$ai_fixture/f8-state"
+mkdir -p "$f8_published/pins"
+printf '%s\n' '{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"}' > "$f8_published/pins/agy.json"
+printf '%s\n' fixture > "$f8_published/flake.nix"
+printf '%s\n' fixture > "$f8_published/flake.lock"
+
+# Stub every function that would otherwise touch the real Nix store or /persist,
+# so this exercises dx_ai_main's own control flow (locking, staging, publication)
+# rather than the network/build/credential side effects those functions own.
+dx_ai_update_flake() { :; }
+dx_ai_install_profile() {
+    local stage="$1" tool
+    mkdir -p "$stage/profile/bin"
+    for tool in codex gemini claude agy herdr; do printf '#!/bin/sh\n' > "$stage/profile/bin/$tool"; chmod 0755 "$stage/profile/bin/$tool"; done
+}
+dx_ai_setup_credentials() { :; }
+dx_ai_ensure_keyring() { :; }
+dx_ai_verify() { :; }
+# The coverage container runs every test as root; stub id so this probe
+# exercises dx_ai_main's lock lifecycle (what F8 is about) rather than
+# tripping its unrelated "run as dx, not root" guard.
+id() { printf '%s\n' 1000; }
+# The host running this unit test may not expose Linux /proc. Provide the
+# identity that a real guest supplies so F8 keeps testing lock release rather
+# than the R5 fail-closed guard above.
+dx_ai_boot_id() { printf '%s\n' test-boot-id; }
+dx_ai_process_start() { printf '%s\n' 123; }
+
+f8_path_before="$PATH"
+DX_AI_BOOTSTRAP_ROOT="$f8_published" DX_AI_STATE_ROOT="$f8_state" dx_ai_main
+f8_main_rc=$?
+f8_trap_after="$(trap -p EXIT)"
+PATH="$f8_path_before"
+# dx_ai_main's own EXIT trap replaced the fixture-cleanup trap installed above;
+# reinstall it now that the probe of its post-call state is complete.
+trap 'chmod -R u+w "$ai_fixture" 2>/dev/null || true; rm -rf "$ai_fixture"' EXIT
+# Restore the real functions the block above stubbed out.
+# shellcheck source=/dev/null
+source "$AI_SCRIPT"
+unset -f mv id
+
+if [ "$f8_main_rc" -eq 0 ] && [ ! -d "$f8_state/.lock" ] && [ -z "$f8_trap_after" ]; then
+    test_pass "a successful sourced dx_ai_main releases its lock and clears its EXIT trap"
+else
+    test_fail "a successful sourced dx_ai_main releases its lock and clears its EXIT trap"
+fi
+
+# --- F15: --supports is a silent, exact-arity capability probe ---
+if out="$(dx_ai_main --supports herdr)" && [ -z "$out" ]; then
+    test_pass "--supports <tool> for a known tool exits 0 with no stdout"
+else
+    test_fail "--supports <tool> for a known tool exits 0 with no stdout"
+fi
+
+out="$(dx_ai_main --supports nonexistent-tool)"; rc=$?
+if [ "$rc" -eq 1 ] && [ -z "$out" ]; then
+    test_pass "--supports <tool> for an unknown tool exits 1 with no stdout"
+else
+    test_fail "--supports <tool> for an unknown tool exits 1 with no stdout"
+fi
+
+dx_ai_main --supports >/dev/null 2>&1
+if [ "$?" -eq 64 ]; then
+    test_pass "--supports with no tool name is a usage error (exit 64)"
+else
+    test_fail "--supports with no tool name is a usage error (exit 64)"
+fi
+
+dx_ai_main --supports herdr junk extra >/dev/null 2>&1
+if [ "$?" -eq 64 ]; then
+    test_pass "--supports rejects trailing arguments (exit 64)"
+else
+    test_fail "--supports rejects trailing arguments (exit 64)"
+fi
 
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
     test_skip "dx-ai guest runtime checks (--skip-integration)"
@@ -136,7 +267,7 @@ else
     test_fail "dx-ai ensures D-Bus keyring service"
 fi
 
-for tool in codex gemini claude agy; do
+for tool in codex gemini claude agy herdr; do
     if run_guest "command -v $tool" >/dev/null 2>&1; then
         test_pass "$tool is available after dx-ai"
     else

@@ -199,6 +199,12 @@ else
     test_fail "agy (Antigravity CLI) is in aiPackages"
 fi
 
+if printf '%s\n' "$AI_PACKAGES_BLOCK" | grep -Eq "\bherdr\b"; then
+    test_pass "herdr is in aiPackages"
+else
+    test_fail "herdr is in aiPackages"
+fi
+
 # Test: shell startup guards optional prompt/environment hooks
 assert_file_contains "$SHELL_NIX" "command -v direnv" "bash direnv hook is guarded"
 assert_file_contains "$SHELL_NIX" "command -v starship" "bash starship hook is guarded"

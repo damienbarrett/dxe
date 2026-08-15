@@ -150,7 +150,7 @@ expect_reject "incomplete legacy manifest refuses migration" mount_clean "$migra
 
 # Phase 2 partial-failure behavior through one fake SSH implementation.
 fake_dir="$(fake_tool_dir_create "$fixture")"; ssh_log="$fixture/ssh.log"
-fake_tool_write "$fake_dir" ssh '
+fake_ssh_write "$fake_dir" '
 socket=""
 previous=""
 for arg in "$@"; do [ "$previous" = -S ] && socket=$arg; previous=$arg; done

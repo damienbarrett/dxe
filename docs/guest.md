@@ -35,7 +35,7 @@ or manually deleting the persist volume/path.
 
 ## Optional AI Tools
 
-Codex, Gemini, Claude, and `agy` (Antigravity CLI) are intentionally not installed by
+Codex, Gemini, Claude, `agy` (Antigravity CLI), and `herdr` are intentionally not installed by
 default. This keeps the standard DX environment free of AI CLIs, so they are not
 available in secure, restricted, or work environments unless you explicitly opt in.
 
@@ -46,10 +46,77 @@ AI tools bundle inside the guest:
 dx-ai
 ```
 
-This updates `nixpkgs-unstable` in `/guest-bootstrap`, then installs or upgrades
-the `codex`, `gemini`, `claude`, and `agy` commands in the guest user's Nix profile.
-The `dx-ai` helper is installed into `~/.local/bin` by Home Manager, the same
-way `dx-theme` is installed.
+`dx-ai` copies the immutable `/guest-bootstrap` source into a new mutable
+generation under `/persist/home/dx/.local/state/dx-ai`, updates
+`nixpkgs-unstable` there, then atomically publishes that generation before
+installing or upgrading the `codex`, `gemini`, `claude`, `agy`, and `herdr`
+commands in the guest user's Nix profile. It never modifies the published
+bootstrap. The `dx-ai` helper is installed into `~/.local/bin` by Home
+Manager, the same way `dx-theme` is installed.
+
+Connect to Herdr from the host using:
+
+```bash
+dx-herdr
+```
+
+If Herdr is not yet installed in the guest, `dx-herdr` checks whether the installed
+`dx-ai` generation supports Herdr and, if so, installs the optional AI tools bundle
+**without prompting for confirmation** before attaching to the default Herdr session.
+If the installed `dx-ai` helper predates Herdr support, `dx-herdr` fails with an
+instruction to run `dx-recreate` rather than guessing at a fix.
+`dx-herdr` also verifies the persistent Herdr configuration and state links
+before it attaches; if bootstrap could not prepare them, it reports the repair
+step (`dx-recreate`) instead of starting an ephemeral session.
+
+### Herdr session persistence
+
+Herdr's configuration, default session, and pane history persist under
+`~/.config/herdr` (mode `0700`), and its mutable application state (downloaded
+agent-detection rules, plugin state, announcement state) persists under
+`~/.local/state/herdr` (mode `0700`). Both directories survive `dx-recreate` and
+container rebuilds through the persistent volume, and both are included in
+`/persist` backups.
+
+**Sensitive-output warning.** Herdr's pane history
+(`~/.config/herdr/session-history.json`) serialises visible terminal output —
+pasted tokens, `env` output, `gh auth token`, `cat` of config files, agent
+conversations. Pane history is off by default upstream for exactly this reason.
+Persisting it makes that transient terminal data durable: it survives detach,
+restart, and container recreation, and it enters `/persist` backups.
+
+To remove saved pane history:
+
+1. Stop the Herdr server with an intentional **cold** stop. This ends its pane processes:
+   anything running in an attached pane is terminated, not preserved or migrated.
+2. Delete `~/.config/herdr/session-history.json`.
+3. Start Herdr again (`dx-herdr`) and confirm the new session shows no restored
+   screen contents from the deleted history before trusting the pane with
+   sensitive output again.
+
+### Upgrading Herdr
+
+There is no live upgrade or handoff for Herdr. `dx-recreate` preserves `/nix`
+and `/persist`, so a previously installed `herdr` executable survives recreation,
+and an ordinary `dx-herdr` launch never refreshes an already-present bundle.
+The supported refresh is a cold sequence:
+
+```bash
+dx-recreate
+dx-ai
+dx-herdr
+```
+
+Running `dx-ai` against a container with a live Herdr server is outside the
+supported workflow; live pane processes are never preserved across an upgrade.
+
+### Licensing
+
+The packaged `herdr` (`v0.7.5`) is distributed by nixpkgs under
+**AGPL-3.0-or-later** (confirmed from nixpkgs' `meta.license.spdxId`), with a
+commercial alternative offered upstream. DXE runs it as an unmodified, separate
+executable; invoking it this way does not relicense DXE's own shell and Nix
+code.
 
 ### Bumping `agy` (Antigravity CLI)
 
@@ -67,8 +134,8 @@ curl -fsSL https://antigravity-cli-auto-updater-974169037036.us-central1.run.app
 
 The manifest returns `{ "version": ..., "url": ..., "sha512": ... }`. `dx-ai`
 converts `sha512` to a Nix SRI hash with `nix hash convert --hash-algo sha512
---to sri` and rewrites the local `/guest-bootstrap/flake.nix` pin before running
-`nix profile add` or `nix profile upgrade`.
+--to sri` and rewrites the local mutable generation's pin before running `nix
+profile add` or `nix profile upgrade`; `/guest-bootstrap` remains unchanged.
 
 To update the checked-in fallback pin:
 
@@ -159,4 +226,3 @@ Then connect normally with `./bin/dx-ssh`, run `dx-theme dark` and `dx-theme lig
 - **Bootstrap Payload:** `/guest-bootstrap` is backed by the `dx-bootstrap`
   volume and populated from the local checkout at start time, keeping repository
   changes out of the image layer.
-

@@ -185,7 +185,94 @@ dx_get_host_timezone >/dev/null
 )
 
 # SSH assembly and generated launcher are data-producing helpers.
-DX_SSH_PORT=2222; dx_ssh_endpoint >/dev/null; dx_ssh_append_common_options >/dev/null; dx_bootstrap_launch_command >/dev/null
+DX_SSH_PORT=2222; dx_ssh_endpoint >/dev/null; dx_bootstrap_launch_command >/dev/null
+
+# Shared SSH boundary (dx-ssh-common.sh, F10): guest PATH/SSL data, the
+# workdir snippet's set/unset branches (including the printf %q escaping
+# round-trip), the env-prefix/bash-lc composition, and the non-interactive
+# and interactive guest-command entry points -- missing-key guards, ssh's own
+# exit status passing through unmodified (F2), and the interactive path's
+# Apple Terminal OSC branch, non-Apple branch, cleanup, and never-exec
+# contract (F3). `ssh` is shadowed with a plain shell function -- consistent
+# with every other external-command fake in this file -- so no real
+# connection is ever attempted.
+(
+    DX_SSH_KEY="$fixture/ssh-common-key"; : > "$DX_SSH_KEY"
+    DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=1
+    export DX_SSH_KEY DX_SSH_PORT DX_SSH_CONNECT_TIMEOUT
+
+    [ "$(dx_guest_path)" = "/home/dx/.nix-profile/bin:/home/dx/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin" ]
+    case "$(dx_guest_ssl_env)" in *"SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"*"NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"*) ;; *) exit 1 ;; esac
+    # Unset branch: no workdir means no `cd` prefix at all.
+    [ -z "$(dx_guest_workdir_snippet)" ]
+
+    # Set branch: the %q-escaped path actually cd's into a directory whose
+    # name contains a space when evaluated -- proves the escaping round-trips
+    # rather than just pattern-matching the generated text.
+    workdir="$fixture/needs quoting"; mkdir -p "$workdir"
+    result="$(cd "$fixture" && eval "$(DX_GUEST_WORKDIR="$workdir" dx_guest_workdir_snippet)pwd")"
+    [ "$result" = "$(cd "$workdir" && pwd)" ]
+
+    # dx_guest_env_prefix: HOST_TZ, PATH, the SSL trust roots, and TERM
+    # actually land in the environment of whatever it feeds -- run the
+    # generated prefix against real `env` and inspect the table it produces.
+    actual_env="$(eval "$(dx_guest_env_prefix TestZone) env")"
+    printf '%s\n' "$actual_env" | grep -qxF 'HOST_TZ=TestZone'
+    printf '%s\n' "$actual_env" | grep -qxF "PATH=$(dx_guest_path)"
+    printf '%s\n' "$actual_env" | grep -qxF 'SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt'
+    printf '%s\n' "$actual_env" | grep -qxF 'NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt'
+    printf '%s\n' "$actual_env" | grep -qxF 'TERM=xterm-256color'
+
+    # dx_guest_bash_command composes the env prefix, workdir snippet, and the
+    # bash -l -c boundary into one runnable string, with and without a workdir.
+    out="$(eval "$(dx_guest_bash_command UTC 'echo hi')")"
+    [ "$out" = hi ]
+    workdir2="$fixture/second workdir"; mkdir -p "$workdir2"
+    out2="$(cd "$fixture" && eval "$(DX_GUEST_WORKDIR="$workdir2" dx_guest_bash_command UTC pwd)")"
+    [ "$out2" = "$(cd "$workdir2" && pwd)" ]
+
+    # dx_ssh_run_guest_command: normal path reaches the shared endpoint and
+    # forwards ssh's own exit status unmodified (F2), whatever it is.
+    ssh() { printf '%s\n' "$*" > "$fixture/ssh-argv"; return 0; }
+    dx_ssh_run_guest_command true >/dev/null
+    grep -qF "$(dx_ssh_endpoint)" "$fixture/ssh-argv"
+    ssh() { return 42; }
+    rc=0; dx_ssh_run_guest_command true >/dev/null 2>&1 || rc=$?
+    [ "$rc" -eq 42 ]
+
+    # dx_ssh_run_guest_command: the missing-key guard is checked before
+    # dialing out and reports 255 without ever invoking ssh.
+    ssh() { echo "SHOULD NOT RUN" >> "$fixture/unexpected-ssh-calls"; return 0; }
+    rm -f "$DX_SSH_KEY"
+    rc=0; dx_ssh_run_guest_command true >/dev/null 2>&1 || rc=$?
+    [ "$rc" -eq 255 ]
+    [ ! -f "$fixture/unexpected-ssh-calls" ]
+    : > "$DX_SSH_KEY"
+
+    # dx_run_interactive_ssh: the same missing-key guard, reporting 1.
+    rm -f "$DX_SSH_KEY"
+    rc=0; dx_run_interactive_ssh true >/dev/null 2>&1 || rc=$?
+    [ "$rc" -eq 1 ]
+    [ ! -f "$fixture/unexpected-ssh-calls" ]
+    : > "$DX_SSH_KEY"
+
+    # dx_run_interactive_ssh: the non-Apple-Terminal branch never emits the
+    # OSC colour-reset sequence.
+    ssh() { return 0; }
+    osc=$'\033]110\033\\\033]111\033\\\033]104\033\\'
+    err="$(unset TERM_PROGRAM; dx_run_interactive_ssh true 2>&1 >/dev/null)"
+    case "$err" in *"$osc"*) exit 1 ;; esac
+
+    # dx_run_interactive_ssh: the Apple Terminal branch emits the OSC reset on
+    # stderr after the "remote" session ends (the cleanup path runs even
+    # though the function never execs, F3), and a failing ssh's exit status
+    # still propagates through that cleanup path unmodified.
+    ssh() { return 7; }
+    rc=0
+    err="$(TERM_PROGRAM=Apple_Terminal dx_run_interactive_ssh true 2>&1 >/dev/null)" || rc=$?
+    [ "$rc" -eq 7 ]
+    case "$err" in *"$osc"*) ;; *) exit 1 ;; esac
+)
 
 # Remaining mount codec error and escape paths.
 for encoded in "\$'a\\ab'" "\$'a\\bb'" "\$'a\\nb'" "\$'a\\rb'" "\$'a\\tb'" "\$'a\\eb'" "\$'a\\Eb'" "\$'a\\fb'" "\$'a\\vb'" "\$'a\\\\b'" "\$'a\\\"b'" "\$'a\\'b'"; do dx_mount_legacy_decode_value "$encoded" >/dev/null; done
@@ -449,6 +536,224 @@ rm -f /persist/home/dx/.local/state/dx/keyring-address
     setup_keyring_service >/dev/null 2>&1 || true
 )
 
+# Herdr persistence and config seeding probes. The Herdr cases below each
+# `rm -rf /persist/home/dx /home/dx` and recreate their own fixture before use,
+# so they cannot clobber the keyring probes above (already run) or the
+# activation/ownership probes further down (which likewise recreate their own
+# /persist/home/dx and /home/dx before use).
+run_herdr_case() (
+    chown() { :; }; run_as_dx() { :; }
+    setup_herdr_persistence
+)
+# Live-defect coverage: a truly fresh guest has neither ~/.config nor
+# ~/.local/state yet, so setup_herdr_persistence must create and chown both
+# home-side parents itself rather than relying on another tool (e.g.
+# setup_gh_persistence) having already created one of them.
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state
+run_herdr_case
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state
+: > /persist/home/dx/.config/herdr; : > /persist/home/dx/.local/state/herdr; run_herdr_case
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state
+ln -s nowhere /home/dx/.config/herdr; ln -s nowhere /home/dx/.local/state/herdr; run_herdr_case
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config/herdr /home/dx/.local/state/herdr
+: > /home/dx/.config/herdr/config.toml; : > /home/dx/.local/state/herdr/announcements; run_herdr_case
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config/herdr /persist/home/dx/.local/state/herdr /home/dx/.config/herdr /home/dx/.local/state/herdr
+: > /home/dx/.config/herdr/config.toml; : > /home/dx/.local/state/herdr/announcements; run_herdr_case
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config/herdr /persist/home/dx/.local/state/herdr /home/dx/.config/herdr /home/dx/.local/state/herdr
+: > /persist/home/dx/.config/herdr/config.toml; : > /home/dx/.config/herdr/config.toml; run_herdr_case
+
+# F5 regression coverage: a symlinked persistent target is rejected before
+# any mutation reaches it.
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state
+mkdir -p "$fixture/herdr-outside-target"
+ln -s "$fixture/herdr-outside-target" /persist/home/dx/.config/herdr
+run_herdr_case >/dev/null 2>&1 || true
+
+# F5 regression coverage: a symlinked parent directory is rejected before any
+# mutation reaches it.
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx /home/dx/.config /home/dx/.local/state
+mkdir -p "$fixture/herdr-outside-parent"
+ln -s "$fixture/herdr-outside-parent" /persist/home/dx/.config
+run_herdr_case >/dev/null 2>&1 || true
+
+# Readiness-marker rejection before any mutation: an existing persistent
+# config directory with a symlinked marker is never safe to invalidate.
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config/herdr /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state "$fixture/herdr-marker-outside-early"
+ln -s "$fixture/herdr-marker-outside-early" /persist/home/dx/.config/herdr/.dxe-persistence-ready
+run_herdr_case >/dev/null 2>&1 || true
+
+# A marker can arrive through migration when persistent_config did not exist
+# during the first marker check. The post-migration check must reject it too.
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config/herdr /home/dx/.local/state "$fixture/herdr-marker-outside-migrated"
+ln -s "$fixture/herdr-marker-outside-migrated" /home/dx/.config/herdr/.dxe-persistence-ready
+run_herdr_case >/dev/null 2>&1 || true
+
+# Cover the defensive post-mkdir real-directory assertion without allowing
+# its artificial symlink to be traversed by chown/chmod in this isolated
+# fixture. This models a replacement between the initial check and mkdir.
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state "$fixture/herdr-config-replaced"
+(
+    target=/persist/home/dx/.config/herdr
+    outside="$fixture/herdr-config-replaced"
+    mkdir() {
+        command mkdir "$@"
+        if [ "$#" -eq 2 ] && [ "$1" = -p ] && [ "$2" = "$target" ]; then
+            command rmdir "$target"
+            command ln -s "$outside" "$target"
+        fi
+    }
+    chown() { :; }; chmod() { :; }; run_as_dx() { :; }
+    setup_herdr_persistence >/dev/null 2>&1 || true
+)
+
+# F5 regression coverage: the state-side ephemeral-backup path (a non-empty
+# home state dir colliding with a non-empty persistent state dir) is
+# reachable too, not just the config-side one exercised above.
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config/herdr /persist/home/dx/.local/state/herdr /home/dx/.config/herdr /home/dx/.local/state/herdr
+: > /persist/home/dx/.local/state/herdr/announcements; : > /home/dx/.local/state/herdr/announcements; run_herdr_case
+
+# Leave a clean, non-adversarial layout so the config-seeding and
+# dx_activate_herdr probes below start from real (non-symlinked) directories,
+# not whatever the rejection probes above left behind.
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state
+run_herdr_case
+
+# Herdr config seeding probes
+herdr_test_cfg="$fixture/herdr-test-config.toml"
+rm -f "$herdr_test_cfg"
+dx_seed_herdr_config "$herdr_test_cfg"
+grep -q 'pane_history = true' "$herdr_test_cfg"
+grep -q 'scrollback_limit_bytes = 10000000' "$herdr_test_cfg"
+
+cat > "$herdr_test_cfg" <<'EOF'
+[experimental]
+other = 123
+
+[advanced]
+other = 456
+EOF
+dx_seed_herdr_config "$herdr_test_cfg"
+grep -q 'pane_history = true' "$herdr_test_cfg"
+grep -q 'scrollback_limit_bytes = 10000000' "$herdr_test_cfg"
+
+cat > "$herdr_test_cfg" <<'EOF'
+[experimental]
+pane_history = false
+
+[advanced]
+scrollback_limit_bytes = 5000000
+EOF
+dx_seed_herdr_config "$herdr_test_cfg"
+grep -q 'pane_history = false' "$herdr_test_cfg"
+grep -q 'scrollback_limit_bytes = 5000000' "$herdr_test_cfg"
+
+# F7 regression coverage: a key name present only under an unrelated table
+# must not suppress seeding the real [experimental]/[advanced] tables.
+cat > "$herdr_test_cfg" <<'EOF'
+[other]
+pane_history = false
+scrollback_limit_bytes = 1
+EOF
+dx_seed_herdr_config "$herdr_test_cfg"
+grep -q '^\[experimental\]$' "$herdr_test_cfg"
+grep -q '^pane_history = true$' "$herdr_test_cfg"
+grep -q '^\[advanced\]$' "$herdr_test_cfg"
+
+# F7 regression coverage: a header with a trailing comment is recognized as
+# that table, never appended as a second, duplicate table.
+cat > "$herdr_test_cfg" <<'EOF'
+[experimental] # mine
+foo = 1
+EOF
+dx_seed_herdr_config "$herdr_test_cfg"
+[ "$(grep -c '\[experimental\]' "$herdr_test_cfg")" -eq 1 ]
+
+# F7 regression coverage: a same-named sub-table is a distinct table and must
+# not suppress seeding the top-level table.
+cat > "$herdr_test_cfg" <<'EOF'
+[experimental.nested]
+pane_history = false
+EOF
+dx_seed_herdr_config "$herdr_test_cfg"
+grep -q '^\[experimental\.nested\]$' "$herdr_test_cfg"
+grep -q '^\[experimental\]$' "$herdr_test_cfg"
+
+# F7 regression coverage: idempotent re-run over already-seeded content.
+dx_seed_herdr_config "$herdr_test_cfg"
+
+# F7 regression coverage: TOML this seeder cannot update safely (a top-level
+# dotted key) fails closed rather than partially rewriting the file.
+printf '%s\n' 'experimental.pane_history = true' > "$herdr_test_cfg"
+dx_seed_herdr_config "$herdr_test_cfg" >/dev/null 2>&1 || true
+
+# F7 regression coverage: a mktemp failure is reported and leaves nothing
+# behind, on both the fresh-file and existing-file publication paths.
+(
+    mktemp() { return 1; }
+    rm -f "$herdr_test_cfg"
+    dx_seed_herdr_config "$herdr_test_cfg" >/dev/null 2>&1 || true
+    printf '%s\n' '[experimental]' > "$herdr_test_cfg"
+    dx_seed_herdr_config "$herdr_test_cfg" >/dev/null 2>&1 || true
+)
+
+# F7 regression coverage: a chmod failure on the temp file is reported and
+# leaves nothing behind, on both publication paths.
+(
+    chmod() { return 1; }
+    rm -f "$herdr_test_cfg"
+    dx_seed_herdr_config "$herdr_test_cfg" >/dev/null 2>&1 || true
+    printf '%s\n' '[experimental]' > "$herdr_test_cfg"
+    dx_seed_herdr_config "$herdr_test_cfg" >/dev/null 2>&1 || true
+)
+
+(
+    # Exercise the complete activation/readiness publication path. A no-op
+    # privilege stub used to be enough here, but readiness now deliberately
+    # verifies the two links before writing its marker.
+    chown() { :; }; run_as_dx() { bash -c "$1"; }
+    dx_activate_herdr
+)
+
+# The readiness marker is only published after its ownership/mode setup. A
+# failed marker chown must remove the temporary file and return failure.
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state
+(
+    chown() {
+        case "${!#}" in
+            */.dxe-persistence-ready.*) return 1 ;;
+            *) : ;;
+        esac
+    }
+    run_as_dx() { bash -c "$1"; }
+    dx_activate_herdr >/dev/null 2>&1 || true
+)
+
+# dx_activate_herdr must fail loudly, not mask, when a sub-step fails (F7/F5).
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state
+mkdir -p "$fixture/herdr-outside-activate"
+ln -s "$fixture/herdr-outside-activate" /persist/home/dx/.config/herdr
+(
+    chown() { :; }; run_as_dx() { :; }
+    dx_activate_herdr >/dev/null 2>&1 || true
+)
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config/herdr /persist/home/dx/.local/state/herdr /home/dx/.config /home/dx/.local/state
+printf '%s\n' 'experimental.pane_history = true' > /persist/home/dx/.config/herdr/config.toml
+(
+    chown() { :; }; run_as_dx() { :; }
+    dx_activate_herdr >/dev/null 2>&1 || true
+)
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state
+(
+    chown() {
+        case "$*" in
+            *"/persist/home/dx/.config/herdr /persist/home/dx/.local/state/herdr") return 1 ;;
+            *) return 0 ;;
+        esac
+    }
+    run_as_dx() { :; }
+    dx_activate_herdr >/dev/null 2>&1 || true
+)
+
 # Activation retries, ownership states, orchestration, and verification.
 (
     DX_BOOTSTRAP_ROOT="$fixture/release-valid" DX_GUEST_ACTIVATION_TIMEOUT=1 DX_GUEST_ACTIVATION_ATTEMPTS=1 DX_GUEST_ACTIVATION_RETRY_DELAY=1
@@ -484,6 +789,111 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.local/state/dx-ai/c
     run_home_manager_activation() { :; }; usermod() { :; }; grep() { return 1; }
     configure_guest
 )
+
+# ai_tools_enabled=false branch: setup_keyring_service must never be called
+# when the AI-tools guard is false (the flag has to stay false all the way to
+# the moved call site after run_home_manager_activation).
+rm -rf /persist/home/dx /home/dx; mkdir -p /home/dx/.nix-profile/bin
+: > /home/dx/.nix-profile/bin/nu
+(
+    ensure_nix_ownership() { :; }; chown() { :; }; run_as_dx() { :; }
+    setup_gh_persistence() { :; }; setup_tmux_persistence() { :; }
+    keyring_called=0
+    setup_keyring_service() { keyring_called=1; }
+    run_home_manager_activation() { :; }; usermod() { :; }; grep() { return 1; }
+    configure_guest
+    [ "$keyring_called" -eq 0 ]
+)
+
+# Bootstrap ordering defect: configure_guest must not start the D-Bus keyring
+# service until Home Manager activation has installed dbus-daemon into dx's
+# profile. On a fresh dx-recreate /home/dx is ephemeral, so
+# setup_keyring_service's `dbus_bin="$(run_as_dx 'command -v dbus-daemon')"`
+# lookup only succeeds once Home Manager activation has run. The custom
+# run_as_dx below prints a PROBE line recording whether Home Manager's stub
+# has already run at the moment the lookup is attempted -- that is the direct
+# signal for the *ordering*, since there is still no error string tied to the
+# old defect itself (a bare failed command substitution under
+# `set -euo pipefail` used to kill the whole bootstrap in total silence), so
+# the assertions below are on outcome and ordering, never on error text.
+#
+# This has to run as a genuinely separate bash process (not sourced/stubbed
+# in-place in this already-running script): bash's `errexit` does not
+# reliably propagate out of a failing bare-assignment command substitution
+# that occurs inside a function which is itself being captured by another
+# `$(...)` in the same interpreter -- verified empirically, execution quietly
+# continues past the failure instead of aborting, which would mask exactly
+# the defect this test exists to catch. The real bootstrap runs
+# `configure_guest` as the top-level script of its own bash process, so a
+# fresh `bash` subprocess is what actually reproduces the silent-death
+# signature.
+rm -rf /persist/home/dx /home/dx
+mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin
+: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex
+chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex
+mkdir -p "$fixture/dbus-order/bin" "$fixture/dbus-order/share/dbus-1"
+: > "$fixture/dbus-order/bin/dbus-daemon"
+: > "$fixture/dbus-order/share/dbus-1/session.conf"
+order_script="$(mktemp "$fixture/dxe-configure-guest-order.XXXXXX")"
+cat > "$order_script" <<'INNER'
+set -euo pipefail
+source "$DXE_TEST_GUEST/scripts/lib/dx-keyring.sh"
+source "$DXE_TEST_GUEST/bootstrap/common.sh"
+source "$DXE_TEST_GUEST/bootstrap/base-and-storage.sh"
+source "$DXE_TEST_GUEST/bootstrap/system.sh"
+source "$DXE_TEST_GUEST/bootstrap/persistence.sh"
+source "$DXE_TEST_GUEST/bootstrap/activation.sh"
+ensure_nix_ownership() { :; }
+chown() { :; }
+setup_gh_persistence() { :; }
+setup_tmux_persistence() { :; }
+usermod() { :; }
+hm_ran=0
+run_as_dx() {
+    case "$1" in
+        (*'command -v dbus-daemon'*)
+            # Deliberately >&2: this call's stdout is captured into the
+            # `dbus_bin="$(run_as_dx ...)"` assignment in setup_keyring_service,
+            # so anything printed on stdout here would vanish into that
+            # variable rather than reach this test's output -- which is
+            # exactly the mechanism that makes the underlying defect silent.
+            echo "PROBE: dbus-daemon lookup attempted with hm_ran=$hm_ran" >&2
+            [ "$hm_ran" -eq 1 ] || return 1
+            printf '%s\n' "$DXE_TEST_DBUS_BIN"
+            ;;
+        (*) return 0 ;;
+    esac
+}
+run_home_manager_activation() { hm_ran=1; echo "STUB: Home Manager activation ran"; }
+setpriv() { case "$*" in (*--print-address*) printf '%s\n' unix:path=/tmp/dxe-coverage-order-bus ;; (*) return 0 ;; esac; }
+configure_guest
+echo "STUB: configure_guest returned normally"
+INNER
+rc=0
+output="$(DXE_TEST_GUEST="$GUEST" DXE_TEST_DBUS_BIN="$fixture/dbus-order/bin/dbus-daemon" bash "$order_script" 2>&1)" || rc=$?
+rm -f "$order_script"
+if [ "$rc" -ne 0 ]; then
+    echo "Error: configure_guest did not complete (rc=$rc). Output:" >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+fi
+if ! printf '%s\n' "$output" | grep -qF 'PROBE: dbus-daemon lookup attempted with hm_ran=1'; then
+    echo "Error: dbus-daemon was never looked up after Home Manager activation ran. Output:" >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+fi
+if printf '%s\n' "$output" | grep -qF 'hm_ran=0'; then
+    echo "Error: setup_keyring_service looked up dbus-daemon before Home Manager activation ran. Output:" >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+fi
+if ! printf '%s\n' "$output" | grep -qF 'STUB: configure_guest returned normally'; then
+    echo "Error: configure_guest did not return normally after the keyring service ran. Output:" >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+fi
+
+rm -rf /persist/home/dx /home/dx
 (
     run_as_dx() { return 0; }; verify_guest_tools
     run_as_dx() { return 1; }; verify_guest_tools

@@ -2,14 +2,19 @@
 
 AGY_MANIFEST_URL="${AGY_MANIFEST_URL:-https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json}"
 NIX_FLAGS=(--extra-experimental-features "nix-command flakes" --accept-flake-config)
+# Single source of truth for the optional AI tools bundle. Keep the Nix
+# declaration (flake.nix's aiPackages), bin/dx-herdr, and docs/guest.md in sync
+# with this list by hand; they are outside this module's ownership.
+DX_AI_TOOLS="codex gemini claude agy herdr"
 
 dx_ai_usage() {
     cat <<'EOF'
-Usage: dx-ai [--recover]
+Usage: dx-ai [--recover] [--supports <tool>]
 
-Install or update Codex, Gemini, Claude, and Antigravity from an immutable
+Install or update Codex, Gemini, Claude, Antigravity, and Herdr from an immutable
 working generation under /persist. The published bootstrap is never modified.
 Use --recover to repoint current to its retained predecessor generation.
+Use --supports <tool> to check if a tool is known to this dx-ai generation.
 EOF
 }
 
@@ -18,23 +23,63 @@ dx_ai_published_root() {
     if [ -L "$root/current" ] && [ -f "$root/current/flake.nix" ]; then readlink -f "$root/current"; else printf '%s\n' "$root"; fi
 }
 
-dx_ai_process_start() { awk '{print $22}' "/proc/$1/stat" 2>/dev/null; }
+# Return Linux /proc field 22 (starttime) without relying on awk. The comm
+# field is parenthesized and may itself contain spaces or ')', so strip through
+# the *last* ") " delimiter before counting the remaining fields (field 3
+# onward). An optional proc root is for tests; production always uses /proc.
+dx_ai_process_start() {
+    local pid="$1" proc_root="${2:-/proc}" stat rest
+    local IFS=' '
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    [ -r "$proc_root/$pid/stat" ] || return 1
+    IFS= read -r stat < "$proc_root/$pid/stat" || return 1
+    rest="${stat##*) }"
+    [ "$rest" != "$stat" ] || return 1
+    set -- $rest
+    [ "$#" -ge 20 ] || return 1
+    case "${20}" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s\n' "${20}"
+}
+
+# A boot ID is part of the lock owner's identity. Prefer the kernel UUID so
+# existing raw-UUID owner records remain compatible. Some minimal guests omit
+# that file but retain /proc/stat's btime; prefix the fallback explicitly so
+# it cannot be confused with a UUID. An optional proc root is for fixtures.
+dx_ai_boot_id() {
+    local proc_root="${1:-/proc}" boot key value extra
+    if [ -r "$proc_root/sys/kernel/random/boot_id" ] && IFS= read -r boot < "$proc_root/sys/kernel/random/boot_id"; then
+        case "$boot" in ''|*[!0-9A-Fa-f-]*) ;; *) printf '%s\n' "$boot"; return 0 ;; esac
+    fi
+    [ -r "$proc_root/stat" ] || return 1
+    while read -r key value extra; do
+        if [ "$key" = btime ] && [ -z "$extra" ]; then
+            case "$value" in ''|*[!0-9]*) return 1 ;; *) printf 'btime:%s\n' "$value"; return 0 ;; esac
+        fi
+    done < "$proc_root/stat"
+    return 1
+}
 
 dx_ai_lock_acquire() {
-    local lock="$1" elapsed=0 boot pid start live
+    local lock="$1" proc_root="${2:-/proc}" elapsed=0 self_boot self_start owner_boot owner_pid owner_start live
+    self_boot="$(dx_ai_boot_id "$proc_root" || true)"
+    self_start="$(dx_ai_process_start "$$" "$proc_root" || true)"
+    if [ -z "$self_boot" ] || [ -z "$self_start" ]; then
+        echo "Error: cannot identify lock owner process; refusing dx-ai publication lock acquisition." >&2
+        return 1
+    fi
     [ ! -L "${lock%/*}" ] || return 1
     mkdir -p "${lock%/*}" || return 1
     [ -d "${lock%/*}" ] && [ ! -L "${lock%/*}" ] || return 1
     while ! mkdir "$lock" 2>/dev/null; do
         if [ -f "$lock/owner" ]; then
-            IFS="$(printf '\t')" read -r boot pid start < "$lock/owner" || true
-            live="$(dx_ai_process_start "${pid:-0}" || true)"
-            if [ "$boot" != "$(cat /proc/sys/kernel/random/boot_id)" ] || [ -z "$live" ] || [ "$start" != "$live" ]; then rm -f "$lock/owner"; rmdir "$lock" 2>/dev/null || true; continue; fi
+            IFS="$(printf '\t')" read -r owner_boot owner_pid owner_start < "$lock/owner" || true
+            live="$(dx_ai_process_start "${owner_pid:-0}" "$proc_root" || true)"
+            if [ "$owner_boot" != "$self_boot" ] || [ -z "$live" ] || [ "$owner_start" != "$live" ]; then rm -f "$lock/owner"; rmdir "$lock" 2>/dev/null || true; continue; fi
         fi
         [ "$elapsed" -lt 30 ] || { echo "Error: timed out waiting for dx-ai publication lock." >&2; return 1; }
         sleep 1; elapsed=$((elapsed + 1))
     done
-    printf '%s\t%s\t%s\n' "$(cat /proc/sys/kernel/random/boot_id)" "$$" "$(dx_ai_process_start $$)" > "$lock/owner"
+    printf '%s\t%s\t%s\n' "$self_boot" "$$" "$self_start" > "$lock/owner"
 }
 
 dx_ai_lock_release() { rm -f "$1/owner"; rmdir "$1"; }
@@ -96,11 +141,19 @@ dx_ai_install_profile() {
     nix profile add --profile "$stage/profile" "${NIX_FLAGS[@]}" "$stage#ai-tools"
 }
 
+dx_ai_tool_known() {
+    local tool="$1" candidate
+    for candidate in $DX_AI_TOOLS; do
+        [ "$candidate" != "$tool" ] || return 0
+    done
+    return 1
+}
+
 dx_ai_validate_generation() {
     local generation="$1" required tool
     [ -d "$generation" ] && [ ! -L "$generation" ] || return 1
     for required in flake.nix flake.lock pins/agy.json .predecessor; do [ -f "$generation/$required" ] && [ ! -L "$generation/$required" ] || return 1; done
-    for tool in codex gemini claude agy; do [ -x "$generation/profile/bin/$tool" ] || return 1; done
+    for tool in $DX_AI_TOOLS; do [ -x "$generation/profile/bin/$tool" ] || return 1; done
 }
 
 dx_ai_publish_pointer() {
@@ -182,11 +235,20 @@ dx_ai_ensure_keyring() {
     if [ "$started" = true ]; then echo "D-Bus keyring service started."; else echo "D-Bus keyring service already available."; fi
 }
 
-dx_ai_verify() { local tool; echo "AI tools installed:"; for tool in codex gemini claude agy; do printf '  %s -> ' "$tool"; command -v "$tool"; done; }
+dx_ai_verify() { local tool; echo "AI tools installed:"; for tool in $DX_AI_TOOLS; do printf '  %s -> ' "$tool"; command -v "$tool"; done; }
 
 dx_ai_main() {
     local action=update published state id stage="" lock result=0
-    case "${1:-}" in -h|--help) dx_ai_usage; return ;; --recover) action=recover; shift ;; esac
+    case "${1:-}" in
+        -h|--help) dx_ai_usage; return ;;
+        --recover) action=recover; shift ;;
+        --supports)
+            local tool="${2:-}"
+            [ "$#" -eq 2 ] || { dx_ai_usage >&2; return 64; }
+            dx_ai_tool_known "$tool"
+            return
+            ;;
+    esac
     [ "$#" -eq 0 ] || { dx_ai_usage >&2; return 64; }
     [ "$(id -u)" -ne 0 ] || { echo "Error: run dx-ai as the dx user, not root." >&2; return 1; }
     state="${DX_AI_STATE_ROOT:-/persist/home/dx/.local/state/dx-ai}"; lock="$state/.lock"; id="$(date -u +%Y%m%dT%H%M%SZ)-$$"

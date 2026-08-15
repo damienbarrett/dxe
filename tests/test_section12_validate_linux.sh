@@ -72,6 +72,7 @@ assert_profile_command_absent /tmp/test-dx-profile codex "codex absent from defa
 assert_profile_command_absent /tmp/test-dx-profile gemini "gemini absent from default profile"
 assert_profile_command_absent /tmp/test-dx-profile claude "claude absent from default profile"
 assert_profile_command_absent /tmp/test-dx-profile agy "agy absent from default profile"
+assert_profile_command_absent /tmp/test-dx-profile herdr "herdr absent from default profile"
 
 # Test: AI CLI tools install through the opt-in package output
 echo "  Testing: nix profile add from ai-tools output"
@@ -86,6 +87,7 @@ assert_profile_command_present /tmp/test-dx-ai-profile codex "codex present in a
 assert_profile_command_present /tmp/test-dx-ai-profile gemini "gemini present in ai-tools profile"
 assert_profile_command_present /tmp/test-dx-ai-profile claude "claude present in ai-tools profile"
 assert_profile_command_present /tmp/test-dx-ai-profile agy "agy (Antigravity CLI) present in ai-tools profile"
+assert_profile_command_present /tmp/test-dx-ai-profile herdr "herdr present in ai-tools profile"
 
 # Test: NixVim launches
 echo "  Testing: nvim --headless +q"

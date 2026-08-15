@@ -108,6 +108,7 @@
         claude-code
         codex
         agy
+        herdr
         # agy stores its known CLI state under ~/.gemini/antigravity-cli, which
         # DXE persists via ~/.gemini. Keep D-Bus + gnome-keyring available for
         # Secret Service compatibility in auth flows that still request it.
