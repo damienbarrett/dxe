@@ -35,6 +35,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     source "$DX_BOOTSTRAP_ROOT/bootstrap/base-and-storage.sh"
     source "$DX_BOOTSTRAP_ROOT/bootstrap/system.sh"
     source "$DX_BOOTSTRAP_ROOT/bootstrap/persistence.sh"
+    source "$DX_BOOTSTRAP_ROOT/bootstrap/herdr-config.sh"
     source "$DX_BOOTSTRAP_ROOT/bootstrap/activation.sh"
     bootstrap_main "$@"
 fi

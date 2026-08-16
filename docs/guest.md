@@ -44,7 +44,7 @@ Bootstrap links Herdr's writable paths into the persistent volume:
 
 The repository-owned defaults live in
 `container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.toml`.
-On bootstrap, the adjacent `scripts/dx-herdr-config.sh` atomically adds missing
+On bootstrap, the adjacent `bootstrap/herdr-config.sh` module atomically adds missing
 defaults to the persisted `config.toml`; explicit existing values win,
 occupied key bindings are not duplicated, and unrelated UI or theme tables
 are preserved. When a Herdr binary is available, the merged candidate must

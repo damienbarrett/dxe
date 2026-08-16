@@ -346,18 +346,15 @@ assert_file_not_contains "$DX_HERDR" 'dx_run_interactive_ssh "herdr"' "dx-herdr 
 # so it failed closed on every config carrying a Herdr key binding -- verified
 # against the live guest config, which is entirely `[[keys.command]]` blocks.
 # The behavior it guaranteed did not go away; it moved to
-# container/.../scripts/dx-herdr-config.sh and is asserted, with the F7 and L5
+# container/.../bootstrap/herdr-config.sh and is asserted, with the F7 and L5
 # regression guards, in tests/test_herdr_config_persistence.sh. What Section 23
 # still owns here is the delegation itself: activation must hand off to the
 # repository-owned merger, and must not grow a second seeder.
-assert_file_contains_literal "$ACTIVATION" '"$merger" seed "$template" "$config_file"' "activation delegates Herdr seeding to the repository-owned merger"
+assert_file_contains_literal "$ACTIVATION" 'dx_herdr_seed_config "$template" "$config_file"' "activation delegates Herdr seeding to the repository-owned merger"
 assert_file_contains_literal "$ACTIVATION" 'Error: Herdr config merger is unavailable' "activation fails closed when the merger is missing"
 assert_file_not_contains "$ACTIVATION" '>> "\$config_file"' "activation never appends in-place to the live Herdr config (F7)"
-if [ -x "$CONTAINER_DIR/scripts/dx-herdr-config.sh" ]; then
-    test_pass "the Herdr config merger is executable"
-else
-    test_fail "the Herdr config merger is executable"
-fi
+assert_file_exists "$CONTAINER_DIR/bootstrap/herdr-config.sh" "the Herdr config merger is a bootstrap module"
+assert_file_contains_literal "$CONTAINER_DIR/bootstrap.sh" 'source "$DX_BOOTSTRAP_ROOT/bootstrap/herdr-config.sh"' "bootstrap sources the Herdr config merger"
 
 # --- F5: setup_herdr_persistence rejects symlinked targets/parents ---
 #

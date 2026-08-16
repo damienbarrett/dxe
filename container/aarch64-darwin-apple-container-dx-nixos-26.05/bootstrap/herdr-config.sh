@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Herdr config.toml merge primitives. Safe to source.
+#
+# A bootstrap module rather than a plain script under scripts/: this is the
+# seeding half of dx_activate_herdr, it belongs with the other bootstrap
+# modules and its template sits beside it, and scripts/ is outside the coverage
+# gate's declared scope -- moving production logic out of that scope is exactly
+# the regression the scope-share ratchet exists to catch.
 
 declare -a DX_HERDR_SCALAR_ORDER=()
 declare -a DX_HERDR_COMMAND_ORDER=()
@@ -35,7 +41,12 @@ dx_herdr_read_template() {
     local line current_table="" scalar_key scalar_id
     local in_command=0 command_key="" command_block=""
 
-    while IFS= read -r line || [ -n "$line" ]; do
+    # Explicit fd rather than `done < "$file"`: kcov's bash tracer credits only
+    # simple commands, so a `done` carrying a redirection is reported as
+    # executable-but-never-hit and permanently blocks the 100% gate. Same
+    # constraint the previous seeder in activation.sh was written around.
+    exec 3< "$template"
+    while IFS= read -r line <&3 || [ -n "$line" ]; do
         if [[ $line =~ $array_header_re ]]; then
             dx_herdr_flush_template_command "$command_key" "$command_block"
             current_table="${BASH_REMATCH[1]}"
@@ -76,7 +87,8 @@ dx_herdr_read_template() {
                 fi
                 ;;
         esac
-    done < "$template"
+    done
+    exec 3<&-
     dx_herdr_flush_template_command "$command_key" "$command_block"
 }
 
@@ -91,7 +103,12 @@ dx_herdr_read_existing() {
     local binding_literal_re="^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*=[[:space:]]*'([^']+)'[[:space:]]*(#.*)?$"
     local line current_table="" scalar_key
 
-    while IFS= read -r line || [ -n "$line" ]; do
+    # Explicit fd rather than `done < "$file"`: kcov's bash tracer credits only
+    # simple commands, so a `done` carrying a redirection is reported as
+    # executable-but-never-hit and permanently blocks the 100% gate. Same
+    # constraint the previous seeder in activation.sh was written around.
+    exec 3< "$config_file"
+    while IFS= read -r line <&3 || [ -n "$line" ]; do
         if [[ $line =~ $array_header_re ]]; then
             current_table="${BASH_REMATCH[1]}"
             continue
@@ -101,11 +118,10 @@ dx_herdr_read_existing() {
             case "$current_table" in keys|ui|ui.sidebar.agents|experimental|advanced) DX_HERDR_EXISTING_TABLES["$current_table"]=1 ;; esac
             continue
         fi
-        if [ "$current_table" = keys.command ] && [[ $line =~ $command_key_re ]]; then
-            DX_HERDR_EXISTING_COMMANDS["${BASH_REMATCH[1]}"]=1
-            continue
-        fi
-        if [ "$current_table" = keys.command ] && [[ $line =~ $command_key_literal_re ]]; then
+        # TOML basic and literal strings both name a key; whichever pattern
+        # matched leaves its capture in BASH_REMATCH, so one body serves both.
+        if [ "$current_table" = keys.command ] \
+            && { [[ $line =~ $command_key_re ]] || [[ $line =~ $command_key_literal_re ]]; }; then
             DX_HERDR_EXISTING_COMMANDS["${BASH_REMATCH[1]}"]=1
             continue
         fi
@@ -115,14 +131,14 @@ dx_herdr_read_existing() {
                     scalar_key="${BASH_REMATCH[1]}"
                     DX_HERDR_EXISTING_SCALARS["$current_table|$scalar_key"]=1
                 fi
-                if [ "$current_table" = keys ] && [[ $line =~ $binding_re ]]; then
-                    DX_HERDR_EXISTING_BINDINGS["${BASH_REMATCH[1]}"]=1
-                elif [ "$current_table" = keys ] && [[ $line =~ $binding_literal_re ]]; then
+                if [ "$current_table" = keys ] \
+                    && { [[ $line =~ $binding_re ]] || [[ $line =~ $binding_literal_re ]]; }; then
                     DX_HERDR_EXISTING_BINDINGS["${BASH_REMATCH[1]}"]=1
                 fi
                 ;;
         esac
-    done < "$config_file"
+    done
+    exec 3<&-
 }
 
 dx_herdr_emit_missing_scalars() {
@@ -158,7 +174,12 @@ dx_herdr_merge_existing() {
     local array_header_re='^[[:space:]]*\[\[([A-Za-z0-9_.-]+)\]\][[:space:]]*(#.*)?$'
     local line current_table="" next_table table command_key
 
-    while IFS= read -r line || [ -n "$line" ]; do
+    # Explicit fd rather than `done < "$file"`: kcov's bash tracer credits only
+    # simple commands, so a `done` carrying a redirection is reported as
+    # executable-but-never-hit and permanently blocks the 100% gate. Same
+    # constraint the previous seeder in activation.sh was written around.
+    exec 3< "$config_file"
+    while IFS= read -r line <&3 || [ -n "$line" ]; do
         next_table=""
         if [[ $line =~ $array_header_re ]]; then
             next_table="${BASH_REMATCH[1]}"
@@ -178,7 +199,8 @@ dx_herdr_merge_existing() {
         esac
         printf '%s\n' "$line" >> "$output"
         if [ -n "$next_table" ]; then current_table="$next_table"; fi
-    done < "$config_file"
+    done
+    exec 3<&-
 
     case "$current_table" in keys|ui|ui.sidebar.agents|experimental|advanced) dx_herdr_emit_missing_scalars "$current_table" >> "$output" ;; esac
 
@@ -257,21 +279,3 @@ dx_herdr_seed_config() {
     temp_file=""
     trap - RETURN
 }
-
-dx_herdr_config_main() {
-    case "${1:-}" in
-        seed)
-            [ "$#" -eq 3 ] || {
-                echo "Usage: dx-herdr-config seed TEMPLATE CONFIG" >&2
-                return 64
-            }
-            dx_herdr_seed_config "$2" "$3"
-            ;;
-        *)
-            echo "Usage: dx-herdr-config seed TEMPLATE CONFIG" >&2
-            return 64
-            ;;
-    esac
-}
-
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then dx_herdr_config_main "$@"; fi

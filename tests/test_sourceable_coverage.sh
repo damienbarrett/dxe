@@ -32,6 +32,7 @@ source "$GUEST/bootstrap/common.sh"
 source "$GUEST/bootstrap/base-and-storage.sh"
 source "$GUEST/bootstrap/system.sh"
 source "$GUEST/bootstrap/persistence.sh"
+source "$GUEST/bootstrap/herdr-config.sh"
 source "$GUEST/bootstrap/activation.sh"
 
 # Configuration registry, validators, diagnostics, and snapshot failures.
@@ -236,6 +237,18 @@ DX_SSH_PORT=2222; dx_ssh_endpoint >/dev/null; dx_bootstrap_launch_command >/dev/
     printf '%s\n' "$actual_env" | stdin_matches -xF 'SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt'
     printf '%s\n' "$actual_env" | stdin_matches -xF 'NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt'
     printf '%s\n' "$actual_env" | stdin_matches -xF 'TERM=xterm-256color'
+
+    # dx_guest_theme_restore_prefix guards on the restore helper being
+    # executable and swallows its failure, so an unthemed guest still reaches
+    # the session's real program. Run the generated prefix for real against a
+    # fixture that stands in for the helper: absent, then present and failing.
+    restore_probe="$fixture/theme-restore-probe"
+    theme_prefix="$(dx_guest_theme_restore_prefix)"
+    [ "$(eval "${theme_prefix}printf ran")" = ran ]
+    printf '%s\n' '#!/bin/sh' "printf marker > '$restore_probe'" 'exit 3' > "$fixture/dx-theme-restore"
+    chmod 0755 "$fixture/dx-theme-restore"
+    [ "$(eval "${theme_prefix//\/home\/dx\/.local\/bin\//$fixture/}printf ran")" = ran ]
+    [ "$(cat "$restore_probe")" = marker ]
 
     # dx_guest_bash_command composes the env prefix, workdir snippet, and the
     # bash -l -c boundary into one runnable string, with and without a workdir.
@@ -527,35 +540,121 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config/gh /home/dx/
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config/gh /home/dx/.config/gh
 : > /persist/home/dx/.config/gh/hosts.yml; : > /home/dx/.config/gh/config.yml; run_gh_case
 
-# Herdr persistence covers fresh activation, steady-state links, migration,
-# collision backups, non-directory repair, and symlink refusal. All paths are
-# inside this disposable coverage environment.
-run_herdr_case() (
-    chown() { :; }
-    run_as_dx() { bash -c "$1"; }
-    setup_herdr_persistence /persist/home/dx /home/dx
-)
-rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx /home/dx
-run_herdr_case
-run_herdr_case
-rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx /home/dx/.config/herdr /home/dx/.local/state/herdr
-: > /home/dx/.config/herdr/config.toml; : > /home/dx/.local/state/herdr/session.json
-run_herdr_case
-rm -rf /persist/home/dx /home/dx
-mkdir -p /persist/home/dx/.config/herdr /persist/home/dx/.local/state/herdr /home/dx/.config/herdr /home/dx/.local/state/herdr
-: > /persist/home/dx/.config/herdr/persisted; : > /persist/home/dx/.local/state/herdr/persisted
-: > /home/dx/.config/herdr/ephemeral; : > /home/dx/.local/state/herdr/ephemeral
-run_herdr_case
-rm -rf /persist/home/dx /home/dx
-mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx
-: > /persist/home/dx/.config/herdr; : > /persist/home/dx/.local/state/herdr
-run_herdr_case
-rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx "$fixture/herdr-outside"
-ln -s "$fixture/herdr-outside" /persist/home/dx/.config/herdr
-run_herdr_case >/dev/null 2>&1 || true
-rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx /home/dx "$fixture/herdr-parent-outside"
-ln -s "$fixture/herdr-parent-outside" /persist/home/dx/.config
-run_herdr_case >/dev/null 2>&1 || true
+# NOTE: the Herdr *persistence* cases live further down, beside the second
+# run_herdr_case definition. The guest branch grew its own copy of them here
+# against its own setup_herdr_persistence; both landed on this file, leaving
+# the function defined twice with the later definition silently winning for
+# every case after it. The surviving block is the one written against the
+# implementation this branch kept.
+
+# The Herdr config merger, driven directly. Behavior for these cases is
+# asserted in tests/test_herdr_config_persistence.sh; what this block owes the
+# gate is that every branch of the parser, the emitter, and the publication
+# path actually runs -- including the ones that refuse to write.
+herdr_merge_dir="$fixture/herdr-merge"
+mkdir -p "$herdr_merge_dir"
+herdr_template="$GUEST/bootstrap/herdr-config.toml"
+herdr_merge_case() {
+    local name="$1" body="$2"
+    local path="$herdr_merge_dir/$name.toml"
+    printf '%s' "$body" > "$path"
+    DX_HERDR_CONFIG_CHECK_BIN=/bin/true dx_herdr_seed_config "$herdr_template" "$path" >/dev/null 2>&1 || true
+}
+# Fresh file: straight copy of the template, no merge pass at all.
+DX_HERDR_CONFIG_CHECK_BIN=/bin/true dx_herdr_seed_config "$herdr_template" "$herdr_merge_dir/fresh.toml" >/dev/null 2>&1 || true
+# Second run over the identical result takes the hash-equal early return.
+DX_HERDR_CONFIG_CHECK_BIN=/bin/true dx_herdr_seed_config "$herdr_template" "$herdr_merge_dir/fresh.toml" >/dev/null 2>&1 || true
+# Every known table already present, so each emitter finds nothing to add.
+herdr_merge_case all-present "$(cat "$herdr_merge_dir/fresh.toml")"
+# Known tables present but empty, plus an unrelated table and a comment: the
+# per-table emit path runs and the merge preserves what it does not own.
+herdr_merge_case partial '# user comment
+[keys]
+detach = "prefix+q"
+
+[[keys.command]]
+key = "prefix+g"
+type = "popup"
+command = "mine"
+
+[ui]
+sidebar_width = 31
+
+[other]
+untouched = true
+'
+# Single-quoted binding and command keys exercise the literal-string branches.
+herdr_merge_case quoted "[keys]
+goto = 'prefix+g'
+
+[[keys.command]]
+key = 'ctrl+h'
+type = 'shell'
+command = 'mine'
+"
+# A keys.command array table arriving before any [keys] scalar table forces the
+# emitter to synthesise the [keys] header ahead of it.
+herdr_merge_case command-first '[[keys.command]]
+key = "prefix+z"
+type = "shell"
+command = "mine"
+'
+# Sub-tables and commented headers: distinct table names, no duplicates.
+herdr_merge_case nested '[experimental.nested]
+pane_history = false
+
+[advanced] # trailing comment
+other = 1
+'
+# Validator rejects the candidate: the original must survive untouched.
+printf '%s' '[ui]
+sidebar_width = 42
+' > "$herdr_merge_dir/rejected.toml"
+DX_HERDR_CONFIG_CHECK_BIN=/bin/false dx_herdr_seed_config "$herdr_template" "$herdr_merge_dir/rejected.toml" >/dev/null 2>&1 || true
+# No validator resolvable at all: validation is skipped rather than fatal.
+( PATH=/nonexistent DX_HERDR_CONFIG_CHECK_BIN="" dx_herdr_seed_config "$herdr_template" "$herdr_merge_dir/novalidator.toml" >/dev/null 2>&1 || true )
+# Refusals: symlinked config, symlinked parent directory, absent template.
+ln -sf /dev/null "$herdr_merge_dir/symlink.toml"
+DX_HERDR_CONFIG_CHECK_BIN=/bin/true dx_herdr_seed_config "$herdr_template" "$herdr_merge_dir/symlink.toml" >/dev/null 2>&1 || true
+mkdir -p "$herdr_merge_dir/real-dir"
+ln -sfn "$herdr_merge_dir/real-dir" "$herdr_merge_dir/linkdir"
+DX_HERDR_CONFIG_CHECK_BIN=/bin/true dx_herdr_seed_config "$herdr_template" "$herdr_merge_dir/linkdir/config.toml" >/dev/null 2>&1 || true
+DX_HERDR_CONFIG_CHECK_BIN=/bin/true dx_herdr_seed_config "$fixture/no-such-template.toml" "$herdr_merge_dir/x.toml" >/dev/null 2>&1 || true
+ln -sf "$herdr_template" "$herdr_merge_dir/template-link.toml"
+DX_HERDR_CONFIG_CHECK_BIN=/bin/true dx_herdr_seed_config "$herdr_merge_dir/template-link.toml" "$herdr_merge_dir/y.toml" >/dev/null 2>&1 || true
+# Malformed templates: a command block with no key, and duplicate definitions.
+printf '%s' '[[keys.command]]
+type = "shell"
+' > "$herdr_merge_dir/tpl-nokey.toml"
+DX_HERDR_CONFIG_CHECK_BIN=/bin/true dx_herdr_seed_config "$herdr_merge_dir/tpl-nokey.toml" "$herdr_merge_dir/z1.toml" >/dev/null 2>&1 || true
+printf '%s' '[[keys.command]]
+key = "a"
+type = "shell"
+
+[[keys.command]]
+key = "a"
+type = "shell"
+' > "$herdr_merge_dir/tpl-dupcmd.toml"
+DX_HERDR_CONFIG_CHECK_BIN=/bin/true dx_herdr_seed_config "$herdr_merge_dir/tpl-dupcmd.toml" "$herdr_merge_dir/z2.toml" >/dev/null 2>&1 || true
+printf '%s' '[keys]
+prefix = "a"
+prefix = "b"
+' > "$herdr_merge_dir/tpl-dupscalar.toml"
+DX_HERDR_CONFIG_CHECK_BIN=/bin/true dx_herdr_seed_config "$herdr_merge_dir/tpl-dupscalar.toml" "$herdr_merge_dir/z3.toml" >/dev/null 2>&1 || true
+# A [[keys.command]] block in the *existing* config whose key is written as a
+# literal single-quoted string, so the literal-key branch of the existing-config
+# reader runs as well as the double-quoted one.
+herdr_merge_case literal-command "[[keys.command]]
+key = 'prefix+g'
+type = 'popup'
+command = 'mine'
+"
+# A [keys] scalar whose value collides with a binding the template also wants,
+# so the emitter reaches its skip-occupied-binding branch rather than writing a
+# duplicate. prefix+f is the template's `goto`.
+herdr_merge_case occupied-binding '[keys]
+detach = "prefix+f"
+'
 
 # Herdr activation composes the persistence wrapper with the repository-owned
 # merger. Exercise success and each wrapper-level failure without depending on
@@ -570,8 +669,23 @@ rm -rf "$fixture/herdr-activate"; mkdir -p "$fixture/herdr-activate/persist/home
     dx_activate_herdr "$fixture/herdr-activate/persist/home/dx" "$fixture/herdr-activate/home/dx"
 )
 (
-    DX_BOOTSTRAP_ROOT="$fixture/missing-herdr-bootstrap"
+    # The wrapper's own refusal: bootstrap/herdr-config.sh was never sourced,
+    # so the merge function it delegates to does not exist. A subshell keeps
+    # the unset from reaching the probes that follow.
+    unset -f dx_herdr_seed_config
     dx_seed_herdr_config "$fixture/missing-config.toml" "$GUEST/bootstrap/herdr-config.toml" >/dev/null 2>&1 || true
+)
+(
+    # Default-template branch: no template argument, so the wrapper derives the
+    # path from DX_BOOTSTRAP_ROOT.
+    DX_BOOTSTRAP_ROOT="$GUEST" DX_HERDR_CONFIG_CHECK_BIN=/bin/true \
+        dx_seed_herdr_config "$fixture/herdr-default-template.toml" >/dev/null 2>&1 || true
+)
+(
+    # ...and with DX_BOOTSTRAP_ROOT unset, from this module's own location.
+    unset DX_BOOTSTRAP_ROOT
+    DX_HERDR_CONFIG_CHECK_BIN=/bin/true \
+        dx_seed_herdr_config "$fixture/herdr-derived-root.toml" >/dev/null 2>&1 || true
 )
 (
     setup_herdr_persistence() { return 1; }

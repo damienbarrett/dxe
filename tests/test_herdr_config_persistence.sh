@@ -11,7 +11,7 @@ BOOTSTRAP_DIR="$CONTAINER_DIR/bootstrap"
 PERSISTENCE="$BOOTSTRAP_DIR/persistence.sh"
 ACTIVATION="$BOOTSTRAP_DIR/activation.sh"
 TEMPLATE="$BOOTSTRAP_DIR/herdr-config.toml"
-MERGER="$CONTAINER_DIR/scripts/dx-herdr-config.sh"
+MERGER="$BOOTSTRAP_DIR/herdr-config.sh"
 
 assert_file_exists "$TEMPLATE" "repository owns a canonical Herdr config template"
 assert_file_exists "$MERGER" "repository owns the Herdr config merger"
@@ -48,8 +48,16 @@ fi
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-herdr-config-test.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 
+# The merger is a sourceable bootstrap module, like scripts/lib/dx-keyring.sh,
+# so drive its function rather than executing the file. Each call runs in a
+# subshell: it publishes through a RETURN trap and resets its own globals, and
+# a failing case must not take this script's shell with it.
+# shellcheck source=/dev/null
+source "$MERGER"
+seed_config() ( dx_herdr_seed_config "$1" "$2" )
+
 fresh="$fixture/fresh/config.toml"
-if bash "$MERGER" seed "$TEMPLATE" "$fresh"; then
+if seed_config "$TEMPLATE" "$fresh"; then
     test_pass "fresh Herdr config is seeded"
 else
     test_fail "fresh Herdr config is seeded"
@@ -76,7 +84,7 @@ fi
 
 fresh_before="$(shasum -a 256 "$fresh" | cut -d' ' -f1)"
 idempotent_output=""
-if idempotent_output="$(bash "$MERGER" seed "$TEMPLATE" "$fresh" 2>&1)"; then
+if idempotent_output="$(seed_config "$TEMPLATE" "$fresh" 2>&1)"; then
     fresh_after="$(shasum -a 256 "$fresh" | cut -d' ' -f1)"
     if [ "$fresh_before" = "$fresh_after" ] && [ -z "$idempotent_output" ]; then
         test_pass "Herdr seeding is byte-idempotent and silent"
@@ -107,7 +115,7 @@ agent_panel_sort = "spaces"
 name = "user-theme"
 EOF
 
-if bash "$MERGER" seed "$TEMPLATE" "$existing"; then
+if seed_config "$TEMPLATE" "$existing"; then
     test_pass "existing Herdr config accepts missing DXE defaults"
 else
     test_fail "existing Herdr config accepts missing DXE defaults"
@@ -132,7 +140,7 @@ cat > "$occupied" <<'EOF'
 [keys]
 goto = 'prefix+g'
 EOF
-if bash "$MERGER" seed "$TEMPLATE" "$occupied"; then
+if seed_config "$TEMPLATE" "$occupied"; then
     if grep -Fq "goto = 'prefix+g'" "$occupied" \
         && grep -Fq 'prefix = "ctrl+space"' "$occupied" \
         && grep -Fq 'agent_panel_sort = "priority"' "$occupied" \
@@ -156,7 +164,7 @@ key = "ctrl+space"
 type = "shell"
 command = "custom-prefix-action"
 EOF
-if bash "$MERGER" seed "$TEMPLATE" "$occupied_default"; then
+if seed_config "$TEMPLATE" "$occupied_default"; then
     if grep -Fq 'detach = "prefix+f"' "$occupied_default" \
         && grep -Fq 'command = "custom-prefix-action"' "$occupied_default" \
         && ! grep -Fq 'goto = "prefix+f"' "$occupied_default" \
@@ -178,7 +186,7 @@ exit 1
 EOF
 chmod +x "$fixture/bin/herdr-reject"
 invalid_before="$(shasum -a 256 "$invalid" | cut -d' ' -f1)"
-if DX_HERDR_CONFIG_CHECK_BIN="$fixture/bin/herdr-reject" bash "$MERGER" seed "$TEMPLATE" "$invalid" >/dev/null 2>&1; then
+if DX_HERDR_CONFIG_CHECK_BIN="$fixture/bin/herdr-reject" seed_config "$TEMPLATE" "$invalid" >/dev/null 2>&1; then
     test_fail "invalid merged Herdr config is rejected"
 else
     invalid_after="$(shasum -a 256 "$invalid" | cut -d' ' -f1)"
@@ -334,7 +342,7 @@ seed_case() {
     local body="$1" path="$fixture/f7-$2/config.toml"
     mkdir -p "$(dirname "$path")"
     printf '%s' "$body" > "$path"
-    bash "$MERGER" seed "$TEMPLATE" "$path" >/dev/null 2>&1
+    seed_config "$TEMPLATE" "$path" >/dev/null 2>&1
     printf '%s' "$path"
 }
 
@@ -390,11 +398,11 @@ assert_file_not_contains "$MERGER" '>> "\$config_file"' "the merger never append
 # this fixture removes awk while keeping the tools bootstrap really does have.
 if awk_out="$(
     shim="$(mktemp -d)"
-    for t in bash env dirname mktemp chmod mv cp mkdir cat rm grep sed sha256sum; do
+    for t in dirname mktemp chmod mv cp mkdir cat rm grep sed sha256sum; do
         p="$(command -v "$t" 2>/dev/null)" && ln -s "$p" "$shim/$t"
     done
     cfg="$(mktemp -d)/config.toml"; printf '[experimental]\nfoo = 1\n' > "$cfg"
-    PATH="$shim" bash "$MERGER" seed "$TEMPLATE" "$cfg" >/dev/null 2>&1
+    PATH="$shim" seed_config "$TEMPLATE" "$cfg" >/dev/null 2>&1
     cat "$cfg"
 )"; then
     case "$awk_out" in

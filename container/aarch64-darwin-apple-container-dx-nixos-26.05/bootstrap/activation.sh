@@ -160,35 +160,29 @@ verify_guest_tools() {
 }
 
 # Seed the repository-owned Herdr defaults into the persisted, mutable
-# config.toml (H10). The merge itself lives in scripts/dx-herdr-config.sh
-# rather than inline here. The defaults now carry `[[keys.command]]` binding
-# blocks, and merging an array of tables is well outside what the previous
-# two-key seeder could express: it rejected array tables outright and so
-# failed closed on every config that carried a key binding at all.
+# config.toml (H10). The merge itself lives in bootstrap/herdr-config.sh rather
+# than inline here. The defaults now carry `[[keys.command]]` binding blocks,
+# and merging an array of tables is well outside what the previous two-key
+# seeder could express: it rejected array tables outright and so failed closed
+# on every config that carried a key binding at all.
 #
 # The contract that seeder established is preserved by the merger: explicit
 # user values win, an occupied binding is never duplicated, unrelated tables
 # and comments survive, publication is atomic via a same-directory temp file,
 # a second run is byte-identical, and TOML it cannot update safely leaves the
 # original untouched rather than risking a partial rewrite.
-#
-# Keeping the merger in its own executable also keeps it directly testable,
-# which matters because `scripts/` sits outside the coverage gate's scope
-# (bin/lib, bootstrap/, scripts/lib), so it needs deliberate behavior tests
-# rather than the 100% ratchet -- see tests/test_herdr_config_persistence.sh.
 dx_seed_herdr_config() {
     local config_file="$1"
     local template="${2:-}"
-    local bootstrap_root merger
+    local bootstrap_root
 
     bootstrap_root="${DX_BOOTSTRAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
     [ -n "$template" ] || template="$bootstrap_root/bootstrap/herdr-config.toml"
-    merger="$bootstrap_root/scripts/dx-herdr-config.sh"
-    if [ ! -x "$merger" ]; then
-        echo "Error: Herdr config merger is unavailable: $merger" >&2
+    if ! declare -F dx_herdr_seed_config >/dev/null; then
+        echo "Error: Herdr config merger is unavailable; bootstrap/herdr-config.sh was not sourced." >&2
         return 1
     fi
-    "$merger" seed "$template" "$config_file"
+    dx_herdr_seed_config "$template" "$config_file"
 }
 
 dx_activate_herdr() {
