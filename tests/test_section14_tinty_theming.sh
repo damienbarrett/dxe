@@ -777,6 +777,23 @@ assert_file_contains_literal "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" 'name = "termi
 assert_file_contains "$SCRIPT_DX_THEME_RESTORE" "HERDR_PANE_ID" "theme restore detects a Herdr pane"
 assert_file_contains "$SCRIPT_DX_THEME_OSC_HOOK" "HERDR_PANE_ID" "the OSC hook detects a Herdr pane"
 
+# The hand-off must degrade, not fail. The OSC hook runs as a Tinty hook, so a
+# non-zero exit here surfaces as `dx-theme <name>` failing. On a guest where
+# Home Manager has not installed the writer yet -- a real state during
+# bootstrap -- the Herdr branch has nothing to exec, and an unguarded `exec`
+# under `set -e` would take the whole hook down with it.
+herdr_handoff_home="$(mktemp -d)"
+for hook_script in "$SCRIPT_DX_THEME_OSC_HOOK" "$SCRIPT_DX_THEME_RESTORE"; do
+    hook_name="$(basename "$hook_script" .sh)"
+    if HOME="$herdr_handoff_home" HERDR_PANE_ID=pane-1 \
+        $(base16_env_args | sed 's/^/env /' | tr '\n' ' ') bash "$hook_script" >/dev/null 2>&1; then
+        test_pass "$hook_name survives a Herdr pane with no writer installed"
+    else
+        test_fail "$hook_name survives a Herdr pane with no writer installed"
+    fi
+done
+rm -rf "$herdr_handoff_home"
+
 # The writer runs unguarded here: a stubbed `herdr` on PATH supplies the
 # validator, and the Herdr paths this exercises avoid the guest-only
 # constructs elsewhere in the script, so these assertions hold on the macOS

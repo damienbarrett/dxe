@@ -5,7 +5,11 @@ set -eo pipefail
 # short-lived child command exits, so a `dx-theme <name>` run inside a pane
 # must go through the writer, which targets the attached client's host TTY.
 # The writer resolves the palette from these same Tinty hook variables.
-if [ "${HERDR_ENV:-}" = 1 ] || [ -n "${HERDR_PANE_ID:-}" ]; then
+# Guarded: this runs as a Tinty hook, so failing here would make `dx-theme`
+# itself report an error. On a guest where Home Manager has not installed the
+# writer yet, fall through to the plain OSC path below rather than exit non-zero.
+if { [ "${HERDR_ENV:-}" = 1 ] || [ -n "${HERDR_PANE_ID:-}" ]; } \
+  && [ -x "$HOME/.local/bin/dx-theme-write-tool-themes" ]; then
   exec "$HOME/.local/bin/dx-theme-write-tool-themes"
 fi
 

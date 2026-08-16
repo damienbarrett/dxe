@@ -5,7 +5,8 @@ set -eo pipefail
 # pane-local override that Herdr discards the moment this helper exits. Hand
 # off to the writer, which updates Herdr's own chrome and writes the palette to
 # each attached client's real host TTY. See write_herdr_host_terminals.
-if [ "${HERDR_ENV:-}" = 1 ] || [ -n "${HERDR_PANE_ID:-}" ]; then
+if { [ "${HERDR_ENV:-}" = 1 ] || [ -n "${HERDR_PANE_ID:-}" ]; } \
+  && [ -x "$HOME/.local/bin/dx-theme-write-tool-themes" ]; then
   exec "$HOME/.local/bin/dx-theme-write-tool-themes"
 fi
 
