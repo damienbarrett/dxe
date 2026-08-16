@@ -181,6 +181,12 @@ setup_herdr_persistence() {
     [ ! -d "$home_config_parent" ] || home_config_parent_created=0
     [ ! -d "$home_state_parent" ] || home_state_parent_created=0
 
+    # `mkdir -p .../.local/state` also creates the intermediate ~/.local, and
+    # it creates it as root just like the leaf. Track it separately: chowning
+    # only the leaves leaves ~/.local root-owned, and Home Manager then runs as
+    # dx and cannot mkdir ~/.local/share.
+    local home_local_parent="${home_state_parent%/*}"
+
     mkdir -p "$persistent_config_parent" "$persistent_state_parent" "$home_config_parent" "$home_state_parent" || return 1
 
     # Live defect: mkdir -p above runs as root, so a freshly created
@@ -194,7 +200,11 @@ setup_herdr_persistence() {
     # in particular is shared with other tools (gh, Home Manager, ...), and
     # forcing it private here would clobber a pre-existing, intentionally
     # shared mode out from under them.
-    chown dx:dx "$home_config_parent" "$home_state_parent" || return 1
+    chown dx:dx "$home_config_parent" "$home_state_parent" "$home_local_parent" || return 1
+    # Deliberately no chmod on ~/.local: unlike the leaves, it is a shared
+    # XDG root (Home Manager's ~/.local/share and ~/.local/bin, the Nix
+    # profile under ~/.local/state/nix), so forcing it private would break
+    # tools that legitimately expect the default mode.
     if [ "$home_config_parent_created" -eq 1 ]; then
         chmod 0700 "$home_config_parent" || return 1
     fi

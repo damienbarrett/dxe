@@ -205,9 +205,16 @@ persist_home="$fixture/persist/home/dx"
 home="$fixture/home/dx"
 mkdir -p "$persist_home" "$home"
 
+chown_log="$fixture/chown-calls"
+: > "$chown_log"
 if declare -F setup_herdr_persistence >/dev/null; then
     if (
-        chown() { :; }
+        # Recording stub, not a no-op. These tests do not run as root, so every
+        # path this creates is already owned by the caller and an ownership
+        # assertion would pass whether or not the code chowns anything --
+        # the blindspot that let the ~/.local defect reach a live guest.
+        # Recording the calls asserts the privilege contract instead.
+        chown() { printf '%s\n' "$*" >> "$chown_log"; }
         run_as_dx() { bash -c "$1"; }
         setup_herdr_persistence "$persist_home" "$home"
     ); then
@@ -223,6 +230,29 @@ if [ -L "$home/.config/herdr" ] && [ "$(readlink "$home/.config/herdr")" = "$per
     test_pass "Herdr configuration is linked to persistent storage"
 else
     test_fail "Herdr configuration is linked to persistent storage"
+fi
+
+# Live defect: `mkdir -p ~/.local/state` runs as root and creates the
+# intermediate ~/.local as root too, but only the leaves were chowned. Herdr
+# activation runs before Home Manager in configure_guest, so HM then ran as dx
+# against a root-owned ~/.local and died with "cannot create directory
+# '/home/dx/.local/share'". It took dx-test down on recreate and was invisible
+# to the factory-reset path, where Nix had already created ~/.local as dx.
+#
+# Asserts ownership rather than a mode: the failing operation is dx creating a
+# new subdirectory, so that is what this reproduces.
+if grep -Fq "$home/.local " "$chown_log" || grep -Fqx "dx:dx $home/.config $home/.local/state $home/.local" "$chown_log"; then
+    test_pass "Herdr activation hands the shared ~/.local root to dx"
+else
+    test_fail "Herdr activation hands the shared ~/.local root to dx (chowned: $(tr '\n' '; ' < "$chown_log"))"
+fi
+# ~/.local is a shared XDG root -- Home Manager's share/ and bin/, the Nix
+# profile under state/nix -- so it must not be forced private the way the
+# Herdr-owned leaves are.
+if [ "$(file_mode "$home/.local")" != 700 ]; then
+    test_pass "the shared ~/.local root keeps a mode other tools can use"
+else
+    test_fail "the shared ~/.local root keeps a mode other tools can use"
 fi
 if [ -L "$home/.local/state/herdr" ] && [ "$(readlink "$home/.local/state/herdr")" = "$persist_home/.local/state/herdr" ]; then
     test_pass "Herdr sessions are linked to persistent storage"
@@ -261,8 +291,11 @@ if (
     setup_herdr_persistence "$repair_persist" "$repair_home"
 ); then
     shopt -s nullglob
-    config_backups=("$repair_persist/.config"/herdr-config.non-directory-backup.*)
-    state_backups=("$repair_persist/.local/state"/herdr-state.non-directory-backup.*)
+    # This branch's setup_herdr_persistence names both backups after the
+    # directory being repaired, disambiguated by their parent; the guest
+    # branch's dropped implementation used a herdr-<label> prefix instead.
+    config_backups=("$repair_persist/.config"/herdr.non-directory-backup.*)
+    state_backups=("$repair_persist/.local/state"/herdr.non-directory-backup.*)
     shopt -u nullglob
     if [ -d "$repair_persist/.config/herdr" ] && [ -d "$repair_persist/.local/state/herdr" ] \
         && [ "${#config_backups[@]}" -eq 1 ] && [ "${#state_backups[@]}" -eq 1 ] \
