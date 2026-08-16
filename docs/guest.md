@@ -33,6 +33,28 @@ survive `dx-recreate` and container rebuilds through the persistent volume.
 This state is removed only by `dx-factory-reset`, `dx-destroy-volumes`,
 or manually deleting the persist volume/path.
 
+## Herdr Configuration and Session Persistence
+
+Bootstrap links Herdr's writable paths into the persistent volume:
+
+- `~/.config/herdr` points to `/persist/home/dx/.config/herdr` for
+  `config.toml`, logs, and other configuration-owned files.
+- `~/.local/state/herdr` points to `/persist/home/dx/.local/state/herdr` for
+  session and runtime state.
+
+The repository-owned defaults live in
+`container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.toml`.
+On bootstrap, the adjacent `scripts/dx-herdr-config.sh` atomically adds missing
+defaults to the persisted `config.toml`; explicit existing values win,
+occupied key bindings are not duplicated, and unrelated UI or theme tables
+are preserved. When a Herdr binary is available, the merged candidate must
+pass `herdr config check` before it replaces the live file.
+
+Session contents are mutable state and are deliberately not committed to Git;
+they survive container rebuilds through `/persist`. A factory reset or removal
+of the persist volume removes both Herdr configuration and session state, after
+which bootstrap recreates `config.toml` from the checked-in defaults.
+
 ## Optional AI Tools
 
 Codex, Gemini, Claude, `agy` (Antigravity CLI), and `herdr` are intentionally not installed by

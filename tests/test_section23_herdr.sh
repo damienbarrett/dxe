@@ -298,209 +298,24 @@ else
     test_pass "the shared SSH boundary does not set HERDR_* (F11)"
 fi
 
-# --- Unit tests: TOML configuration seeding ---
+# --- The seeding contract now lives behind the merger ---
 #
-# Each case sources activation.sh (which defines dx_seed_herdr_config) inside
-# its own subshell to keep that function out of this script's namespace, for
-# the same reason as above: the assertion is evaluated in the parent via the
-# subshell's exit status, so a broken seeding rule can still fail this suite.
-fixture_cfg="$(mktemp "${TMPDIR:-/tmp}/dxe-herdr-toml.XXXXXX")"
-trap 'rm -f "$fixture_cfg" "$fixture_cfg.tmp"*' EXIT
-
-# Test fresh file creation
-rm -f "$fixture_cfg"
-if (
-    source "$ACTIVATION"
-    dx_seed_herdr_config "$fixture_cfg"
-    grep -q 'pane_history = true' "$fixture_cfg" && grep -q 'scrollback_limit_bytes = 10000000' "$fixture_cfg"
-); then
-    test_pass "dx_seed_herdr_config seeds default options in fresh file"
+# dx_seed_herdr_config used to carry a two-key, pure-Bash TOML rewriter inline.
+# It could not express an array-of-tables merge and rejected `[[...]]` outright,
+# so it failed closed on every config carrying a Herdr key binding -- verified
+# against the live guest config, which is entirely `[[keys.command]]` blocks.
+# The behavior it guaranteed did not go away; it moved to
+# container/.../scripts/dx-herdr-config.sh and is asserted, with the F7 and L5
+# regression guards, in tests/test_herdr_config_persistence.sh. What Section 23
+# still owns here is the delegation itself: activation must hand off to the
+# repository-owned merger, and must not grow a second seeder.
+assert_file_contains_literal "$ACTIVATION" '"$merger" seed "$template" "$config_file"' "activation delegates Herdr seeding to the repository-owned merger"
+assert_file_contains_literal "$ACTIVATION" 'Error: Herdr config merger is unavailable' "activation fails closed when the merger is missing"
+assert_file_not_contains "$ACTIVATION" '>> "\$config_file"' "activation never appends in-place to the live Herdr config (F7)"
+if [ -x "$CONTAINER_DIR/scripts/dx-herdr-config.sh" ]; then
+    test_pass "the Herdr config merger is executable"
 else
-    test_fail "dx_seed_herdr_config seeds default options in fresh file"
-fi
-
-# Test preserving existing table headers
-cat > "$fixture_cfg" <<'EOF'
-[experimental]
-custom_opt = 123
-
-[advanced]
-other_opt = "hello"
-EOF
-if (
-    source "$ACTIVATION"
-    dx_seed_herdr_config "$fixture_cfg"
-    grep -q 'custom_opt = 123' "$fixture_cfg" && grep -q 'pane_history = true' "$fixture_cfg" && grep -q 'other_opt = "hello"' "$fixture_cfg" && grep -q 'scrollback_limit_bytes = 10000000' "$fixture_cfg"
-); then
-    test_pass "dx_seed_herdr_config inserts missing options into existing tables preserving comments/keys"
-else
-    test_fail "dx_seed_herdr_config inserts missing options into existing tables preserving comments/keys"
-fi
-
-# Test preserving explicit user values
-cat > "$fixture_cfg" <<'EOF'
-[experimental]
-pane_history = false
-
-[advanced]
-scrollback_limit_bytes = 5000000
-EOF
-if (
-    source "$ACTIVATION"
-    dx_seed_herdr_config "$fixture_cfg"
-    grep -q 'pane_history = false' "$fixture_cfg" && grep -q 'scrollback_limit_bytes = 5000000' "$fixture_cfg"
-); then
-    test_pass "dx_seed_herdr_config preserves explicit user settings"
-else
-    test_fail "dx_seed_herdr_config preserves explicit user settings"
-fi
-
-# --- F7: table-scope-aware seeding regression guards ---
-#
-# The pre-fix seeder grepped for key names anywhere in the file and matched
-# table headers with an exact-line regex. That produced three reproduced
-# failure modes (herdr-refactor.md F7): a key name under an unrelated table
-# suppressed seeding entirely; a header with a trailing comment caused a
-# *second*, duplicate `[experimental]` table to be appended (a TOML parse
-# error); and a key under a same-named sub-table (`[experimental.nested]`)
-# also suppressed seeding. Each case below was observed failing against the
-# pre-fix function before the table-scope-aware awk pass replaced it.
-
-# Case: key names present only under an unrelated table must not suppress
-# seeding into the correct tables.
-cat > "$fixture_cfg" <<'EOF'
-[other]
-pane_history = false
-scrollback_limit_bytes = 1
-EOF
-if (
-    source "$ACTIVATION"
-    dx_seed_herdr_config "$fixture_cfg"
-    grep -q '^pane_history = false' "$fixture_cfg" \
-        && grep -q '^\[experimental\]$' "$fixture_cfg" \
-        && grep -q '^pane_history = true' "$fixture_cfg" \
-        && grep -q '^\[advanced\]$' "$fixture_cfg" \
-        && grep -q '^scrollback_limit_bytes = 10000000' "$fixture_cfg"
-); then
-    test_pass "dx_seed_herdr_config seeds into [experimental]/[advanced] even when an unrelated table holds the same key names (F7)"
-else
-    test_fail "dx_seed_herdr_config seeds into [experimental]/[advanced] even when an unrelated table holds the same key names (F7)"
-fi
-
-# Case: a table header with a trailing comment must be recognized as that
-# table (not appended as a brand-new, duplicate table).
-cat > "$fixture_cfg" <<'EOF'
-[experimental] # mine
-foo = 1
-EOF
-if (
-    source "$ACTIVATION"
-    dx_seed_herdr_config "$fixture_cfg"
-    [ "$(grep -c '\[experimental\]' "$fixture_cfg")" -eq 1 ] \
-        && grep -q 'pane_history = true' "$fixture_cfg" \
-        && grep -q 'foo = 1' "$fixture_cfg"
-); then
-    test_pass "dx_seed_herdr_config never emits a duplicate table for a commented header (F7)"
-else
-    test_fail "dx_seed_herdr_config never emits a duplicate table for a commented header (F7)"
-fi
-
-# Case: a key under a differently-named sub-table (`[experimental.nested]`)
-# must not suppress seeding the top-level `[experimental]` table.
-cat > "$fixture_cfg" <<'EOF'
-[experimental.nested]
-pane_history = false
-EOF
-if (
-    source "$ACTIVATION"
-    dx_seed_herdr_config "$fixture_cfg"
-    grep -q '^\[experimental\.nested\]$' "$fixture_cfg" \
-        && grep -q '^pane_history = false$' "$fixture_cfg" \
-        && grep -q '^\[experimental\]$' "$fixture_cfg" \
-        && grep -q '^pane_history = true$' "$fixture_cfg"
-); then
-    test_pass "dx_seed_herdr_config treats [experimental.nested] as a distinct table from [experimental] (F7)"
-else
-    test_fail "dx_seed_herdr_config treats [experimental.nested] as a distinct table from [experimental] (F7)"
-fi
-
-# Case: running the seeder twice must be byte-for-byte idempotent.
-cat > "$fixture_cfg" <<'EOF'
-# a user comment
-[experimental]
-custom_opt = 123
-
-[advanced]
-other_opt = "hello"
-EOF
-if (
-    source "$ACTIVATION"
-    dx_seed_herdr_config "$fixture_cfg"
-    cp "$fixture_cfg" "$fixture_cfg.first-run"
-    dx_seed_herdr_config "$fixture_cfg"
-    cmp -s "$fixture_cfg.first-run" "$fixture_cfg"
-    rc=$?
-    rm -f "$fixture_cfg.first-run"
-    exit "$rc"
-); then
-    test_pass "dx_seed_herdr_config is idempotent: a second run is byte-identical (F7)"
-else
-    test_fail "dx_seed_herdr_config is idempotent: a second run is byte-identical (F7)"
-fi
-
-# Case: atomic publication -- no leftover temp file, no `>>` in-place append,
-# and the original file is preserved byte-for-byte on the seeder's own
-# publication path (a plain successful run's tmp file must not survive it).
-cat > "$fixture_cfg" <<'EOF'
-[experimental]
-custom_opt = 123
-EOF
-if (
-    source "$ACTIVATION"
-    dx_seed_herdr_config "$fixture_cfg"
-    ! ls "$(dirname "$fixture_cfg")"/.dxe-herdr-config.* >/dev/null 2>&1
-); then
-    test_pass "dx_seed_herdr_config leaves no leftover temp file after a successful publish (F7)"
-else
-    test_fail "dx_seed_herdr_config leaves no leftover temp file after a successful publish (F7)"
-fi
-assert_file_not_contains "$ACTIVATION" '>> "\$config_file"' "dx_seed_herdr_config never appends in-place with >> (F7)"
-
-# Case: TOML this seeder cannot understand conservatively (a top-level dotted
-# key) must fail closed -- non-zero exit, a diagnostic, the file left
-# completely untouched, and no temp file left behind.
-cat > "$fixture_cfg" <<'EOF'
-experimental.pane_history = true
-EOF
-cp "$fixture_cfg" "$fixture_cfg.before-fail-closed"
-if (
-    source "$ACTIVATION"
-    set +e
-    out="$(dx_seed_herdr_config "$fixture_cfg" 2>&1)"
-    rc=$?
-    set -e
-    [ "$rc" -ne 0 ] \
-        && [ -n "$out" ] \
-        && cmp -s "$fixture_cfg.before-fail-closed" "$fixture_cfg" \
-        && ! ls "$(dirname "$fixture_cfg")"/.dxe-herdr-config.* >/dev/null 2>&1
-); then
-    test_pass "dx_seed_herdr_config fails closed on TOML it cannot update safely, leaving the file untouched (F7)"
-else
-    test_fail "dx_seed_herdr_config fails closed on TOML it cannot update safely, leaving the file untouched (F7)"
-fi
-rm -f "$fixture_cfg.before-fail-closed"
-
-# Case: a missing/empty file is created with mode 0600.
-rm -f "$fixture_cfg"
-if (
-    source "$ACTIVATION"
-    dx_seed_herdr_config "$fixture_cfg"
-    mode="$(dx_path_mode "$fixture_cfg")"
-    [ "$mode" = "600" ]
-); then
-    test_pass "dx_seed_herdr_config creates a fresh config.toml with mode 0600 (F7)"
-else
-    test_fail "dx_seed_herdr_config creates a fresh config.toml with mode 0600 (F7)"
+    test_fail "the Herdr config merger is executable"
 fi
 
 # --- F5: setup_herdr_persistence rejects symlinked targets/parents ---
@@ -539,7 +354,7 @@ herdr_persist_run_as_dx() {
 }
 
 fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-herdr-persist.XXXXXX")"
-trap 'rm -f "$fixture_cfg" "$fixture_cfg.tmp"*; rm -rf "$fixture_root"' EXIT
+trap 'rm -rf "$fixture_root"' EXIT
 
 # Symlinked persistent target rejected before any mutation.
 if (
@@ -914,35 +729,13 @@ else
     test_fail "configure_guest activates Herdr persistence even when the AI-tools guard is false (F4)"
 fi
 
-# --- L5 regression guards: the early bootstrap environment lacks awk ---
+# --- L5: an optional seeding step must never abort bootstrap ---
 #
-# Live defect: awk is not in the early essentials profile, so the seeder failed,
-# the failure propagated, and the guest never booted. Two separate faults are
-# guarded here: the diagnostic must name the real cause (it used to blame the
-# user's TOML for a missing binary), and an optional seeding step must never be
-# able to abort bootstrap. The suite's own host always has awk, which is exactly
-# why this needs a fixture that removes it while keeping coreutils.
-if diag="$(
-    shim="$(mktemp -d)"
-    for t in dirname mktemp chmod mv cat rm grep sed; do
-        p="$(command -v "$t" 2>/dev/null)" && ln -s "$p" "$shim/$t"
-    done
-    # shellcheck source=/dev/null
-    . "$ACTIVATION"
-    cfg="$(mktemp)"; printf '[experimental]\nfoo = 1\n' > "$cfg"
-    PATH="$shim" dx_seed_herdr_config "$cfg" >/dev/null 2>&1
-    out="$(cat "$cfg")"
-    rm -rf "$shim" "$cfg"
-    printf '%s' "$out"
-    # NB: a bare `case ... esac` here would be mis-parsed by Bash 3.2 inside a
-    # double-quoted "$(...)" -- the statement text leaks into the output. The
-    # [[ ]] form has no bare parens and is safe in the 3.2 tier.
-    [[ "$out" == *"pane_history = true"* && "$out" == *"scrollback_limit_bytes = 10000000"* ]]
-)"; then
-    test_pass "dx_seed_herdr_config seeds correctly with no awk on PATH (L5 regression guard)"
-else
-    test_fail "dx_seed_herdr_config seeds correctly with no awk on PATH (L5 regression guard) (got: $diag)"
-fi
+# Live defect: the seeder failed in the early, awk-less bootstrap environment,
+# the failure propagated, and the guest never booted. The awk-free seeding
+# guard moved to tests/test_herdr_config_persistence.sh with the merger; what
+# stays here is the other half of that defect, which is Section 23's own: a
+# failing Herdr activation must not be able to abort configure_guest.
 
 if (
     # A failing Herdr activation must not abort configure_guest: sshd runs as

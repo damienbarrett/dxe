@@ -47,6 +47,13 @@ assert_file_contains_literal "$CONFIG_DOC" '${DX_PROJECT_ROOT}' "the sole data e
 assert_file_contains "$CONFIG_DOC" 'partial, stale, wrong-root' "snapshot failure modes are documented"
 assert_file_contains "$BASE_DIR/docs/lifecycle.md" 'refus' "destructive refusal behavior remains documented"
 assert_file_contains "$BASE_DIR/docs/release-maintenance.md" 'Base Image Changeover' "temporary guard procedure remains discoverable"
+# These are documentation literals, not shell paths to expand.
+# shellcheck disable=SC2088
+assert_file_contains_literal "$BASE_DIR/docs/guest.md" '~/.config/herdr' "guest docs identify the persisted Herdr config path"
+# shellcheck disable=SC2088
+assert_file_contains_literal "$BASE_DIR/docs/guest.md" '~/.local/state/herdr' "guest docs identify the persisted Herdr session path"
+assert_file_contains_literal "$BASE_DIR/docs/guest.md" 'bootstrap/herdr-config.toml' "guest docs identify the repository-owned Herdr defaults"
+assert_file_contains_literal "$BASE_DIR/docs/guest.md" 'explicit existing values win' "guest docs explain the Herdr merge policy"
 
 GUEST_DOC="$BASE_DIR/docs/guest.md"
 assert_file_contains_literal "$GUEST_DOC" 'without prompting for confirmation' "dx-herdr install-without-confirming behavior is documented accurately"

@@ -78,6 +78,7 @@ run_test "$SCRIPT_DIR/test_section0_lint.sh" "0"
 run_test "$SCRIPT_DIR/test_section1_secrets.sh" "1"
 run_test "$SCRIPT_DIR/test_section2_containerfile.sh" "2"
 run_test "$SCRIPT_DIR/test_section3_bootstrap.sh" "3"
+run_test "$SCRIPT_DIR/test_herdr_config_persistence.sh" "3"
 
 # Bring the selected isolated guest to a validated running state before any
 # later section performs live probes against it.

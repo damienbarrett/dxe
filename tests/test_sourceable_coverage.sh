@@ -527,6 +527,62 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config/gh /home/dx/
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config/gh /home/dx/.config/gh
 : > /persist/home/dx/.config/gh/hosts.yml; : > /home/dx/.config/gh/config.yml; run_gh_case
 
+# Herdr persistence covers fresh activation, steady-state links, migration,
+# collision backups, non-directory repair, and symlink refusal. All paths are
+# inside this disposable coverage environment.
+run_herdr_case() (
+    chown() { :; }
+    run_as_dx() { bash -c "$1"; }
+    setup_herdr_persistence /persist/home/dx /home/dx
+)
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx /home/dx
+run_herdr_case
+run_herdr_case
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx /home/dx/.config/herdr /home/dx/.local/state/herdr
+: > /home/dx/.config/herdr/config.toml; : > /home/dx/.local/state/herdr/session.json
+run_herdr_case
+rm -rf /persist/home/dx /home/dx
+mkdir -p /persist/home/dx/.config/herdr /persist/home/dx/.local/state/herdr /home/dx/.config/herdr /home/dx/.local/state/herdr
+: > /persist/home/dx/.config/herdr/persisted; : > /persist/home/dx/.local/state/herdr/persisted
+: > /home/dx/.config/herdr/ephemeral; : > /home/dx/.local/state/herdr/ephemeral
+run_herdr_case
+rm -rf /persist/home/dx /home/dx
+mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx
+: > /persist/home/dx/.config/herdr; : > /persist/home/dx/.local/state/herdr
+run_herdr_case
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx "$fixture/herdr-outside"
+ln -s "$fixture/herdr-outside" /persist/home/dx/.config/herdr
+run_herdr_case >/dev/null 2>&1 || true
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx /home/dx "$fixture/herdr-parent-outside"
+ln -s "$fixture/herdr-parent-outside" /persist/home/dx/.config
+run_herdr_case >/dev/null 2>&1 || true
+
+# Herdr activation composes the persistence wrapper with the repository-owned
+# merger. Exercise success and each wrapper-level failure without depending on
+# an installed Herdr binary in the coverage image.
+rm -rf "$fixture/herdr-activate"; mkdir -p "$fixture/herdr-activate/persist/home/dx" "$fixture/herdr-activate/home/dx"
+(
+    chown() { :; }
+    run_as_dx() { bash -c "$1"; }
+    DX_BOOTSTRAP_ROOT="$GUEST"
+    DX_HERDR_CONFIG_CHECK_BIN=/bin/true
+    export DX_BOOTSTRAP_ROOT DX_HERDR_CONFIG_CHECK_BIN
+    dx_activate_herdr "$fixture/herdr-activate/persist/home/dx" "$fixture/herdr-activate/home/dx"
+)
+(
+    DX_BOOTSTRAP_ROOT="$fixture/missing-herdr-bootstrap"
+    dx_seed_herdr_config "$fixture/missing-config.toml" "$GUEST/bootstrap/herdr-config.toml" >/dev/null 2>&1 || true
+)
+(
+    setup_herdr_persistence() { return 1; }
+    dx_activate_herdr "$fixture/herdr-fail/persist/home/dx" "$fixture/herdr-fail/home/dx" "$GUEST/bootstrap/herdr-config.toml" >/dev/null 2>&1 || true
+)
+(
+    setup_herdr_persistence() { :; }
+    dx_seed_herdr_config() { return 1; }
+    dx_activate_herdr "$fixture/herdr-fail/persist/home/dx" "$fixture/herdr-fail/home/dx" "$GUEST/bootstrap/herdr-config.toml" >/dev/null 2>&1 || true
+)
+
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx /home/dx "$fixture/dbus/bin" "$fixture/dbus/share/dbus-1"
 : > "$fixture/dbus/bin/dbus-daemon"; : > "$fixture/dbus/share/dbus-1/session.conf"
 (
@@ -799,7 +855,7 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.local/state/dx-ai/c
 : > /home/dx/.nix-profile/bin/nu
 (
     ensure_nix_ownership() { :; }; chown() { :; }; run_as_dx() { :; }
-    setup_gh_persistence() { :; }; setup_tmux_persistence() { :; }; setup_keyring_service() { :; }
+    setup_gh_persistence() { :; }; setup_tmux_persistence() { :; }; dx_activate_herdr() { :; }; setup_keyring_service() { :; }
     run_home_manager_activation() { :; }; usermod() { :; }; grep() { return 1; }
     configure_guest
 )

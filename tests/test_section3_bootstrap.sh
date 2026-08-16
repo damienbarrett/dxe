@@ -22,7 +22,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in essentials_profile_path install_essentials link_system_bash setup_nix_volume configure_nix_daemon configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files create_user setup_persist configure_ssh run_as_dx run_home_manager_activation ensure_nix_ownership setup_gh_persistence setup_tmux_persistence setup_keyring_service configure_guest verify_guest_tools; do
+for function_name in essentials_profile_path install_essentials link_system_bash setup_nix_volume configure_nix_daemon configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files create_user setup_persist configure_ssh run_as_dx run_home_manager_activation ensure_nix_ownership setup_gh_persistence setup_tmux_persistence setup_herdr_persistence setup_keyring_service dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -49,6 +49,7 @@ if guard_old_base >/dev/null 2>&1; then test_fail "old-base guard rejects a dang
 assert_file_contains_literal "$BOOTSTRAP" 'if [ "${BASH_SOURCE[0]}" = "$0" ]' "bootstrap main runs only when executed"
 assert_file_not_contains "$BOOTSTRAP" 'DX_BOOTSTRAP_TEST_MODE' "bootstrap has no production test-mode branch"
 assert_file_not_contains "$BOOTSTRAP_DIR/activation.sh" 'chown -R dx:dx /guest-bootstrap' "bootstrap never hands published payload ownership to dx"
+assert_file_contains_literal "$BOOTSTRAP_DIR/activation.sh" 'dx_activate_herdr || echo "Warning: Herdr activation failed; continuing bootstrap without it." >&2' "Herdr persistence and config seeding are non-fatal bootstrap activation steps"
 assert_file_contains_literal "$BOOTSTRAP" 'exec "$(command -v sshd)" -D -e -p 2222' "foreground sshd remains the final bootstrap action"
 
 # /etc/os-release must be world-readable: unprivileged guest tooling reads it,

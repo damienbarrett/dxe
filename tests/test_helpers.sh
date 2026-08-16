@@ -24,6 +24,13 @@ set -uo pipefail
 # this helper does not exist over there.
 stdin_matches() { grep "$@" >/dev/null; }
 
+# Octal permission bits of a file, on either host. GNU coreutils and BSD stat
+# disagree on both the flag and the format specifier, and these tests run on
+# macOS locally and Ubuntu in CI, so neither spelling can be hardcoded.
+file_mode() {
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

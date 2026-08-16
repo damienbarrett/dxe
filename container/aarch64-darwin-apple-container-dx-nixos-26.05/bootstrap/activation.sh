@@ -159,138 +159,42 @@ verify_guest_tools() {
     fi
 }
 
-# Seed default Herdr settings into config.toml when missing (H10). Table-scope
-# aware: adds `experimental.pane_history = true` and
-# `advanced.scrollback_limit_bytes = 10000000` only when the exact top-level
-# table is missing that key, preserving unrelated tables, keys, comments, and
-# any explicit user value already present. Idempotent: a second run produces a
-# byte-identical file (F7). Publication is atomic -- the complete file is
-# assembled in a temp file in the same directory, permissioned, then `mv`'d
-# into place; there is no in-place `>>` append, and no partially-seeded file
-# is ever visible at the real path, nor left behind on failure. TOML this
-# function cannot parse conservatively (quoted or dotted keys, array tables,
-# multi-line values, ...) is left completely untouched: the function fails
-# closed with a diagnostic rather than risk a partial rewrite.
+# Seed the repository-owned Herdr defaults into the persisted, mutable
+# config.toml (H10). The merge itself lives in scripts/dx-herdr-config.sh
+# rather than inline here. The defaults now carry `[[keys.command]]` binding
+# blocks, and merging an array of tables is well outside what the previous
+# two-key seeder could express: it rejected array tables outright and so
+# failed closed on every config that carried a key binding at all.
+#
+# The contract that seeder established is preserved by the merger: explicit
+# user values win, an occupied binding is never duplicated, unrelated tables
+# and comments survive, publication is atomic via a same-directory temp file,
+# a second run is byte-identical, and TOML it cannot update safely leaves the
+# original untouched rather than risking a partial rewrite.
+#
+# Keeping the merger in its own executable also keeps it directly testable,
+# which matters because `scripts/` sits outside the coverage gate's scope
+# (bin/lib, bootstrap/, scripts/lib), so it needs deliberate behavior tests
+# rather than the 100% ratchet -- see tests/test_herdr_config_persistence.sh.
 dx_seed_herdr_config() {
     local config_file="$1"
+    local template="${2:-}"
+    local bootstrap_root merger
 
-    local dir tmp_file
-
-    dir="$(dirname "$config_file")"
-
-    if [ ! -s "$config_file" ]; then
-        mkdir -p "$dir"
-        tmp_file="$(mktemp "$dir/.dxe-herdr-config.XXXXXX")" || {
-            echo "Error: could not create a temp file to seed $config_file." >&2
-            return 1
-        }
-        cat > "$tmp_file" <<'EOF'
-[experimental]
-pane_history = true
-
-[advanced]
-scrollback_limit_bytes = 10000000
-EOF
-        if ! chmod 0600 "$tmp_file"; then
-            rm -f "$tmp_file"
-            echo "Error: could not set permissions on $config_file." >&2
-            return 1
-        fi
-        mv -f "$tmp_file" "$config_file"
-        return 0
-    fi
-
-    tmp_file="$(mktemp "$dir/.dxe-herdr-config.XXXXXX")" || {
-        echo "Error: could not create a temp file to seed $config_file." >&2
-        return 1
-    }
-
-    # Pure-bash, no external interpreter. This function runs during bootstrap,
-    # where the essentials profile provides coreutils/sed/grep but NOT awk --
-    # and the essentials install is skipped entirely on a guest that already
-    # has one, so adding a package there cannot fix it retroactively. The
-    # bootstrap launcher avoids awk for the same reason (its process_start is
-    # pure sh). Depending on awk here cost a live guest its boot.
-    local header_re='^[[:space:]]*\[([A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*)\][[:space:]]*(#.*)?$'
-    local key_re='^[[:space:]]*([A-Za-z0-9_-]+)[[:space:]]*='
-    local blank_re='^[[:space:]]*$'
-    local comment_re='^[[:space:]]*#'
-
-    # Pass 1: validate that every line is a construct this seeder understands,
-    # and record which of the two target tables and keys already exist. Any
-    # other construct (quoted or dotted keys, array tables, multi-line values)
-    # marks the file unsafe and we leave it entirely alone.
-    local ok=1 cur_table="" line key
-    local exp_seen=0 adv_seen=0 exp_has_key=0 adv_has_key=0
-    # Explicit fd rather than `done < "$file"`: kcov's bash tracer credits only
-    # simple commands, so a `done` carrying a redirection is reported as
-    # executable-but-never-hit and permanently blocks the 100% gate. Same
-    # constraint that forced the previous awk program onto one line.
-    exec 3< "$config_file"
-    while IFS= read -r line <&3 || [ -n "$line" ]; do
-        if [[ $line =~ $blank_re ]] || [[ $line =~ $comment_re ]]; then
-            continue
-        elif [[ $line =~ $header_re ]]; then
-            cur_table="${BASH_REMATCH[1]}"
-            [ "$cur_table" != experimental ] || exp_seen=1
-            [ "$cur_table" != advanced ] || adv_seen=1
-        elif [[ $line =~ $key_re ]]; then
-            key="${BASH_REMATCH[1]}"
-            if [ "$cur_table" = experimental ] && [ "$key" = pane_history ]; then exp_has_key=1; fi
-            if [ "$cur_table" = advanced ] && [ "$key" = scrollback_limit_bytes ]; then adv_has_key=1; fi
-        else
-            ok=0
-            break
-        fi
-    done
-    exec 3<&-
-
-    if [ "$ok" -ne 1 ]; then
-        rm -f "$tmp_file"
-        echo "Error: $config_file has TOML this seeder cannot update safely (quoted/dotted keys, array tables, or multi-line values); left unmodified." >&2
+    bootstrap_root="${DX_BOOTSTRAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+    [ -n "$template" ] || template="$bootstrap_root/bootstrap/herdr-config.toml"
+    merger="$bootstrap_root/scripts/dx-herdr-config.sh"
+    if [ ! -x "$merger" ]; then
+        echo "Error: Herdr config merger is unavailable: $merger" >&2
         return 1
     fi
-
-    # Pass 2: publish, inserting each missing key directly after its table
-    # header, and appending any table that is absent entirely.
-    local exp_inserted=0 adv_inserted=0
-    exec 3< "$config_file"
-    exec 4> "$tmp_file"
-    while IFS= read -r line <&3 || [ -n "$line" ]; do
-        printf '%s\n' "$line" >&4
-        if [[ $line =~ $header_re ]]; then
-            cur_table="${BASH_REMATCH[1]}"
-            if [ "$cur_table" = experimental ] && [ "$exp_has_key" -eq 0 ] && [ "$exp_inserted" -eq 0 ]; then
-                printf '%s\n' 'pane_history = true' >&4
-                exp_inserted=1
-            fi
-            if [ "$cur_table" = advanced ] && [ "$adv_has_key" -eq 0 ] && [ "$adv_inserted" -eq 0 ]; then
-                printf '%s\n' 'scrollback_limit_bytes = 10000000' >&4
-                adv_inserted=1
-            fi
-        fi
-    done
-    exec 3<&-
-    exec 4>&-
-
-    if [ "$exp_seen" -eq 0 ]; then
-        printf '\n%s\n%s\n' '[experimental]' 'pane_history = true' >> "$tmp_file"
-    fi
-    if [ "$adv_seen" -eq 0 ]; then
-        printf '\n%s\n%s\n' '[advanced]' 'scrollback_limit_bytes = 10000000' >> "$tmp_file"
-    fi
-
-    if ! chmod 0600 "$tmp_file"; then
-        rm -f "$tmp_file"
-        echo "Error: could not set permissions on $config_file." >&2
-        return 1
-    fi
-    mv -f "$tmp_file" "$config_file"
+    "$merger" seed "$template" "$config_file"
 }
 
 dx_activate_herdr() {
     local persist_home="${1:-/persist/home/dx}"
     local home="${2:-/home/dx}"
+    local template="${3:-}"
     local persistent_config_file="$persist_home/.config/herdr/config.toml"
     local persistent_config_dir="$persist_home/.config/herdr"
     local persistent_state_dir="$persist_home/.local/state/herdr"
@@ -298,7 +202,7 @@ dx_activate_herdr() {
     local ready_tmp=""
 
     setup_herdr_persistence "$persist_home" "$home" || return 1
-    dx_seed_herdr_config "$persistent_config_file" || return 1
+    dx_seed_herdr_config "$persistent_config_file" "$template" || return 1
     if ! chown -R dx:dx "$persistent_config_dir" "$persistent_state_dir"; then
         echo "Error: could not set dx:dx ownership on Herdr's persisted config/state directories; refusing to leave a root-owned config.toml the dx user cannot read." >&2
         return 1
