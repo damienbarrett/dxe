@@ -16,7 +16,7 @@ SKIP_INTEGRATION=false
 # Every section this runner can dispatch. An unknown --section= must fail rather
 # than report success over an empty run: tests/run-tier.sh selects whole tiers by
 # section number, so a silent no-op would shrink a tier without failing CI.
-KNOWN_SECTIONS="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23"
+KNOWN_SECTIONS="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24"
 
 for arg in "$@"; do
     case $arg in
@@ -30,7 +30,7 @@ for arg in "$@"; do
             echo "Usage: $0 [--section=N] [--skip-integration]"
             echo ""
             echo "Options:"
-            echo "  --section=N         Run only section N (0-23)"
+            echo "  --section=N         Run only section N (0-24)"
             echo "  --skip-integration  Skip integration tests and live checks"
             echo "  --help              Show this help message"
             exit 0
@@ -78,7 +78,6 @@ run_test "$SCRIPT_DIR/test_section0_lint.sh" "0"
 run_test "$SCRIPT_DIR/test_section1_secrets.sh" "1"
 run_test "$SCRIPT_DIR/test_section2_containerfile.sh" "2"
 run_test "$SCRIPT_DIR/test_section3_bootstrap.sh" "3"
-run_test "$SCRIPT_DIR/test_herdr_config_persistence.sh" "3"
 
 # Bring the selected isolated guest to a validated running state before any
 # later section performs live probes against it.
@@ -111,6 +110,7 @@ run_test "$SCRIPT_DIR/test_section17_dx_ai_runtime.sh" "17"
 # Herdr's live block probes for an installed herdr; it must run after section 17
 # installs the AI tools bundle, or the live probe is doomed to skip.
 run_test "$SCRIPT_DIR/test_section23_herdr.sh" "23"
+run_test "$SCRIPT_DIR/test_herdr_config_persistence.sh" "24"
 run_test "$SCRIPT_DIR/test_section18_mount_git.sh" "18"
 run_test "$SCRIPT_DIR/test_section19_reverse_forward.sh" "19"
 

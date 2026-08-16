@@ -48,7 +48,10 @@ base16_env_args() {
 run_tool_theme_writer() {
     local home="$1"
     shift
-    HOME="$home" bash "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" "$@"
+    # DX_THEME_SKIP_HERDR_RELOAD keeps the writer from signalling a Herdr
+    # server: this suite also runs on a developer host that may have a live
+    # Herdr of its own, and a test must not reload the user's real session.
+    HOME="$home" DX_THEME_SKIP_HERDR_RELOAD=1 bash "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" "$@"
 }
 
 assert_file_exists "$FLAKE_NIX" "flake.nix exists"
@@ -388,7 +391,7 @@ assert_file_contains "$LUALINE_NIX" 'theme = "tinted"' "lualine uses tinted them
 assert_file_not_contains "$LUALINE_NIX" 'theme = "rose-pine"' "lualine no longer hard-codes rose-pine"
 assert_file_contains "$ROSE_PINE_NIX" "pkgs.vimPlugins.rose-pine" "Rose Pine remains packaged as fallback"
 
-assert_file_contains "$RUNNER" "0-23" "test runner help advertises current section range"
+assert_file_contains "$RUNNER" "0-24" "test runner help advertises current section range"
 assert_file_contains "$RUNNER" 'run_test "$SCRIPT_DIR/test_section14_tinty_theming.sh" "14"' "test runner explicitly runs section 14"
 assert_file_not_contains "$FLAKE_NIX" "stylix" "Stylix dependency was not added"
 
@@ -754,6 +757,95 @@ DRIVER_EOF
         fi
     fi
 fi
+
+# --- Herdr chrome theming (herdr-theme-plan.md Layer 2) ---
+#
+# herdr-theme-plan.md concluded this layer was unbuildable: Herdr accepted only
+# eight built-in theme names and no palette, so four of sixteen dx-theme
+# aliases -- including the default -- had no match. That conclusion was wrong.
+# With `[theme] name = "terminal"`, Herdr honours a full custom palette under
+# `[theme.custom]`, so the base16 scheme maps exactly and no approximation is
+# needed. Confirmed against herdr 0.7.5: `herdr config check` reports unknown
+# keys in that table, and reports none for the keys written here.
+#
+# Executing the writer needs the guest toolchain (Bash 4 `mapfile`, GNU
+# `chmod --reference`), so the behavior half is Linux-only, exactly as in
+# tests/test_herdr_config_persistence.sh. The static assertions run everywhere.
+assert_file_contains "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" "write_herdr_theme" "the tool theme writer themes Herdr's chrome"
+assert_file_contains "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" "write_herdr_host_terminals" "the tool theme writer repaints attached Herdr host terminals"
+assert_file_contains_literal "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" 'name = "terminal"' "Herdr is put in terminal-palette mode rather than a built-in theme name"
+assert_file_contains "$SCRIPT_DX_THEME_RESTORE" "HERDR_PANE_ID" "theme restore detects a Herdr pane"
+assert_file_contains "$SCRIPT_DX_THEME_OSC_HOOK" "HERDR_PANE_ID" "the OSC hook detects a Herdr pane"
+
+# The writer runs unguarded here: a stubbed `herdr` on PATH supplies the
+# validator, and the Herdr paths this exercises avoid the guest-only
+# constructs elsewhere in the script, so these assertions hold on the macOS
+# host too. Only the /proc-walking host-terminal repaint needs a real guest.
+herdr_theme_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-herdr-theme.XXXXXX")"
+herdr_cfg="$herdr_theme_fixture/config.toml"
+herdr_stub_dir="$herdr_theme_fixture/bin"
+mkdir -p "$herdr_stub_dir"
+# A palette whose 16 slots are distinguishable, so a wrong slot mapping is
+# visible rather than coincidentally correct.
+herdr_palette=(001100 011101 021102 031103 041104 051105 061106 071107 \
+               081108 091109 0A110A 0B110B 0C110C 0D110D 0E110E 0F110F)
+
+write_herdr_stub() {
+    cat > "$herdr_stub_dir/herdr" <<STUB
+#!/bin/sh
+if [ "\$1" = "config" ] && [ "\$2" = "check" ]; then exit ${1:-0}; fi
+if [ "\$1" = "server" ]; then echo "reload" >> "$herdr_theme_fixture/reloads"; fi
+exit 0
+STUB
+    chmod 0755 "$herdr_stub_dir/herdr"
+}
+
+printf '%s\n' '[keys]' 'prefix = "ctrl+space"' > "$herdr_cfg"
+write_herdr_stub 0
+HOME="$herdr_theme_fixture" HERDR_CONFIG_PATH="$herdr_cfg" \
+    DX_THEME_SKIP_HERDR_RELOAD=1 PATH="$herdr_stub_dir:$PATH" \
+    bash "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" "${herdr_palette[@]}" >/dev/null 2>&1
+
+if grep -Fq 'name = "terminal"' "$herdr_cfg" \
+    && grep -Fq 'panel_bg = "#001100"' "$herdr_cfg" \
+    && grep -Fq 'text = "#051105"' "$herdr_cfg" \
+    && grep -Fq 'accent = "#0E110E"' "$herdr_cfg"; then
+    test_pass "Herdr chrome receives the exact base16 palette, not an approximation"
+else
+    test_fail "Herdr chrome receives the exact base16 palette, not an approximation"
+fi
+assert_file_contains_literal "$herdr_cfg" 'prefix = "ctrl+space"' "seeded Herdr key bindings survive a theme switch"
+
+herdr_first="$(shasum -a 256 "$herdr_cfg" | cut -d' ' -f1)"
+HOME="$herdr_theme_fixture" HERDR_CONFIG_PATH="$herdr_cfg" \
+    DX_THEME_SKIP_HERDR_RELOAD=1 PATH="$herdr_stub_dir:$PATH" \
+    bash "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" "${herdr_palette[@]}" >/dev/null 2>&1
+if [ "$herdr_first" = "$(shasum -a 256 "$herdr_cfg" | cut -d' ' -f1)" ]; then
+    test_pass "rewriting the same Herdr theme is byte-idempotent"
+else
+    test_fail "rewriting the same Herdr theme is byte-idempotent"
+fi
+
+# A config Herdr rejects is one it falls back to defaults for, which would
+# silently discard the seeded key bindings too. Fail closed instead.
+cp "$herdr_cfg" "$herdr_theme_fixture/before-reject"
+write_herdr_stub 1
+HOME="$herdr_theme_fixture" HERDR_CONFIG_PATH="$herdr_cfg" \
+    DX_THEME_SKIP_HERDR_RELOAD=1 PATH="$herdr_stub_dir:$PATH" \
+    bash "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" 0A0A0A 0B0B0B 0C0C0C 0D0D0D 0E0E0E 0F0F0F \
+    101010 111111 121212 131313 141414 151515 161616 171717 181818 191919 >/dev/null 2>&1
+if cmp -s "$herdr_theme_fixture/before-reject" "$herdr_cfg"; then
+    test_pass "a Herdr config the validator rejects leaves the live config untouched"
+else
+    test_fail "a Herdr config the validator rejects leaves the live config untouched"
+fi
+if ! ls "$herdr_theme_fixture"/.dx-theme-herdr.* >/dev/null 2>&1; then
+    test_pass "a rejected Herdr theme leaves no temp file behind"
+else
+    test_fail "a rejected Herdr theme leaves no temp file behind"
+fi
+
+rm -rf "$herdr_theme_fixture"
 
 print_summary
 exit_with_code

@@ -16,6 +16,7 @@ source "$SCRIPT_DIR/lib/fake-tools.sh"
 test_section "Section 23: Herdr Integration"
 
 DX_HERDR="$BASE_DIR/bin/dx-herdr"
+SSH_COMMON="$BASE_DIR/bin/lib/dx-ssh-common.sh"
 PERSISTENCE="$CONTAINER_DIR/bootstrap/persistence.sh"
 ACTIVATION="$CONTAINER_DIR/bootstrap/activation.sh"
 
@@ -297,6 +298,46 @@ if grep -q 'HERDR_SOCKET_PATH=' "$BASE_DIR/bin/lib/dx-ssh-common.sh" || grep -q 
 else
     test_pass "the shared SSH boundary does not set HERDR_* (F11)"
 fi
+
+# --- Theme restore precedes the Herdr program (herdr-theme-plan.md Layer 1) ---
+#
+# dx-herdr attached without ever restoring the guest's persisted scheme, so a
+# Herdr session inherited whatever palette the terminal was carrying while
+# dx-ssh restored it correctly. Ordering is the fix, not mere presence: the
+# restore has to run while the outer terminal is still directly attached to the
+# SSH pty, before Herdr takes over the screen. Assert against the decoded guest
+# command body so this tests the real boundary rather than the transport.
+if diag="$(
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    body_capture="$fake_dir/body"
+    fake_tool_write "$fake_dir" container "echo \"$DX_CONTAINER_NAME\""
+    fake_ssh_write "$fake_dir" '
+        case "$DX_FAKE_GUEST_CMD" in
+            *".dxe-persistence-ready"*) printf "%s" DX_HERDR_PRESENT; exit 0 ;;
+            *"command -v herdr"*) printf "%s" DX_HERDR_PRESENT; exit 0 ;;
+            *"herdr"*) printf "%s" "$DX_FAKE_GUEST_CMD" > "'"$body_capture"'"; exit 0 ;;
+        esac
+        exit 0
+    '
+    export PATH="$fake_dir:$PATH"
+    "$DX_HERDR" >/dev/null 2>&1
+    body="$(cat "$body_capture" 2>/dev/null || true)"
+    rm -rf "$fake_dir"
+    printf '%s' "$body"
+    restore_at="${body%%dx-theme-restore*}"
+    herdr_at="${body%%herdr*}"
+    [ "$body" != "${body#*dx-theme-restore}" ] && [ "${#restore_at}" -lt "${#herdr_at}" ]
+)"; then
+    test_pass "dx-herdr restores the guest theme before starting herdr (Layer 1)"
+else
+    test_fail "dx-herdr restores the guest theme before starting herdr (Layer 1) ($diag)"
+fi
+
+# The restore prefix is shared rather than inline in each caller: it was inline
+# in dx-ssh only, which is precisely how dx-herdr shipped without it.
+assert_file_contains "$SSH_COMMON" "dx_guest_theme_restore_prefix" "the shared SSH boundary owns the theme-restore prefix"
+assert_file_contains "$DX_HERDR" "dx_guest_theme_restore_prefix" "dx-herdr takes the theme-restore prefix from the shared boundary"
+assert_file_not_contains "$DX_HERDR" 'dx_run_interactive_ssh "herdr"' "dx-herdr no longer attaches without restoring the theme"
 
 # --- The seeding contract now lives behind the merger ---
 #

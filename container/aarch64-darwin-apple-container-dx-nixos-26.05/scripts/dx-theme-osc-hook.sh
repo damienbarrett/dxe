@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
+# Same reason as dx-theme-restore: Herdr restores OSC defaults as soon as a
+# short-lived child command exits, so a `dx-theme <name>` run inside a pane
+# must go through the writer, which targets the attached client's host TTY.
+# The writer resolves the palette from these same Tinty hook variables.
+if [ "${HERDR_ENV:-}" = 1 ] || [ -n "${HERDR_PANE_ID:-}" ]; then
+  exec "$HOME/.local/bin/dx-theme-write-tool-themes"
+fi
+
 base00="$TINTY_SCHEME_PALETTE_BASE00_HEX_R$TINTY_SCHEME_PALETTE_BASE00_HEX_G$TINTY_SCHEME_PALETTE_BASE00_HEX_B"
 base01="$TINTY_SCHEME_PALETTE_BASE01_HEX_R$TINTY_SCHEME_PALETTE_BASE01_HEX_G$TINTY_SCHEME_PALETTE_BASE01_HEX_B"
 base02="$TINTY_SCHEME_PALETTE_BASE02_HEX_R$TINTY_SCHEME_PALETTE_BASE02_HEX_G$TINTY_SCHEME_PALETTE_BASE02_HEX_B"

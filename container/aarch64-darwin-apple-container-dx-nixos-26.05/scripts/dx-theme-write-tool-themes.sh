@@ -413,7 +413,178 @@ EOF
   tmux source-file "$conf" >/dev/null 2>&1 || true
 }
 
+# Herdr's own chrome: tabs, status bar, pane borders. Herdr accepts a full
+# custom palette under `[theme.custom]` when `[theme] name` is "terminal", so
+# the base16 scheme maps exactly and no nearest-neighbour approximation over
+# its eight built-in theme names is needed. Verified against herdr 0.7.5 with
+# `herdr config check`, which reports unknown keys in that table and reports
+# none for these -- so every key below is one Herdr actually honours.
+write_herdr_theme() {
+  command -v herdr >/dev/null 2>&1 || return 0
+
+  local config_file config_dir tmp existing proposed
+  config_file="${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}"
+  config_dir="$(dirname "$config_file")"
+  mkdir -p "$config_dir"
+  [ -f "$config_file" ] || : > "$config_file"
+
+  tmp="$(mktemp "$config_dir/.dx-theme-herdr.XXXXXX")"
+  trap 'rm -f "$tmp"; trap - RETURN' RETURN
+
+  # Drop only the tables this function owns and keep every other setting, so
+  # the bootstrap-seeded key bindings and any user config survive a theme
+  # switch. Pure Bash, for the same reason the config merger is: awk is not in
+  # the early essentials profile.
+  local line skip=false last_index
+  local -a preserved=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [[ "$line" =~ ^[[:space:]]*#\ dx-theme:\ managed\ Herdr\ theme[[:space:]]*$ ]]; then
+      continue
+    fi
+    if [[ "$line" =~ ^[[:space:]]*\[theme\][[:space:]]*(#.*)?$ ]] \
+      || [[ "$line" =~ ^[[:space:]]*\[theme\.custom\][[:space:]]*(#.*)?$ ]]; then
+      skip=true
+      continue
+    fi
+    if [ "$skip" = true ] && [[ "$line" =~ ^[[:space:]]*\[ ]]; then
+      skip=false
+    fi
+    if [ "$skip" = false ]; then
+      preserved+=( "$line" )
+    fi
+  done < "$config_file"
+
+  while [ "${#preserved[@]}" -gt 0 ]; do
+    last_index=$((${#preserved[@]} - 1))
+    [[ "${preserved[$last_index]}" =~ ^[[:space:]]*$ ]] || break
+    unset 'preserved[last_index]'
+  done
+  for line in "${preserved[@]}"; do
+    printf '%s\n' "$line" >> "$tmp"
+  done
+  if [ "${#preserved[@]}" -gt 0 ]; then
+    printf '\n' >> "$tmp"
+  fi
+
+  {
+    printf '# dx-theme: managed Herdr theme\n'
+    printf '[theme]\n'
+    printf 'name = "terminal"\n\n'
+    printf '[theme.custom]\n'
+    printf 'accent = "#%s"\n' "$base0E"
+    printf 'panel_bg = "#%s"\n' "$base00"
+    printf 'surface0 = "#%s"\n' "$base01"
+    printf 'surface1 = "#%s"\n' "$base02"
+    printf 'surface_dim = "#%s"\n' "$base01"
+    printf 'overlay0 = "#%s"\n' "$base03"
+    printf 'overlay1 = "#%s"\n' "$base04"
+    printf 'text = "#%s"\n' "$base05"
+    printf 'subtext0 = "#%s"\n' "$base04"
+    printf 'mauve = "#%s"\n' "$base0E"
+    printf 'green = "#%s"\n' "$base0B"
+    printf 'yellow = "#%s"\n' "$base0A"
+    printf 'red = "#%s"\n' "$base08"
+    printf 'blue = "#%s"\n' "$base0D"
+    printf 'teal = "#%s"\n' "$base0C"
+    printf 'peach = "#%s"\n' "$base09"
+  } >> "$tmp"
+
+  existing="$(<"$config_file")"
+  proposed="$(<"$tmp")"
+  if [ "$existing" = "$proposed" ]; then
+    return 0
+  fi
+
+  # Validate the whole merged file, not just this fragment: a config Herdr
+  # rejects is one Herdr falls back to defaults for, which would silently undo
+  # the seeded key bindings as well as the theme.
+  if ! HERDR_CONFIG_PATH="$tmp" herdr config check >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Carry the live file's mode across the atomic replace. `chmod --reference`
+  # would be the obvious way and is GNU-only; this script also runs on a macOS
+  # host under test, where that spelling aborts the whole writer.
+  local mode=""
+  if [ -e "$config_file" ]; then
+    mode="$(stat -c '%a' "$config_file" 2>/dev/null || stat -f '%Lp' "$config_file" 2>/dev/null || true)"
+  fi
+  chmod "${mode:-600}" "$tmp"
+  mv -f "$tmp" "$config_file"
+  trap - RETURN
+
+  [ "${DX_THEME_SKIP_HERDR_RELOAD:-}" = 1 ] || herdr server reload-config >/dev/null 2>&1 || true
+}
+
+# Pane *contents*: the shell, editors, ls colors, agent output. OSC emitted
+# from inside a Herdr pane is treated by Herdr as a transient child override
+# and is undone as soon as the emitting command exits, so writing to our own
+# stdout would repaint nothing. Write to each attached client's real host TTY
+# instead, then query the new defaults back so Herdr updates its cached host
+# theme and propagates it to every pane. This is what makes `dx-theme <name>`
+# work from inside a Herdr session rather than only at attach time.
+write_herdr_host_terminals() {
+  if [ "${HERDR_ENV:-}" != 1 ] && [ -z "${HERDR_PANE_ID:-}" ]; then
+    return 0
+  fi
+
+  local proc comm tty entry in_tmux color index osc sequence escaped
+  local -a argv=()
+  local -a indexed=(
+    "$base00" "$base08" "$base0B" "$base0A" "$base0D" "$base0E" "$base0C" "$base05"
+    "$base03" "$base08" "$base0B" "$base0A" "$base0D" "$base0E" "$base0C" "$base07"
+    "$base09" "$base0F" "$base01" "$base02" "$base04" "$base06"
+  )
+  local -A seen_ttys=()
+
+  sequence=""
+  for index in "${!indexed[@]}"; do
+    color="${indexed[$index]}"
+    printf -v osc '\033]4;%s;rgb:%s/%s/%s\033\\' \
+      "$index" "${color:0:2}" "${color:2:2}" "${color:4:2}"
+    sequence+="$osc"
+  done
+  printf -v osc '\033]10;#%s\033\\\033]11;#%s\033\\\033]12;#%s\033\\' \
+    "$base05" "$base00" "$base05"
+  sequence+="$osc"
+  sequence+=$'\033]10;?\033\\\033]11;?\033\\'
+
+  for proc in /proc/[0-9]*; do
+    [ -r "$proc/comm" ] && IFS= read -r comm < "$proc/comm" || continue
+    [ "$comm" = herdr ] || continue
+    argv=()
+    mapfile -d '' -t argv < "$proc/cmdline" 2>/dev/null || true
+    [ "${#argv[@]}" -gt 0 ] || continue
+    # The server holds no terminal; only attached clients do.
+    [ "${argv[1]:-}" != server ] || continue
+    tty="$(readlink "$proc/fd/1" 2>/dev/null || true)"
+    [[ "$tty" =~ ^/dev/pts/[0-9]+$ ]] || continue
+    [ -w "$tty" ] || continue
+    [ -z "${seen_ttys[$tty]:-}" ] || continue
+    seen_ttys[$tty]=1
+
+    in_tmux=false
+    while IFS= read -r -d '' entry; do
+      if [[ "$entry" == TMUX=* ]] && [ "$entry" != TMUX= ]; then
+        in_tmux=true
+        break
+      fi
+    done < "$proc/environ"
+
+    # A Herdr client running inside tmux needs the same DCS passthrough the
+    # restore path uses, or tmux eats the sequence before the terminal sees it.
+    if [ "$in_tmux" = true ]; then
+      escaped="${sequence//$'\033'/$'\033\033'}"
+      printf '\033Ptmux;%s\033\\' "$escaped" > "$tty"
+    else
+      printf '%s' "$sequence" > "$tty"
+    fi
+  done
+}
+
 write_btop_theme
 write_yazi_theme
 write_starship_theme
 apply_tmux_pills
+write_herdr_theme
+write_herdr_host_terminals

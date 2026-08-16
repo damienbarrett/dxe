@@ -3,17 +3,67 @@
 Drafted 2026-08-11. Findings were probed against the live `dx-host` guest
 running `herdr 0.7.5` from nixpkgs, not inferred from upstream documentation.
 
-## Status
+**Implemented 2026-08-16. Both layers shipped, and Layer 2's central finding
+below turned out to be wrong — see the correction before relying on any of it.**
 
-Two independent problems, only one of which is fully solvable.
+## Status
 
 | Layer | What it covers | Verdict |
 | --- | --- | --- |
-| 1 — pane colors | Everything *inside* a pane: shell, editors, `ls` colors, agent output | **Defect, fixable.** `dx-herdr` never restores the theme. One-line fix |
-| 2 — herdr chrome | Herdr's own tabs, status bar, borders | **Constrained.** Herdr accepts 8 built-in theme names and no palette. Exact base16 matching is impossible |
+| 1 — pane colors | Everything *inside* a pane: shell, editors, `ls` colors, agent output | **Done.** The restore prefix is shared by `dx-ssh` and `dx-herdr` in `bin/lib/dx-ssh-common.sh` |
+| 2 — herdr chrome | Herdr's own tabs, status bar, borders | **Done, and matched exactly.** The "no palette" finding was wrong |
 
-Layer 1 is a straightforward bug fix and should land on its own. Layer 2 needs a
-product decision before any code is written.
+### Correction: Herdr does accept a full custom palette
+
+This plan concluded that `[theme]` took exactly one key, `name`, restricted to
+eight built-in themes, so exact base16 matching was "impossible" and four of
+sixteen aliases — including the default `dark` — had no match at all. That
+elimination sweep missed the mechanism: with
+
+```toml
+[theme]
+name = "terminal"
+
+[theme.custom]
+accent = "#a89bb9"
+panel_bg = "#3B3228"
+…
+```
+
+Herdr honours a complete 16-slot palette. Re-probed on herdr 0.7.5 with the
+same `herdr config check` oracle this plan established: the live config
+validates `config: ok` with no warnings, while planting an unknown key in that
+same table *is* reported as `unknown config key theme.custom.<key>; ignoring
+key`. So the keys being written are ones Herdr honours, not ones it silently
+drops.
+
+Everything downstream of the old finding is therefore obsolete: the
+nearest-neighbour mapping table, the three-way product decision, and the
+recommendation to do nothing or map only exact matches. No mapping exists in
+the code, because none is needed — `dx-theme` hands Herdr the same base16
+palette it hands every other tool. Retained below as the record of what was
+probed and why the wrong conclusion was reached.
+
+The `[theme] name` mapping table is kept for reference only. It describes an
+approximation that was never built.
+
+### Where it landed
+
+- **Layer 1:** `dx_guest_theme_restore_prefix` in `bin/lib/dx-ssh-common.sh`,
+  used by both `bin/dx-ssh` and `bin/dx-herdr`. Open question 3 below is
+  answered: the prefix *is* shared, because leaving it inline in one caller is
+  precisely how this defect shipped.
+- **Layer 2:** `write_herdr_theme` and `write_herdr_host_terminals` in
+  `container/…/scripts/dx-theme-write-tool-themes.sh`, beside `apply_tmux_pills`
+  as this plan proposed.
+- **Mid-session switching, listed below as unsolvable without upstream
+  passthrough support:** solved. Herdr treats OSC from inside a pane as a
+  transient child override and undoes it on exit, so `dx-theme-restore` and
+  `dx-theme-osc-hook` detect a Herdr pane and hand off to the writer, which
+  writes the palette to each attached client's real host TTY (found by walking
+  `/proc` for non-server `herdr` processes) and queries the new defaults back so
+  Herdr updates its cached host theme. No Herdr passthrough sequence is needed,
+  which is why open questions 1 and 2 no longer block anything.
 
 ## Layer 1 — `dx-herdr` never restores the theme
 

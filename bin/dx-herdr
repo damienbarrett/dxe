@@ -126,5 +126,7 @@ if [ "$herdr_present" -ne 0 ]; then
     fi
 fi
 
-# Attach default herdr session via shared interactive SSH contract
-dx_run_interactive_ssh "herdr"
+# Attach default herdr session via shared interactive SSH contract. The theme
+# restore must precede herdr, while the terminal is still directly attached to
+# the SSH pty -- see dx_guest_theme_restore_prefix.
+dx_run_interactive_ssh "$(dx_guest_theme_restore_prefix)herdr"

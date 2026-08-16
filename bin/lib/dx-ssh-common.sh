@@ -111,6 +111,21 @@ dx_ssh_run_guest_command() {
     ssh "${ssh_opts[@]}" "$(dx_ssh_endpoint)" "$(dx_guest_bash_command "$host_tz" "$remote_cmd_body")"
 }
 
+# Restore the guest's persisted colour scheme before the session's real
+# program starts. Ordering is the whole design: this runs while the outer
+# terminal is still directly attached to the SSH pty, with no multiplexer in
+# the path, so the OSC sequences reach the terminal unwrapped and neither tmux
+# nor Herdr needs to support passthrough for attach-time theming to work.
+#
+# This is a shared prefix rather than an inline snippet because it was inline
+# in dx-ssh only, which is exactly how dx-herdr shipped without it: unifying
+# the SSH transport (F10) left the theme restore behind in one caller's command
+# body, invisible from the other. Herdr sessions therefore inherited whatever
+# palette the terminal happened to be carrying.
+dx_guest_theme_restore_prefix() {
+    printf '%s' 'if [ -x /home/dx/.local/bin/dx-theme-restore ]; then /home/dx/.local/bin/dx-theme-restore 2>/dev/null || true; fi; '
+}
+
 # Attach an interactive (pty) guest session running $1 inside the boundary
 # above. Prints the "Connecting..." banner once, installs the Apple Terminal
 # colour-restore cleanup, and always returns the real ssh exit status -- it

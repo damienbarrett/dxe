@@ -14,7 +14,7 @@ if [ $# -eq 0 ]; then
     # with dx-herdr) owns the "Connecting..." banner, the timezone lookup, the
     # SSH options, the guest env prefix/workdir snippet, and the
     # terminal-colour cleanup trap -- see F3/F10 in herdr-refactor.md.
-    REMOTE_TMUX_CMD="if [ -x /home/dx/.local/bin/dx-theme-restore ]; then /home/dx/.local/bin/dx-theme-restore 2>/dev/null || true; fi; if ! command -v tmux >/dev/null 2>&1; then echo \"DX guest tools are still bootstrapping; tmux is not available yet.\" >&2; exit 127; fi; tmux attach -t dx || tmux new-session -s dx"
+    REMOTE_TMUX_CMD="$(dx_guest_theme_restore_prefix)if ! command -v tmux >/dev/null 2>&1; then echo \"DX guest tools are still bootstrapping; tmux is not available yet.\" >&2; exit 127; fi; tmux attach -t dx || tmux new-session -s dx"
     dx_run_interactive_ssh "$REMOTE_TMUX_CMD"
 else
     # Arguments provided: run them through bash so shell syntax is stable even

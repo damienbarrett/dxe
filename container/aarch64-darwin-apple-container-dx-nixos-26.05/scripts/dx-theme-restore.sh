@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
+# Inside a Herdr pane, emitting OSC on our own stdout would only create a
+# pane-local override that Herdr discards the moment this helper exits. Hand
+# off to the writer, which updates Herdr's own chrome and writes the palette to
+# each attached client's real host TTY. See write_herdr_host_terminals.
+if [ "${HERDR_ENV:-}" = 1 ] || [ -n "${HERDR_PANE_ID:-}" ]; then
+  exec "$HOME/.local/bin/dx-theme-write-tool-themes"
+fi
+
 current="$(tinty current 2>/dev/null || true)"
 if [ -z "$current" ] && [ -s "$HOME/.config/dx/theme-current" ]; then
   current="$(cat "$HOME/.config/dx/theme-current")"
