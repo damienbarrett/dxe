@@ -6,6 +6,9 @@ NIX_FLAGS=(--extra-experimental-features "nix-command flakes" --accept-flake-con
 # declaration (flake.nix's aiPackages), bin/dx-herdr, and docs/guest.md in sync
 # with this list by hand; they are outside this module's ownership.
 DX_AI_TOOLS="codex gemini claude agy herdr"
+# The intersection of the agents dx-ai publishes and the integrations Herdr
+# ships. Herdr has no target for gemini or agy, so they are absent by design.
+DX_AI_HERDR_INTEGRATIONS=(claude codex)
 
 dx_ai_usage() {
     cat <<'EOF'
@@ -235,6 +238,41 @@ dx_ai_ensure_keyring() {
     if [ "$started" = true ]; then echo "D-Bus keyring service started."; else echo "D-Bus keyring service already available."; fi
 }
 
+dx_ai_herdr_integration_needs_install() {
+    local target="$1" status="$2" outdated="$3" line state
+    while IFS= read -r line; do
+        case "$line" in "$target: "*) ;; *) continue ;; esac
+        state="${line#*: }"; state="${state%% (*}"
+        [ "$state" = installed ] || return 0
+        break
+    done <<EOF
+$status
+EOF
+    while IFS= read -r line; do
+        case "$line" in "$target"|"$target: "*) return 0 ;; esac
+    done <<EOF
+$outdated
+EOF
+    return 1
+}
+
+dx_ai_install_herdr_integrations() {
+    local herdr_bin target status outdated
+    herdr_bin="${HERDR_BIN_PATH:-}"
+    [ -n "$herdr_bin" ] || herdr_bin="$(command -v herdr 2>/dev/null || true)"
+    [ -n "$herdr_bin" ] || { echo "Herdr is unavailable; skipping agent integrations."; return 0; }
+    status="$("$herdr_bin" integration status 2>/dev/null)" || { echo "Warning: could not read Herdr integration status." >&2; return 0; }
+    outdated="$("$herdr_bin" integration status --outdated-only 2>/dev/null || true)"
+    for target in "${DX_AI_HERDR_INTEGRATIONS[@]}"; do
+        dx_ai_herdr_integration_needs_install "$target" "$status" "$outdated" || continue
+        if "$herdr_bin" integration install "$target"; then
+            echo "Installed the Herdr $target integration."
+        else
+            echo "Warning: could not install the Herdr $target integration." >&2
+        fi
+    done
+}
+
 dx_ai_verify() { local tool; echo "AI tools installed:"; for tool in $DX_AI_TOOLS; do printf '  %s -> ' "$tool"; command -v "$tool"; done; }
 
 dx_ai_main() {
@@ -275,6 +313,9 @@ dx_ai_main() {
     dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM
     dx_ai_setup_credentials || return
     dx_ai_ensure_keyring || return
+    # Herdr is optional, so a missing or unhappy integration is reported but
+    # never fails an otherwise successful AI update.
+    dx_ai_install_herdr_integrations
     dx_ai_verify
 }
 

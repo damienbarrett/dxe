@@ -226,6 +226,104 @@ else
     test_fail "--supports rejects trailing arguments (exit 64)"
 fi
 
+# Herdr agent integrations install hook files into the agent config directories
+# dx-ai already owns, so dx-ai re-asserts them for every published generation.
+# HERDR_BIN_PATH is the same injection seam dx-herdr-navigate.sh uses.
+herdr_fixture="$ai_fixture/herdr"
+mkdir -p "$herdr_fixture"
+herdr_stub="$herdr_fixture/herdr"
+cat > "$herdr_stub" <<'HERDR_STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$DXE_HERDR_STUB_LOG"
+case "$1 ${2:-}" in
+    "integration status")
+        [ "${DXE_HERDR_STUB_STATUS_RC:-0}" -eq 0 ] || exit "$DXE_HERDR_STUB_STATUS_RC"
+        if [ "${3:-}" = --outdated-only ]; then
+            printf '%s' "${DXE_HERDR_STUB_OUTDATED:-}"
+        else
+            printf '%s' "${DXE_HERDR_STUB_STATUS:-}"
+        fi
+        ;;
+    "integration install") exit "${DXE_HERDR_STUB_INSTALL_RC:-0}" ;;
+esac
+HERDR_STUB
+chmod 0755 "$herdr_stub"
+
+herdr_stub_log="$herdr_fixture/log"
+run_herdr_integrations() {
+    : > "$herdr_stub_log"
+    (
+        export DXE_HERDR_STUB_LOG="$herdr_stub_log"
+        export DXE_HERDR_STUB_STATUS="${1:-}"
+        export DXE_HERDR_STUB_OUTDATED="${2:-}"
+        export DXE_HERDR_STUB_INSTALL_RC="${3:-0}"
+        export DXE_HERDR_STUB_STATUS_RC="${4:-0}"
+        HERDR_BIN_PATH="$herdr_stub" dx_ai_install_herdr_integrations
+    )
+}
+herdr_installed_targets() {
+    sed -n 's/^integration install //p' "$herdr_stub_log" | sort | tr '\n' ' '
+}
+
+all_missing="claude: not installed (/home/dx/.claude/hooks/herdr-agent-state.sh)
+codex: not installed (/home/dx/.codex/herdr-agent-state.sh)
+cursor: not installed (/home/dx/.cursor/herdr-agent-state.sh)"
+all_current="claude: installed (/home/dx/.claude/hooks/herdr-agent-state.sh)
+codex: installed (/home/dx/.codex/herdr-agent-state.sh)"
+
+if run_herdr_integrations "$all_missing" "" >/dev/null 2>&1 \
+    && [ "$(herdr_installed_targets)" = "claude codex " ]; then
+    test_pass "dx-ai installs the missing Herdr integrations for the agents it manages"
+else
+    test_fail "dx-ai installs the missing Herdr integrations for the agents it manages"
+fi
+
+if run_herdr_integrations "$all_missing" "" >/dev/null 2>&1 \
+    && ! grep -q 'integration install cursor' "$herdr_stub_log"; then
+    test_pass "dx-ai leaves Herdr integrations for unmanaged agents alone"
+else
+    test_fail "dx-ai leaves Herdr integrations for unmanaged agents alone"
+fi
+
+if run_herdr_integrations "$all_current" "" >/dev/null 2>&1 \
+    && [ -z "$(herdr_installed_targets)" ]; then
+    test_pass "a repeated dx-ai run reinstalls no current Herdr integration"
+else
+    test_fail "a repeated dx-ai run reinstalls no current Herdr integration"
+fi
+
+if run_herdr_integrations "$all_current" "codex: outdated (/home/dx/.codex/herdr-agent-state.sh)" >/dev/null 2>&1 \
+    && [ "$(herdr_installed_targets)" = "codex " ]; then
+    test_pass "dx-ai refreshes a Herdr integration that upstream reports outdated"
+else
+    test_fail "dx-ai refreshes a Herdr integration that upstream reports outdated"
+fi
+
+if (
+    export DXE_HERDR_STUB_LOG="$herdr_stub_log"
+    PATH=/nonexistent HERDR_BIN_PATH='' dx_ai_install_herdr_integrations
+) >/dev/null 2>&1; then
+    test_pass "dx-ai treats an absent Herdr as a skip, not a failure"
+else
+    test_fail "dx-ai treats an absent Herdr as a skip, not a failure"
+fi
+
+if run_herdr_integrations "$all_missing" "" 1 >/dev/null 2>&1; then
+    test_pass "a failed Herdr integration install does not fail the AI update"
+else
+    test_fail "a failed Herdr integration install does not fail the AI update"
+fi
+
+if run_herdr_integrations "" "" 0 1 >/dev/null 2>&1 \
+    && [ -z "$(herdr_installed_targets)" ]; then
+    test_pass "an unreadable Herdr integration status installs nothing and does not fail"
+else
+    test_fail "an unreadable Herdr integration status installs nothing and does not fail"
+fi
+
+assert_grep_in_file "$AI_SCRIPT" '^ +dx_ai_install_herdr_integrations$' "dx-ai runs the Herdr integration step from its main flow"
+assert_file_not_contains "$AI_SCRIPT" 'dx_ai_install_herdr_integrations || return' "dx-ai never lets an optional Herdr integration fail the update"
+
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
     test_skip "dx-ai guest runtime checks (--skip-integration)"
     print_summary
