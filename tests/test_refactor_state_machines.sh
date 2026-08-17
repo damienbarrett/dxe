@@ -206,6 +206,144 @@ else
 fi
 unset DXE_FAKE_SSH_START_DELAY
 
+# Metadata reaped from under a live SSH master. macOS deletes files under /tmp
+# that have gone untouched for three days, but the master holds its socket open
+# indefinitely -- so the tunnel outlives the file that describes it, and the
+# port used to be unusable until someone stopped it by hand. The master's own
+# -L/-R mapping is the authority, so the peer is recovered from there.
+: > "$ssh_log"
+dx_tunnel_process_list >/dev/null 2>&1 || true   # cover the real ps probe once
+expect_ok "reaped-metadata fixture starts a forward" dx_tunnel_start forward 15200 5200
+reaped_metadata="$(dx_tunnel_metadata_path forward 15200)"; reaped_socket="$(dx_tunnel_socket_path forward 15200)"
+# The fake ssh logs "$*" verbatim, so the log *is* the argv the master would
+# show in ps; prefixing the binary name is the only thing ps adds.
+dx_tunnel_process_list() { sed 's/^/ssh /' "$ssh_log"; }
+
+rm -f "$reaped_metadata"
+expect_ok "reaped metadata self-heals from the live SSH master" dx_tunnel_start forward 15200 5200
+if dx_tunnel_metadata_read "$reaped_metadata" && [ "$DX_TUNNEL_META_PEER" = 5200 ]; then
+    test_pass "recovery republishes the peer the master is actually forwarding"
+else
+    test_fail "recovery republishes the peer the master is actually forwarding"
+fi
+
+# Recovery must not become a way to silently repoint a live tunnel.
+rm -f "$reaped_metadata"
+expect_reject "recovered peer still refuses a conflicting mapping" dx_tunnel_start forward 15200 9200
+
+rm -f "$reaped_metadata"
+if [ "$(dx_tunnel_peer_for_socket forward 15200 "$reaped_socket")" = 5200 ]; then
+    test_pass "listing reports the recovered peer instead of unknown"
+else
+    test_fail "listing reports the recovered peer instead of unknown"
+fi
+
+# Refreshing on every confirmed-active start keeps the reaper from reaching a
+# tunnel that is still in daily use at all.
+touch -t 200001010000 "$reaped_metadata"
+refresh_marker="$fixture/refresh-marker"; touch -t 200001020000 "$refresh_marker"
+dx_tunnel_start forward 15200 5200 >/dev/null
+if [ -n "$(find "$reaped_metadata" -newer "$refresh_marker" 2>/dev/null)" ]; then
+    test_pass "confirming an active tunnel restamps its metadata against the reaper"
+else
+    test_fail "confirming an active tunnel restamps its metadata against the reaper"
+fi
+
+rm -f "$reaped_metadata"
+if ( dx_tunnel_metadata_write() { return 1; }; dx_tunnel_recover_peer forward 15200 "$reaped_socket" ) >/dev/null 2>&1; then
+    test_fail "recovery that cannot republish metadata fails loudly"
+else
+    test_pass "recovery that cannot republish metadata fails loudly"
+fi
+
+# A master that claims an impossible peer is not evidence of anything.
+dx_tunnel_process_list() { printf 'ssh -f -N -M -S %s -L 127.0.0.1:15200:127.0.0.1:99999999 -i k\n' "$reaped_socket"; }
+expect_reject "an out-of-range peer in the master argv is not trusted" dx_tunnel_start forward 15200 5200
+
+# Nothing left to recover from: the error must name the command that clears it.
+dx_tunnel_process_list() { :; }
+recover_error="$(dx_tunnel_start forward 15200 5200 2>&1 >/dev/null || true)"
+if printf '%s\n' "$recover_error" | stdin_matches -F 'dx-forward --stop 15200'; then
+    test_pass "unrecoverable state names the command that clears it"
+else
+    test_fail "unrecoverable state names the command that clears it"
+fi
+expect_ok "recovered tunnel remains stoppable" dx_tunnel_stop forward 15200
+
+# Reverse tunnels bind the same way through -R, and legacy sockets predate the
+# metadata layout entirely, so recovery must not publish canonical state for one.
+dx_tunnel_process_list() { sed 's/^/ssh /' "$ssh_log"; }
+expect_ok "reverse fixture starts a reverse forward" dx_tunnel_start reverse 18200 8200
+rm -f "$(dx_tunnel_metadata_path reverse 18200)"
+expect_ok "reverse recovery reads the -R mapping" dx_tunnel_start reverse 18200 8200
+dx_tunnel_stop reverse 18200 >/dev/null
+
+legacy_recover="$fixture/dx-forward-side-15300.sock"; : > "$legacy_recover"
+dx_tunnel_process_list() { printf 'ssh -f -N -M -S %s -L 127.0.0.1:15300:127.0.0.1:5300 -i k\n' "$legacy_recover"; }
+if [ "$(dx_tunnel_peer_for_socket forward 15300 "$legacy_recover")" = 5300 ] &&
+    [ ! -f "$(dx_tunnel_metadata_path forward 15300)" ]; then
+    test_pass "legacy socket recovery reports the peer without publishing new-layout state"
+else
+    test_fail "legacy socket recovery reports the peer without publishing new-layout state"
+fi
+rm -f "$legacy_recover"
+
+legacy_unknown="$fixture/dx-forward-side-15500.sock"; : > "$legacy_unknown"
+dx_tunnel_process_list() { :; }
+legacy_unknown_status=0
+legacy_unknown_out="$(dx_tunnel_peer_for_socket forward 15500 "$legacy_unknown")" || legacy_unknown_status=$?
+if [ "$legacy_unknown_status" -eq 0 ] && [ -z "$legacy_unknown_out" ]; then
+    test_pass "an unknown legacy peer reports nothing rather than failing its set -e caller"
+else
+    test_fail "an unknown legacy peer reports nothing rather than failing its set -e caller"
+fi
+rm -f "$legacy_unknown"
+
+# Discovery is keyed by the metadata file, so reaping it also hid the socket:
+# --list reported nothing while a master still held the port, and --stop-all
+# walked straight past it. The key port is in the master's argv as well, and
+# re-deriving the socket path from it proves the key belongs to this direction
+# and container rather than trusting the argv on its face.
+: > "$ssh_log"
+dx_tunnel_process_list() { sed 's/^/ssh /' "$ssh_log"; }
+expect_ok "orphan-discovery fixture starts a forward" dx_tunnel_start forward 15400 5400
+if [ "$(dx_tunnel_discover forward | grep -c -F 15400)" = 1 ]; then
+    test_pass "a socket with intact metadata is discovered exactly once"
+else
+    test_fail "a socket with intact metadata is discovered exactly once"
+fi
+if [ "$(dx_tunnel_list forward 2>/dev/null | grep -c -F 'Active http://127.0.0.1:15400')" = 1 ]; then
+    test_pass "listing a healthy tunnel prints one entry"
+else
+    test_fail "listing a healthy tunnel prints one entry"
+fi
+rm -f "$(dx_tunnel_metadata_path forward 15400)"
+if dx_tunnel_discover forward | stdin_matches -F '15400'; then
+    test_pass "discovery finds a live socket whose metadata was reaped"
+else
+    test_fail "discovery finds a live socket whose metadata was reaped"
+fi
+if dx_tunnel_list forward 2>/dev/null | stdin_matches -F 'Active http://127.0.0.1:15400 -> side:5400'; then
+    test_pass "listing an orphaned socket reports its real peer"
+else
+    test_fail "listing an orphaned socket reports its real peer"
+fi
+if dx_tunnel_discover reverse | stdin_matches -F '15400'; then
+    test_fail "a forward socket is never discovered as a reverse forward"
+else
+    test_pass "a forward socket is never discovered as a reverse forward"
+fi
+expect_reject "a key port outside the valid range is not trusted" \
+    eval 'dx_tunnel_process_list() { printf "ssh -S %s -L 127.0.0.1:99999999:127.0.0.1:5400\n" "$(dx_tunnel_socket_path forward 15400)"; }; dx_tunnel_recover_key forward "$(dx_tunnel_socket_path forward 15400)"'
+expect_reject "a key whose socket path does not round-trip is not trusted" \
+    eval 'dx_tunnel_process_list() { printf "ssh -S %s -L 127.0.0.1:15300:127.0.0.1:5300\n" "$fixture/dx-forward-side-15300.sock"; }; dx_tunnel_recover_key forward "$fixture/dx-forward-side-15300.sock"'
+dx_tunnel_process_list() { sed 's/^/ssh /' "$ssh_log"; }
+expect_ok "stop-all reclaims a socket that only the process table knew about" dx_tunnel_stop_all forward
+[ ! -e "$(dx_tunnel_socket_path forward 15400)" ] &&
+    test_pass "reclaimed orphan leaves no socket behind" || test_fail "reclaimed orphan leaves no socket behind"
+
+dx_tunnel_process_list() { :; }
+
 dx_tunnel_metadata_write() { return 1; }
 expect_reject "metadata publication failure fails the start" dx_tunnel_start reverse 15432 5432
 socket="$(dx_tunnel_socket_path reverse 15432)"

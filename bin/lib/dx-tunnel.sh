@@ -54,6 +54,14 @@ dx_tunnel_metadata_read() {
         dx_tunnel_validate_port "$DX_TUNNEL_META_KEY" key true >/dev/null 2>&1 && dx_tunnel_validate_port "$DX_TUNNEL_META_PEER" peer true >/dev/null 2>&1
 }
 
+# The state directory lives under /tmp, which macOS sweeps daily for anything
+# untouched for three days (com.apple.tmp_cleaner). An SSH master holds its
+# socket open indefinitely, so a tunnel that is left up but not re-established
+# outlives the metadata file describing it. Restamping the file every time the
+# tunnel is confirmed active keeps the pair together for as long as the tunnel
+# is in use; dx_tunnel_recover_peer handles the case where it was reaped anyway.
+dx_tunnel_metadata_refresh() { [ ! -f "$1" ] || touch "$1" 2>/dev/null || true; }
+
 dx_tunnel_metadata_write() {
     local direction="$1" key_port="$2" peer_port="$3" target tmp state
     state="$(dx_tunnel_state_dir)"; target="$(dx_tunnel_metadata_path "$direction" "$key_port")"
@@ -90,12 +98,62 @@ dx_tunnel_legacy_peer() {
     awk -F= -v field="$field" '$1 == field && $2 ~ /^[0-9]+$/ {print $2; exit}' "$socket.meta"
 }
 
+# Separated so tests can supply a process table; overriding `ps` itself would
+# mean putting a fake on PATH for every command the engine runs.
+dx_tunnel_process_list() { ps -xo args= 2>/dev/null; }
+
+# The metadata file only ever caches what the running master already knows: the
+# mapping is right there in its argv, exactly as dx_tunnel_start wrote it. So a
+# missing or unreadable file is recoverable rather than fatal -- read the peer
+# back off the master and republish. Only canonical state is republished; a
+# legacy socket has no place in the current layout and gets reported as-is.
+dx_tunnel_recover_peer() {
+    local direction="$1" key_port="$2" socket="$3" needle line peer
+    if [ "$direction" = forward ]; then needle="-S $socket -L"; else needle="-S $socket -R"; fi
+    needle="$needle 127.0.0.1:$key_port:127.0.0.1:"
+    while IFS= read -r line; do
+        case "$line" in *"$needle"*) ;; *) continue ;; esac
+        peer=${line#*"$needle"}; peer=${peer%% *}
+        dx_tunnel_validate_port "$peer" peer true >/dev/null 2>&1 || continue
+        if [ "$socket" = "$(dx_tunnel_socket_path "$direction" "$key_port")" ]; then
+            dx_tunnel_metadata_write "$direction" "$key_port" "$peer" || return 1
+        fi
+        printf '%s\n' "$peer"; return 0; done < <(dx_tunnel_process_list)
+    return 1
+}
+
+# Discovery is keyed by the metadata file, so a reaped file also hid its socket:
+# --list reported nothing while a master still held the port, and --stop-all
+# walked straight past it. The key port is in the master's argv too, but unlike
+# the peer it has to be proved rather than believed -- re-deriving the socket
+# path from the recovered key is what establishes that this socket really is
+# this direction's, for this container, on that port.
+dx_tunnel_recover_key() {
+    local direction="$1" socket="$2" needle line key
+    if [ "$direction" = forward ]; then needle="-S $socket -L 127.0.0.1:"; else needle="-S $socket -R 127.0.0.1:"; fi
+    while IFS= read -r line; do
+        case "$line" in *"$needle"*) ;; *) continue ;; esac
+        key=${line#*"$needle"}; key=${key%%:*}
+        dx_tunnel_validate_port "$key" key true >/dev/null 2>&1 || continue
+        [ "$socket" = "$(dx_tunnel_socket_path "$direction" "$key")" ] || continue
+        printf '%s\n' "$key"; return 0; done < <(dx_tunnel_process_list)
+    return 1
+}
+
 dx_tunnel_peer_for_socket() {
-    local direction="$1" key_port="$2" socket="$3" metadata
+    local direction="$1" key_port="$2" socket="$3" metadata peer
     if [ "$socket" = "$(dx_tunnel_socket_path "$direction" "$key_port")" ]; then
         metadata="$(dx_tunnel_metadata_path "$direction" "$key_port")"
-        dx_tunnel_metadata_read "$metadata" && printf '%s\n' "$DX_TUNNEL_META_PEER"
-    else dx_tunnel_legacy_peer "$direction" "$socket"
+        if dx_tunnel_metadata_read "$metadata"; then
+            dx_tunnel_metadata_refresh "$metadata"; printf '%s\n' "$DX_TUNNEL_META_PEER"; return 0
+        fi
+        dx_tunnel_recover_peer "$direction" "$key_port" "$socket"
+    else
+        # An unrecoverable legacy peer is missing data, not an error: callers run
+        # under `set -e` and have always been able to treat "unknown" as a value.
+        peer="$(dx_tunnel_legacy_peer "$direction" "$socket")"
+        [ -n "$peer" ] || peer="$(dx_tunnel_recover_peer "$direction" "$key_port" "$socket" || true)"
+        [ -z "$peer" ] || printf '%s\n' "$peer"
     fi
 }
 
@@ -122,8 +180,13 @@ dx_tunnel_start() {
     socket="$(dx_tunnel_socket_path "$direction" "$key_port")"; metadata="$(dx_tunnel_metadata_path "$direction" "$key_port")"; lock="$(dx_tunnel_lock_path "$direction" "$key_port")"
     dx_lock_acquire "$lock" "$DX_TUNNEL_LOCK_TIMEOUT" || return
     if dx_tunnel_control_active "$socket"; then
-        dx_tunnel_metadata_read "$metadata" && existing=$DX_TUNNEL_META_PEER
-        if [ -z "$existing" ]; then echo "Error: port $key_port has an active dx-$direction socket, but its peer is unknown; stop it before changing it." >&2; dx_lock_release "$lock"; return 1; fi
+        if dx_tunnel_metadata_read "$metadata"; then
+            existing=$DX_TUNNEL_META_PEER; dx_tunnel_metadata_refresh "$metadata"
+        else
+            existing="$(dx_tunnel_recover_peer "$direction" "$key_port" "$socket" || true)"
+            [ -z "$existing" ] || echo "Recovered dx-$direction metadata for port $key_port from its running SSH master."
+        fi
+        if [ -z "$existing" ]; then echo "Error: port $key_port has an active dx-$direction socket whose peer could not be recovered; run dx-$direction --stop $key_port before changing it." >&2; dx_lock_release "$lock"; return 1; fi
         if [ "$existing" != "$peer_port" ]; then echo "Error: port $key_port is already managed with peer port $existing; stop it before changing it." >&2; dx_lock_release "$lock"; return 1; fi
         dx_tunnel_print_active "$direction" "$key_port" "$peer_port"; dx_lock_release "$lock"; return 0
     fi
@@ -154,6 +217,15 @@ dx_tunnel_discover() {
                 socket="$(dx_tunnel_socket_path "$direction" "$DX_TUNNEL_META_KEY")"
                 printf '%s\t%s\n' "$DX_TUNNEL_META_KEY" "$socket"
             fi
+        done
+        for path in "$state"/s-*.sock; do
+            [ -e "$path" ] || continue
+            key="$(dx_tunnel_recover_key "$direction" "$path")" || continue
+            # Orphans only. The metadata loop above already emitted every socket
+            # whose file survives, and only the legacy loop below is deduplicated,
+            # so emitting a healthy socket here would list it twice.
+            if dx_tunnel_metadata_read "$(dx_tunnel_metadata_path "$direction" "$key")"; then continue; fi
+            printf '%s\t%s\n' "$key" "$path"
         done
     fi
     prefix="dx-${direction}-${DX_CONTAINER_NAME}-"
