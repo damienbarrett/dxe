@@ -12,7 +12,12 @@ dx_tunnel_validate_port() {
     [ "$allow_privileged" = true ] || [ "$port" -ge 1024 ] || { echo "Error: $label port '$value' is privileged; use a $label port >= 1024." >&2; return 1; }
 }
 
-dx_tunnel_state_dir() { printf '%s\n' "${DX_TUNNEL_STATE_DIR:-/tmp/dxe-tunnels-$(id -u)}"; }
+# Not /tmp: macOS sweeps it daily for anything untouched for three days, which
+# deletes a live tunnel's metadata from under its own still-running SSH master.
+# Sockets live here too, so keep the path short -- AF_UNIX paths cap near 104.
+# One expansion rather than a branch: the suite always sets the override, so a
+# separate fallback line would never be executed and could never be covered.
+dx_tunnel_state_dir() { printf '%s\n' "${DX_TUNNEL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/dxe/tunnels}"; }
 dx_tunnel_key() { printf '%s:%s:%s' "$1" "$DX_CONTAINER_NAME" "$2"; }
 dx_tunnel_hash() { dx_short_hash "$(dx_tunnel_key "$1" "$2")"; }
 dx_tunnel_socket_path() { printf '%s/s-%s.sock\n' "$(dx_tunnel_state_dir)" "$(dx_tunnel_hash "$1" "$2")"; }
@@ -24,7 +29,7 @@ dx_tunnel_prepare_state() {
     local state uid
     state="$(dx_tunnel_state_dir)"
     [ ! -L "$state" ] || { echo "Error: refusing symlinked tunnel state directory $state." >&2; return 1; }
-    if [ ! -e "$state" ]; then mkdir "$state" 2>/dev/null || [ -d "$state" ] || return 1; fi
+    if [ ! -e "$state" ]; then mkdir -p "$state" 2>/dev/null || [ -d "$state" ] || return 1; fi
     [ ! -L "$state" ] && [ -d "$state" ] || { echo "Error: tunnel state path is not a safe directory: $state." >&2; return 1; }
     uid="$(dx_path_uid "$state")"
     [ "$uid" = "$(id -u)" ] || { echo "Error: tunnel state directory is not owned by the current user: $state." >&2; return 1; }
