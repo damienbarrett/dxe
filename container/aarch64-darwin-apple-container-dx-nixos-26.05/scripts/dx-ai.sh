@@ -238,16 +238,31 @@ dx_ai_ensure_keyring() {
     if [ "$started" = true ]; then echo "D-Bus keyring service started."; else echo "D-Bus keyring service already available."; fi
 }
 
+# Decide whether `herdr integration install <target>` still has work to do.
+#
+# Detect the states that mean "not done" rather than the one that means "done".
+# Herdr reports an up-to-date integration as `current (v7)`, not `installed`;
+# matching the latter treated every healthy integration as missing and
+# reinstalled both of them on every dx-ai run, rewriting their hook files each
+# time. Verified against herdr 0.8.0, whose status vocabulary is `not installed`
+# / `outdated (vN)` / `current (vN)`.
+#
+# Inverting the test also fails safe across versions: a state neither of these
+# patterns recognises is left alone rather than reinstalled on a loop.
 dx_ai_herdr_integration_needs_install() {
     local target="$1" status="$2" outdated="$3" line state
     while IFS= read -r line; do
         case "$line" in "$target: "*) ;; *) continue ;; esac
-        state="${line#*: }"; state="${state%% (*}"
-        [ "$state" = installed ] || return 0
+        state="${line#*: }"; state="${state%% (*}"; state="${state% }"
+        case "$state" in
+            "not installed"|outdated) return 0 ;;
+        esac
         break
     done <<EOF
 $status
 EOF
+    # `--outdated-only` is a second, independent signal: an integration Herdr
+    # considers current in the full listing can still be named here.
     while IFS= read -r line; do
         case "$line" in "$target"|"$target: "*) return 0 ;; esac
     done <<EOF
