@@ -1,20 +1,165 @@
 # DX Bootstrap Performance Plan
 
-Drafted 2026-08-19. Revised 2026-08-19 after review of
-`performance-refactor.md` against branch `herdr-guest-integration` at
-`375f113`.
+Drafted 2026-08-19. Revised 2026-08-20 after implementation and validation,
+following the review then held in `performance-refactor.md` against branch
+`herdr-guest-integration` at `375f113`. That file has since been removed, both
+reviews having been closed out; the pre-execution text remains in git at
+`5e10d4b` and the implementation review's dispositions are tabled below.
 
 ## Status
 
-Proposed. The ownership performance defect has been reproduced, and the review
-identified additional correctness constraints in the same storage-import path.
-No implementation has been selected or applied yet.
+Implemented and validated on the isolated `dx-test` profile on 2026-08-20.
+The guest remains direct single-user Nix, with the daemon alternative deferred
+as a separate architectural decision. The implementation and validation below
+complete the delivery sequence; lifecycle permutations that were not run live
+are covered by behavioral interruption and image-bump tests rather than claimed
+as live-tested.
 
 Do not begin with the earlier plan's implementation sequence. Instrument the
 complete boot path and establish a behavior-tested import boundary first. A
 change that only removes `chown -R dx:dx /nix` can leave the observed wall time
 unchanged, and a naive replacement for `cp -a -n` can create a guest that boots
 once but fails after GC, interruption, or a later restart.
+
+## Implementation and Validation Results
+
+The original ownership handoff was necessary because DX uses a direct,
+single-user Nix store and database that must be writable by `dx`. The observed
+slow path was more specific: the old `cp -a -n /nix/store/. ...` reset the
+existing destination directory metadata to `root`, after which the persisted
+sentinel still existed but the writability check failed and an unbounded
+`chown -R dx:dx /nix` ran. Normal boot now has no unbounded recursive ownership
+repair.
+
+The selected implementation is:
+
+- On a fresh volume, seed through a same-filesystem GNU-tar staging directory
+  with numeric owner mapping. The transfer preserves hard links, symlinks,
+  modes, timestamps, and dotfiles, and has recognizable ready-stage recovery.
+- On an existing volume, use Nix-native `nix copy` from the image's read-only
+  local store into an explicit target local store and state database. The
+  source is the complete registered image path set, whose sorted paths are
+  recorded as a SHA-256 identity.
+- Gate on both registered closure and content. Content checks use
+  `nix store verify --no-trust` without `--no-contents`: locally built image
+  paths are unsigned and otherwise return status 2 even when their content is
+  correct. That trust result is not corruption.
+- Publish the identity marker and versioned GC roots atomically. Image roots
+  use the `v2` layout, are established before pruning, and include the captured
+  default profile. The default profile is captured before remount and restored
+  after remount; essentials content is repaired when needed, including bounded
+  host-key recovery.
+- Probe durable Nix and persist UID/GID ownership before creating `dx`. Safe
+  identities are reused; unsafe or conflicting identities take an explicit
+  migration path. Ownership markers are transactional, versioned, and retain
+  the compatibility sentinel. Recurring recursive chowns were removed or
+  reduced to bounded XDG-parent repair and one-time migrations.
+- Validate every marker as absent or a regular file before publication. Use
+  GNU/Linux `mv -Tf` for atomic replacement and a validated Darwin fallback.
+  This applies to tree-ownership, durable-Nix-identity, image-identity, Nix
+  ownership, and Herdr-readiness markers. Tests cover safe failure, retained
+  retry state, and refusal to nest a temporary marker under a directory-valued
+  marker path.
+- Timings now identify storage/import, ownership, persistence, Home Manager,
+  and verification phases; wait output includes elapsed progress and recent
+  guest log lines. `configure_nix_daemon` was renamed to
+  `configure_single_user_nix`. `dx-reclaim` was made portable without guest
+  `sed` and uses absolute guest `bash` and a rooted Nix profile path.
+
+The work followed red-green-refactor behavior testing. The final checks were:
+
+- importer: 49/49 GNU/Linux tests using real numeric UIDs/GIDs;
+- Section 3: 102/102; focused live `dx-ai`: 43/43; Section 23: 36 pass/1
+  skip; final `run_all_tests.sh --skip-integration` and the full non-integration
+  suite pass. The full live suite passed earlier; the exact final tree received
+  the normal-boot live smoke below.
+- isolated `dx-test` factory-reset standalone test: pass, including the
+  persistent write probe;
+- coverage: 100% (1936/1936 executable lines), scope share 22.58%, with no
+  ratchet rebaseline.
+
+Red failures directly drove the `--no-trust` content gate, `mv -Tf` for the
+live default-profile link, version-2 image roots, reclaim's no-`sed`/absolute-
+`bash` portability, and ownership repair for a fresh `.local/state` tree.
+The full live run initially exposed that fresh persist `.local`/state roots
+were not owned correctly; the red-green fix was rerun successfully.
+
+The exact final tree then received a normal-boot smoke on `dx-test`: 14.53s,
+unchanged-image import skipped, Nix and ownership phases at 0–1s, Home Manager
+at 6s, and healthy SSH. The final Linux behavior suite and coverage run were
+also green on this tree.
+
+The first exact-tree non-integration rerun caught a macOS-only Herdr fixture
+ordering issue: the persistence standalone fallback sourced `common` after
+the fixture's stubs and overwrote fake `run_as_dx` with `setpriv`. TDD made the
+fixture load `common` before stubbing; Section 23 then passed 36 tests with one
+skip, and the final `run_all_tests.sh --skip-integration` passed.
+
+Mature same-volume boots measured 24.50s and 24.41s before the change, with
+10,018 store paths and 477,999 used inodes. Final steady-state measurements
+were 13.58s, 14.69s, and 13.38s with AI enabled; the clean immediate second
+boot after factory reset was 7.69s. The final mature improvement is about 45%.
+Two samples reporting 918s and 281s were rejected: the guest clock jumped
+while host wall time was approximately 21s and 31s.
+
+The end-to-end factory reset took 224.78s, including image/key rebuild and
+cold network/build work. Its phases were approximately 45s essentials, 7s
+fresh seed, 0s ownership migrations, and 158s Home Manager. It passed the
+persistent write probe. After factory reset and AI activation, the store had
+10,010 paths, 458,133 used inodes, and 8,127,928 KiB used.
+
+GC initially deleted 2,750 paths (3.8 GiB) and optimized 86.8 MiB. The later
+full reclaim deleted 10 paths (144.1 MiB), reduced the sparse image from 11 GiB
+to 5.0 GiB, and reduced the store from 4.2 GiB to 3.8 GiB; both volumes were
+trimmed. The post-reclaim restart skipped import, verified the rooted closure
+with result 0, and preserved the default profile, `sh`, and the CA bundle.
+That boot took 19.68s because Home Manager refetched for 14s.
+
+Final root validation found three v2 image roots and a successful full content
+verification. The temporary recovery directories used during live
+default-profile recovery were removed after validation. All destructive
+GC/reclaim/factory-reset operations were scoped to `dx-test`; unrelated
+primary-host operational state is not part of this record.
+
+One follow-up remains outside this performance change: the pre-existing
+`dx-ai` publication path leaves Nix's automatic GC roots pointing at renamed
+`.staging-*` paths. Those roots are dangling while the current AI profile is
+valid, so GC preservation for the AI profile should not be relied on until
+`dx-ai` root publication is fixed separately.
+
+## Progress and Final-Review Chronology
+
+- 2026-08-19: reproduced the ownership regression, reviewed the pre-execution
+  findings then held in `performance-refactor.md` (removed once closed; text in
+  git at `5e10d4b`), and expanded the scope from `/nix` ownership to all
+  recurring recursive ownership work and import correctness.
+- 2026-08-20: implemented the instrumented import, identity, ownership,
+  essentials, GC-root, default-profile, reclaim, and documentation changes;
+  completed the original red-green-refactor validation on isolated `dx-test`.
+  The full live suite and 100% coverage were green before the final adversarial
+  review fixes.
+- Final adversarial review found that an existing `dx` group at the durable GID
+  with no corresponding user made a redundant `groupadd` abort. TDD fixed this
+  in `system.sh`; the final importer result is 49/49 and the conflicting-
+  identity fallback remains green.
+- Final adversarial review also found that directory-valued marker paths could
+  make `mv` nest a temporary marker and falsely report success, causing a
+  repeated migration. TDD hardening now validates absent-or-regular-file
+  markers, uses atomic `mv -Tf` on GNU/Linux with a validated Darwin fallback,
+  and preserves retry state on safe failure. The tree-ownership,
+  durable-identity, image-identity, Nix-ownership, and Herdr-readiness marker
+  cases include no-nested-temp regression tests.
+- Final coverage is 1936/1936 executable lines (100%), with 22.58% scope share
+  and no ratchet rebaseline. Diff and shell-syntax checks are green.
+
+Validation safety context: destructive GC, reclaim, and factory-reset actions
+were strictly scoped to `dx-test`. During validation an unprofiled
+`dx-reclaim --help` was mistakenly invoked; the script has no help mode and it
+was terminated during read-only “Before” usage reporting, before GC or trim,
+so it made no changes. A read-only check also observed that `dx-host` SSH was
+already broken/missing `sshd-session`; `dx-host` was not repaired, restarted,
+or modified and remains out of scope. The two temporary live recovery
+directories were removed after validation.
 
 ## Executive Summary
 
@@ -88,6 +233,36 @@ The recommended direction is:
 | P11: rename/order blast radius | Listed call/test sites and added the early `nix.conf` ordering decision |
 | P12: wait output | Reused the existing log helper and recorded the configuration-registry contract |
 | P13: missing user documentation | Added guest ownership and one-time migration documentation deliverables |
+
+### Implementation review disposition
+
+The post-implementation review of 2026-08-20 (recorded in `performance-refactor.md`,
+removed once closed) raised I1–I10 against the finished tree. All are resolved;
+the two criticals were fixed before commit and the remainder followed rather
+than being deferred.
+
+| Review finding | Resolution |
+| --- | --- |
+| I1: `getent` absent in the guest, conflict guard unreachable | `auth_entries_with_numeric_id` reads the materialized `/etc/passwd`/`/etc/group`; fixtures dropped their `getent` stub for a `getent`-free PATH plus occupied-UID and occupied-GID cases |
+| I2: boot-blocking essentials gate omitted `--no-trust` | Added to `essentials_store_valid` and `repair_store_closure`, `--no-contents` still deliberately absent; tested by modelling the Nix trust boundary rather than string-matching the flag |
+| I3: `DX_NIX_VOLUME_PHASE` global steering one function | Global removed; `bootstrap_main` calls `prepare_nix_volume` and `populate_prepared_nix_volume` directly |
+| I4: `DX_NIX_OWNERSHIP_CONTENT_VALIDATED` exported into every child | Replaced by a parameter; the `run_as_dx "test -w …"` safety condition is retained in both branches |
+| I5: duplicated PIPESTATUS, move-if-absent, and `shopt` idioms | `dx_pipeline_succeeded`, `dx_seed_staged_entries`/`dx_move_missing_entries`; the `shopt` save/restore is gone entirely, the helpers being subshell functions |
+| I6: Section 25 always skips on macOS inside `unit/static` | The tier prints a note directing the reader to `tests/run-coverage-linux.sh`; no macOS fallback was added |
+| I7: unrelated `bin/dx-reclaim` portability work | Kept, being required by the validated reclaim path; named separately in the commit message |
+| I8: single-writer rule documented but unenforced | Host-side volume claim under `~/.dx-cache/nix-volume-claims` — outside the contended Nix filesystem — acquired by create/start and released by destroy, with stale-claim recovery |
+| I9: no non-destructive recovery for an inconsistent volume | Runbook added to `docs/troubleshooting.md`, explicitly warning against deleting identity markers or GC roots |
+| I10: essentials resolved through the mutable flake registry | `bootstrap-essentials` flake output installed with `--no-update-lock-file`; `docs/release-maintenance.md` corrected and the pin asserted in tests |
+
+Two follow-ups landed after that review. The durable-identity marker was renamed
+from `.dx-owner-layout-v2` to `.dx-durable-identity-v1`: it records a different
+one-time migration than activation.sh's `.dx-owner-layout-v1` rather than a later
+version of it, and the shared `v*` naming invited a future reader to treat one as
+superseding the other. Neither marker had been committed, so no deployed volume
+carries the old name. `tests/test_refactor_contracts.sh` also gained a contract
+over `bootstrapEssentials`: I10 made that list the only declaration of the
+pre-sshd closure, so the test asserts both that each providing package is still
+declared and that each mapped binary is still genuinely invoked by bootstrap.
 
 ## Confirmed Evidence
 
@@ -419,7 +594,7 @@ The Nix configuration ordering should also be reviewed. Writing the explicit
 single-user `nix.conf` before the first root `nix profile install` states the
 model consistently, provided the required filesystem tools are available.
 
-### 4. Select the import mechanism with a focused spike
+### 4. Selected import mechanisms and spike outcome
 
 The review recommends a GNU tar stream with create-side owner mapping because
 `gnutar` is already installed and can assign UID/GID without a second ownership
@@ -430,19 +605,17 @@ tar -C "$src" --owner="$uid" --group="$gid" --numeric-owner -cf - . \
   | tar -C "$stage" -xf -
 ```
 
-This is a strong candidate for the fresh seed, but it is not selected yet. The
-pinned Nix 2.34.7 CLI also supports copying closures between local stores and a
-chroot/custom-root target. A Nix-native import may provide atomic publication,
-registration, reference metadata, validity checks, and repair semantics that a
-tar plus database merge would otherwise need to reproduce.
-
-Spike both approaches against the real guest tools:
+The tar stream is selected for the fresh seed. The pinned Nix 2.34.7 CLI was
+also tested against the real guest tools for incremental import. The two
+boundaries have different jobs: tar supplies ownership-correct full-volume
+seeding, while Nix supplies store registration, reference metadata, validity
+checks, and repair semantics for an existing volume.
 
 #### Candidate A: Nix-native store copy
 
-Evaluate `nix copy` between the image's read-only local store and the temporary
-target store, using an appropriate chroot or explicit `real`/`state` local-store
-URI. Verify:
+Use `nix copy` between the image's read-only local store and the temporary
+target store, using an explicit `real`/`state` local-store URI. The spike and
+live validation established that it:
 
 - it can open the image source read-only and write the mounted target;
 - it copies exactly the required image closure or registered store set;
@@ -453,15 +626,15 @@ URI. Verify:
 - signature settings are correct for image paths built or installed locally;
 - interruption recovery is deterministic;
 - hard-link and physical-space behavior is acceptable;
-- it is faster than a full destination traversal.
+- it avoids a full destination ownership traversal on unchanged boots.
 
-This candidate is preferred if those properties hold because it delegates Nix
-store semantics to Nix.
+The content gate deliberately uses `--no-trust`, not `--no-contents`, because
+the image's local unsigned paths otherwise return status 2. Content is still
+verified.
 
 #### Candidate B: tar plus explicit registration
 
-If Nix-native copying cannot meet the ownership or bootstrap constraints, use a
-tar-based importer with:
+The tar importer remains the fresh-seed mechanism and has:
 
 - create-side owner/group mapping;
 - same-filesystem staging;
@@ -472,10 +645,10 @@ tar-based importer with:
 - one archive over the relevant set when hard links can cross path boundaries;
 - a defined policy for `.links` and post-import optimization.
 
-Do not use a per-path archive blindly: it can lose hard links that cross the
-selected path boundary. Do not use `cp -R --preserve=mode,timestamps` as a
-shortcut: it omits link preservation and does not solve registration or atomic
-publication.
+The implementation does not use a per-path archive blindly: it can lose hard
+links that cross the selected path boundary. It also does not use
+`cp -R --preserve=mode,timestamps` as a shortcut, since that omits link
+preservation and does not solve registration or atomic publication.
 
 For either candidate, importing only missing names is insufficient. An existing
 but invalid destination path must be detected and repaired or replaced through
@@ -736,43 +909,43 @@ not comparable.
     time.
 16. Before/after results use the same volume and confirmed bootstrap generation.
 
-## Proposed Delivery Sequence
+## Completed Delivery Sequence
 
-1. **Instrument all slow boundaries.** Add `SECONDS` timing around storage,
+1. **Instrument all slow boundaries — complete.** Added `SECONDS` timing around storage,
    every recursive ownership target, persistence activation, Home Manager, and
    verification. Record same-volume cold and mature baselines using the
    measurement protocol.
-2. **Extract the parameterized import seam without changing behavior.** Add a
+2. **Extract the parameterized import seam — complete.** Added a
    real-UID Linux behavior harness and the failing `cp -a` directory-owner
    regression.
-3. **Spike Nix-native copy versus tar.** Prove atomicity, registration,
-   ownership, hard links, interruption recovery, and performance with the
-   pinned Nix/GNU tools. Record the decision in this document or a focused
-   decision note.
-4. **Implement ownership-correct fresh seed and incremental import.** Include
+3. **Spike and select Nix-native copy versus tar — complete.** Proved
+   registration, ownership, hard links, interruption recovery, content
+   verification, and the performance boundary with the pinned Nix/GNU tools;
+   the decision is recorded in section 4.
+4. **Implement ownership-correct fresh seed and incremental import — complete.** Include
    staging/publication, target-database registration, failure cleanup, and the
    full transfer fixtures.
-5. **Re-land essentials validation and repair.** Adapt the relevant protection
+5. **Re-land essentials validation and repair — complete.** Adapted the relevant protection
    from `a428c55` to the modular current bootstrap and cover the SIGBUS/truncated
    path failure.
-6. **Split mount/probe from user creation.** Reuse a safe durable UID/GID when
+6. **Split mount/probe from user creation — complete.** Reused a safe durable UID/GID when
    possible and cover conflicts/mismatches.
-7. **Add transactional, backward-compatible markers.** Keep
+7. **Add transactional, backward-compatible markers — complete.** Kept
    `/nix/.dx-owner-set`, add the versioned layout/import marker, and remove the
    recurring whole-store fallback from normal bootstrap.
-8. **Gate unchanged-image import.** Use a deterministic closure/store identity
+8. **Gate unchanged-image import — complete.** Used a deterministic closure/store identity
    plus essentials verification so GC cannot make the gate lie.
-9. **Remove the remaining unbounded ownership traversals.** Use intended-owner
+9. **Remove the remaining unbounded ownership traversals — complete.** Used intended-owner
    creation and separate one-time migrations for home, cache, persist, AI, and
    Herdr state.
-10. **Run lifecycle and performance validation.** Include two-start generation
+10. **Run lifecycle and performance validation — complete.** Included two-start generation
     confirmation, interruption, image bump, GC/reclaim, and factory reset.
-11. **Finish coverage accounting.** Re-measure the ratchet only on the completed
+11. **Finish coverage accounting — complete.** Re-measured the ratchet only on the completed
     tree and explain any test-denominator rebaseline.
-12. **Rename and document.** Update configuration naming, progress output,
+12. **Rename and document — complete.** Updated configuration naming, progress output,
     `docs/guest.md`, `docs/troubleshooting.md`, and any configuration registry
     contract affected by new knobs.
-13. **Evaluate daemon-backed Nix separately.** Do not couple it to this delivery.
+13. **Evaluate daemon-backed Nix separately — deferred.** It is not coupled to this delivery.
 
 ## Larger Alternative: Nix Daemon
 

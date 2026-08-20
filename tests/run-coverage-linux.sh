@@ -32,7 +32,10 @@ fi
 [ "$(uname -s)" = Linux ] && command -v kcov >/dev/null 2>&1 || { echo "Error: isolated coverage image is missing Linux kcov." >&2; exit 1; }
 
 mkdir -p "$OUT"
-DXE_COVERAGE_ISOLATED=1 kcov --clean --include-path="$SCOPE" "$OUT" "$SCRIPT_DIR/run-coverage-contracts.sh"
+# A standalone `)` only terminates a Bash subshell compound command; it has no
+# executable instruction for kcov to probe. Keep multiline subshell helpers
+# readable while measuring every executable source line.
+DXE_COVERAGE_ISOLATED=1 kcov --clean --exclude-line=KCOV_SUBSHELL_TERMINATOR --include-path="$SCOPE" "$OUT" "$SCRIPT_DIR/run-coverage-contracts.sh"
 summary="$OUT/run-coverage-contracts.sh/coverage.json"
 [ -f "$summary" ] || summary="$(find "$OUT" -name coverage.json -print -quit)"
 while IFS= read -r source; do

@@ -65,6 +65,16 @@ assert_file_contains_literal "$GUEST_DOC" 'It never modifies the published' "dx-
 assert_file_contains_literal "$GUEST_DOC" 'verifies the persistent Herdr configuration and state links' "dx-herdr's persistence-ready preflight is documented (R3)"
 assert_file_contains_literal "$GUEST_DOC" 'AGPL-3.0-or-later' "the packaged herdr license is documented"
 assert_file_contains_literal "$GUEST_DOC" 'meta.license.spdxId' "the license claim cites its nixpkgs source"
+assert_file_contains_literal "$GUEST_DOC" 'direct single-user mode' "guest docs explain the Nix single-user ownership model"
+assert_file_contains_literal "$GUEST_DOC" 'versioned `.dxe-*-owner-v1` marker' "guest docs explain bounded ownership markers"
+assert_file_contains_literal "$GUEST_DOC" 'full lifecycle, not merely while it is running' "guest documentation records the Nix-volume single-writer constraint"
+assert_file_contains_literal "$GUEST_DOC" 'Destroy that container before' "guest documentation records the required claim transfer boundary"
+assert_file_contains_literal "$BASE_DIR/docs/configuration.md" 'host lifecycle claim' "configuration documents the host Nix-volume claim boundary"
+assert_file_contains_literal "$BASE_DIR/docs/configuration.md" 'Destroy the owning container before assigning' "configuration documents the required Nix-volume claim transfer boundary"
+assert_file_contains_literal "$BASE_DIR/docs/troubleshooting.md" 'Recovering a Nix volume without resetting it' "troubleshooting documents non-destructive Nix-volume recovery"
+assert_file_contains_literal "$BASE_DIR/docs/release-maintenance.md" 'bootstrap-essentials' "release maintenance documents locked bootstrap essentials provenance"
+assert_file_contains_literal "$BASE_DIR/docs/troubleshooting.md" 'Migrating legacy ... ownership (one time)' "troubleshooting docs identify one-time ownership migration output"
+assert_file_contains_literal "$BASE_DIR/docs/troubleshooting.md" 'written only after the recursive repair completes' "troubleshooting docs explain safe migration interruption"
 
 print_summary
 exit_with_code

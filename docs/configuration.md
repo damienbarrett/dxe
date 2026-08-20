@@ -45,10 +45,11 @@ its own writable filesystem. Apple Container creates and mounts the volume at
 device as btrfs (or ext4 if the kernel lacks btrfs) and remounts it at `/nix`,
 which requires `CAP_SYS_ADMIN` inside the guest (granted by
 `bin/dx-create-container`). The default `dx-nix` volume preserves downloads
-and activation state across container recreation, but only one running
-container should use that writable volume at a time. For a clean lifecycle
-test, use a separate Nix volume so the test cannot corrupt or lock the default
-environment.
+and activation state across container recreation, and a host lifecycle claim
+assigns it to one container for that container's full lifecycle, including
+while stopped. Destroy the owning container before assigning the volume to a
+different container; for a clean lifecycle test, use a separate Nix volume so
+the test cannot corrupt or lock the default environment.
 
 `/persist` is the fixed supported guest path for persisted files. Do not set
 `DX_PERSIST_PATH`; path overrides are not supported. Setting old

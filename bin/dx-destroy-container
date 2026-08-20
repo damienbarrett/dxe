@@ -14,9 +14,11 @@ if container_is_running "$DX_CONTAINER_NAME"; then
     if ! container_stop_bounded "$DX_CONTAINER_NAME"; then
         echo "Container $DX_CONTAINER_NAME did not stop cleanly; force-deleting..." >&2
         run_with_timeout "$DX_DELETE_COMMAND_TIMEOUT" container delete --force "$DX_CONTAINER_NAME"
+        dx_nix_volume_claim_release "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME"
         exit 0
     fi
 fi
 
 echo "Removing container $DX_CONTAINER_NAME..."
 run_with_timeout "$DX_DELETE_COMMAND_TIMEOUT" container delete "$DX_CONTAINER_NAME"
+dx_nix_volume_claim_release "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME"

@@ -67,6 +67,32 @@
         tzdata
       ];
 
+      # The tools required before Home Manager starts are one locked flake
+      # output. Keeping this list here prevents bootstrap from resolving
+      # nixpkgs through the mutable global registry.
+      #
+      # This is a bootstrap closure, not a subset of dxPackages: it is
+      # deliberately kept separate so that editing the guest toolset above can
+      # never silently change what the guest needs to reach sshd. One package
+      # per line, matching dxPackages -- test_refactor_contracts.sh parses this
+      # list line-by-line to check it still covers the pre-sshd binaries.
+      bootstrapEssentials = with pkgs; [
+        bashInteractive
+        shadow
+        openssh
+        gnutar
+        gzip
+        sudo
+        coreutils
+        gnused
+        gnugrep
+        which
+        procps
+        util-linux
+        btrfs-progs
+        e2fsprogs
+      ];
+
       # Antigravity CLI (`agy`) — Google's agentic coding tool. The nixpkgs
       # `antigravity` package is the Electron editor, which is unusable in a
       # headless guest; the real CLI is a separate Go binary distributed by
@@ -139,6 +165,11 @@
         "ai-tools" = pkgs.buildEnv {
           name = "dx-ai-tools";
           paths = aiPackages;
+        };
+
+        bootstrap-essentials = pkgs.buildEnv {
+          name = "dx-bootstrap-essentials";
+          paths = bootstrapEssentials;
         };
       };
 

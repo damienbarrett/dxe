@@ -24,12 +24,9 @@ package set):
 
 - the full guest toolset follows the lock — Home Manager activation builds
   from this flake;
-- the root bootstrap essentials do **not** yet follow the lock —
-  `install_essentials` resolves `nixpkgs#…` through the **global flake
-  registry** (pinning them to the guest lock with
-  `--inputs-from /guest-bootstrap --no-update-lock-file` is a follow-up, not
-  yet implemented — see the caveat below and "Bootstrap nixpkgs pin and
-  provenance" tracking).
+- the root bootstrap essentials follow this lock through the local
+  `bootstrap-essentials` flake output; bootstrap installs it with
+  `--no-update-lock-file`, so the global flake registry is not consulted.
 
 The base image is release-agnostic: it contributes the Nix tool itself and
 a seed store that is merged once and then inert — after bootstrap, every
@@ -47,10 +44,9 @@ includes lock regeneration, `home.stateVersion` review, the aligned Nix
 image-pin review (below — a release bump can change the correct image
 tag), identity-name updates (context directory, local image name),
 release-string test updates, and revalidation — see
-[plan.md](../plan.md)'s playbook. And until the bootstrap lock pin lands (a
-follow-up, not yet implemented), root bootstrap essentials still resolve
-through the **global flake registry**, not the guest lock — this document
-must not claim otherwise.
+[plan.md](../plan.md)'s playbook. Root bootstrap essentials follow the checked-in
+flake lock through the `bootstrap-essentials` output, so this document does not
+rely on the global flake registry for their provenance.
 
 A release bump is therefore:
 

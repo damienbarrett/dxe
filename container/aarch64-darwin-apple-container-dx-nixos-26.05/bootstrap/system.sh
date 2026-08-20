@@ -142,12 +142,60 @@ materialize_auth_files() {
     done
 }
 
+# The bootstrap essentials deliberately do not include getent.  These files
+# have just been materialized above, so use them as the authoritative local
+# identity database rather than introducing another early-boot dependency.
+# Print every name using the requested numeric UID/GID; multiple entries are
+# treated as unsafe by create_user rather than silently selecting one.
+auth_entries_with_numeric_id() {
+    local database="$1" numeric_id="$2"
+    local auth_root="${DX_AUTH_ROOT:-}" auth_file name password entry_id remainder
+
+    auth_file="$auth_root/etc/$database"
+    if [ ! -r "$auth_file" ]; then
+        echo "Error: cannot inspect materialized $auth_file for durable Nix identity conflicts." >&2
+        return 1
+    fi
+    while IFS=: read -r name password entry_id remainder; do [ "$entry_id" = "$numeric_id" ] && printf '%s\n' "$name"; done < "$auth_file"
+    return 0
+}
+
 # 2. Create non-root guest user (Section 3)
 create_user() {
-    if ! id -u dx >/dev/null 2>&1; then
+    if id -u dx >/dev/null 2>&1; then
+        if [ -n "${DX_NIX_DURABLE_UID:-}" ] && [ -n "${DX_NIX_DURABLE_GID:-}" ] \
+            && { [ "$(id -u dx)" != "$DX_NIX_DURABLE_UID" ] || [ "$(id -g dx)" != "$DX_NIX_DURABLE_GID" ]; }; then
+            echo "Warning: existing dx identity $(id -u dx):$(id -g dx) conflicts with durable identity $DX_NIX_DURABLE_UID:$DX_NIX_DURABLE_GID; keeping the safe existing identity and scheduling one migration." >&2
+            DX_NIX_IDENTITY_MIGRATION_REQUIRED=true
+            export DX_NIX_IDENTITY_MIGRATION_REQUIRED
+        fi
+    else
         echo "Creating user dx..."
-        groupadd -f dx
-        useradd -m -g dx -s /bin/sh dx
+        if [ -n "${DX_NIX_DURABLE_UID:-}" ] && [ -n "${DX_NIX_DURABLE_GID:-}" ]; then
+            echo "Creating dx with durable Nix UID:GID $DX_NIX_DURABLE_UID:$DX_NIX_DURABLE_GID..."
+            local existing_user existing_group
+            if existing_user="$(auth_entries_with_numeric_id passwd "$DX_NIX_DURABLE_UID")" \
+                && existing_group="$(auth_entries_with_numeric_id group "$DX_NIX_DURABLE_GID")" \
+                && { [ -z "$existing_user" ] || [ "$existing_user" = dx ]; } \
+                && { [ -z "$existing_group" ] || [ "$existing_group" = dx ]; }; then
+                # The durable group may have survived without its user (for
+                # example after an interrupted auth-file restore).  Reuse it
+                # instead of asking groupadd to recreate an existing GID.
+                if [ -z "$existing_group" ]; then
+                    groupadd -g "$DX_NIX_DURABLE_GID" dx
+                fi
+                useradd -m -u "$DX_NIX_DURABLE_UID" -g dx -s /bin/sh dx
+            else
+                echo "Warning: durable Nix UID/GID is unavailable or occupied; allocating a safe dx identity and scheduling one migration." >&2
+                DX_NIX_IDENTITY_MIGRATION_REQUIRED=true
+                export DX_NIX_IDENTITY_MIGRATION_REQUIRED
+                groupadd -f dx
+                useradd -m -g dx -s /bin/sh dx
+            fi
+        else
+            groupadd -f dx
+            useradd -m -g dx -s /bin/sh dx
+        fi
         # Unlock the account for SSH access
         usermod -p '*' dx
     fi
@@ -171,6 +219,8 @@ create_user() {
 configure_ssh() {
     echo "Configuring SSH..."
     mkdir -p /home/dx/.ssh
+    chown dx:dx /home/dx/.ssh
+    chmod 700 /home/dx/.ssh
     
     # Authorized keys from environment variable (Section 4)
     if [ -n "${DX_PUB_KEY:-}" ]; then
@@ -184,14 +234,16 @@ configure_ssh() {
     fi
     
     if [ -f /home/dx/.ssh/authorized_keys ]; then
-        chown -R dx:dx /home/dx/.ssh
-        chmod 700 /home/dx/.ssh
+        # Only bootstrap-written metadata is repaired here. Existing user SSH
+        # contents must remain untouched, and an ordinary start must not walk
+        # the complete known_hosts/configuration tree.
+        chown dx:dx /home/dx/.ssh/authorized_keys
         chmod 600 /home/dx/.ssh/authorized_keys
     fi
 
     mkdir -p /etc/ssh
     if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
-        ssh-keygen -A
+        generate_host_keys
     fi
 
     mkdir -p /run /var/run/sshd

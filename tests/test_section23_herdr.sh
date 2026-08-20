@@ -17,8 +17,15 @@ test_section "Section 23: Herdr Integration"
 
 DX_HERDR="$BASE_DIR/bin/dx-herdr"
 SSH_COMMON="$BASE_DIR/bin/lib/dx-ssh-common.sh"
+COMMON="$CONTAINER_DIR/bootstrap/common.sh"
 PERSISTENCE="$CONTAINER_DIR/bootstrap/persistence.sh"
 ACTIVATION="$CONTAINER_DIR/bootstrap/activation.sh"
+
+# persistence.sh is also directly sourceable for the fixture probes below.
+# Load its shared marker contract once before those probes install their fake
+# run_as_dx boundaries; otherwise the standalone compatibility seam would
+# source common.sh later and overwrite each fixture's stub.
+source "$COMMON"
 
 # --- Host wrapper structure & syntax ---
 assert_file_exists "$DX_HERDR" "dx-herdr host script exists"
@@ -744,6 +751,7 @@ fi
 # override) so this never touches the real host filesystem; the AI-tools
 # guard is forced false via the stubbed `grep`.
 if (
+    source "$PERSISTENCE"
     source "$ACTIVATION"
 
     ensure_nix_ownership() { :; }
@@ -779,6 +787,7 @@ if (
     # A failing Herdr activation must not abort configure_guest: sshd runs as
     # the foreground process, so an aborted bootstrap means no guest at all.
     # shellcheck source=/dev/null
+    . "$PERSISTENCE"
     . "$ACTIVATION"
     set -euo pipefail
     dx_activate_herdr() { return 1; }

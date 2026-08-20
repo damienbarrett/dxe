@@ -16,7 +16,7 @@ SKIP_INTEGRATION=false
 # Every section this runner can dispatch. An unknown --section= must fail rather
 # than report success over an empty run: tests/run-tier.sh selects whole tiers by
 # section number, so a silent no-op would shrink a tier without failing CI.
-KNOWN_SECTIONS="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24"
+KNOWN_SECTIONS="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25"
 
 for arg in "$@"; do
     case $arg in
@@ -30,7 +30,7 @@ for arg in "$@"; do
             echo "Usage: $0 [--section=N] [--skip-integration]"
             echo ""
             echo "Options:"
-            echo "  --section=N         Run only section N (0-24)"
+            echo "  --section=N         Run only section N (0-25)"
             echo "  --skip-integration  Skip integration tests and live checks"
             echo "  --help              Show this help message"
             exit 0
@@ -111,6 +111,7 @@ run_test "$SCRIPT_DIR/test_section17_dx_ai_runtime.sh" "17"
 # installs the AI tools bundle, or the live probe is doomed to skip.
 run_test "$SCRIPT_DIR/test_section23_herdr.sh" "23"
 run_test "$SCRIPT_DIR/test_herdr_config_persistence.sh" "24"
+run_test "$SCRIPT_DIR/test_nix_store_import.sh" "25"
 run_test "$SCRIPT_DIR/test_section18_mount_git.sh" "18"
 run_test "$SCRIPT_DIR/test_section19_reverse_forward.sh" "19"
 

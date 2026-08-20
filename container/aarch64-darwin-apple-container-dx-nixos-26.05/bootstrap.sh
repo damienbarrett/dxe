@@ -8,16 +8,24 @@ bootstrap_main() {
     DX_GUEST_ACTIVATION_RETRY_DELAY="${DX_GUEST_ACTIVATION_RETRY_DELAY:-5}"
 
     guard_old_base
+    configure_single_user_nix
     install_essentials
     link_system_bash
-    setup_nix_volume
-    configure_nix_daemon
-    configure_release_identity
+    capture_nix_image_default_profile
+    prepare_nix_volume
     materialize_auth_files
     create_user
+    populate_prepared_nix_volume
+    nix_restore_image_default_profile
+    ensure_essentials_valid
+    # The remounted essentials closure is content-verified before ownership
+    # markers are published. This lets activation avoid a redundant recursive
+    # chown on a freshly owner-mapped import.
+    publish_nix_image_store_identity
+    configure_release_identity
     setup_persist
     configure_ssh
-    configure_guest
+    configure_guest true
     verify_guest_tools
     configure_timezone
 

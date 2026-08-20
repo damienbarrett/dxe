@@ -10,6 +10,11 @@ if container_exists "$DX_CONTAINER_NAME"; then
     exit 0
 fi
 
+dx_nix_volume_claim_acquire "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME"
+claim_pending=true
+release_pending_claim() { [ "${claim_pending:-false}" != true ] || dx_nix_volume_claim_release "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME" || true; }
+trap release_pending_claim EXIT HUP INT TERM
+
 if ! container_image_exists "$DX_IMAGE"; then
     echo "Error: Image $DX_IMAGE does not exist. Run ./bin/dx-create-image first (or ./bin/dx, which builds it if missing)." >&2
     exit 1
@@ -67,3 +72,5 @@ else
     echo "Warning: $DX_SSH_KEY_PUB not found. SSH access may not be configured."
     container create "${CREATE_FLAGS[@]}" "$DX_IMAGE" -c "$BOOTSTRAP_LAUNCH_CMD" -- "$DX_BOOTSTRAP_PATH"
 fi
+claim_pending=false
+trap - EXIT HUP INT TERM

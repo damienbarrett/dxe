@@ -27,7 +27,7 @@ host_image_size() {
 # Nix must run as dx: the store is single-user dx-owned, and a root-invoked
 # nix re-owns /nix/store to root:nixbld, locking dx out.
 run_in_guest() {
-    container exec -u dx "$DX_CONTAINER_NAME" bash -lc "$1"
+    container exec -u dx "$DX_CONTAINER_NAME" /usr/bin/bash -lc "$1"
 }
 
 report_host_images() {
@@ -38,10 +38,20 @@ report_host_images() {
 
 report_guest_filesystems() {
     echo "Guest filesystem usage:"
-    container exec "$DX_CONTAINER_NAME" sh -lc '
-        printf "  %-14s %s\n" "$1/store" "$(du -sh "$1/store" 2>/dev/null | cut -f1)"
-        df -h "$@" | sed "s/^/  /"
-    ' sh "$DX_NIX_MOUNT" /persist
+    container exec "$DX_CONTAINER_NAME" /usr/bin/bash -lc '
+        export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"
+        store_path="$1/store"
+        store_usage="$(du -sh "$store_path" 2>/dev/null)" || exit $?
+        store_size="${store_usage%%	*}"
+        [ "$store_size" = "$store_usage" ] && store_size="${store_usage%% *}"
+        printf "  %-14s %s\n" "$store_path" "$store_size"
+        df_output="$(df -h "$@")" || exit $?
+        while IFS= read -r line; do
+            printf "  %s\n" "$line"
+        done <<EOF
+$df_output
+EOF
+    ' bash "$DX_NIX_MOUNT" /persist
 }
 
 report_usage() {
@@ -52,12 +62,13 @@ report_usage() {
 
 trim_mount() {
     local mount_path="$1"
-    container exec "$DX_CONTAINER_NAME" sh -lc '
+    container exec "$DX_CONTAINER_NAME" /usr/bin/bash -lc '
+        export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"
         if fstrim -v "$1"; then
             exit 0
         fi
         echo "$1: trim not supported"
-    ' sh "$mount_path"
+    ' bash "$mount_path"
 }
 
 if ! container_is_running "$DX_CONTAINER_NAME"; then

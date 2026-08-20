@@ -164,4 +164,50 @@ check test "$herdr_message_tools" = "$declared_tools"
 # consume its input to the end after extracting.
 check grep -q 'cat >/dev/null' "$ROOT/bin/dx-sync-bootstrap"
 
+# --- The bootstrap essentials closure is the guest's entire pre-sshd
+# dependency set, and since it moved out of the bootstrap scripts into
+# flake.nix's `bootstrapEssentials` it is declared in exactly one place.
+# A tidy-up of that list ("coreutils surely provides tar") has nothing else
+# standing between it and a guest that dies before sshd -- the failure class
+# this whole change exists to prevent.
+#
+# The binary -> nixpkgs attribute mapping is the part that is easy to get
+# wrong: tar is gnutar, useradd is shadow, mkfs.btrfs is btrfs-progs. Assert
+# it in both directions -- the providing package is still declared, and the
+# binary is still genuinely invoked by bootstrap -- so a stale entry here gets
+# reported rather than left silently guarding nothing.
+#
+# Packages in the list that bootstrap never invokes (gzip, procps, which,
+# sudo) are deliberately not asserted: they serve the dx user's shell after
+# boot rather than bootstrap itself.
+bootstrap_essentials="$(sed -n '/bootstrapEssentials = /,/^[[:space:]]*\];$/p' "$container_dir/flake.nix" | sed -n 's/^[[:space:]]*\([A-Za-z][A-Za-z0-9_.-]*\)$/\1/p')"
+check test -n "$bootstrap_essentials"
+bootstrap_sources=("$container_dir/bootstrap.sh" "$container_dir"/bootstrap/*.sh)
+# Full-line comments are stripped so a binary named only in prose cannot stand
+# in for a real invocation. `-Fw` rather than an anchored ERE: word-matching a
+# fixed string is exactly the intent, and it avoids the `(^|[^[:alnum:]...])`
+# construct that some grep builds (ugrep) silently fail to match.
+#
+# The stripped text is materialized once and matched from a herestring rather
+# than piped: `grep -q` exits at the first match, and under `set -o pipefail`
+# the resulting EPIPE in the upstream `sed` would fail every *successful*
+# lookup -- the same SIGPIPE-under-pipefail defect described at the end of
+# this file.
+bootstrap_source_text="$(sed 's/^[[:space:]]*#.*//' "${bootstrap_sources[@]}")"
+bootstrap_invokes() { grep -Fqw "$1" <<<"$bootstrap_source_text"; }
+bootstrap_declares() {
+    local declared
+    for declared in $bootstrap_essentials; do
+        [ "$declared" = "$1" ] && return 0
+    done
+    return 1
+}
+for pair in useradd:shadow groupadd:shadow usermod:shadow ssh-keygen:openssh \
+    sshd:openssh tar:gnutar mount:util-linux sed:gnused grep:gnugrep \
+    chown:coreutils mktemp:coreutils stat:coreutils mkfs.btrfs:btrfs-progs \
+    mkfs.ext4:e2fsprogs bash:bashInteractive; do
+    check bootstrap_declares "${pair##*:}"
+    check bootstrap_invokes "${pair%%:*}"
+done
+
 [ "$failures" -eq 0 ]

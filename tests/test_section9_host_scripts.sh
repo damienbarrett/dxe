@@ -51,6 +51,78 @@ ps() { printf '%s\n' '101 container-runtime-linux start --uuid dx-host-other' '1
 if [ "$(container_runtime_pids dx-host)" = 102 ]; then test_pass "runtime discovery matches exact --uuid argument/value pairs"; else test_fail "runtime discovery matches exact --uuid argument/value pairs"; fi
 unset -f ps
 
+# Host lifecycle claims live outside the mounted Nix filesystem and serialize
+# ownership by volume name, even when profiles use separate identity dirs.
+(
+    source "$BASE_DIR/bin/lib/dx-host-util.sh"
+    DX_TUNNEL_LOCK_TIMEOUT=1
+    DXE_SELF_PROCESS_IDENTITY="test-$$"
+    HOME="$config_fixture/claim-home"
+    existing="first"
+    container_exists() { [ "$existing" = "$1" ]; }
+    dx_nix_volume_claim_acquire shared-nix first
+    ! dx_nix_volume_claim_acquire shared-nix second
+    ! dx_nix_volume_claim_acquire shared-nix second
+    existing=""
+    dx_nix_volume_claim_acquire shared-nix second
+    existing="second"
+    ! dx_nix_volume_claim_acquire shared-nix first
+    dx_nix_volume_claim_acquire shared-nix second
+    existing=""
+    printf 'stale\t999999\tdead-process\n' > "$HOME/.dx-cache/nix-volume-claims/stale-nix"
+    dx_nix_volume_claim_acquire stale-nix third
+    IFS="$(printf '\t')" read -r stale_owner _ < "$HOME/.dx-cache/nix-volume-claims/stale-nix"
+    [ "$stale_owner" = third ]
+    printf 'stale\t999999\tdead-process\nsecond\t999998\tdead-process\n' > "$HOME/.dx-cache/nix-volume-claims/multiline-nix"
+    if dx_nix_volume_claim_acquire multiline-nix third; then exit 1; fi
+    dx_nix_volume_claim_release shared-nix first
+    IFS="$(printf '\t')" read -r shared_owner _ < "$HOME/.dx-cache/nix-volume-claims/shared-nix"
+    [ "$shared_owner" = second ]
+    dx_nix_volume_claim_release shared-nix second
+    [ ! -e "$HOME/.dx-cache/nix-volume-claims/shared-nix" ]
+) && test_pass "Nix-volume lifecycle claims reject running and stopped owners and recover stale claims" || test_fail "Nix-volume lifecycle claims reject running and stopped owners and recover stale claims"
+
+# A create claim is a live reservation before `container create` makes the
+# owner observable to `container_exists`. A second creator must not steal it;
+# after the first process exits without creating anything, the next attempt
+# safely reclaims that stale reservation.
+(
+    claim_home="$config_fixture/concurrent-claim-home"
+    ready="$config_fixture/concurrent-claim-ready"
+    hold="$config_fixture/concurrent-claim-hold"
+    : > "$hold"
+    HOME="$claim_home" DX_TUNNEL_LOCK_TIMEOUT=1 bash -c '
+        source "$1"
+        source "$2"
+        container_exists() { return 1; }
+        dx_nix_volume_claim_acquire concurrent-nix first
+        : > "$3"
+        while [ -e "$4" ]; do sleep 1; done
+    ' _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-container.sh" "$ready" "$hold" &
+    creator_pid=$!
+    for _ in $(seq 1 10); do [ -e "$ready" ] && break; sleep 1; done
+    [ -e "$ready" ]
+    if HOME="$claim_home" DX_TUNNEL_LOCK_TIMEOUT=1 bash -c '
+        source "$1"
+        source "$2"
+        container_exists() { return 1; }
+        dx_nix_volume_claim_acquire concurrent-nix second
+    ' _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-container.sh"; then
+        exit 1
+    fi
+    rm -f "$hold"
+    wait "$creator_pid"
+    HOME="$claim_home" DX_TUNNEL_LOCK_TIMEOUT=1 bash -c '
+        source "$1"
+        source "$2"
+        container_exists() { return 1; }
+        dx_nix_volume_claim_acquire concurrent-nix second
+    ' _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-container.sh"
+    claim="$claim_home/.dx-cache/nix-volume-claims/concurrent-nix"
+    IFS="$(printf '\t')" read -r owner _ < "$claim"
+    [ "$owner" = second ]
+) && test_pass "live create reservations cannot be stolen before container creation" || test_fail "live create reservations cannot be stolen before container creation"
+
 source "$BASE_DIR/bin/dx-forward"
 if [ "$(parse_all_forwards 5173 8000:8001)" = $'5173:5173\n8001:8000' ]; then test_pass "forward wrapper parses direction-specific mappings"; else test_fail "forward wrapper parses direction-specific mappings"; fi
 if parse_all_forwards 80 >/dev/null 2>&1; then test_fail "forward wrapper rejects privileged host ports"; else test_pass "forward wrapper rejects privileged host ports"; fi
@@ -59,6 +131,59 @@ if [ "$(parse_all_reverses 5432 3000:13000)" = $'5432:5432\n13000:3000' ]; then 
 
 assert_file_not_contains "$BASE_DIR/bin/dx-forward" 'DX_FORWARD_TEST_MODE' "forward has no production test seam"
 assert_file_not_contains "$BASE_DIR/bin/dx-reverse" 'DX_REVERSE_TEST_MODE' "reverse has no production test seam"
+assert_file_not_contains "$BASE_DIR/bin/dx-reclaim" 'df -h "\$@" | sed' "reclaim filesystem reporting does not require guest sed"
+assert_file_contains_literal "$BASE_DIR/bin/dx-reclaim" 'export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"' "reclaim uses the GC-rooted essentials profile PATH"
+if (
+    reclaim_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-reclaim.XXXXXX")"
+    fake_bin="$reclaim_fixture/bin"
+    guest_bin="$reclaim_fixture/guest-bin"
+    mkdir -p "$fake_bin" "$guest_bin" "$reclaim_fixture/home"
+    printf '%s\n' \
+        '#!/bin/bash' \
+        'case "${1:-}" in' \
+        '  list) printf "%s\\n" dx-host ;;' \
+        '  exec)' \
+        '    shift' \
+        '    if [ "${1:-}" = -u ]; then shift 2; fi' \
+        '    shift' \
+        '    shell="$1"; [ "$shell" = /usr/bin/bash ] || exit 91; shift 2' \
+        '    script="$1"; shift' \
+        '    case "$script" in nix-collect-garbage*) exit 0 ;; esac' \
+        '    script="${script//\/nix\/var\/nix\/profiles\/per-user\/root\/profile\/bin/$RECLAIM_GUEST_PATH}"' \
+        '    PATH="$RECLAIM_INHERITED_PATH" /bin/sh -c "$script" bash "$@"' \
+        '    ;;' \
+        '  *) exit 1 ;;' \
+        'esac' > "$fake_bin/container"
+    printf '%s\n' '#!/bin/sh' '[ "${RECLAIM_DF_FAIL:-}" = 1 ] && exit 37' 'printf "%s\\n" "Filesystem 1024-blocks Used Available Capacity Mounted on" "fake 100 20 80 20% /nix"' > "$guest_bin/df"
+    printf '%s\n' '#!/bin/sh' 'printf "1.0M %s\\n" "$2"' > "$guest_bin/du"
+    printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "$*"' > "$guest_bin/fstrim"
+    mkdir -p "$reclaim_fixture/no-profile"
+    chmod +x "$fake_bin/container" "$guest_bin/df" "$guest_bin/du" "$guest_bin/fstrim"
+    reclaim_output=""
+    reclaim_status=0
+    if reclaim_output="$(PATH="$fake_bin:/usr/bin:/bin" HOME="$reclaim_fixture/home" RECLAIM_GUEST_PATH="$guest_bin" RECLAIM_INHERITED_PATH="$reclaim_fixture/no-profile" DX_CONTAINER_NAME=dx-host "$BASE_DIR/bin/dx-reclaim" 2>&1)"; then
+        reclaim_status=0
+    else
+        reclaim_status=$?
+    fi
+    df_failure_status=0
+    if PATH="$fake_bin:/usr/bin:/bin" HOME="$reclaim_fixture/home" RECLAIM_GUEST_PATH="$guest_bin" RECLAIM_INHERITED_PATH="$reclaim_fixture/no-profile" RECLAIM_DF_FAIL=1 DX_CONTAINER_NAME=dx-host "$BASE_DIR/bin/dx-reclaim" >/dev/null 2>&1; then
+        df_failure_status=0
+    else
+        df_failure_status=$?
+    fi
+    rm -rf "$reclaim_fixture"
+    [ "$reclaim_status" -eq 0 ] \
+        && printf '%s\n' "$reclaim_output" | grep -q 'fake 100 20 80 20% /nix' \
+        && [ "$df_failure_status" -eq 37 ] \
+        && ! printf '%s\n' "$reclaim_output" | grep -q 'sed:.*not found'
+); then
+    test_pass "reclaim reports guest filesystems without a guest sed binary"
+else
+    test_fail "reclaim reports guest filesystems without a guest sed binary"
+fi
+assert_file_contains_literal "$BASE_DIR/bin/dx-wait-ssh" 'print_container_logs 5' "bootstrap progress shows several recent guest log lines"
+assert_file_contains_literal "$BASE_DIR/bin/dx-wait-ssh" 'approximately' "bootstrap wait budget is rendered in human-readable minutes"
 assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '-- "$DX_BOOTSTRAP_PATH"' "bootstrap path crosses the launcher boundary positionally"
 assert_file_contains_literal "$BASE_DIR/bin/dx-migrate-persist" "-- \"\$legacy_volume\" \"\$sentinel\"" "migration values cross fixed command boundaries positionally"
 

@@ -393,6 +393,12 @@ setup_nix_volume
     setup_nix_volume
 )
 mkdir -p /var/lib/dx-nix-raw /nix
+# setup_nix_volume's mount probes intentionally replace mount with a no-op;
+# keep their focus on device selection rather than attempting a real import
+# from the runner's synthetic /nix tree.  Import semantics have a dedicated
+# real-UID behaviour test in test_nix_store_import.sh.
+nix_seed_volume() { :; }
+nix_store_import_registered() { :; }
 (
     grep() {
         if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 1; fi
@@ -468,7 +474,7 @@ fake_block="$fixture/fake-block"
 is_block_device /dev/null && exit 1
 is_block_device "$fake_block" && exit 1
 if [ -b /dev/loop0 ]; then is_block_device /dev/loop0 || exit 1; fi
-configure_nix_daemon
+configure_single_user_nix
 
 # System phase data resolution and root-mutating paths are safe in this runner.
 mkdir -p "$fixture/release-valid" "$fixture/release-invalid"
@@ -510,7 +516,10 @@ DX_AUTH_ROOT="$fixture/auth" materialize_auth_files
     [ ! -e /etc/ssh/sshd_config ] || { mv /etc/ssh/sshd_config "$fixture/sshd-config.saved"; saved_config=true; }
     [ ! -e /etc/ssh/ssh_host_rsa_key ] || { mv /etc/ssh/ssh_host_rsa_key "$fixture/ssh-host-key.saved"; saved_host_key=true; }
     id() { return 1; }; useradd() { :; }; ssh-keygen() { :; }; chown() { :; }
+    mkdir -p /home/dx/.ssh
+    printf '%s\n' 'existing-known-host' > /home/dx/.ssh/known_hosts
     DX_BOOTSTRAP_ROOT="$fixture/release-valid" DX_PUB_KEY='ssh-ed25519 coverage' configure_ssh
+    [ "$(cat /home/dx/.ssh/known_hosts)" = 'existing-known-host' ]
     rm -f /home/dx/.ssh/authorized_keys
     printf '%s\n' 'ssh-ed25519 fallback' > "$fixture/release-valid/dx_key.pub"
     DX_BOOTSTRAP_ROOT="$fixture/release-valid" DX_PUB_KEY='' configure_ssh
@@ -937,6 +946,17 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/hom
     run_as_dx() { :; }
     dx_activate_herdr >/dev/null 2>&1 || true
 )
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state
+(
+    chown() {
+        case "$*" in
+            */persist/home/dx/.config/herdr/config.toml) return 1 ;;
+            *) return 0 ;;
+        esac
+    }
+    run_as_dx() { bash -c "$1"; }
+    dx_activate_herdr >/dev/null 2>&1 || true
+)
 
 # Activation retries, ownership states, orchestration, and verification.
 (
@@ -956,14 +976,117 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/hom
     run_as_dx_with_timeout() { return 9; }
     run_home_manager_activation >/dev/null 2>&1 || true
 )
-mkdir -p /nix/store /nix/var/nix
+
+# Home Manager's input validation failures are timed as well as returned.
 (
-    id() { printf '%s\n' 1000; }; chown() { :; }
-    rm -f /nix/.dx-owner-set; ensure_nix_ownership
-    stat() { printf '%s\n' 1000:1000; }; run_as_dx() { return 0; }; ensure_nix_ownership
-    run_as_dx() { return 1; }; ensure_nix_ownership
-    stat() { printf '%s\n' 0:0; }; ensure_nix_ownership
+    DX_BOOTSTRAP_ROOT="$fixture/release-valid" DX_GUEST_ACTIVATION_TIMEOUT=bad DX_GUEST_ACTIVATION_ATTEMPTS=1 DX_GUEST_ACTIVATION_RETRY_DELAY=1
+    run_home_manager_activation >/dev/null 2>&1 || true
 )
+(
+    DX_BOOTSTRAP_ROOT="$fixture/release-valid" DX_GUEST_ACTIVATION_TIMEOUT=1 DX_GUEST_ACTIVATION_ATTEMPTS=bad DX_GUEST_ACTIVATION_RETRY_DELAY=1
+    run_home_manager_activation >/dev/null 2>&1 || true
+)
+(
+    DX_BOOTSTRAP_ROOT="$fixture/release-valid" DX_GUEST_ACTIVATION_TIMEOUT=1 DX_GUEST_ACTIVATION_ATTEMPTS=1 DX_GUEST_ACTIVATION_RETRY_DELAY=bad
+    run_home_manager_activation >/dev/null 2>&1 || true
+)
+
+# Keep ownership coverage on a disposable tree. The real `run_as_dx` invokes
+# setpriv and cannot be used by sourceable coverage's rootless fixture; each
+# branch below supplies the privilege/content result it is meant to exercise.
+ownership_fixture="$fixture/nix-ownership"
+mkdir -p "$ownership_fixture/store" "$ownership_fixture/var/nix"
+(
+    ownership_stat=0:0
+    id() { printf '%s\n' 1000; }
+    stat() { printf '%s\n' "$ownership_stat"; }
+    chown() { :; }
+    run_as_dx() { return 0; }
+    essentials_store_valid() { return 0; }
+
+    rm -f "$ownership_fixture/.dx-owner-set" "$ownership_fixture/.dx-owner-layout-v1"
+    DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" ensure_nix_ownership
+
+    ownership_stat=1000:1000
+    DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" ensure_nix_ownership
+    rm -f "$ownership_fixture/.dx-owner-set"
+    DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" ensure_nix_ownership
+
+    rm -f "$ownership_fixture/.dx-owner-layout-v1"
+    DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" ensure_nix_ownership
+
+    run_as_dx() { return 1; }
+    ownership_status=0
+    DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" ensure_nix_ownership || ownership_status=$?
+    [ "$ownership_status" -ne 0 ]
+
+    run_as_dx() { return 0; }
+    ownership_stat=0:0
+    DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" ensure_nix_ownership
+
+    # Direct marker publication refusals and both atomic publication failure
+    # points are covered independently from ensure_nix_ownership's wrapper.
+    rm -f "$ownership_fixture/.dx-owner-layout-v1"
+    ln -s "$ownership_fixture/store" "$ownership_fixture/.dx-owner-layout-v1.symlink-target"
+    ln -s "$ownership_fixture/.dx-owner-layout-v1.symlink-target" "$ownership_fixture/.dx-owner-layout-v1"
+    DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" publish_nix_ownership_marker >/dev/null 2>&1 || true
+    rm -f "$ownership_fixture/.dx-owner-layout-v1"
+    run_as_dx() { return 1; }
+    DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" publish_nix_ownership_marker >/dev/null 2>&1 || true
+    run_as_dx() { return 0; }
+    ownership_stat=0:0
+    rm -f "$ownership_fixture/.dx-owner-set"
+    mv_count=0
+    mv() { mv_count=$((mv_count + 1)); [ "$mv_count" -eq 1 ] && return 1; command mv "$@"; }
+    DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" publish_nix_ownership_marker >/dev/null 2>&1 || true
+    unset -f mv
+    mv_count=0
+    mv() { mv_count=$((mv_count + 1)); [ "$mv_count" -eq 2 ] && return 1; command mv "$@"; }
+    DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" publish_nix_ownership_marker >/dev/null 2>&1 || true
+    unset -f mv
+
+    rm -f "$ownership_fixture/.dx-owner-set" "$ownership_fixture/.dx-owner-layout-v1"
+    ownership_stat=1000:1000
+    DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" ensure_nix_ownership true
+
+    # A completed versioned marker with a stale compatibility sentinel only
+    # needs the sentinel's ownership repaired; it must not recurse through the
+    # durable Nix tree again.
+    printf 'durable-identity=1\nowner=dx:dx\n' > "$ownership_fixture/.dx-durable-identity-v1"
+    : > "$ownership_fixture/.dx-owner-set"
+    chown_calls=0
+    chown() { chown_calls=$((chown_calls + 1)); }
+    stat() {
+        case "$3" in
+            *'.dx-owner-set') printf '0:0\n' ;;
+            *) printf '1000:1000\n' ;;
+        esac
+    }
+    DX_NIX_IDENTITY_MIGRATION_REQUIRED=true migrate_durable_nix_identity_if_needed "$ownership_fixture"
+    [ "$chown_calls" -gt 0 ]
+)
+
+# Persisted-tree migration refusals and directory-creation failures are kept
+# in a disposable tree so the probes never depend on guest paths or accounts.
+persist_edge="$fixture/persist-edge"
+mkdir -p "$persist_edge"
+printf '%s\n' file > "$persist_edge/not-a-directory"
+(
+    dx_ensure_tree_owner "$persist_edge/not-a-directory" "$persist_edge/file-marker" "non-directory" >/dev/null 2>&1 || true
+    ln -s "$persist_edge/not-a-directory" "$persist_edge/marker-target"
+    dx_ensure_tree_owner "$persist_edge" "$persist_edge/marker-target" "symlink-marker" >/dev/null 2>&1 || true
+    id() { return 0; }
+    install() { return 1; }
+    dx_ensure_tree_owner "$persist_edge/install-failure" "$persist_edge/install-failure.marker" "install-failure" >/dev/null 2>&1 || true
+    install() { :; }
+    dx_ensure_tree_owner "$persist_edge/mkdir-failure" "$persist_edge/mkdir-failure.marker" "mkdir-failure" >/dev/null 2>&1 || true
+    id() { return 1; }
+    mkdir() { :; }
+    dx_ensure_tree_owner "$persist_edge/no-guest" "$persist_edge/no-guest.marker" "no-guest" >/dev/null 2>&1 || true
+    ln -s "$persist_edge" "$persist_edge/owned-directory-symlink"
+    dx_prepare_owned_directory "$persist_edge/owned-directory-symlink" 0700 >/dev/null 2>&1 || true
+)
+
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin /home/dx/.nix-profile/bin
 : > /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex; chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex
 : > /home/dx/.nix-profile/bin/nu
@@ -1078,6 +1201,247 @@ if ! printf '%s\n' "$output" | stdin_matches -F 'STUB: configure_guest returned 
 fi
 
 rm -rf /persist/home/dx /home/dx
+
+# Core Nix bootstrap negative/recovery branches.  These are sourceable-only
+# fakes: every path is under the disposable fixture and no guest service is
+# contacted.
+# Earlier volume-selection probes intentionally replace the import functions.
+# Re-source the production implementation before exercising its failure and
+# recovery boundaries below.
+source "$GUEST/bootstrap/base-and-storage.sh"
+(
+    command() { [ "$1" = -v ] && [ "$2" = useradd ] && return 1; builtin command "$@"; }
+    essentials_profile_path() { :; }
+    install_essential_packages() { return 7; }
+    install_essentials >/dev/null 2>&1 || true
+
+    essentials_profile_store_path() { printf '%s\n' /nix/store/profile; }
+    essentials_store_valid() { return 0; }
+    ensure_essentials_valid >/dev/null
+    essentials_store_valid() { return 1; }
+    repair_store_closure() { :; }
+    ensure_essentials_valid >/dev/null 2>&1 || true
+)
+(
+    root="$fixture/core-nix-branches"
+    mkdir -p "$root/store" "$root/var/nix"
+    chown() { :; }
+    DX_NIX_PENDING_IMAGE_STORE_IDENTITY=bad
+    nix_install_image_essentials_root "$root" 1000 1000 >/dev/null 2>&1 || true
+    DX_NIX_PENDING_IMAGE_STORE_IDENTITY=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/root; }
+    ln() { return 1; }
+    nix_install_image_essentials_root "$root" 1000 1000 >/dev/null 2>&1 || true
+    unset -f ln
+    nix_install_image_essentials_root "$root" 1000 1000
+
+    # A failed root enumeration must remove the private stage before returning
+    # so a later bootstrap cannot mistake it for a published root set.
+    rm -rf "$root/var/nix/gcroots"/dx-image-roots-*
+    nix_image_bootstrap_store_paths() { return 1; }
+    nix_install_image_essentials_root "$root" 1000 1000 >/dev/null 2>&1 || true
+
+    seed="$root/seed"; target="$root/target"
+    mkdir -p "$seed/store/a" "$target"
+    printf x > "$seed/store/a/file"
+    mv() { case "$1" in *'/contents/'*) return 1;; *) command mv "$@";; esac; }
+    nix_seed_volume "$seed" "$target" 1000 1000 >/dev/null 2>&1 || true
+    unset -f mv
+
+    mkdir -p "$root/unsafe-persist"
+    chown 0:0 "$root/unsafe-persist"
+    DX_PERSIST_HOME="$root/unsafe-persist" record_durable_nix_identity "$root"
+
+    id() { case "$1:$2" in -u:dx|-g:dx) printf '%s\n' 1000;; *) builtin id "$@";; esac; }
+    chown() { :; }
+    : > "$root/.dx-durable-identity-v1"
+    printf 'durable-identity=1\nowner=dx:dx\n' > "$root/.dx-durable-identity-v1"
+    stat() { printf '1000:1000\n'; }
+    DX_NIX_IDENTITY_MIGRATION_REQUIRED=true migrate_durable_nix_identity_if_needed "$root"
+    rm -f "$root/.dx-owner-set"
+    DX_NIX_IDENTITY_MIGRATION_REQUIRED=true migrate_durable_nix_identity_if_needed "$root"
+    mv() { return 1; }
+    DX_NIX_IDENTITY_MIGRATION_REQUIRED=true migrate_durable_nix_identity_if_needed "$root" >/dev/null 2>&1 || true
+    unset -f mv
+    : > "$root/.dx-owner-set"
+    stat() { case "$1" in *'.dx-owner-set') printf '1:1\n';; *) printf '1000:1000\n';; esac; }
+    DX_NIX_IDENTITY_MIGRATION_REQUIRED=true migrate_durable_nix_identity_if_needed "$root"
+
+    nix() { return 1; }
+    nix_image_registered_paths >/dev/null 2>&1 || true
+    unset -f nix
+
+    mkdir -p "$root/gate"; printf '%s\n' identity > "$root/gate/.dx-image-store-identity"
+    nix_image_store_identity() { printf '%s\n' identity; }
+    nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/root; }
+    run_as_dx() { return 0; }
+    nix_image_store_import_required /nix "$root/gate" >/dev/null 2>&1 || true
+    chown() { :; }
+    DX_NIX_PENDING_IMAGE_STORE_IDENTITY=identity
+    publish_nix_image_store_identity "$root/gate"
+
+    # A directory at the image identity marker is not an absent marker: the
+    # gate must retain the computed identity for a retry rather than silently
+    # treating the directory as a valid publication.
+    mkdir -p "$root/gate-directory/.dx-image-store-identity"
+    unset DX_NIX_PENDING_IMAGE_STORE_IDENTITY
+    nix_image_store_import_required /nix "$root/gate-directory"
+    [ "${DX_NIX_PENDING_IMAGE_STORE_IDENTITY:-}" = identity ]
+
+    # Exercise the portable sourceable fallback used on Darwin. It still
+    # replaces a validated marker atomically and leaves no temporary file.
+    fallback_marker="$root/fallback-marker"
+    fallback_temporary="$root/fallback-marker.tmp"
+    printf '%s\n' fallback > "$fallback_temporary"
+    uname() { printf '%s\n' Darwin; }
+    dx_publish_atomic_marker "$fallback_temporary" "$fallback_marker" "coverage fallback marker"
+    unset -f uname
+    [ -f "$fallback_marker" ] && [ "$(cat "$fallback_marker")" = fallback ] && [ ! -e "$fallback_temporary" ]
+
+    DX_NIX_VOLUME_ALREADY_MOUNTED=true DX_NIX_VOLUME_ROOT="$root" populate_prepared_nix_volume
+    populate_prepared_nix_volume() { :; }
+    setup_nix_volume_impl
+)
+(
+    # Exercise every refusal branch of the retained image-default profile
+    # helper against a disposable tree.  The Linux behavior test proves the
+    # successful GC/recovery flow; these probes keep its defensive boundaries
+    # observable without ever touching a mounted guest Nix store.
+    root="$fixture/default-profile-branches"
+    profiles="$root/var/nix/profiles"
+    target="$root/store/default-profile"
+    mkdir -p "$target/bin" "$target/etc/ssl/certs" "$profiles"
+    : > "$target/bin/sh"; : > "$target/bin/nix"; : > "$target/etc/ssl/certs/ca-bundle.crt"
+    chmod 0755 "$target/bin/sh" "$target/bin/nix"
+
+    ln -s /tmp "$profiles/default"
+    ! nix_image_default_profile_store_path "$root" >/dev/null 2>&1 || exit 1
+    rm "$profiles/default"
+    ln -s "$target" "$profiles/default"
+    rm "$target/etc/ssl/certs/ca-bundle.crt"
+    ! nix_image_default_profile_store_path "$root" >/dev/null 2>&1 || exit 1
+    : > "$target/etc/ssl/certs/ca-bundle.crt"
+
+    unset DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET
+    ! DX_NIX_ROOT="$root" nix_restore_image_default_profile >/dev/null 2>&1 || exit 1
+    ln -s unavailable "$root/store/unavailable"
+    DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET="$root/store/unavailable"
+    ! DX_NIX_ROOT="$root" nix_restore_image_default_profile >/dev/null 2>&1 || exit 1
+    DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET=/tmp
+    ! DX_NIX_ROOT="$root" nix_restore_image_default_profile >/dev/null 2>&1 || exit 1
+    DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET="$target"
+    rm "$target/etc/ssl/certs/ca-bundle.crt"
+    ! DX_NIX_ROOT="$root" nix_restore_image_default_profile >/dev/null 2>&1 || exit 1
+    : > "$target/etc/ssl/certs/ca-bundle.crt"
+
+    rm -rf "$root/var/nix"
+    ln -s /tmp "$root/var/nix"
+    ! DX_NIX_ROOT="$root" nix_restore_image_default_profile >/dev/null 2>&1 || exit 1
+    rm "$root/var/nix"
+    mkdir -p "$profiles"
+    : > "$profiles/default"
+    ! DX_NIX_ROOT="$root" nix_restore_image_default_profile >/dev/null 2>&1 || exit 1
+    rm "$profiles/default"
+
+    chown() { return 1; }
+    ! DX_NIX_ROOT="$root" nix_restore_image_default_profile >/dev/null 2>&1 || exit 1
+    ! find "$profiles" -name '.default.dx.*' -print -quit | grep -q . || exit 1
+    unset -f chown
+    chown() { :; }
+    readlink() {
+        if [ "${1:-}" = "$profiles/default" ]; then printf '%s\n' wrong-target; else command readlink "$@"; fi
+    }
+    ! DX_NIX_ROOT="$root" nix_restore_image_default_profile >/dev/null 2>&1 || exit 1
+)
+(
+    auth_root="$fixture/core-auth"
+    mkdir -p "$auth_root/etc"
+    printf '%s\n' 'root:x:0:0:root:/root:/bin/sh' > "$auth_root/etc/passwd"
+    printf '%s\n' 'root:x:0:' > "$auth_root/etc/group"
+    id() { [ "$1" = -u ] && [ "$2" = dx ] && return 1; builtin id "$@"; }
+    groupadd() { :; }; useradd() { :; }; usermod() { :; }
+    DX_AUTH_ROOT="$auth_root" DX_NIX_DURABLE_UID=42420 DX_NIX_DURABLE_GID=42420 create_user
+    ! DX_AUTH_ROOT="$fixture/core-auth-missing" auth_entries_with_numeric_id passwd 42420 >/dev/null 2>&1 || exit 1
+)
+(
+    root="$fixture/core-nix-final"
+    mkdir -p "$root/store" "$root/var/nix"
+    id() { case "$1:$2" in -u:dx|-g:dx) printf '%s\n' 1000;; *) builtin id "$@";; esac; }
+    stat() { printf '1000:1000\n'; }
+    chown() { :; }
+    run_as_dx() { :; }
+    essentials_store_valid() { :; }
+    : > "$root/.dx-durable-identity-v1"
+    printf 'durable-identity=1\nowner=dx:dx\n' > "$root/.dx-durable-identity-v1"
+    rm -f "$root/.dx-owner-set"
+    mv() { return 1; }
+    DX_NIX_IDENTITY_MIGRATION_REQUIRED=true migrate_durable_nix_identity_if_needed "$root" >/dev/null 2>&1 || true
+    unset -f mv
+    rm -f "$root/.dx-durable-identity-v1" "$root/.dx-owner-set"
+    mv() { return 1; }
+    DX_NIX_IDENTITY_MIGRATION_REQUIRED=true migrate_durable_nix_identity_if_needed "$root" >/dev/null 2>&1 || true
+    unset -f mv
+
+    DX_NIX_VOLUME_ALREADY_MOUNTED=false DX_NIX_VOLUME_ROOT="$root" DX_NIX_VOLUME_FS_TYPE=fake DX_NIX_VOLUME_MOUNT_OPTS=none DX_NIX_VOLUME_DEVICE=fake
+    migrate_durable_nix_identity_if_needed() { :; }
+    nix_image_store_import_required() { return 1; }
+    nix_install_image_essentials_root() { :; }
+    umount() { :; }; mount() { :; }; grep() { return 0; }
+    populate_prepared_nix_volume
+)
+(
+    root="$fixture/activation-marker-failure"
+    mkdir -p "$root/store" "$root/var/nix"
+    id() { printf '%s\n' 1000; }
+    run_as_dx() { :; }; essentials_store_valid() { :; }; chown() { :; }; stat() { printf '1000:1000\n'; }
+    : > "$root/.dx-owner-set"
+    mv() { return 1; }
+    DX_NIX_OWNERSHIP_ROOT="$root" publish_nix_ownership_marker >/dev/null 2>&1 || true
+)
+(
+    # Explicit lifecycle seams report both outcomes independently from the
+    # compatibility wrapper.
+    prepare_nix_volume_impl() { return 0; }
+    prepare_nix_volume >/dev/null
+    prepare_nix_volume_impl() { return 9; }
+    prepare_nix_volume >/dev/null 2>&1 || true
+)
+(
+    # The host-wide Nix-volume claim is a lifecycle boundary, not mounted
+    # store state. Exercise acquisition, contention, stale takeover, and
+    # owner-only release with disposable host state.
+    HOME="$fixture/claim-home" DXE_SELF_PROCESS_IDENTITY="coverage-$$" DX_TUNNEL_LOCK_TIMEOUT=1
+    existing=first
+    container_exists() { [ "$existing" = "$1" ]; }
+    dx_nix_volume_claim_acquire coverage-nix first
+    ! dx_nix_volume_claim_acquire coverage-nix second
+    existing=""
+    dx_nix_volume_claim_acquire coverage-nix second
+    existing=second
+    dx_nix_volume_claim_acquire coverage-nix second
+    existing=""
+    ! dx_nix_volume_claim_acquire ../unsafe second
+    printf 'malformed\n' > "$HOME/.dx-cache/nix-volume-claims/malformed-nix"
+    ! dx_nix_volume_claim_acquire malformed-nix second
+    printf 'stale\t999999\tdead-process\nsecond\t999998\tdead-process\n' > "$HOME/.dx-cache/nix-volume-claims/multiline-nix"
+    ! dx_nix_volume_claim_acquire multiline-nix second
+    printf 'creating\t444\tlive-start\n' > "$HOME/.dx-cache/nix-volume-claims/reserved-nix"
+    dx_process_identity_matches() { return 0; }
+    ! dx_nix_volume_claim_acquire reserved-nix second
+    dx_nix_volume_claim_release coverage-nix first
+    dx_nix_volume_claim_release coverage-nix second
+)
+(
+    # A validated caller may bypass the duplicate content check, but still
+    # must prove dx can write both Nix roots before publication.
+    root="$fixture/validated-ownership"
+    mkdir -p "$root/store" "$root/var/nix"
+    id() { printf '%s\n' 1000; }
+    stat() { printf '%s\n' 1000:1000; }
+    run_as_dx() { return 0; }
+    chown() { :; }
+    DX_NIX_OWNERSHIP_ROOT="$root" ensure_nix_ownership true
+)
 (
     run_as_dx() { return 0; }; verify_guest_tools
     run_as_dx() { return 1; }; verify_guest_tools

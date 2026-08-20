@@ -11,6 +11,22 @@ To rerun the bootstrap manually inside the guest:
 sudo /guest-bootstrap/bootstrap.sh
 ```
 
+## Nix and persistent-data ownership
+
+DX runs Nix in direct single-user mode. After the persistent Nix volume is
+mounted, `/nix/store` and `/nix/var/nix` are owned by `dx`; Nix commands,
+Home Manager, garbage collection, and reclaim must run as `dx`. Root performs
+the early mount/import work, then must not write new store content behind the
+single-user boundary.
+
+Bootstrap creates mutable guest directories with `dx:dx` ownership. A volume
+created by an older bootstrap may receive a one-time ownership migration for
+`/home/dx`, `/nix/cache`, or `/persist/home/dx`. Each migration publishes a
+versioned `.dxe-*-owner-v1` marker only after it succeeds, so ordinary starts
+do not recursively scan the user's accumulated cache, AI state, or sessions.
+The legacy Nix marker `/nix/.dx-owner-set` remains for compatibility with an
+older bootstrap generation.
+
 The image does not contain the bootstrap repository. `dx-create-container`
 mounts a dedicated `dx-bootstrap` volume at `/guest-bootstrap`, and
 `dx-start-container` copies the local container configuration into that volume
@@ -243,7 +259,10 @@ Then connect normally with `./bin/dx-ssh`, run `dx-theme dark` and `dx-theme lig
 
 - **Nix Volume Name:** `dx-nix` by default, configurable with `DX_NIX_VOLUME`.
 - **Recreate-Survival:** The Nix store (`/nix`) is stored on a dedicated Apple container volume. This means your downloaded packages and Nix configuration persist even if you delete and recreate the container with `dx-recreate` (or any manual sequence of `dx-destroy-container` and `dx-create-container`).
-- **Single-Writer Constraint:** Only one running container may mount the dx-nix volume at a time. If you need a second concurrent container, it will need its own volume name or you must wait for the first container to stop.
+- **Single-Writer Constraint:** A Nix volume is claimed by one container for its
+  full lifecycle, not merely while it is running. Destroy that container before
+  assigning the volume to another one; use a distinct volume name for parallel
+  containers.
 - **Optimization:** The filesystem is formatted with btrfs and zstd:3 compression. Nix's auto-optimise-store is enabled to deduplicate identical files at the hardlink level, further saving space.
 - **Bootstrap Payload:** `/guest-bootstrap` is backed by the `dx-bootstrap`
   volume and populated from the local checkout at start time, keeping repository

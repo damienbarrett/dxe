@@ -1,24 +1,139 @@
 #!/usr/bin/env bash
 # Source-only bootstrap persistence phase. Safe to source.
 
+# Mutable guest data is durable, so recursively repairing its ownership on
+# every start makes bootstrap time grow with the user's history.  New trees
+# are created with their intended owner and old trees are migrated once.  The
+# marker lives beside the data it protects and is published only after the
+# migration succeeds, so an interrupted migration is retried safely.
+if ! declare -F dx_validate_atomic_marker_path >/dev/null; then
+    # A few direct behavior tests source this phase by itself. Production
+    # bootstrap sources common.sh first; load that same shared contract for
+    # standalone callers without duplicating its safety-critical helpers.
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
+fi
+
+dx_ensure_tree_owner() {
+    local target="$1"
+    local marker="$2"
+    local description="$3"
+    local marker_tmp
+    local started=$SECONDS
+    local expected_owner
+    local marker_owner
+
+    if [ -L "$target" ] || { [ -e "$target" ] && [ ! -d "$target" ]; }; then
+        echo "Error: refusing ownership migration for $description: $target is not a directory." >&2
+        return 1
+    fi
+    dx_validate_atomic_marker_path "$marker" "$description ownership marker" || return 1
+
+    if [ -d "$target" ]; then
+        if id -u dx >/dev/null 2>&1 && id -g dx >/dev/null 2>&1; then
+            chown dx:dx "$target" || return 1
+        fi
+    elif id -u dx >/dev/null 2>&1 && id -g dx >/dev/null 2>&1; then
+        install -d -o dx -g dx -m 0755 "$target" || return 1
+    else
+        # Sourceable behavior tests run on hosts without the guest account.
+        # Production always reaches this branch after create_user.
+        mkdir -p "$target" || return 1
+    fi
+    if [ ! -d "$target" ]; then
+        if id -u dx >/dev/null 2>&1; then
+            echo "Error: could not create $description directory $target." >&2
+            return 1
+        fi
+        # A sourceable test may intentionally stub mkdir while exercising a
+        # later branch. There is no guest account or writable target to
+        # migrate in that harness.
+        return 0
+    fi
+    if [ -f "$marker" ]; then
+        expected_owner="$(id -u dx):$(id -g dx)"
+        marker_owner="$(stat -c '%u:%g' "$marker" 2>/dev/null || stat -f '%u:%g' "$marker" 2>/dev/null || true)"
+        if [ "$marker_owner" = "$expected_owner" ] \
+            && grep -q '^ownership-layout=1$' "$marker" \
+            && grep -q '^owner=dx:dx$' "$marker"; then
+            echo "Bootstrap phase: $description ownership already verified (0s)."
+            return 0
+        fi
+        echo "Warning: $description ownership marker is stale; repeating its bounded migration."
+    fi
+
+    echo "Migrating legacy $description ownership (one time)..."
+    # This is intentionally the only recursive ownership operation for the
+    # target.  It is marker-guarded and therefore does not run on normal boots.
+    chown -R dx:dx "$target" || return 1
+    marker_tmp="$marker.tmp.$$"
+    if ! printf 'ownership-layout=1\nowner=dx:dx\n' > "$marker_tmp" \
+        || ! chown dx:dx "$marker_tmp" \
+        || ! chmod 0600 "$marker_tmp" \
+        || ! dx_publish_atomic_marker "$marker_tmp" "$marker" "$description ownership marker"; then
+        rm -f "$marker_tmp"
+        return 1
+    fi
+    echo "Bootstrap phase: $description ownership migration completed in $((SECONDS - started))s."
+}
+
+dx_prepare_owned_directory() {
+    local directory="$1"
+    local mode="${2:-0755}"
+    if [ -L "$directory" ]; then
+        echo "Error: refusing to create owned directory through symlink: $directory" >&2
+        return 1
+    fi
+    if [ -d "$directory" ]; then
+        if id -u dx >/dev/null 2>&1 && id -g dx >/dev/null 2>&1; then
+            chown dx:dx "$directory" || return 1
+        fi
+        chmod "$mode" "$directory" || return 1
+    elif id -u dx >/dev/null 2>&1 && id -g dx >/dev/null 2>&1; then
+        install -d -o dx -g dx -m "$mode" "$directory"
+    else
+        mkdir -p "$directory"
+    fi
+    if [ ! -d "$directory" ] && id -u dx >/dev/null 2>&1; then
+        echo "Error: could not create owned directory $directory." >&2
+        return 1
+    fi
+}
+
 setup_persist() {
-    if [ -d /persist ]; then
-        chown dx:dx /persist
-        chmod 0755 /persist
-        install -d -o dx -g dx -m 0755 /persist/home /persist/home/dx
+    local persist_root="${1:-/persist}"
+    if [ -L "$persist_root" ]; then
+        echo "Error: refusing to prepare persisted storage through symlink: $persist_root" >&2
+        return 1
+    fi
+    if [ -d "$persist_root" ]; then
+        chown dx:dx "$persist_root"
+        chmod 0755 "$persist_root"
+        install -d -o dx -g dx -m 0755 "$persist_root/home" "$persist_root/home/dx"
+        dx_ensure_tree_owner "$persist_root/home/dx" "$persist_root/home/dx/.dxe-owner-v1" "persisted guest home" || return 1
+        # The persisted home is shared by Home Manager and optional tools.
+        # Establish only the bounded XDG root here, while the volume is still
+        # fresh, so later root-run setup cannot leave it inaccessible to dx.
+        # dx_prepare_owned_directory rejects a symlink and changes no child
+        # ownership, preserving the marker-based no-recursive-chown design.
+        dx_prepare_owned_directory "$persist_root/home/dx/.local" 0755 || return 1
+        dx_prepare_owned_directory "$persist_root/home/dx/.local/state" 0755 || return 1
     fi
 }
 
 # 3. Configure SSH (Section 4)
 setup_gh_persistence() {
-    local persistent_config_dir="/persist/home/dx/.config"
-    local persistent_gh="/persist/home/dx/.config/gh"
-    local home_config_dir="/home/dx/.config"
-    local home_gh="/home/dx/.config/gh"
+    local persist_home="${1:-/persist/home/dx}"
+    local home="${2:-/home/dx}"
+    local persistent_config_dir="$persist_home/.config"
+    local persistent_gh="$persistent_config_dir/gh"
+    local home_config_dir="$home/.config"
+    local home_gh="$home_config_dir/gh"
     local timestamp=""
     local backup_path=""
 
-    mkdir -p "$persistent_config_dir" "$home_config_dir"
+    dx_ensure_tree_owner "$persist_home" "$persist_home/.dxe-owner-v1" "persisted guest home" || return 1
+    dx_prepare_owned_directory "$persistent_config_dir" 0755 || return 1
+    dx_prepare_owned_directory "$home_config_dir" 0755 || return 1
 
     if [ -e "$persistent_gh" ] && [ ! -d "$persistent_gh" ]; then
         timestamp="$(date +%Y%m%d%H%M%S)" || return 1
@@ -43,10 +158,10 @@ setup_gh_persistence() {
         fi
     fi
 
-    mkdir -p "$persistent_gh"
-    chown -R dx:dx /persist/home/dx "$home_config_dir"
-    chmod 700 "$persistent_gh"
-    run_as_dx "ln -sfnT /persist/home/dx/.config/gh /home/dx/.config/gh"
+    dx_prepare_owned_directory "$persistent_gh" 0700 || return 1
+    chown dx:dx "$home_config_dir" "$persistent_gh" || return 1
+    chmod 700 "$persistent_gh" || return 1
+    run_as_dx "ln -sfnT '$persistent_gh' '$home_gh'" || return 1
 }
 
 # Persist tmux-resurrect save data across container rebuilds. /persist is a
@@ -70,8 +185,8 @@ setup_keyring_service() {
     local state_dir="/persist/home/dx/.local/state/dx"
     local address_file="$state_dir/keyring-address"
     local legacy_file="/home/dx/.dx-keyring-env"
-    mkdir -p "$persistent_keyrings" "$state_dir"
-    chown -R dx:dx /persist/home/dx/.local
+    dx_prepare_owned_directory "$persistent_keyrings" 0700 || return 1
+    dx_prepare_owned_directory "$state_dir" 0700 || return 1
     run_as_dx "mkdir -p ~/.local/share && ln -sfnT '$persistent_keyrings' ~/.local/share/keyrings"
 
     # 2. Reuse a live D-Bus session when available, otherwise start a fresh one.
@@ -156,6 +271,12 @@ setup_herdr_persistence() {
             return 1
         fi
     done
+    dx_validate_atomic_marker_path "$ready_marker" "Herdr persistence readiness marker" || return 1
+
+    # setup_persist normally publishes this marker before activation.  Keep
+    # the call here as a safe seam for direct recovery/re-entry, but it is a
+    # no-op on ordinary boots and never rewalks the persisted home tree.
+    dx_ensure_tree_owner "$persist_home" "$persist_home/.dxe-owner-v1" "persisted guest home" || return 1
 
     # Invalidate a prior successful activation only after every persistent
     # component has been proven non-symlinked. In particular, do not touch a
@@ -164,10 +285,6 @@ setup_herdr_persistence() {
     # any marker is necessarily absent and the config migration below handles
     # that target first.
     if [ -d "$persistent_config" ]; then
-        if [ -L "$ready_marker" ]; then
-            echo "Error: refusing to activate Herdr persistence: readiness marker is a symlink." >&2
-            return 1
-        fi
         rm -f "$ready_marker" || return 1
     fi
 
@@ -240,8 +357,7 @@ setup_herdr_persistence() {
         fi
     fi
 
-    mkdir -p "$persistent_config" || return 1
-    chown -R dx:dx "$persistent_config" || return 1
+    dx_prepare_owned_directory "$persistent_config" 0700 || return 1
     chmod 0700 "$persistent_config" || return 1
 
     # The config target might have been created above or populated by moving
@@ -252,10 +368,7 @@ setup_herdr_persistence() {
         echo "Error: Herdr persistent config target did not become a real directory." >&2
         return 1
     fi
-    if [ -L "$ready_marker" ]; then
-        echo "Error: refusing to activate Herdr persistence: readiness marker is a symlink." >&2
-        return 1
-    fi
+    dx_validate_atomic_marker_path "$ready_marker" "Herdr persistence readiness marker" || return 1
     rm -f "$ready_marker" || return 1
     run_as_dx "ln -sfnT '$persistent_config' '$home_config'" || return 1
 
@@ -287,8 +400,7 @@ setup_herdr_persistence() {
         fi
     fi
 
-    mkdir -p "$persistent_state" || return 1
-    chown -R dx:dx "$persistent_state" || return 1
+    dx_prepare_owned_directory "$persistent_state" 0700 || return 1
     chmod 0700 "$persistent_state" || return 1
     run_as_dx "ln -sfnT '$persistent_state' '$home_state'" || return 1
 }

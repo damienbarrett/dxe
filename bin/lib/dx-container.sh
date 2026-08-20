@@ -155,3 +155,81 @@ dx_bootstrap_report_drift() {
     echo "Run dx-start-container again to pick it up." >&2
     return 0
 }
+dx_nix_volume_claim_dir() { printf '%s/.dx-cache/nix-volume-claims\n' "${HOME:?}"; }
+
+dx_nix_volume_claim_name_valid() {
+    case "$1" in ''|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
+}
+
+dx_nix_volume_claim_read() {
+    local claim="$1" record container_name pid start extra
+    record="$(cat "$claim" 2>/dev/null)" || return 1
+    case "$record" in *$'\n'*) return 1 ;; esac
+    IFS="$(printf '\t')" read -r container_name pid start extra <<EOF
+$record
+EOF
+    dx_nix_volume_claim_name_valid "$container_name" \
+        && case "$pid" in *[!0-9]*|'') return 1 ;; esac \
+        && [ -n "$start" ] && [ -z "$extra" ] || return 1
+    printf '%s\t%s\t%s\n' "$container_name" "$pid" "$start"
+}
+
+dx_nix_volume_claim_acquire() {
+    local volume="$1" container_name="$2" directory claim lock temporary record claim_container claim_pid claim_start
+    dx_nix_volume_claim_name_valid "$volume" && dx_nix_volume_claim_name_valid "$container_name" || {
+        echo "Error: refusing unsafe Nix-volume claim name." >&2
+        return 1
+    }
+    directory="$(dx_nix_volume_claim_dir)"
+    mkdir -p "$directory" || return 1
+    [ ! -L "$directory" ] && [ -d "$directory" ] || { echo "Error: refusing unsafe Nix-volume claim directory $directory." >&2; return 1; }
+    chmod 0700 "$directory"
+    claim="$directory/$volume"; lock="$directory/.${volume}.lock"
+    dx_lock_acquire "$lock" "${DX_TUNNEL_LOCK_TIMEOUT:-5}" || return 1
+    [ ! -L "$claim" ] && { [ ! -e "$claim" ] || [ -f "$claim" ]; } || { echo "Error: refusing unsafe Nix-volume claim path $claim." >&2; dx_lock_release "$lock" || true; return 1; }
+    if [ -e "$claim" ]; then
+        if ! record="$(dx_nix_volume_claim_read "$claim")"; then
+            echo "Error: refusing malformed Nix-volume claim $claim." >&2
+            dx_lock_release "$lock" || true
+            return 1
+        fi
+        IFS="$(printf '\t')" read -r claim_container claim_pid claim_start <<EOF
+$record
+EOF
+        if container_exists "$claim_container"; then
+            if [ "$claim_container" = "$container_name" ]; then
+                dx_lock_release "$lock"
+                return 0
+            fi
+            echo "Error: Nix volume $volume is already claimed by container $claim_container; destroy it or choose a distinct DX_NIX_VOLUME." >&2
+            dx_lock_release "$lock" || true
+            return 1
+        fi
+        if dx_process_identity_matches "$claim_pid" "$claim_start"; then
+            echo "Error: Nix volume $volume is reserved while container $claim_container is being created." >&2
+            dx_lock_release "$lock" || true
+            return 1
+        fi
+    fi
+    temporary="$(mktemp "$directory/.${volume}.claim.XXXXXX")" || { dx_lock_release "$lock" || true; return 1; }
+    printf '%s\t%s\t%s\n' "$container_name" "$$" "$DXE_SELF_PROCESS_IDENTITY" > "$temporary" \
+        && mv -f "$temporary" "$claim" || { rm -f "$temporary"; dx_lock_release "$lock" || true; return 1; }
+    dx_lock_release "$lock"
+}
+
+dx_nix_volume_claim_release() {
+    local volume="$1" container_name="$2" directory claim lock record claim_container claim_pid claim_start
+    dx_nix_volume_claim_name_valid "$volume" && dx_nix_volume_claim_name_valid "$container_name" || return 1
+    directory="$(dx_nix_volume_claim_dir)"; claim="$directory/$volume"; lock="$directory/.${volume}.lock"
+    [ -d "$directory" ] && [ ! -L "$directory" ] || return 0
+    dx_lock_acquire "$lock" "${DX_TUNNEL_LOCK_TIMEOUT:-5}" || return 1
+    [ ! -L "$claim" ] && { [ ! -e "$claim" ] || [ -f "$claim" ]; } || { dx_lock_release "$lock" || true; return 1; }
+    if [ -e "$claim" ]; then
+        record="$(dx_nix_volume_claim_read "$claim")" || { dx_lock_release "$lock" || true; return 1; }
+        IFS="$(printf '\t')" read -r claim_container claim_pid claim_start <<EOF
+$record
+EOF
+        [ "$claim_container" != "$container_name" ] || rm -f "$claim"
+    fi
+    dx_lock_release "$lock"
+}
