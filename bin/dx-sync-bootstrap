@@ -22,6 +22,56 @@ container exec "$DX_CONTAINER_NAME" sh -c 'test -f "$1/.dx-bootstrap-waiting" ||
 tar_create_args=()
 tar --no-xattrs -C "$DX_BOOTSTRAP_SOURCE" -cf /dev/null . >/dev/null 2>&1 && tar_create_args+=(--no-xattrs)
 tar --no-mac-metadata -C "$DX_BOOTSTRAP_SOURCE" -cf /dev/null . >/dev/null 2>&1 && tar_create_args+=(--no-mac-metadata)
+# Publish only when the payload actually differs from what is already current.
+# A generation id is minted from the clock, so republishing identical content
+# moves `current` for no reason and leaves the running guest looking stale
+# forever -- see dx_bootstrap_content_digest.
+#
+# A guest published before this existed has no digest to compare, so it reports
+# nothing and we publish, which re-establishes the digest for next time.
+#
+# The completeness test is `current/bootstrap.sh`, deliberately not
+# `.dx-bootstrap-ready`: the guest launcher clears that marker on every boot and
+# then waits for `current` *or* the marker, so on a restart it is always absent
+# at the moment this runs. Gating on it would mean never skipping on the one
+# path that matters. Nothing else reads it -- it exists only for the first-boot
+# handshake, where `current` does not yet exist and we publish anyway. The flat
+# compatibility symlinks point at `current/...` rather than a generation, so
+# they need no republication either.
+content_digest="$(dx_bootstrap_content_digest "$DX_BOOTSTRAP_SOURCE" || true)"
+if [ -n "$content_digest" ]; then
+    published="$(container exec "$DX_CONTAINER_NAME" sh -c '
+        root=$1
+        [ -L "$root/current" ] || exit 0
+        [ -f "$root/current/bootstrap.sh" ] || exit 0
+        readlink "$root/current"
+        cat "$root/current/.dx-content-digest" 2>/dev/null || true
+    ' -- "$DX_BOOTSTRAP_PATH" 2>/dev/null || true)"
+    published_generation="$(printf '%s\n' "$published" | sed -n '1s#^generations/##p')"
+    published_digest="$(printf '%s\n' "$published" | sed -n '2p')"
+    if [ -n "$published_digest" ] && [ "$published_digest" = "$content_digest" ]; then
+        # Publishing is also what prunes execution leases from earlier boots.
+        # Skipping it leaves the previous boot's PID 1 lease beside the live
+        # one, and dx_bootstrap_lease_generation returns whichever it sees
+        # first -- so the drift check would report the guest as running a
+        # generation it booted two restarts ago. Prune by boot id, which is the
+        # part that makes a lease stale across a restart; publication still owns
+        # the fuller process-identity retention pass.
+        container exec "$DX_CONTAINER_NAME" sh -c '
+            root=$1
+            boot=$(cat /proc/sys/kernel/random/boot_id) || exit 0
+            for lease in "$root/.locks/leases"/*; do
+                [ -f "$lease" ] || continue
+                tab=$(printf "\t")
+                IFS="$tab" read -r lease_generation lease_boot lease_rest < "$lease" || continue
+                [ "$lease_boot" = "$boot" ] || rm -f "$lease"
+            done
+        ' -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1 || true
+        echo "Bootstrap content is unchanged; generation $published_generation stays current."
+        exit 0
+    fi
+fi
+
 generation_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 echo "Syncing bootstrap generation $generation_id from $DX_BOOTSTRAP_SOURCE to $DX_CONTAINER_NAME:$DX_BOOTSTRAP_PATH..."
 
@@ -29,6 +79,7 @@ COPYFILE_DISABLE=1 tar "${tar_create_args[@]}" -C "$DX_BOOTSTRAP_SOURCE" -cf - .
 set -eu
 root=$1
 generation=$2
+content_digest=${3:-}
 generations=$root/generations
 locks=$root/.locks
 lock=$locks/publication
@@ -94,6 +145,7 @@ if [ -L "$root/current" ]; then
     case "$predecessor" in ""|*/*|[.-]*|*[!A-Za-z0-9_.-]*) echo "Error: invalid bootstrap predecessor generation." >&2; exit 1 ;; esac
 fi
 printf "%s\n" "$predecessor" > "$stage/.predecessor"
+printf "%s\n" "$content_digest" > "$stage/.dx-content-digest"
 chown -R root:root "$stage"
 find "$stage" -type d -exec chmod 0555 {} +
 find "$stage" -type f -exec chmod 0444 {} +
@@ -140,6 +192,6 @@ for candidate in "$generations"/*; do
 done
 trap - EXIT HUP INT TERM
 rm -f "$lock/owner"; rmdir "$lock"
-' -- "$DX_BOOTSTRAP_PATH" "$generation_id"
+' -- "$DX_BOOTSTRAP_PATH" "$generation_id" "$content_digest"
 
 echo "Bootstrap generation $generation_id is ready."

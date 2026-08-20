@@ -438,5 +438,52 @@ fi
 assert_file_contains "$BASE_DIR/bin/lib/dx-ssh-common.sh" 'dx_ssh_cleanup_osc' "the OSC cleanup helper exists under the dx_ namespace (F12)"
 assert_file_not_contains "$BASE_DIR/bin/lib/dx-ssh-common.sh" 'export TERM' "the shared SSH boundary no longer mutates the caller's TERM to no effect (F12)"
 
+# The bootstrap payload digest decides whether a sync has anything to publish.
+# It must be stable across runs, and must notice a content change *and* a
+# rename -- a rename that hashed the same would leave the guest running code
+# that no longer exists under that name.
+digest_root="$config_fixture/digest"
+mkdir -p "$digest_root/tree/sub"
+printf 'one\n' > "$digest_root/tree/a.sh"
+printf 'two\n' > "$digest_root/tree/sub/b.nix"
+first="$(dx_bootstrap_content_digest "$digest_root/tree")"
+second="$(dx_bootstrap_content_digest "$digest_root/tree")"
+if [ -n "$first" ] && [ "$first" = "$second" ]; then
+    test_pass "bootstrap content digest is stable across runs"
+else
+    test_fail "bootstrap content digest is stable across runs ($first vs $second)"
+fi
+
+printf 'changed\n' > "$digest_root/tree/sub/b.nix"
+if [ "$(dx_bootstrap_content_digest "$digest_root/tree")" != "$first" ]; then
+    test_pass "bootstrap content digest changes when a file's contents change"
+else
+    test_fail "bootstrap content digest changes when a file's contents change"
+fi
+
+printf 'two\n' > "$digest_root/tree/sub/b.nix"
+mv "$digest_root/tree/a.sh" "$digest_root/tree/renamed.sh"
+if [ "$(dx_bootstrap_content_digest "$digest_root/tree")" != "$first" ]; then
+    test_pass "bootstrap content digest changes when a file is renamed"
+else
+    test_fail "bootstrap content digest changes when a file is renamed"
+fi
+
+# Modes are deliberately not content: the guest re-derives them by name when it
+# publishes, so a mode difference must not force a pointless republication.
+mv "$digest_root/tree/renamed.sh" "$digest_root/tree/a.sh"
+chmod 0700 "$digest_root/tree/a.sh"
+if [ "$(dx_bootstrap_content_digest "$digest_root/tree")" = "$first" ]; then
+    test_pass "bootstrap content digest ignores file modes"
+else
+    test_fail "bootstrap content digest ignores file modes"
+fi
+
+if ! dx_bootstrap_content_digest "$digest_root/tree/a.sh" >/dev/null 2>&1; then
+    test_pass "bootstrap content digest rejects a non-directory source"
+else
+    test_fail "bootstrap content digest rejects a non-directory source"
+fi
+
 print_summary
 exit_with_code

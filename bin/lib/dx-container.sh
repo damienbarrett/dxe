@@ -138,6 +138,40 @@ dx_bootstrap_lease_generation() {
     return 1
 }
 
+# A deterministic digest of the bootstrap payload, used to decide whether a sync
+# has anything to publish.
+#
+# Generation ids are minted from the clock ("<date>-<pid>"), so every sync used
+# to produce a new id and repoint `current` even when the payload was byte for
+# byte identical. dx-start-container syncs *after* starting the container, so
+# the guest was then permanently "running an older generation" than the one just
+# published, and the drift warning fired on every start -- which meant it could
+# not distinguish a real unsynced change from the sync that had just run.
+#
+# Hashes the per-file digest listing, which carries both path and content, so a
+# rename counts as a change. Modes deliberately do not: the guest re-derives
+# them by name when it publishes, so a mode difference is not a content
+# difference. Files only -- the payload has no symlinks and no meaningful empty
+# directories.
+#
+# The tool pick is duplicated across the two branches rather than factored into
+# a helper because `find -exec` needs a real command, not a shell function, and
+# a shell loop feeding a pipeline is not reliably instrumentable by the coverage
+# gate. `-exec ... +` also runs nothing on an empty tree, where `xargs` would
+# hang waiting on stdin.
+dx_bootstrap_content_digest() {
+    local source="$1" digest
+    [ -d "$source" ] || return 1
+    if command -v sha256sum >/dev/null 2>&1; then
+        digest="$(cd "$source" && find . -type f -exec sha256sum {} + | LC_ALL=C sort | sha256sum)" || return 1
+    else
+        digest="$(cd "$source" && find . -type f -exec shasum -a 256 {} + | LC_ALL=C sort | shasum -a 256)" || return 1
+    fi
+    digest="${digest%% *}"
+    case "$digest" in ''|*[!0-9a-f]*) return 1 ;; esac
+    printf '%s\n' "$digest"
+}
+
 # Announce that the guest is running an older generation than the published
 # one. dx-start-container has to start the container before it can sync -- the
 # payload crosses `container exec`, which needs a running container -- and the

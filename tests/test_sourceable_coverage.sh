@@ -199,6 +199,28 @@ dx_bootstrap_report_drift old new probe 2>/dev/null
 dx_bootstrap_report_drift same same probe 2>/dev/null
 dx_bootstrap_report_drift '' new probe 2>/dev/null
 
+# Bootstrap payload digest: the success path, the not-a-directory rejection, and
+# both halves of the SHA-256 tool pick. Behavior lives in Section 9; these
+# probes exist so every branch is executed under the gate. Reaching the shasum
+# fallback needs a PATH with no sha256sum anywhere on it, so the probe builds a
+# minimal one rather than assuming the runner lacks coreutils.
+digest_fixture="$fixture/bootstrap-digest"
+mkdir -p "$digest_fixture"
+printf 'payload\n' > "$digest_fixture/bootstrap.sh"
+dx_bootstrap_content_digest "$digest_fixture" >/dev/null
+dx_bootstrap_content_digest "$digest_fixture/bootstrap.sh" >/dev/null 2>&1 || true
+(
+    digest_bin="$fixture/digest-bin"
+    mkdir -p "$digest_bin"
+    for digest_tool in find sort cat; do
+        digest_tool_path="$(command -v "$digest_tool")" || continue
+        ln -sf "$digest_tool_path" "$digest_bin/$digest_tool"
+    done
+    printf '#!/bin/sh\nprintf "%%s  -\\n" 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n' > "$digest_bin/shasum"
+    chmod 0755 "$digest_bin/shasum"
+    PATH="$digest_bin" dx_bootstrap_content_digest "$digest_fixture" >/dev/null
+)
+
 # SSH assembly and generated launcher are data-producing helpers.
 DX_SSH_PORT=2222; dx_ssh_endpoint >/dev/null; dx_bootstrap_launch_command >/dev/null
 
