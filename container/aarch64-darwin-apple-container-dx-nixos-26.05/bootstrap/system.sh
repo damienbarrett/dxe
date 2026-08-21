@@ -214,6 +214,111 @@ create_user() {
     fi
 }
 
+# SSH host identity must outlive the ephemeral rootfs.  /etc/ssh is rebuilt with
+# the container, so without a persisted copy the guest gets a new host key on
+# every recreate, and a persistent OpenSSH-closure fault re-runs key generation
+# on every boot instead of restoring a key that already worked.  Note that
+# dx-ssh pins nothing (StrictHostKeyChecking=no, UserKnownHostsFile=/dev/null),
+# so the churn is invisible through the normal path; it surfaces on a direct
+# ssh to the forwarded port.
+#
+# setup_persist hands /persist to dx, so dx can rename a directory it does not
+# own out of the way and leave its own in that place.  Host *private* keys
+# therefore live in a root-owned 0700 store that is trusted only while it still
+# is one.  An untrusted store is neither restored from (it would hand dx control
+# of the guest's host identity) nor written to (it would leak the private key
+# into a dx-readable directory).
+dx_host_key_store_trusted() {
+    local store="$1"
+    local owner
+    [ -d "$store" ] || return 1
+    owner="$(stat -c '%u:%g' "$store" 2>/dev/null || stat -f '%u:%g' "$store" 2>/dev/null || true)"
+    if [ "${owner%%:*}" != 0 ]; then
+        echo "Warning: persisted host-key store $store is not root-owned; refusing to use it for the guest identity." >&2
+        return 1
+    fi
+}
+
+dx_host_key_store_populated() {
+    local store="$1"
+    local key
+    for key in "$store"/ssh_host_*_key; do
+        [ -f "$key" ] && return 0
+    done
+    return 1
+}
+
+# Private keys 0600, public keys 0644.  A persisted copy with looser modes
+# would make sshd refuse to start, which is a boot failure rather than a
+# warning, so the modes are re-asserted after every restore and backfill.
+dx_harden_host_keys() {
+    local directory="$1"
+    local key
+    for key in "$directory"/ssh_host_*; do
+        [ -f "$key" ] || continue
+        case "$key" in
+            *.pub) chmod 0644 "$key" || return 1 ;;
+            *) chmod 0600 "$key" || return 1 ;;
+        esac
+    done
+}
+
+dx_persist_host_keys() {
+    local etc_ssh="${1:-/etc/ssh}"
+    local store="${2:-/persist/etc/ssh}"
+    local persist_root="${3:-}"
+    local store_parent store_usable=false
+    store_parent="$(dirname "$store")"
+    [ -n "$persist_root" ] || persist_root="$(dirname "$store_parent")"
+
+    if [ -L "$etc_ssh" ]; then
+        echo "Error: refusing to configure host keys through symlink: $etc_ssh" >&2
+        return 1
+    fi
+    if [ -L "$store" ] || [ -L "$store_parent" ]; then
+        echo "Error: refusing to persist host keys through symlink: $store" >&2
+        return 1
+    fi
+
+    mkdir -p "$etc_ssh" || return 1
+
+    # No persist volume mounted: the guest must still boot, just without a
+    # durable identity.
+    if [ -d "$persist_root" ]; then
+        # Create the store only when it is absent.  Never chown an existing
+        # store into trust: if dx substituted a directory it owns, normalising
+        # ownership here would launder it into the guest's host identity.
+        if [ ! -e "$store" ]; then
+            install -d -o root -g root -m 0700 "$store_parent" "$store" || return 1
+        fi
+        if dx_host_key_store_trusted "$store"; then
+            store_usable=true
+            chmod 0700 "$store" || return 1
+        fi
+    fi
+
+    if [ "$store_usable" = true ] && dx_host_key_store_populated "$store"; then
+        echo "Restoring the persisted SSH host identity."
+        cp -a "$store"/ssh_host_* "$etc_ssh/" || return 1
+        dx_harden_host_keys "$etc_ssh" || return 1
+        return 0
+    fi
+
+    if [ ! -f "$etc_ssh/ssh_host_ed25519_key" ] && [ ! -f "$etc_ssh/ssh_host_rsa_key" ]; then
+        generate_host_keys || return 1
+    fi
+    dx_harden_host_keys "$etc_ssh" || return 1
+
+    # Backfill so the identity generated here survives the next rebuild.  This
+    # also covers an older rootfs whose keys the persist volume has never seen.
+    if [ "$store_usable" = true ] && ! dx_host_key_store_populated "$store" \
+        && dx_host_key_store_populated "$etc_ssh"; then
+        cp -a "$etc_ssh"/ssh_host_* "$store/" || return 1
+        dx_harden_host_keys "$store" || return 1
+        echo "Persisted the SSH host identity for future rebuilds."
+    fi
+}
+
 # Hand /persist (mounted from the dx-persist named volume) to dx.
 # Top-level only; recursive chown on populated persistent storage is wasteful.
 configure_ssh() {
@@ -241,10 +346,7 @@ configure_ssh() {
         chmod 600 /home/dx/.ssh/authorized_keys
     fi
 
-    mkdir -p /etc/ssh
-    if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
-        generate_host_keys
-    fi
+    dx_persist_host_keys /etc/ssh /persist/etc/ssh || return 1
 
     mkdir -p /run /var/run/sshd
     mkdir -p /var/log

@@ -22,7 +22,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl populate_prepared_nix_volume setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership setup_gh_persistence setup_tmux_persistence setup_herdr_persistence setup_keyring_service dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl populate_prepared_nix_volume setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership setup_gh_persistence setup_tmux_persistence setup_herdr_persistence setup_keyring_service dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -461,6 +461,146 @@ if [ "$rc" -ne 0 ] && printf '%s\n' "$output" | stdin_matches -i 'dbus-daemon'; 
     test_pass "setup_keyring_service reports an explicit diagnostic when dbus-daemon is missing, instead of dying silently"
 else
     test_fail "setup_keyring_service reports an explicit diagnostic when dbus-daemon is missing, instead of dying silently (rc=$rc, output=[$output])"
+fi
+
+# SSH host identity must survive a rebuild. /etc/ssh is on the ephemeral
+# rootfs, so without a persisted store the guest's host key churns on every
+# recreate (known_hosts warnings on the host) and a persistent openssh-closure
+# problem re-runs keygen on every boot instead of restoring a key that already
+# worked. setup_persist hands /persist to dx, so the store holding host
+# *private* keys is root-owned 0700 and is trusted only while it still is --
+# dx can rename a directory it does not own out of the way and substitute one
+# it does. These fixtures record chown rather than stubbing it to a no-op: a
+# no-op chown is what has previously hidden root-vs-dx defects in this tree.
+hostkey_fixture="$fixture/hostkeys"
+
+# A fresh persist volume: no persisted keys, so bootstrap generates them and
+# backfills the store, and the store is created root-owned 0700.
+fresh_etc="$hostkey_fixture/fresh/etc/ssh"
+fresh_store="$hostkey_fixture/fresh/persist/etc/ssh"
+mkdir -p "$hostkey_fixture/fresh/persist/etc"
+fresh_out="$({
+    chown() { printf '%s\n' "$*" >> "$hostkey_fixture/fresh-chown.log"; }
+    install() { command mkdir -p "${!#}"; printf '%s\n' "$*" >> "$hostkey_fixture/fresh-install.log"; }
+    stat() { printf '0:0\n'; }
+    generate_host_keys() {
+        printf '%s\n' generated >> "$hostkey_fixture/fresh-generate.log"
+        mkdir -p "$fresh_etc"
+        printf 'private\n' > "$fresh_etc/ssh_host_ed25519_key"
+        printf 'public\n' > "$fresh_etc/ssh_host_ed25519_key.pub"
+    }
+    dx_persist_host_keys "$fresh_etc" "$fresh_store"
+} 2>&1)"
+if [ -f "$hostkey_fixture/fresh-generate.log" ] \
+    && [ -f "$fresh_store/ssh_host_ed25519_key" ] \
+    && [ "$(file_mode "$fresh_store")" = 700 ] \
+    && grep -q -- '-o root -g root -m 0700' "$hostkey_fixture/fresh-install.log"; then
+    test_pass "a fresh persist store generates host keys and backfills them for the next boot"
+else
+    test_fail "a fresh persist store generates host keys and backfills them for the next boot ($fresh_out)"
+fi
+
+# A populated, root-owned store is authoritative: restore it instead of
+# generating a new identity, which is what keeps the host key stable.
+restore_etc="$hostkey_fixture/restore/etc/ssh"
+restore_store="$hostkey_fixture/restore/persist/etc/ssh"
+mkdir -p "$restore_store" "$restore_etc"
+printf 'persisted-private\n' > "$restore_store/ssh_host_ed25519_key"
+printf 'persisted-public\n' > "$restore_store/ssh_host_ed25519_key.pub"
+chmod 0666 "$restore_store/ssh_host_ed25519_key"
+restore_out="$({
+    chown() { printf '%s\n' "$*" >> "$hostkey_fixture/restore-chown.log"; }
+    install() { command mkdir -p "${!#}"; }
+    stat() { printf '0:0\n'; }
+    generate_host_keys() { printf '%s\n' generated >> "$hostkey_fixture/restore-generate.log"; }
+    dx_persist_host_keys "$restore_etc" "$restore_store"
+} 2>&1)"
+if [ ! -f "$hostkey_fixture/restore-generate.log" ] \
+    && [ "$(cat "$restore_etc/ssh_host_ed25519_key")" = persisted-private ] \
+    && [ "$(file_mode "$restore_etc/ssh_host_ed25519_key")" = 600 ] \
+    && [ "$(file_mode "$restore_etc/ssh_host_ed25519_key.pub")" = 644 ]; then
+    test_pass "a persisted host identity is restored and re-hardened instead of regenerated"
+else
+    test_fail "a persisted host identity is restored and re-hardened instead of regenerated ($restore_out)"
+fi
+
+# /persist belongs to dx, so a store dx could have substituted must not be
+# trusted as the guest's host identity.
+untrusted_etc="$hostkey_fixture/untrusted/etc/ssh"
+untrusted_store="$hostkey_fixture/untrusted/persist/etc/ssh"
+mkdir -p "$untrusted_store" "$untrusted_etc"
+printf 'attacker-private\n' > "$untrusted_store/ssh_host_ed25519_key"
+untrusted_out="$({
+    chown() { printf '%s\n' "$*" >> "$hostkey_fixture/untrusted-chown.log"; }
+    install() { command mkdir -p "${!#}"; }
+    stat() { printf '1000:1000\n'; }
+    generate_host_keys() {
+        printf '%s\n' generated >> "$hostkey_fixture/untrusted-generate.log"
+        printf 'fresh-private\n' > "$untrusted_etc/ssh_host_ed25519_key"
+    }
+    dx_persist_host_keys "$untrusted_etc" "$untrusted_store"
+} 2>&1)"
+if [ -f "$hostkey_fixture/untrusted-generate.log" ] \
+    && [ "$(cat "$untrusted_etc/ssh_host_ed25519_key")" = fresh-private ] \
+    && printf '%s\n' "$untrusted_out" | stdin_matches -i 'not root-owned'; then
+    test_pass "a persisted host-key store dx could have substituted is refused, not restored"
+else
+    test_fail "a persisted host-key store dx could have substituted is refused, not restored ($untrusted_out)"
+fi
+
+# Symlinks are a trust boundary here exactly as they are in persistence.sh:
+# refuse before any mutation rather than following the link.
+symlink_store="$hostkey_fixture/symlink/persist/etc/ssh"
+symlink_target="$hostkey_fixture/symlink/target"
+symlink_etc="$hostkey_fixture/symlink/etc/ssh"
+mkdir -p "$symlink_target" "$symlink_etc" "$hostkey_fixture/symlink/persist/etc"
+ln -s "$symlink_target" "$symlink_store"
+symlink_out="$({
+    chown() { printf '%s\n' "$*" >> "$hostkey_fixture/symlink-chown.log"; }
+    install() { command mkdir -p "${!#}"; }
+    generate_host_keys() { :; }
+    ! dx_persist_host_keys "$symlink_etc" "$symlink_store"
+} 2>&1)"
+if [ ! -e "$symlink_target/ssh_host_ed25519_key" ] \
+    && [ ! -f "$hostkey_fixture/symlink-chown.log" ] \
+    && printf '%s\n' "$symlink_out" | stdin_matches -i 'symlink'; then
+    test_pass "host-key persistence refuses a symlinked store before any mutation"
+else
+    test_fail "host-key persistence refuses a symlinked store before any mutation ($symlink_out)"
+fi
+
+symlink_etc_link="$hostkey_fixture/symlink-etc/etc/ssh"
+symlink_etc_target="$hostkey_fixture/symlink-etc/target"
+symlink_etc_store="$hostkey_fixture/symlink-etc/persist/etc/ssh"
+mkdir -p "$symlink_etc_target" "$hostkey_fixture/symlink-etc/etc" "$symlink_etc_store"
+ln -s "$symlink_etc_target" "$symlink_etc_link"
+symlink_etc_out="$({
+    chown() { printf '%s\n' "$*" >> "$hostkey_fixture/symlink-etc-chown.log"; }
+    install() { command mkdir -p "${!#}"; }
+    stat() { printf '0:0\n'; }
+    generate_host_keys() { :; }
+    ! dx_persist_host_keys "$symlink_etc_link" "$symlink_etc_store"
+} 2>&1)"
+if [ ! -e "$symlink_etc_target/ssh_host_ed25519_key" ] \
+    && printf '%s\n' "$symlink_etc_out" | stdin_matches -i 'symlink'; then
+    test_pass "host-key persistence refuses a symlinked /etc/ssh before any mutation"
+else
+    test_fail "host-key persistence refuses a symlinked /etc/ssh before any mutation ($symlink_etc_out)"
+fi
+
+# Without a persist volume mounted the guest must still boot: generate into
+# the ephemeral rootfs rather than failing configure_ssh.
+nopersist_etc="$hostkey_fixture/nopersist/etc/ssh"
+nopersist_out="$({
+    chown() { printf '%s\n' "$*" >> "$hostkey_fixture/nopersist-chown.log"; }
+    install() { command mkdir -p "${!#}"; }
+    generate_host_keys() { printf '%s\n' generated >> "$hostkey_fixture/nopersist-generate.log"; }
+    dx_persist_host_keys "$nopersist_etc" "$hostkey_fixture/nopersist/absent-persist/etc/ssh"
+} 2>&1)"
+if [ -f "$hostkey_fixture/nopersist-generate.log" ]; then
+    test_pass "an unmounted persist volume still yields a bootable host identity"
+else
+    test_fail "an unmounted persist volume still yields a bootable host identity ($nopersist_out)"
 fi
 
 print_summary

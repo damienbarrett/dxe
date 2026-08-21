@@ -1469,4 +1469,33 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     run_as_dx() { return 1; }; verify_guest_tools
 ) >/dev/null 2>&1 || true
 
+(
+    # Host-key persistence trust boundary, exercised with real filesystem
+    # ownership. /persist is handed to dx, so the store holding host *private*
+    # keys is trusted only while it is genuinely root-owned. Stubbing stat and
+    # chown here would defeat the probe: a wrong real uid is exactly the defect
+    # it guards against.
+    hk="$fixture/hostkeys"
+    mkdir -p "$hk/persist/etc" "$hk/etc/ssh"
+
+    install -d -o root -g root -m 0700 "$hk/persist/etc/ssh"
+    printf 'persisted-private\n' > "$hk/persist/etc/ssh/ssh_host_ed25519_key"
+    printf 'persisted-public\n' > "$hk/persist/etc/ssh/ssh_host_ed25519_key.pub"
+    generate_host_keys() { echo "unexpected host-key generation" >&2; return 1; }
+    dx_persist_host_keys "$hk/etc/ssh" "$hk/persist/etc/ssh"
+    [ "$(cat "$hk/etc/ssh/ssh_host_ed25519_key")" = persisted-private ]
+    [ "$(stat -c '%a' "$hk/etc/ssh/ssh_host_ed25519_key")" = 600 ]
+    [ "$(stat -c '%a' "$hk/etc/ssh/ssh_host_ed25519_key.pub")" = 644 ]
+
+    # The same store owned by an unprivileged uid is refused: the guest
+    # regenerates rather than adopting an identity dx could have planted, and
+    # the fresh private key is not written into a dx-readable directory.
+    rm -rf "$hk/etc/ssh"
+    mkdir -p "$hk/etc/ssh"
+    chown 1000:1000 "$hk/persist/etc/ssh"
+    generate_host_keys() { printf 'regenerated\n' > "$hk/etc/ssh/ssh_host_ed25519_key"; }
+    dx_persist_host_keys "$hk/etc/ssh" "$hk/persist/etc/ssh"
+    [ "$(cat "$hk/etc/ssh/ssh_host_ed25519_key")" = regenerated ]
+    [ "$(cat "$hk/persist/etc/ssh/ssh_host_ed25519_key")" = persisted-private ]
+) 2>/dev/null
 echo "Isolated sourceable coverage probes passed."

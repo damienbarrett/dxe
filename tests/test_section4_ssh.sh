@@ -13,6 +13,13 @@ assert_file_contains_literal "$SYSTEM" 'DX_PUB_KEY' "authorized keys are configu
 assert_file_contains_literal "$SYSTEM" 'dx ALL=(ALL) NOPASSWD:ALL' "passwordless sudo is preserved for dx"
 assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '127.0.0.1:$DX_SSH_PORT:2222' "host SSH forwarding is loopback-only"
 
+# The guest's host identity is persisted on the dx-persist volume rather than
+# regenerated onto the ephemeral rootfs each boot. Behavior for restore, the
+# root-ownership trust boundary, and the symlink guards is covered by the
+# section 3 bootstrap tests.
+assert_file_contains_literal "$SYSTEM" '/persist/etc/ssh' "SSH host keys are persisted across rebuilds"
+assert_file_contains_literal "$SYSTEM" 'dx_persist_host_keys' "configure_ssh restores or persists the host identity"
+
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then test_skip "SSH live behavior skipped by --skip-integration"; else
     if requires_container && "$BASE_DIR/bin/dx-ssh" true; then test_pass "key-only SSH live probe succeeds"; else test_fail "key-only SSH live probe succeeds"; fi
 fi
