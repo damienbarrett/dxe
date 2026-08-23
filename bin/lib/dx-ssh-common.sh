@@ -211,7 +211,28 @@ release_publication_lock() { rm -f "$lock/owner"; rmdir "$lock"; }
 rm -f "$root/.dx-bootstrap-ready"
 touch "$root/.dx-bootstrap-waiting"
 echo "Waiting for bootstrap payload in $root..."
-while [ ! -L "$root/current" ] && [ ! -f "$root/.dx-bootstrap-ready" ]; do sleep 1; done
+# Wait for the host to signal that publication for *this* boot has settled, not
+# merely for a `current` to exist. On a restart `current` already points at the
+# previous boot's generation, so resolving it on sight runs the payload from the
+# last boot -- which is why a bootstrap change used to need two starts, and why
+# a guest whose bootstrap died could not be recovered by syncing (the sync
+# refuses unless the container is running, and it will not stay running on the
+# broken payload). dx-sync-bootstrap signals readiness whether it publishes or
+# skips.
+#
+# A container started outside dx-start-container is never signalled at all.
+# Waiting forever would be worse than running what is already published, so
+# fall back after a bounded grace and say so.
+publish_grace=${DX_BOOTSTRAP_PUBLISH_GRACE:-30}
+waited=0
+while [ ! -f "$root/.dx-bootstrap-ready" ]; do
+    if [ -L "$root/current" ] && [ "$waited" -ge "$publish_grace" ]; then
+        echo "Warning: no publication signal after ${waited}s; using the generation already current." >&2
+        break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+done
 if [ -L "$root/current" ]; then
     acquire_publication_lock
     trap 'rm -f "$lock/owner"; rmdir "$lock" 2>/dev/null || true' EXIT HUP INT TERM

@@ -265,5 +265,74 @@ else
     test_fail "changed content still publishes a new generation"
 fi
 
+# --- The restart path must run the generation published for *this* boot.
+#
+# `current` already points at the previous boot's generation when a container
+# restarts, so a launcher that waits only for `current` to exist resolves it
+# immediately -- before dx-start-container has had any chance to sync. The guest
+# then runs the previous boot's payload. That is why a bootstrap change has
+# needed two starts to take effect, and why a guest whose bootstrap died could
+# not be recovered by syncing: dx-sync-bootstrap refuses when the container is
+# not running, and the container will not stay running on the broken payload.
+restart_root="$fixture/launch-restart"
+mkdir -p "$restart_root/generations/gen-previous" "$restart_root/generations/gen-current" "$restart_root/.locks/leases"
+for restart_gen in gen-previous gen-current; do
+    cat > "$restart_root/generations/$restart_gen/bootstrap.sh" <<GUEST
+#!/bin/sh
+printf '%s\n' "$restart_gen" > "$restart_root/ran"
+GUEST
+    chmod 0755 "$restart_root/generations/$restart_gen/bootstrap.sh"
+done
+ln -sfn generations/gen-previous "$restart_root/current"
+dx_bootstrap_launch_command > "$restart_root/launcher.sh"
+
+env PATH="$fake_dir:$PATH" sh "$restart_root/launcher.sh" "$restart_root" >"$restart_root/out" 2>&1 &
+restart_launcher_pid=$!
+# Let the launcher reach its wait before the host publishes, which is the
+# ordering a real start has.
+sleep 2
+ln -sfn generations/gen-current "$restart_root/current"
+: > "$restart_root/.dx-bootstrap-ready"
+wait "$restart_launcher_pid" 2>/dev/null || true
+
+restart_ran="$(cat "$restart_root/ran" 2>/dev/null || true)"
+if [ "$restart_ran" = gen-current ]; then
+    test_pass "the launcher runs the generation published for this boot, not the previous boot's"
+else
+    test_fail "the launcher runs the generation published for this boot, not the previous boot's (ran '${restart_ran:-none}')"
+fi
+
+# Availability guard: a container started outside dx-start-container gets no
+# publication signal at all. Waiting forever would be worse than running the
+# payload already present, so fall back after a bounded grace and say so.
+grace_root="$fixture/launch-grace"
+mkdir -p "$grace_root/generations/gen-only" "$grace_root/.locks/leases"
+cat > "$grace_root/generations/gen-only/bootstrap.sh" <<GUEST
+#!/bin/sh
+printf '%s\n' gen-only > "$grace_root/ran"
+GUEST
+chmod 0755 "$grace_root/generations/gen-only/bootstrap.sh"
+ln -sfn generations/gen-only "$grace_root/current"
+dx_bootstrap_launch_command > "$grace_root/launcher.sh"
+env DX_BOOTSTRAP_PUBLISH_GRACE=2 PATH="$fake_dir:$PATH" sh "$grace_root/launcher.sh" "$grace_root" >"$grace_root/out" 2>&1 || true
+grace_ran="$(cat "$grace_root/ran" 2>/dev/null || true)"
+if [ "$grace_ran" = gen-only ] && grep -q 'no publication signal' "$grace_root/out"; then
+    test_pass "an unsignalled start falls back to the current generation after a bounded wait"
+else
+    test_fail "an unsignalled start falls back to the current generation after a bounded wait (ran '${grace_ran:-none}', out '$(cat "$grace_root/out" 2>/dev/null || true)')"
+fi
+
+# The launcher can only wait for a signal the host always sends. An unchanged
+# sync skips publication, so if only the publishing path signalled readiness,
+# every restart with unchanged content would stall for the full grace.
+run_sync "$good" >/dev/null
+rm -f "$root/.dx-bootstrap-ready"
+run_sync "$good" >/dev/null
+if [ -f "$root/.dx-bootstrap-ready" ]; then
+    test_pass "an unchanged sync still signals boot readiness"
+else
+    test_fail "an unchanged sync still signals boot readiness"
+fi
+
 print_summary
 exit_with_code

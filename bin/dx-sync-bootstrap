@@ -31,13 +31,15 @@ tar --no-mac-metadata -C "$DX_BOOTSTRAP_SOURCE" -cf /dev/null . >/dev/null 2>&1 
 # nothing and we publish, which re-establishes the digest for next time.
 #
 # The completeness test is `current/bootstrap.sh`, deliberately not
-# `.dx-bootstrap-ready`: the guest launcher clears that marker on every boot and
-# then waits for `current` *or* the marker, so on a restart it is always absent
-# at the moment this runs. Gating on it would mean never skipping on the one
-# path that matters. Nothing else reads it -- it exists only for the first-boot
-# handshake, where `current` does not yet exist and we publish anyway. The flat
-# compatibility symlinks point at `current/...` rather than a generation, so
-# they need no republication either.
+# `.dx-bootstrap-ready`: the guest launcher clears that marker on every boot, so
+# on a restart it is always absent at the moment this runs. Gating the skip on
+# it would mean never skipping on the one path that matters.
+#
+# The marker is the launcher's go-ahead, not a completeness record: the launcher
+# waits for it before resolving `current`, so both outcomes here must set it --
+# the publication below, and the skip above. The flat compatibility symlinks
+# point at `current/...` rather than a generation, so they need no republication
+# either.
 content_digest="$(dx_bootstrap_content_digest "$DX_BOOTSTRAP_SOURCE" || true)"
 if [ -n "$content_digest" ]; then
     published="$(container exec "$DX_CONTAINER_NAME" sh -c '
@@ -66,6 +68,15 @@ if [ -n "$content_digest" ]; then
                 IFS="$tab" read -r lease_generation lease_boot lease_rest < "$lease" || continue
                 [ "$lease_boot" = "$boot" ] || rm -f "$lease"
             done
+        ' -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1 || true
+        # Signal boot readiness here too. The guest launcher waits for this
+        # marker before resolving `current`, so a skip that stayed silent would
+        # stall every restart with unchanged content for the launcher's full
+        # grace period.
+        container exec "$DX_CONTAINER_NAME" sh -c '
+            root=$1
+            touch "$root/.dx-bootstrap-ready"
+            rm -f "$root/.dx-bootstrap-waiting"
         ' -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1 || true
         echo "Bootstrap content is unchanged; generation $published_generation stays current."
         exit 0
