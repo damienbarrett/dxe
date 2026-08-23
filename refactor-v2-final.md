@@ -14,7 +14,11 @@ contracts were incomplete in ways that risk boot regressions, and one phase plus
 one invariant rested on premises that are no longer true.
 
 Prerequisite A1 is **already closed**: the coverage ratchet was re-measured to
-2267 bp at `7ffa66b`. Phase 4 depended on it.
+2267 bp at `7ffa66b`. Phase 4 depended on it. That figure is the measurement
+taken at that commit, not the live baseline: `tests/coverage/ratchet.env` has
+since moved to 2256 bp, lowered deliberately because the digest work added more
+lines to `tests/` than to the covered scope. Read the ratchet file, not this
+number, before touching the gate.
 
 This plan changes no production behavior. It makes state flow explicit, and it
 must not alter bootstrap ordering, persistence formats, marker formats, retry
