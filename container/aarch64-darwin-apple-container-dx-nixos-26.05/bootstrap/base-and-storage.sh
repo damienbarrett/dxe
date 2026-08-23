@@ -131,11 +131,11 @@ nix_store_import_registered() {
     chown "$owner_uid:$owner_gid" "$destination_root/store" "$destination_root/var" "$destination_root/var/nix" "$destination_root/var/log/nix"
     target_store="$(nix_target_store_uri "$destination_root")"
     echo "Importing registered image Nix closure..."
-    if ! { nix --extra-experimental-features 'nix-command flakes read-only-local-store' --store 'local?read-only=true' path-info --all \
-        | run_as_dx "set -o pipefail; nix --extra-experimental-features 'nix-command flakes read-only-local-store' copy --from 'local?read-only=true' --to '$target_store' --stdin --no-check-sigs"; dx_pipeline_succeeded "${PIPESTATUS[@]}"; }; then
+    if ! { nix_image_registered_paths | run_as_dx "set -o pipefail; nix --extra-experimental-features 'nix-command flakes read-only-local-store' copy --from 'local?read-only=true' --to '$target_store' --stdin --no-check-sigs"; dx_pipeline_succeeded "${PIPESTATUS[@]}"; }; then
         echo "Error: Nix could not import and register the image store closure." >&2
         return 1
     fi
+    nix_verify_imported_bootstrap_paths "$destination_root" || return 1
     nix_install_image_essentials_root "$destination_root" "$owner_uid" "$owner_gid"
 }
 
@@ -326,8 +326,15 @@ migrate_durable_nix_identity_if_needed() {
 # Read the source store database rather than walking the source filesystem.
 # Sorting gives a deterministic whole-image identity: a changed /usr/bin/nix
 # or sshd target changes the registered path set even if root's profile does not.
+# Read the registered set through a read-write store view.  A read-only
+# local-store view cannot checkpoint the store database's SQLite write-ahead
+# log, so it reports only what was committed when the image was built and omits
+# every path install_essentials registered this boot -- the bootstrap
+# essentials closure among them.  Importing that stale set copies nothing onto
+# a volume that already holds the image-build paths, and the guest then loses
+# its toolchain to the /nix remount.
 nix_image_registered_paths() {
-    if ! { nix --extra-experimental-features 'nix-command flakes read-only-local-store' --store 'local?read-only=true' path-info --all | LC_ALL=C sort; dx_pipeline_succeeded "${PIPESTATUS[@]}"; }; then
+    if ! { nix --extra-experimental-features 'nix-command flakes' path-info --all | LC_ALL=C sort; dx_pipeline_succeeded "${PIPESTATUS[@]}"; }; then
         return 1
     fi
 }
@@ -469,6 +476,40 @@ nix_image_bootstrap_store_paths() {
             case "$resolved" in /nix/store/*) printf '%s\n' "$resolved" ;; esac
         done
     } | LC_ALL=C sort -u
+}
+
+# The remount replaces /nix wholesale, so every path the bootstrap is about to
+# exec must physically exist on the volume first.  Checking presence here turns
+# a silent brick -- "mkdir: No such file or directory" from a dead PATH after
+# the remount -- into an actionable failure while the image store is still
+# readable.
+nix_verify_imported_bootstrap_paths() {
+    local destination_root="$1"
+    local source_root="${2:-/nix}"
+    local path missing="" remaining entry
+
+    while IFS= read -r path; do [ -n "$path" ] || continue; [ -e "$destination_root/store/${path#/nix/store/}" ] || missing="$missing $path"; done < <(nix_image_bootstrap_store_paths "$source_root")
+
+    # PATH is set from the *resolved* essentials bin directories, which
+    # readlink -f follows into the derivation output rather than leaving at the
+    # profile root.  Those outputs are what the next command execs, so check
+    # them by name as well; a closure member can be skipped by the copy while
+    # the profile root it belongs to is published.
+    remaining="$(essentials_profile_path 2>/dev/null || true)"
+    while [ -n "$remaining" ]; do
+        entry="${remaining%%:*}"
+        case "$remaining" in *:*) remaining="${remaining#*:}" ;; *) remaining="" ;; esac
+        case "$entry" in /nix/store/*) ;; *) continue ;; esac
+        path="${entry#/nix/store/}"
+        path="/nix/store/${path%%/*}"
+        case " $missing " in *" $path "*) continue ;; esac
+        [ -e "$destination_root/store/${path#/nix/store/}" ] || missing="$missing $path"
+    done
+
+    [ -z "$missing" ] || {
+        echo "Error: the image store import did not materialise required bootstrap paths on the Nix volume:$missing" >&2
+        return 1
+    }
 }
 
 nix_target_store_uri() {

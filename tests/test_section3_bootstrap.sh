@@ -22,7 +22,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl populate_prepared_nix_volume setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership setup_gh_persistence setup_tmux_persistence setup_herdr_persistence setup_keyring_service dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl populate_prepared_nix_volume setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership setup_gh_persistence setup_tmux_persistence setup_herdr_persistence setup_keyring_service dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -601,6 +601,95 @@ if [ -f "$hostkey_fixture/nopersist-generate.log" ]; then
     test_pass "an unmounted persist volume still yields a bootable host identity"
 else
     test_fail "an unmounted persist volume still yields a bootable host identity ($nopersist_out)"
+fi
+
+# The image-store import must read the registered set through a read-write
+# store view. A read-only local-store view cannot checkpoint the store
+# database's SQLite write-ahead log, so it reports only what was committed when
+# the image was built and omits every path install_essentials registered this
+# boot -- including the bootstrap essentials closure. Measured on Apple
+# container: the read-only spelling returned 123 paths without the essentials,
+# the read-write one 1349 paths with them. Importing the stale set copies
+# nothing onto a mature volume, and the guest then loses its toolchain to the
+# /nix remount and dies on the first post-remount command.
+if (
+    nix() {
+        case "$*" in
+            *'read-only=true'*) printf '%s\n' /nix/store/committed-at-image-build ;;
+            *) printf '%s\n' /nix/store/committed-at-image-build /nix/store/aaa-dx-bootstrap-essentials ;;
+        esac
+    }
+    nix_image_registered_paths | stdin_matches -F dx-bootstrap-essentials
+); then
+    test_pass "the registered image set is read through a view that sees this boot's registrations"
+else
+    test_fail "the registered image set is read through a view that sees this boot's registrations"
+fi
+
+# The same requirement at the pipeline level: whatever the importer streams into
+# the copy has to carry the essentials, or the copy is a no-op on a volume that
+# already holds every image-build path.
+import_dst="$fixture/import-dst"
+import_capture="$fixture/import-stdin.log"
+if (
+    nix() {
+        case "$*" in
+            *'read-only=true'*) printf '%s\n' /nix/store/committed-at-image-build ;;
+            *) printf '%s\n' /nix/store/committed-at-image-build /nix/store/aaa-dx-bootstrap-essentials ;;
+        esac
+    }
+    run_as_dx() { cat > "$import_capture"; }
+    chown() { printf '%s\n' "$*" >> "$fixture/import-chown.log"; }
+    nix_install_image_essentials_root() { :; }
+    nix_verify_imported_bootstrap_paths() { :; }
+    nix_store_import_registered "$import_dst" 0 0 >/dev/null
+    stdin_matches -F dx-bootstrap-essentials < "$import_capture"
+); then
+    test_pass "the importer streams this boot's essentials closure into the copy"
+else
+    test_fail "the importer streams this boot's essentials closure into the copy"
+fi
+
+# The remount replaces /nix wholesale, so a required path that never
+# materialised must be reported while the image store is still readable --
+# rather than surfacing as an inscrutable "mkdir: No such file or directory"
+# from a dead PATH after the remount.
+verify_dst="$fixture/verify-dst"
+mkdir -p "$verify_dst/store/aaa-present"
+verify_missing_output="$({
+    nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/aaa-present /nix/store/bbb-absent; }
+    ! nix_verify_imported_bootstrap_paths "$verify_dst"
+} 2>&1)"
+if [ -z "${verify_missing_output##*bbb-absent*}" ]; then
+    test_pass "an import that did not materialise a required bootstrap path fails before the remount"
+else
+    test_fail "an import that did not materialise a required bootstrap path fails before the remount ($verify_missing_output)"
+fi
+if (
+    nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/aaa-present; }
+    nix_verify_imported_bootstrap_paths "$verify_dst"
+); then
+    test_pass "a fully materialised bootstrap set passes the pre-remount check"
+else
+    test_fail "a fully materialised bootstrap set passes the pre-remount check"
+fi
+
+# PATH after the remount points at the *resolved* essentials bin directory,
+# which readlink -f follows into the derivation output rather than leaving at
+# the profile root. Verifying only the profile root therefore misses exactly
+# the path the next command execs -- an import can report success, satisfy the
+# root check, and still leave the guest without a toolchain.
+verify_bin_dst="$fixture/verify-bin-dst"
+mkdir -p "$verify_bin_dst/store/present-profile"
+verify_bin_output="$({
+    nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/present-profile; }
+    essentials_profile_path() { printf '%s\n' /nix/store/absent-essentials/bin; }
+    ! nix_verify_imported_bootstrap_paths "$verify_bin_dst"
+} 2>&1)"
+if [ -z "${verify_bin_output##*absent-essentials*}" ]; then
+    test_pass "the pre-remount check covers the resolved essentials bin target, not just the profile root"
+else
+    test_fail "the pre-remount check covers the resolved essentials bin target, not just the profile root ($verify_bin_output)"
 fi
 
 print_summary
