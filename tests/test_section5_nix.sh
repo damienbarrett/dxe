@@ -86,5 +86,56 @@ else
     esac
 fi
 
+# The image-store import enumerates the image's registered Nix paths and copies
+# them onto the /nix volume before the remount replaces /nix wholesale. That
+# enumeration must include what install_essentials registered *this boot*. A
+# read-only local-store view cannot checkpoint the store database's SQLite
+# write-ahead log, so it reports only the paths committed when the image was
+# built; importing that stale set is a no-op against a volume that already
+# holds them, the essentials never reach the volume, and the first command
+# after the remount has no binary to exec.
+#
+# This runs the real bootstrap function against real Nix in a throwaway
+# container from the DX image, which is the only context that reproduces it:
+# the running guest's /nix is the ext4 volume, where a fresh registration is
+# visible to both spellings. No volumes are attached, so it never contends with
+# a running guest for a named volume. Verified to discriminate -- restoring the
+# read-only spelling turns this red.
+DX_IMAGE="${DX_IMAGE:-dx-nixos-26.05}"
+if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+    test_skip "Nix store enumeration behaviour skipped by --skip-integration"
+elif ! command -v container >/dev/null 2>&1; then
+    test_skip "Apple container CLI unavailable for the Nix enumeration probe"
+elif ! container image list 2>/dev/null | awk -v w="$DX_IMAGE" 'NR > 1 && $1 == w { f = 1 } END { exit !f }'; then
+    test_skip "image $DX_IMAGE is not built; skipping the Nix enumeration probe"
+else
+    enum_probe_body='
+export SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt
+# A batch large enough to leave the store database'"'"'s write-ahead log dirty,
+# which is what install_essentials does on a real boot.
+nix profile install nixpkgs#shadow nixpkgs#openssh --extra-experimental-features "nix-command flakes" >/dev/null 2>&1 || true
+profile="$(readlink -f /nix/var/nix/profiles/per-user/root/profile 2>/dev/null || readlink -f /root/.nix-profile 2>/dev/null || true)"
+if [ -n "$profile" ] && nix_image_registered_paths | grep -q -F "$(basename "$profile")"; then
+    echo RESULT=SEES_THIS_SESSION_REGISTRATIONS
+else
+    echo RESULT=MISSES_THIS_SESSION_REGISTRATIONS
+fi
+'
+    enum_script="$(cat "$CONTAINER_DIR/bootstrap/common.sh" "$CONTAINER_DIR/bootstrap/base-and-storage.sh"; printf '%s\n' "$enum_probe_body")"
+    enum_output="$(container run --rm --name "dxe-enum-check-$$" --entrypoint bash "$DX_IMAGE:latest" -c "$enum_script" 2>&1 || true)"
+    case "$enum_output" in
+        *SEES_THIS_SESSION_REGISTRATIONS*)
+            test_pass "the image store enumeration includes paths registered during this boot"
+            ;;
+        *)
+            # Report the probe's own verdict rather than the runtime's
+            # progress chatter, which is what tailing the raw output yields.
+            enum_verdict="$(printf '%s
+' "$enum_output" | grep -e 'RESULT=' -e 'error' | tail -2)"
+            test_fail "the image store enumeration includes paths registered during this boot (${enum_verdict:-no probe verdict: $(printf '%s' "$enum_output" | tail -1)})"
+            ;;
+    esac
+fi
+
 print_summary
 exit_with_code
