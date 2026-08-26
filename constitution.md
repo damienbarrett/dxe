@@ -1,2 +1,3 @@
 - Use established patterns.
 - Use Test Driven Development, with 100% code coverage, and a Red --> Green --> Refactor workflow. Where practical, tests should validate *behaviour*, not simply parsing configuration files.
+- A stub that stands in for a privilege or trust boundary must be validated against the real boundary at least once. Line coverage proves a line ran, not that it ran under the conditions that make it correct.

@@ -24,6 +24,59 @@ start fresh:
 For a complete wipe (including `/persist` contents and SSH keys), use
 `./bin/dx-factory-reset` — it prompts for confirmation before removing anything.
 
+### Guest stops before SSH with a missing bootstrap toolchain
+
+The container starts and then stops, and `container logs dx-host` ends with a
+missing binary immediately after the Nix volume is remounted:
+
+```
+copying 0 paths...
+Nix volume image import completed in 1s.
+.../bootstrap/base-and-storage.sh: line NNN: /nix/store/<hash>-dx-bootstrap-essentials/bin/mkdir: No such file or directory
+```
+
+The bootstrap toolchain is on `PATH` at a store path that exists only in the
+container's own filesystem. The import is what copies it onto the `/nix` volume
+before the remount replaces `/nix` wholesale; when the import copies nothing,
+the first command after the remount has no binary to execute. `copying 0 paths`
+right before the failure is the tell.
+
+Current bootstraps do not produce this: the import reads the registered set
+through a read-write store view, and checks that the required paths are present
+before the remount, failing with `did not materialise required bootstrap paths`
+and naming them. If you see that message instead, the guest stopped early on
+purpose and nothing is half-written.
+
+Recovery, in order of cost:
+
+1. Run `./bin/dx` again. The guest waits for the host to publish before it
+   executes anything, so a corrected payload from your working tree is picked up
+   on that start. A generation that cannot boot is no longer self-perpetuating.
+2. If the volume itself is the problem, use the hard reset above — delete only
+   `dx-nix`. It costs a full Nix store download and nothing else.
+
+Do not reach for `./bin/dx-factory-reset` here. It also destroys `/persist`,
+which holds the home directory and persisted state; a store rebuild does not.
+
+### A healthy boot reported as a failure
+
+`./bin/dx` can exit non-zero on a guest that is actually fine. Two causes, both
+harmless:
+
+- `dx-wait-ssh` samples SSH once, so under load it can give up while the guest
+  is still coming up.
+- Run non-interactively, the final tmux attach fails with
+  `open terminal failed: not a terminal`.
+
+Check the guest directly before re-diagnosing:
+
+```bash
+container list -a | grep dx-host
+./bin/dx-ssh true
+```
+
+If the container is running and `dx-ssh` succeeds, the boot succeeded.
+
 ### Checking Bootstrap Logs
 After a factory reset, `./bin/dx` must repopulate the complete Nix store before
 SSH starts. The command waits for the full bounded retry period and prints a

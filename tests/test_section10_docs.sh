@@ -76,5 +76,21 @@ assert_file_contains_literal "$BASE_DIR/docs/release-maintenance.md" 'bootstrap-
 assert_file_contains_literal "$BASE_DIR/docs/troubleshooting.md" 'Migrating legacy ... ownership (one time)' "troubleshooting docs identify one-time ownership migration output"
 assert_file_contains_literal "$BASE_DIR/docs/troubleshooting.md" 'written only after the recursive repair completes' "troubleshooting docs explain safe migration interruption"
 
+# A guest that will not boot is the one situation where the reader cannot get
+# into the guest to look things up, so the recovery has to be discoverable from
+# the host and it has to name the volume boundary. Deleting dx-nix costs a
+# store rebuild; reaching for dx-factory-reset instead destroys /persist and
+# with it the home directory. Pin both, the way the Base Image Changeover
+# procedure above is pinned.
+TROUBLESHOOTING="$BASE_DIR/docs/troubleshooting.md"
+assert_file_contains_literal "$TROUBLESHOOTING" 'dx-bootstrap-essentials' "troubleshooting docs identify the missing-toolchain boot failure"
+assert_file_contains_literal "$TROUBLESHOOTING" 'container volume delete dx-nix' "troubleshooting docs give the store-only recovery command"
+assert_file_contains "$TROUBLESHOOTING" 'dx-factory-reset' "troubleshooting docs warn which reset also destroys /persist"
+assert_file_contains "$TROUBLESHOOTING" 'dx-wait-ssh' "troubleshooting docs cover a healthy boot reported as a failure"
+
+# The rule that would have caught both the ownership-laundering defect and the
+# read-only store defect, neither of which a stubbed boundary can observe.
+assert_file_contains "$BASE_DIR/constitution.md" 'trust boundary' "the constitution states the real-boundary testing rule"
+
 print_summary
 exit_with_code
