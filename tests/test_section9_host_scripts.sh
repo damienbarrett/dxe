@@ -240,7 +240,12 @@ if diag="$(
     export PATH="$fake_dir:$PATH"
     osc=$'\033]110\033\\\033]111\033\\\033]104\033\\'
 
-    out="$(TERM_PROGRAM=Apple_Terminal "$BASE_DIR/bin/dx-ssh" 2>&1)"
+    # dx_key is gitignored, so the repo never ships one: depending on the
+    # default key path passes only on a checkout where dx-create-keys has run,
+    # and fails on a fresh clone, in CI, and in any git worktree. ssh is faked
+    # here, so the guard only needs a file to exist.
+    : > "$fake_dir/ssh-key"
+    out="$(DX_SSH_KEY="$fake_dir/ssh-key" TERM_PROGRAM=Apple_Terminal "$BASE_DIR/bin/dx-ssh" 2>&1)"
     rc=$?
     rm -rf "$fake_dir"
     connects="$(printf '%s\n' "$out" | grep -c "Connecting to DX guest via SSH")"
@@ -284,7 +289,9 @@ if (
     counter="$fake_dir/tz-calls"
     : > "$counter"
     dx_get_host_timezone() { printf 'x' >> "$counter"; printf '%s\n' UTC; }
-    DX_SSH_KEY="$BASE_DIR/dx_key" DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=1 dx_run_interactive_ssh "true" >/dev/null 2>&1
+    # A fixture key, not the developer's: see the note above.
+    : > "$fake_dir/ssh-key"
+    DX_SSH_KEY="$fake_dir/ssh-key" DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=1 dx_run_interactive_ssh "true" >/dev/null 2>&1
     calls="$(wc -c < "$counter" | tr -d ' ')"
     rm -rf "$fake_dir"
     [ "$calls" -eq 1 ]
