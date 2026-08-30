@@ -127,26 +127,55 @@ container **and** image; `./bin/dx-factory-reset` additionally removes all
 three volumes and the SSH keypair (confirmation-gated, `--force` to skip).
 Both operate only on the resources the active profile resolves.
 
-### Bumping the Nix image pin — unresolved pending store-reuse fixes
+### Bumping the Nix image pin — blocked by a store-path collision
 
-**There is currently no valid, volume-reusing pin-bump procedure.**
-Two defects block one, both rooted in `setup_nix_volume`'s store handling:
+**There is currently no valid, volume-reusing pin-bump procedure.** The
+blocker is a store-path *content* collision between image versions. Observed
+directly on 2026-08-30, bumping the isolated `dx-test` profile from
+`nixos/nix:2.34.7` to `2.34.8` while retaining its `/nix` volume:
 
-- a reused `/nix` volume's profile paths can keep resolving `nix` to the
-  **old** image's binary even after a new image is built, so a naive
-  transition check can silently validate the wrong binary;
-- the store-seeding merge copies `/nix/store` paths onto the volume without
-  registering them in the volume's store database — copied paths exist on
-  disk but are invisible to `nix path-info` and unprotected from garbage
-  collection.
+```
+copying path '/nix/store/dy9skynmbyj7yc7dnn7qcgrfpwiy2yh6-base-system' to 'local://'...
+error: hash mismatch importing path '/nix/store/dy9skynmbyj7yc7dnn7qcgrfpwiy2yh6-base-system';
+         specified: sha256:0n8y708xzz6w5wfmjj9lfazp63f5rpkhwaz90hcvcnvlrl8n20v1
+         got:       sha256:0nwfi38jwvazkb5mwvkg1i711v5j3g27z0p7p0m079kqhslmw5c1
+Error: Nix could not import and register the image store closure.
+```
 
-Until both are fixed (their own design change, tracked as a follow-up),
-**the only safe way to bump the Nix image pin is a full destroy-and-rebuild
+Both images ship a `base-system` path with the same store path name and
+different content. The volume holds the old one, registered, so importing
+the new one is a collision and Nix refuses it. This is inherent to reusing a
+store across images that disagree about a path's content; no amount of
+registration hygiene resolves it. Making a volume-reusing bump possible is a
+design change — the importer would have to quarantine or skip colliding
+image paths, and that has consequences for what the booted guest can then
+trust.
+
+The failure is safe, and that is by design: it aborts before the `/nix`
+remount, names the offending path, and leaves the volume intact. Revert the
+pin, rebuild the image, and the guest comes back — verified on the same
+canary.
+
+**The only safe way to bump the Nix image pin is a full destroy-and-rebuild
 with salvage** — the same one-time changeover procedure below (quiesce and
 salvage `/persist`, referrer-first inventoried cleanup, factory reset,
 rebuild, validate), not an in-place volume-reusing bump. What *is* safe to
 rely on today: the alignment rule above, this section's build-cache trap
 warning, and the digest re-query discipline.
+
+Two earlier diagnoses were recorded here and have not survived testing. They
+are kept only so nobody re-derives them:
+
+- *"the store-seeding merge copies paths onto the volume without registering
+  them — invisible to `nix path-info` and unprotected from garbage
+  collection."* Written against the old `cp -a` merge and **no longer
+  reproduces**. The importer uses `nix copy`, which registers; verified on
+  the canary that imported paths resolve through `nix path-info` and that
+  the in-use toolchain is GC-live rather than dead. Registration is in fact
+  what makes the collision above detectable at all.
+- *"a reused volume's profile paths can keep resolving `nix` to the old
+  image's binary."* **Untested.** The pin-bump boot dies at the import, well
+  before this could manifest, so it is neither confirmed nor ruled out.
 
 ## Upgrade / Bump (new NixOS release)
 

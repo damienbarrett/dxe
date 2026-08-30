@@ -92,5 +92,14 @@ assert_file_contains "$TROUBLESHOOTING" 'dx-wait-ssh' "troubleshooting docs cove
 # read-only store defect, neither of which a stubbed boundary can observe.
 assert_file_contains "$BASE_DIR/constitution.md" 'trust boundary' "the constitution states the real-boundary testing rule"
 
+# The pin-bump prohibition is load-bearing: it is what sends a bump down the
+# destructive salvage path instead of dx-recreate. Pin the observed evidence,
+# so the section cannot drift back to a diagnosis that no longer reproduces.
+RELEASE_DOC="$BASE_DIR/docs/release-maintenance.md"
+assert_file_contains_literal "$RELEASE_DOC" 'hash mismatch importing path' "release maintenance records the observed pin-bump blocker"
+# Match a phrase that line-wrapping cannot split; the bolded verdicts below it
+# are broken across lines by the surrounding prose width.
+assert_file_contains_literal "$RELEASE_DOC" 'have not survived testing' "release maintenance marks the superseded store-reuse diagnoses"
+
 print_summary
 exit_with_code
