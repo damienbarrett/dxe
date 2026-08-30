@@ -82,11 +82,23 @@ it reads as an unexplained assertion failure rather than a runtime error.
 
 Fixing it belongs to its own change, not to this disposition.
 
-Two host facts worth carrying into the window: ShellCheck is absent on the
-macOS host, so `tests/test_section0_lint.sh` **silently skips** and the
-mandatory lint gate does not run locally at all; and the canary's
-`authorized_keys` does not match `dx-test_key.pub`, so `dx-ssh` and `dx-put`
-fail until the canary is recreated.
+Two host facts worth carrying into the window.
+
+ShellCheck was absent on the macOS host, so `tests/test_section0_lint.sh`
+**silently skipped** and the mandatory lint gate never ran locally — which is
+how 31 warning-severity findings accumulated unseen. The gate itself is
+unchanged; run it against pinned ShellCheck 0.10.0 in the guest, per
+`docs/refactor/validation-matrix.md`.
+
+**The canary has two keypairs, one per worktree, and this is not a defect.**
+`dx-test_key` is gitignored, so each worktree carries its own; the guest's
+`authorized_keys` matches whichever worktree last bootstrapped it — currently
+the candidate worktree. `dx-ssh` and `dx-put` therefore succeed from
+`dxe-bump` and fail from the primary worktree. An earlier revision of this
+plan recorded that as a key mismatch blocking Gate D; that was wrong, and the
+cause was running the command from the wrong worktree — exactly the failure the
+resource preflight above exists to catch. Resolve which worktree you are in
+before concluding the canary is broken.
 
 **Candidate** has exactly one meaning in this document: the branch tip carrying
 the *entire* intended stack — the preservation/lock commit, the waiver, and any
