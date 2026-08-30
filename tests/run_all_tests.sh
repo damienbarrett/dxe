@@ -16,7 +16,7 @@ SKIP_INTEGRATION=false
 # Every section this runner can dispatch. An unknown --section= must fail rather
 # than report success over an empty run: tests/run-tier.sh selects whole tiers by
 # section number, so a silent no-op would shrink a tier without failing CI.
-KNOWN_SECTIONS="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25"
+KNOWN_SECTIONS="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26"
 
 for arg in "$@"; do
     case $arg in
@@ -30,7 +30,7 @@ for arg in "$@"; do
             echo "Usage: $0 [--section=N] [--skip-integration]"
             echo ""
             echo "Options:"
-            echo "  --section=N         Run only section N (0-25)"
+            echo "  --section=N         Run only section N (0-26)"
             echo "  --skip-integration  Skip integration tests and live checks"
             echo "  --help              Show this help message"
             exit 0
@@ -78,6 +78,7 @@ run_test "$SCRIPT_DIR/test_section0_lint.sh" "0"
 run_test "$SCRIPT_DIR/test_section1_secrets.sh" "1"
 run_test "$SCRIPT_DIR/test_section2_containerfile.sh" "2"
 run_test "$SCRIPT_DIR/test_section3_bootstrap.sh" "3"
+run_test "$SCRIPT_DIR/test_section26_audit_flake_lock.sh" "26"
 
 # Bring the selected isolated guest to a validated running state before any
 # later section performs live probes against it.

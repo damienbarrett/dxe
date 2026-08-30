@@ -8,30 +8,37 @@
 # on a fixed set of input nodes, nothing else) and prints every violation it
 # finds rather than stopping at the first.
 #
-# Usage: audit-flake-lock.sh <base-lock-file> <candidate-lock-file>
+# Usage: audit-flake-lock.sh <base-lock-file> <candidate-lock-file> <expected-changed-nodes>
+#
+# <expected-changed-nodes> is a whitespace-separated list of the flake input
+# node names this refresh is claimed to touch (e.g. "nixpkgs home-manager
+# nixvim flake-parts"). It is a required argument, not a default, so the
+# helper stays reusable for a future refresh with a different node set. The
+# changed-node set actually found in the two documents must equal this list
+# exactly, not merely be a subset of it (assertion 9) -- a no-op or partial
+# refresh must fail rather than pass as if it delivered the full claim.
 
 set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
-    echo "Usage: $(basename "$0") <base-lock-file> <candidate-lock-file>" >&2
+if [ "$#" -ne 3 ]; then
+    echo "Usage: $(basename "$0") <base-lock-file> <candidate-lock-file> <expected-changed-nodes>" >&2
     exit 2
 fi
 
 BASE="$1"
 CANDIDATE="$2"
+# The nodes this refresh is claimed to touch. Doubles as the allowlist for
+# assertion 6 (nothing outside this set may change) and the requirement for
+# assertion 9 (everything in this set must have changed) -- one caller-
+# supplied list drives both directions of the check.
+ALLOWED_CHANGE_NODES="$3"
+[ -n "$ALLOWED_CHANGE_NODES" ] || { echo "Error: expected-changed-nodes must name at least one input node." >&2; exit 2; }
 
 command -v jq >/dev/null 2>&1 || { echo "Error: jq is required." >&2; exit 1; }
 [ -f "$BASE" ] || { echo "Error: base lock file not found: $BASE" >&2; exit 1; }
 [ -f "$CANDIDATE" ] || { echo "Error: candidate lock file not found: $CANDIDATE" >&2; exit 1; }
 jq -e . "$BASE" >/dev/null 2>&1 || { echo "Error: base lock file is not valid JSON: $BASE" >&2; exit 1; }
 jq -e . "$CANDIDATE" >/dev/null 2>&1 || { echo "Error: candidate lock file is not valid JSON: $CANDIDATE" >&2; exit 1; }
-
-# The four input names a stable pin refresh is allowed to move. Node keys are
-# derived from the actual files below rather than assumed to equal this list
-# -- a real key that does not match one of these bare names (e.g. a
-# collision-suffixed "nixpkgs_2") is reported explicitly instead of silently
-# skipped.
-ALLOWED_CHANGE_NODES="nixpkgs home-manager nixvim flake-parts"
 
 OVERALL_STATUS=0
 
@@ -54,6 +61,19 @@ list_contains() {
         [ "$item" = "$needle" ] && return 0
     done
     return 1
+}
+
+# True if node $1's locked.$2 leaf is present in lock file $3 with JSON type
+# $4. `has` is used rather than `// null` so a leaf whose real value happens
+# to be JSON null is not mistaken for an absent leaf -- flake.lock never
+# stores null there, so treating a present null as missing costs nothing and
+# keeps the check honest either way.
+locked_leaf_present() {
+    local name="$1" field="$2" file="$3" want_type="$4"
+    jq -e --arg n "$name" --arg f "$field" --arg t "$want_type" '
+        (.nodes[$n].locked // {}) as $locked
+        | ($locked | has($f)) and (($locked[$f] | type) == $t)
+    ' "$file" >/dev/null
 }
 
 # --- gather shared facts -----------------------------------------------
@@ -151,6 +171,24 @@ for name in $ALL_NODE_KEYS; do
         continue
     fi
 
+    # Prove the three allowed leaves are actually present, with the
+    # expected JSON type, on both sides before normalizing them away.
+    # Normalizing a leaf that was *deleted* rather than moved would
+    # otherwise silently manufacture equality with the base value -- the
+    # normalization step would paper over the very deletion it exists to
+    # tolerate a legitimate move around.
+    leaf_violations=""
+    for field_spec in lastModified:number rev:string narHash:string; do
+        field="${field_spec%%:*}"
+        want_type="${field_spec##*:}"
+        locked_leaf_present "$name" "$field" "$BASE" "$want_type" || leaf_violations="$leaf_violations base.locked.$field"
+        locked_leaf_present "$name" "$field" "$CANDIDATE" "$want_type" || leaf_violations="$leaf_violations candidate.locked.$field"
+    done
+    if [ -n "$leaf_violations" ]; then
+        FIELD_SCOPE_VIOLATIONS="$FIELD_SCOPE_VIOLATIONS $name(missing:$leaf_violations)"
+        continue
+    fi
+
     # Neutralize the three fields a pin refresh is allowed to move on the
     # candidate side, then require the result to equal the base node
     # exactly. Anything left different -- another locked.* field (type,
@@ -203,6 +241,41 @@ for name in nixpkgs-unstable systems; do
         report_fail "7. node '$name' byte-for-byte identical" "nodes[\"$name\"] differs between base and candidate"
     fi
 done
+
+# --- assertion 8: top-level document key set identical -------------------
+
+# None of the assertions above look past `.nodes`, `.root`, and `.version`
+# individually -- a wholesale added or removed top-level key (a smuggled
+# override block, a stripped field) would pass every one of them untouched.
+BASE_TOP_KEYS="$(jq -r 'keys[]' "$BASE" | sort)"
+CANDIDATE_TOP_KEYS="$(jq -r 'keys[]' "$CANDIDATE" | sort)"
+if [ "$BASE_TOP_KEYS" = "$CANDIDATE_TOP_KEYS" ]; then
+    report_pass "8. top-level document key set identical ($(echo "$BASE_TOP_KEYS" | wc -l | tr -d ' ') keys)"
+else
+    ADDED_TOP="$(comm -13 <(printf '%s\n' "$BASE_TOP_KEYS") <(printf '%s\n' "$CANDIDATE_TOP_KEYS") | tr '\n' ' ')"
+    REMOVED_TOP="$(comm -23 <(printf '%s\n' "$BASE_TOP_KEYS") <(printf '%s\n' "$CANDIDATE_TOP_KEYS") | tr '\n' ' ')"
+    report_fail "8. top-level document key set identical" "added=[$ADDED_TOP] removed=[$REMOVED_TOP]"
+fi
+
+# --- assertion 9: every expected node actually changed --------------------
+
+# Assertion 6 proves the converse of this: every *actual* node change is
+# confined to an allowlisted node's locked.{lastModified,narHash,rev}.
+# Neither that nor any assertion above requires the changed set to be
+# non-empty or complete, so a no-op diff (nothing changed) or a partial
+# refresh (only some of the claimed nodes moved) reports the same "no
+# violation found" result as a complete, on-claim refresh. This closes that
+# gap: every node named in the caller's expected-changed-nodes argument must
+# be among the nodes that actually changed.
+MISSING_EXPECTED_CHANGES=""
+for name in $ALLOWED_CHANGE_NODES; do
+    list_contains "$name" "$CHANGED_ALLOWED_NODES" || MISSING_EXPECTED_CHANGES="$MISSING_EXPECTED_CHANGES $name"
+done
+if [ -z "$MISSING_EXPECTED_CHANGES" ]; then
+    report_pass "9. every expected node ({$ALLOWED_CHANGE_NODES}) actually changed"
+else
+    report_fail "9. every expected node actually changed" "expected but unchanged:$MISSING_EXPECTED_CHANGES"
+fi
 
 # --- evidence: full rev/narHash/lastModified for each changed node ------
 

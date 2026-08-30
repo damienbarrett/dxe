@@ -8,7 +8,7 @@ case "$tier" in
             echo "NOTE: Section 25 Nix-store importer behavior requires the isolated Linux runner; run tests/run-coverage-linux.sh for that gate."
         fi
         "$SCRIPT_DIR/test_refactor_contracts.sh"
-        for section in 1 2 3 5 6 7 8 10 13 14 15 16 17 20 21 22 23 25; do "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section="$section"; done
+        for section in 1 2 3 5 6 7 8 10 13 14 15 16 17 20 21 22 23 25 26; do "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section="$section"; done
         ;;
     host-contract)
         "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=9
