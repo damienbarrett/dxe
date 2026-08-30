@@ -118,6 +118,74 @@ Containerfile: the Containerfile is deliberately a single `FROM` line (no
 `ARG` indirection), and the macOS host has no Nix with which to evaluate
 the version at build time.
 
+#### Waiver — newest-patch clause, 2026-08-31
+
+> **Status: DRAFT, not yet in force.** This waiver takes effect only when the
+> stable-lock refresh is actually landed and promoted. Until then it records a
+> decision and its supporting evidence, not a completed event. Do not read it
+> as describing the running system.
+
+**Scope.** The stable-lock refresh, once landed, runs on the image pinned as:
+
+```
+nixos/nix:2.34.7@sha256:bf1d938835ab96312f098fa6c2e9cab367728e0aad0646ee3e02a787c80d8fb8
+```
+
+**What is deviated from.** Only the "newest patch tag within that minor"
+clause. The major.minor requirement is *satisfied*: the candidate's locked
+`nixpkgs#nix.version` evaluates to 2.34.8, and the pinned image is 2.34.x.
+
+**Re-queried immediately before this waiver was written**, per the rule above:
+
+| Fact | Value |
+| --- | --- |
+| Locked `nixpkgs#nix.version` (candidate) | `2.34.8` |
+| Newest `nixos/nix:2.34.x` tag | `2.34.8`, published 2026-07-06 |
+| That tag's manifest-list digest | `sha256:1a711b619c8a713eff32c3f8d8781b3b4d0130cb91c0a57f67e87abfeeb90b01` |
+| `linux/arm64` present for it | yes (`2.34.8-arm64`) |
+| Actually pinned | `2.34.7@sha256:bf1d938835ab…` |
+
+**Reason it cannot be satisfied.** Moving the pin to 2.34.8 requires the
+destroy-and-rebuild-with-salvage procedure, because of the store-path content
+collision recorded under "Bumping the Nix image pin" — observed directly on
+2026-08-30 bumping the isolated `dx-test` profile from 2.34.7 to 2.34.8 with
+its `/nix` volume retained. There is no valid volume-reusing pin bump today,
+and a lock refresh does not justify a destructive rebuild of the primary.
+
+**Evidence so far, stated as it stands.** The canary ran the refreshed lock on
+the 2.34.7 image, with the running generation proved from the PID-1 lease and
+its `flake.lock` hashing to the candidate. `nix flake check` passed and all
+four aarch64-linux outputs built against the candidate lock, with the lock
+hash unchanged afterwards.
+
+The reused-volume canary is **not green**: 1040 passed, 2 failed, 9 skipped.
+Both failures are Section 16 migration cases, traced to a pre-existing Apple
+Container race that also reproduces on the pre-refresh primary image, so they
+are not evidence against the refresh — but they are also not a pass, and this
+waiver does not claim one. The fresh-volume canary has not been run. Neither
+had the alignment deviation caused any observed failure.
+
+This waiver may only be moved out of DRAFT once the gate table in
+`bump-disposition-plan.md` shows both canary paths green on the frozen tip.
+
+**Residual risk, and why accepted.** The guest toolset ships the locked Nix
+(2.34.8) which shadows the image's 2.34.7 on `PATH`, so the version actually
+used at runtime is the locked one; the image's Nix matters only for the
+pre-activation window. That window is small, and both versions are the same
+minor.
+
+**Decision maker.** Damien Barrett.
+
+**Expiry.** The next image-pin maintenance event, or the next stable-lock
+refresh, whichever comes first. Resolution is tracked in
+[`image-pin-collision-plan.md`](../image-pin-collision-plan.md); this waiver
+must be closed or re-scoped as part of that work.
+
+**Note on test enforcement.** `tests/test_section2_containerfile.sh` asserts
+the literal `FROM` line, so it stays green throughout this mismatch. It pins
+the expected digest; it does not prove the pin follows the locked
+`nix.version`. Do not read its passing as evidence the alignment rule holds.
+
 ### Build-cache trap
 
 `dx-create-image` skips the build whenever the local image name
