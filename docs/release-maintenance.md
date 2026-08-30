@@ -120,12 +120,12 @@ the version at build time.
 
 #### Waiver — newest-patch clause, 2026-08-31
 
-> **Status: DRAFT, not yet in force.** This waiver takes effect only when the
-> stable-lock refresh is actually landed and promoted. Until then it records a
-> decision and its supporting evidence, not a completed event. Do not read it
-> as describing the running system.
+> **Status: in force once the refresh is landed.** All gates are green on the
+> validated tip, including both canary paths. This waiver still describes the
+> guest only from the point the refresh actually reaches it; it is not a claim
+> about any machine that has not adopted it yet.
 
-**Scope.** The stable-lock refresh, once landed, runs on the image pinned as:
+**Scope.** The stable-lock refresh runs on the image pinned as:
 
 ```
 nixos/nix:2.34.7@sha256:bf1d938835ab96312f098fa6c2e9cab367728e0aad0646ee3e02a787c80d8fb8
@@ -158,15 +158,17 @@ its `flake.lock` hashing to the candidate. `nix flake check` passed and all
 four aarch64-linux outputs built against the candidate lock, with the lock
 hash unchanged afterwards.
 
-The reused-volume canary is **not green**: 1040 passed, 2 failed, 9 skipped.
-Both failures are Section 16 migration cases, traced to a pre-existing Apple
-Container race that also reproduces on the pre-refresh primary image, so they
-are not evidence against the refresh — but they are also not a pass, and this
-waiver does not claim one. The fresh-volume canary has not been run. Neither
-had the alignment deviation caused any observed failure.
+Both canary paths are green on the validated tip, each 1045 passed / 0 failed
+/ 9 skipped: reused-volume, and fresh-volume after a full factory reset and
+cold rebuild. The running generation was proved from the PID-1 lease on each
+boot.
 
-This waiver may only be moved out of DRAFT once the gate table in
-`bump-disposition-plan.md` shows both canary paths green on the frozen tip.
+An earlier revision of this waiver recorded the reused-volume canary at 1040
+passed / 2 failed. Those two failures were an Apple Container runtime-client
+race in `dx-migrate-persist`, unrelated to the refresh; they were fixed with a
+bounded retry rather than argued away, and the gate is now genuinely green.
+
+At no point did the alignment deviation itself cause an observed failure.
 
 **Residual risk, and why accepted.** The guest toolset ships the locked Nix
 (2.34.8) which shadows the image's 2.34.7 on `PATH`, so the version actually
