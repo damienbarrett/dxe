@@ -134,6 +134,22 @@ assert_file_not_contains "$BASE_DIR/bin/dx-reverse" 'DX_REVERSE_TEST_MODE' "reve
 assert_file_not_contains "$BASE_DIR/bin/dx-reclaim" 'df -h "\$@" | sed' "reclaim filesystem reporting does not require guest sed"
 assert_file_contains_literal "$BASE_DIR/bin/dx-reclaim" 'export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"' "reclaim uses the GC-rooted essentials profile PATH"
 if (
+    # Sourcing dx-forward/dx-reverse above (for their parse_all_* helpers)
+    # pulled in bin/lib/dx-config.sh, which resolved and exported the real
+    # DXE configuration snapshot into this shell: DXE_CONFIG_RESOLVED=1,
+    # DXE_CONFIG_SNAPSHOT_VERSION, DX_PROJECT_ROOT, every DX_* field, and
+    # every DXE_CONFIG_ORIGIN_* origin tag. dx_init_config honours an
+    # inherited snapshot by design (that is what lets bin/dx-reclaim's own
+    # exec of dx-lib.sh skip re-resolving), so without clearing it here,
+    # dx-reclaim below would reuse the leaked snapshot -- built from the
+    # developer's real $HOME -- instead of resolving fresh from the fixture
+    # HOME set on its invocations, and this test would silently report the
+    # real host's volumes instead of the fixture's. dx_config.sh also
+    # refuses a *partial* snapshot (see the "partial snapshot fails closed"
+    # case above), so every marker must go together: the two resolution
+    # markers, DX_PROJECT_ROOT, and each field/origin pair.
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION DX_PROJECT_ROOT
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
     reclaim_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-reclaim.XXXXXX")"
     fake_bin="$reclaim_fixture/bin"
     guest_bin="$reclaim_fixture/guest-bin"
@@ -173,10 +189,18 @@ if (
         df_failure_status=$?
     fi
     rm -rf "$reclaim_fixture"
+    # printf ... | grep -q races the writer exactly as described in
+    # stdin_matches's definition in test_helpers.sh: grep -q here can close
+    # the pipe after its first match (the fixture df line appears twice, in
+    # both the "Before" and "After" report_usage calls) while printf is
+    # still writing the rest of $reclaim_output, so the writer takes
+    # SIGPIPE and pipefail promotes that 141 to this whole check's status --
+    # deterministically flipping an otherwise-passing assertion to fail.
+    # stdin_matches drops -q so grep drains all of its input instead.
     [ "$reclaim_status" -eq 0 ] \
-        && printf '%s\n' "$reclaim_output" | grep -q 'fake 100 20 80 20% /nix' \
+        && printf '%s\n' "$reclaim_output" | stdin_matches 'fake 100 20 80 20% /nix' \
         && [ "$df_failure_status" -eq 37 ] \
-        && ! printf '%s\n' "$reclaim_output" | grep -q 'sed:.*not found'
+        && ! printf '%s\n' "$reclaim_output" | stdin_matches 'sed:.*not found'
 ); then
     test_pass "reclaim reports guest filesystems without a guest sed binary"
 else

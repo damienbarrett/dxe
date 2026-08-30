@@ -72,8 +72,14 @@ if diag="$(
     '
     export PATH="$fake_dir:$PATH"
 
+    # dx_key is gitignored, so the repo never ships one: depending on the
+    # default key path passes only on a checkout where dx-create-keys has
+    # run, and fails on a fresh clone, in CI, and in any git worktree. ssh is
+    # faked here, so the guard only needs a file to exist.
+    : > "$fake_dir/ssh-key"
+
     set +e
-    out="$("$DX_HERDR" 2>&1)"
+    out="$(DX_SSH_KEY="$fake_dir/ssh-key" "$DX_HERDR" 2>&1)"
     rc=$?
     set -e
     attached=no; [ -e "$attach_marker" ] && attached=yes
@@ -109,8 +115,11 @@ if diag="$(
     '
     export PATH="$fake_dir:$PATH"
 
+    # A fixture key, not the real developer key: see the note above.
+    : > "$fake_dir/ssh-key"
+
     set +e
-    out="$("$DX_HERDR" 2>&1)"
+    out="$(DX_SSH_KEY="$fake_dir/ssh-key" "$DX_HERDR" 2>&1)"
     rc=$?
     set -e
     attached=no; [ -e "$attach_marker" ] && attached=yes
@@ -134,8 +143,11 @@ if diag="$(
     '
     export PATH="$fake_dir:$PATH"
 
+    # A fixture key, not the real developer key: see the note above.
+    : > "$fake_dir/ssh-key"
+
     set +e
-    out="$("$DX_HERDR" 2>&1)"
+    out="$(DX_SSH_KEY="$fake_dir/ssh-key" "$DX_HERDR" 2>&1)"
     rc=$?
     set -e
     rm -rf "$fake_dir"
@@ -170,8 +182,11 @@ if diag="$(
     '
     export PATH="$fake_dir:$PATH"
 
+    # A fixture key, not the real developer key: see the note above.
+    : > "$fake_dir/ssh-key"
+
     set +e
-    out="$("$DX_HERDR" 2>&1)"
+    out="$(DX_SSH_KEY="$fake_dir/ssh-key" "$DX_HERDR" 2>&1)"
     rc=$?
     set -e
     rm -rf "$fake_dir"
@@ -234,8 +249,11 @@ if diag="$(
     '
     export PATH="$fake_dir:$PATH"
 
+    # A fixture key, not the real developer key: see the note above.
+    : > "$fake_dir/ssh-key"
+
     set +e
-    out="$("$DX_HERDR" 2>&1)"
+    out="$(DX_SSH_KEY="$fake_dir/ssh-key" "$DX_HERDR" 2>&1)"
     rc=$?
     set -e
     rm -rf "$fake_dir"
@@ -327,7 +345,10 @@ if diag="$(
         exit 0
     '
     export PATH="$fake_dir:$PATH"
-    "$DX_HERDR" >/dev/null 2>&1
+
+    # A fixture key, not the real developer key: see the note above.
+    : > "$fake_dir/ssh-key"
+    DX_SSH_KEY="$fake_dir/ssh-key" "$DX_HERDR" >/dev/null 2>&1
     body="$(cat "$body_capture" 2>/dev/null || true)"
     rm -rf "$fake_dir"
     printf '%s' "$body"
