@@ -40,14 +40,16 @@ An unfilled field is a reason not to start.
 ### Gate status as of 2026-08-31
 
 Non-binding smoke checks, run before the record was filled. None of these are
-freeze evidence: they were gathered on `8ff05d8`, which is not the candidate
-tip.
+freeze evidence: they were gathered on the raw-lock anchor (now `7f97613`,
+rebased onto `main` at `3325211`), which is not the candidate tip — the
+digest-qualified waiver is still absent.
 
 | Gate | Result |
 | --- | --- |
-| A — mechanical lock audit | PASS, but the helper **fails open** on a no-op refresh, a partial refresh, a deleted allowed field, and an added top-level key. Being closed under TDD before it can be credited. |
+| A — mechanical lock audit | PASS, 9 assertions. The helper's four fail-opens (no-op, partial refresh, deleted allowed leaf, added top-level key) were closed under TDD and are covered by Section 26. |
 | B — `release-check` | PASS |
 | B — `bash -n`, `/bin/bash` 3.2 syntax | PASS |
+| B — `unit/static` | PASS, including the new Section 26 (21 / 0) |
 | B — `host-contract` | PASS (97 / 24, 0 failed) after the `759240f` fixes |
 | B — `run-bash32-tests` | PASS |
 | B — ShellCheck 0.10.0 | Ran in the guest. `audit-flake-lock.sh` clean; pre-existing SC1090 debt elsewhere, unchanged by these commits |
