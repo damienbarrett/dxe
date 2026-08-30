@@ -25,6 +25,7 @@ ACTIVATION="$CONTAINER_DIR/bootstrap/activation.sh"
 # Load its shared marker contract once before those probes install their fake
 # run_as_dx boundaries; otherwise the standalone compatibility seam would
 # source common.sh later and overwrite each fixture's stub.
+# shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/common.sh
 source "$COMMON"
 
 # --- Host wrapper structure & syntax ---
@@ -433,6 +434,7 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     set +e
     out="$(setup_herdr_persistence "$persist_home" "$home" 2>&1)"
@@ -456,6 +458,7 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     set +e
     out="$(setup_herdr_persistence "$persist_home" "$home" 2>&1)"
@@ -481,6 +484,7 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     set +e
     out="$(setup_herdr_persistence "$persist_home" "$home" 2>&1)"
@@ -505,6 +509,7 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     set +e
     out="$(setup_herdr_persistence "$persist_home" "$home" 2>&1)"
@@ -527,6 +532,7 @@ if (
     calls=0
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { calls=$((calls + 1)); [ "$calls" -ne 1 ]; }
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     set +e
     setup_herdr_persistence "$persist_home" "$home" >/dev/null 2>&1
@@ -551,6 +557,7 @@ if (
     # Config-link succeeds; state-link fails. The marker must be gone even
     # though setup returns non-zero before a complete activation.
     run_as_dx() { calls=$((calls + 1)); [ "$calls" -ne 2 ]; }
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     set +e
     setup_herdr_persistence "$persist_home" "$home" >/dev/null 2>&1
@@ -575,7 +582,9 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/activation.sh
     source "$ACTIVATION"
     set +e
     dx_activate_herdr "$persist_home" "$home" >/dev/null 2>&1
@@ -602,7 +611,9 @@ if (
         esac
     }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/activation.sh
     source "$ACTIVATION"
     set +e
     dx_activate_herdr "$persist_home" "$home" >/dev/null 2>&1
@@ -624,6 +635,7 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     setup_herdr_persistence "$persist_home" "$home" >/dev/null 2>&1
     backup="$(ls "$persist_home"/.config/herdr.non-directory-backup.* 2>/dev/null | head -n1)"
@@ -644,6 +656,7 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     setup_herdr_persistence "$persist_home" "$home" >/dev/null 2>&1
     : > "$persist_home/.config/herdr/config.toml"
@@ -738,6 +751,7 @@ if diag="$(
 
     chown() { herdr_boundary_chown "$@"; }
     run_as_dx() { herdr_boundary_run_as_dx "$@"; }
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
 
     set +e
@@ -772,7 +786,9 @@ fi
 # override) so this never touches the real host filesystem; the AI-tools
 # guard is forced false via the stubbed `grep`.
 if (
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/activation.sh
     source "$ACTIVATION"
 
     ensure_nix_ownership() { :; }
@@ -809,6 +825,7 @@ if (
     # the foreground process, so an aborted bootstrap means no guest at all.
     # shellcheck source=/dev/null
     . "$PERSISTENCE"
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/activation.sh
     . "$ACTIVATION"
     set -euo pipefail
     dx_activate_herdr() { return 1; }

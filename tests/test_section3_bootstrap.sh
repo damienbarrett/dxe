@@ -368,7 +368,9 @@ assert_file_contains_literal "$BOOTSTRAP" 'exec "$(command -v sshd)" -D -e -p 22
 if (
     validate_positive_integer() { return 0; }
     run_as_dx_with_timeout() { return 17; }
-    DX_BOOTSTRAP_ROOT="$fixture" DX_GUEST_ACTIVATION_TIMEOUT=1 DX_GUEST_ACTIVATION_ATTEMPTS=1 DX_GUEST_ACTIVATION_RETRY_DELAY=1
+    # Exported: run_home_manager_activation (activation.sh) reads all four as
+    # globals, several statements below, not as a same-line command prefix.
+    export DX_BOOTSTRAP_ROOT="$fixture" DX_GUEST_ACTIVATION_TIMEOUT=1 DX_GUEST_ACTIVATION_ATTEMPTS=1 DX_GUEST_ACTIVATION_RETRY_DELAY=1
     hm_status=0
     run_home_manager_activation >/dev/null 2>&1 || hm_status=$?
     [ "$hm_status" -eq 17 ]

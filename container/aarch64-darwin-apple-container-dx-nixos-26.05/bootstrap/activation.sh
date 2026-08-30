@@ -320,6 +320,13 @@ dx_seed_herdr_config() {
     dx_herdr_seed_config "$template" "$config_file"
 }
 
+# The production caller (below, in configure_guest) always invokes this with
+# zero arguments and relies on the /persist and /home defaults; the optional
+# persist_home/home/template parameters exist so tests (test_section23_herdr.sh,
+# test_sourceable_coverage.sh) can point activation at a disposable fixture
+# tree instead of the real filesystem. ShellCheck only sees this file's own
+# zero-arg call site, not those out-of-file test callers.
+# shellcheck disable=SC2120
 dx_activate_herdr() {
     local persist_home="${1:-/persist/home/dx}"
     local home="${2:-/home/dx}"

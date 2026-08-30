@@ -135,7 +135,9 @@ else
     test_fail "default profile repair cleans up a failed atomic publication"
 fi
 if (
-    DX_ESSENTIALS_ROOT="$common_fixture"
+    # Exported, not just assigned: the reader is dynamically sourced, so a
+    # plain assignment reads as unused. The subshell bounds the export.
+    export DX_ESSENTIALS_ROOT="$common_fixture"
     mkdir -p "$common_fixture/nix/var/nix/profiles/per-user/root"
     ln -s "$common_fixture/nix/store/profile" "$common_fixture/nix/var/nix/profiles/per-user/root/profile"
     # Unsigned image-store paths are content-valid.  Model the Nix boundary
@@ -236,8 +238,9 @@ else
 fi
 
 if (
-    DX_ESSENTIALS_ROOT="$fixture/no-profile"
-    ! ensure_essentials_valid
+    # Env-prefixed so ensure_essentials_valid (common.sh) reads it as a real
+    # consumer, not an unused local assignment.
+    ! DX_ESSENTIALS_ROOT="$fixture/no-profile" ensure_essentials_valid
 ); then
     test_pass "missing essentials profile fails before any repair attempt"
 else
@@ -356,10 +359,19 @@ if (
 else
     test_fail "recovery helper moves hidden entries without changing caller glob state"
 fi
+# From here through the persist-only fixture below, bare `chown` is the real
+# system command, run as root (this file skips entirely unless already root;
+# see the top-of-file guard). The file's own `chown() { return 1; }` stub is
+# a one-shot failure simulation defined and unset immediately around its
+# single use far below (~line 590); it is never active at these call sites,
+# so moving it up -- as SC2218 suggests -- would wrongly fail every real
+# ownership fixture between here and there instead.
 durable_nix="$fixture/durable-nix"
 durable_persist="$fixture/durable-persist"
 mkdir -p "$durable_nix/store" "$durable_persist"
+# shellcheck disable=SC2218
 chown "$test_uid:$test_gid" "$durable_nix/store"
+# shellcheck disable=SC2218
 chown 1:1 "$durable_persist"
 if DX_PERSIST_HOME="$durable_persist" record_durable_nix_identity "$durable_nix" \
     && [ "${DX_NIX_DURABLE_UID:-}" = "$test_uid" ] \
@@ -373,7 +385,9 @@ unsafe_nix="$fixture/unsafe-nix"
 unsafe_persist="$fixture/unsafe-persist"
 mkdir -p "$unsafe_nix/store" "$unsafe_nix/var/nix/db" "$unsafe_nix/var/nix" "$unsafe_persist"
 touch "$unsafe_nix/var/nix/db/big-lock"
+# shellcheck disable=SC2218
 chown -R 0:0 "$unsafe_nix"
+# shellcheck disable=SC2218
 chown "$test_uid:$test_gid" "$unsafe_persist"
 if DX_PERSIST_HOME="$unsafe_persist" record_durable_nix_identity "$unsafe_nix" \
     && [ "${DX_NIX_DURABLE_UID:-}" = "$test_uid" ] \
@@ -567,6 +581,9 @@ unset -f nix
 # durable identity source.  Root and malformed identities are rejected.
 persist_only="$fixture/persist-only/home/dx"
 mkdir -p "$persist_only"
+# Real chown again, before the file's later one-shot stub; see the note above
+# the durable_nix/durable_persist fixture.
+# shellcheck disable=SC2218
 chown "$test_uid:$test_gid" "$persist_only"
 DX_PERSIST_HOME="$persist_only" record_durable_nix_identity "$fixture/no-nix" || true
 if [ "${DX_NIX_DURABLE_UID:-}" = "$test_uid" ] && [ "${DX_NIX_DURABLE_GID:-}" = "$test_gid" ]; then

@@ -149,14 +149,17 @@ materialize_auth_files() {
 # treated as unsafe by create_user rather than silently selecting one.
 auth_entries_with_numeric_id() {
     local database="$1" numeric_id="$2"
-    local auth_root="${DX_AUTH_ROOT:-}" auth_file name password entry_id remainder
+    local auth_root="${DX_AUTH_ROOT:-}" auth_file name _password entry_id _remainder
 
     auth_file="$auth_root/etc/$database"
     if [ ! -r "$auth_file" ]; then
         echo "Error: cannot inspect materialized $auth_file for durable Nix identity conflicts." >&2
         return 1
     fi
-    while IFS=: read -r name password entry_id remainder; do [ "$entry_id" = "$numeric_id" ] && printf '%s\n' "$name"; done < "$auth_file"
+    # _password/_remainder: positional placeholders so entry_id lands in the
+    # right field; the fields themselves are never read (leading underscore
+    # is ShellCheck's throwaway-variable convention).
+    while IFS=: read -r name _password entry_id _remainder; do [ "$entry_id" = "$numeric_id" ] && printf '%s\n' "$name"; done < "$auth_file"
     return 0
 }
 

@@ -280,7 +280,8 @@ migrate_durable_nix_identity_if_needed() {
     local marker="$volume_root/.dx-durable-identity-v1"
     local compat_marker="$volume_root/.dx-owner-set"
     local marker_tmp compat_tmp
-    local expected="$(id -u dx):$(id -g dx)"
+    local expected
+    expected="$(id -u dx):$(id -g dx)"
 
     [ "${DX_NIX_IDENTITY_MIGRATION_REQUIRED:-false}" = true ] || return 0
     if ! [[ "$expected" =~ ^[1-9][0-9]*:[1-9][0-9]*$ ]]; then
