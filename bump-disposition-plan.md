@@ -52,13 +52,35 @@ digest-qualified waiver is still absent.
 | B — `unit/static` | PASS, including the new Section 26 (21 / 0) |
 | B — `host-contract` | PASS (97 / 24, 0 failed) after the `759240f` fixes |
 | B — `run-bash32-tests` | PASS |
-| B — ShellCheck 0.10.0 | Ran in the guest. `audit-flake-lock.sh` clean; pre-existing SC1090 debt elsewhere, unchanged by these commits |
+| B — ShellCheck 0.10.0 | PASS — zero warning-severity findings repo-wide, against 31 before `ca265ec` |
 | B — coverage | NOT RUN |
 | C — `nix flake check` | PASS (`all checks passed!`) in the canary via `container exec` |
 | C — four output builds | NOT RUN |
-| D — reused-volume canary | NOT RUN |
+| D — reused-volume canary | 1040 passed / 2 failed / 9 skipped. The two failures are Section 16 migration cases and are **not** candidate-caused — see below. |
 | D — fresh-volume canary | NOT RUN |
 | Running-generation proof | PASS on the canary: lease `20260830T021223Z-84395` = `current`, lock `ee4d64dc…` |
+
+#### Section 16 migration flake — pre-existing, blocks a deterministic Gate D
+
+`dx-migrate-persist` fails intermittently with `Error: no runtime client
+exists: container is stopped`, an Apple Container race in which the helper's
+temporary container stops before the runtime client attaches. Measured at 1
+failure in 5 standalone runs, and 2 failed / 0 failed / 2 failed across three
+consecutive Section 16 runs.
+
+It is not caused by the refresh. Driven by hand with the test's exact fixture,
+the helper preserves regular files, dotfiles, nested files, empty directories,
+symlinks, and the sentinel; and a controlled comparison migrates successfully
+under both the rebuilt candidate image and the untouched pre-refresh primary
+image.
+
+Two consequences for the window. Gate D cannot currently be read as a
+pass/fail signal without repeating it, so a single red run is not evidence
+against the candidate. And the test discards the helper's output
+(`>/dev/null 2>&1`), so the failure surfaces with no diagnostic — that is why
+it reads as an unexplained assertion failure rather than a runtime error.
+
+Fixing it belongs to its own change, not to this disposition.
 
 Two host facts worth carrying into the window: ShellCheck is absent on the
 macOS host, so `tests/test_section0_lint.sh` **silently skips** and the
