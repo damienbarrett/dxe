@@ -11,6 +11,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
+source "$SCRIPT_DIR/lib/fake-tools.sh"
 source "$BASE_DIR/bin/lib/dx-container.sh"
 
 LIB_SH="$BASE_DIR/bin/dx-lib.sh"
@@ -114,6 +115,8 @@ run_migration_helper_tests() {
     local collision_new="dx-test-persist-collision-$$"
     local temp_container="dx-migrate-test-$$"
     local cleanup_volumes=("$old" "$new" "$collision_old" "$collision_new")
+    local migrate_out migrate_rc migrate_idempotent_out migrate_idempotent_rc
+    local migrate_collision_out migrate_collision_rc
 
     cleanup_migration_volumes() {
         local vol
@@ -135,27 +138,38 @@ run_migration_helper_tests() {
         return
     fi
 
-    if DX_CONTAINER_NAME="$temp_container" DX_LEGACY_WORKSPACE_VOLUME="$old" DX_PERSIST_VOLUME="$new" "$DX_MIGRATE" >/dev/null 2>&1 \
+    # The helper's own stdout/stderr is captured (rather than discarded with
+    # >/dev/null 2>&1) so that a failure -- including the intermittent Apple
+    # Container "no runtime client exists" runtime-client race -- shows up in
+    # the test_fail diagnostic instead of surfacing as an unexplained
+    # assertion failure.
+    migrate_out="$(DX_CONTAINER_NAME="$temp_container" DX_LEGACY_WORKSPACE_VOLUME="$old" DX_PERSIST_VOLUME="$new" "$DX_MIGRATE" 2>&1)"
+    migrate_rc=$?
+    if [ "$migrate_rc" -eq 0 ] \
         && container run --rm --volume "$new:/new:ro" --entrypoint sh "$DX_IMAGE" -lc \
             "test \"\$(cat /new/regular)\" = data && test \"\$(cat /new/.dotfile)\" = dot && test \"\$(cat /new/nested/file)\" = nested && test -d /new/nested/empty && test \"\$(readlink /new/link)\" = regular && test \"\$(cat /new/.dxe-persist-migrated-from)\" = '$old'" \
         && container volume inspect "$old" >/dev/null 2>&1; then
         test_pass "migration helper copies files, dotfiles, symlinks, empty dirs, and preserves legacy volume"
     else
-        test_fail "migration helper copies files, dotfiles, symlinks, empty dirs, and preserves legacy volume"
+        test_fail "migration helper copies files, dotfiles, symlinks, empty dirs, and preserves legacy volume (migrate rc=$migrate_rc output: $migrate_out)"
     fi
 
-    if DX_CONTAINER_NAME="$temp_container" DX_LEGACY_WORKSPACE_VOLUME="$old" DX_PERSIST_VOLUME="$new" "$DX_MIGRATE" >/dev/null 2>&1; then
+    migrate_idempotent_out="$(DX_CONTAINER_NAME="$temp_container" DX_LEGACY_WORKSPACE_VOLUME="$old" DX_PERSIST_VOLUME="$new" "$DX_MIGRATE" 2>&1)"
+    migrate_idempotent_rc=$?
+    if [ "$migrate_idempotent_rc" -eq 0 ]; then
         test_pass "migration helper is idempotent when sentinel matches"
     else
-        test_fail "migration helper is idempotent when sentinel matches"
+        test_fail "migration helper is idempotent when sentinel matches (migrate rc=$migrate_idempotent_rc output: $migrate_idempotent_out)"
     fi
 
     container_ensure_volume "$collision_old"
     container_ensure_volume "$collision_new"
     container run --rm --volume "$collision_old:/old:rw" --entrypoint sh "$DX_IMAGE" -lc "printf source > /old/file" >/dev/null 2>&1
     container run --rm --volume "$collision_new:/new:rw" --entrypoint sh "$DX_IMAGE" -lc "printf existing > /new/file" >/dev/null 2>&1
-    if DX_CONTAINER_NAME="$temp_container" DX_LEGACY_WORKSPACE_VOLUME="$collision_old" DX_PERSIST_VOLUME="$collision_new" "$DX_MIGRATE" >/dev/null 2>&1; then
-        test_fail "migration helper rejects non-empty destination without sentinel"
+    migrate_collision_out="$(DX_CONTAINER_NAME="$temp_container" DX_LEGACY_WORKSPACE_VOLUME="$collision_old" DX_PERSIST_VOLUME="$collision_new" "$DX_MIGRATE" 2>&1)"
+    migrate_collision_rc=$?
+    if [ "$migrate_collision_rc" -eq 0 ]; then
+        test_fail "migration helper rejects non-empty destination without sentinel (migrate unexpectedly succeeded: $migrate_collision_out)"
     else
         test_pass "migration helper rejects non-empty destination without sentinel"
     fi
@@ -166,6 +180,125 @@ if [ "${SKIP_INTEGRATION:-false}" = true ]; then
 else
     run_migration_helper_tests
 fi
+
+# ---------- Migration helper runtime-client race regression (fake container) ----------
+#
+# Apple Container's `container run --rm` intermittently reports
+#   Error: no runtime client exists: container is stopped
+# when a short-lived temporary container's process finishes before the
+# runtime client finishes attaching (or attaches after the container has
+# already stopped). Real Apple Container timing cannot be forced
+# deterministically, so this fakes `container` to reproduce the exact
+# failure text on demand -- the durable regression guard. Per the
+# constitution's stub rule, this fake was validated against the real
+# boundary: the reproduction loop recorded in bump-disposition-plan.md
+# caught the identical error text from the real Apple Container CLI.
+#
+# This needs neither the real container image nor a running dx-test
+# container, so unlike run_migration_helper_tests above it runs even under
+# --skip-integration.
+
+race_fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+race_counter="$race_fake_dir/run-count"
+
+# A minimal `container` that answers just enough of dx-migrate-persist's
+# preflight checks (list/volume/image) to let it reach its `container run`
+# calls, then fails the first $DXE_FAKE_RUN_FAIL_COUNT of those with
+# $DXE_FAKE_RUN_FAIL_MESSAGE before succeeding -- modeling the runtime-client
+# race, or any other failure a caller wants to inject, on demand.
+fake_tool_write "$race_fake_dir" container '
+case "${1:-}" in
+    list)
+        exit 0
+        ;;
+    volume)
+        case "${2:-}" in
+            inspect|create|rm) exit 0 ;;
+        esac
+        exit 1
+        ;;
+    image)
+        case "${2:-}" in
+            list) printf "%s\n" "$DX_IMAGE"; exit 0 ;;
+        esac
+        exit 1
+        ;;
+    run)
+        n=0
+        [ -f "$DXE_FAKE_RUN_COUNTER" ] && n=$(cat "$DXE_FAKE_RUN_COUNTER")
+        n=$((n + 1))
+        printf "%s" "$n" > "$DXE_FAKE_RUN_COUNTER"
+        if [ "$n" -le "${DXE_FAKE_RUN_FAIL_COUNT:-0}" ]; then
+            printf "%s\n" "${DXE_FAKE_RUN_FAIL_MESSAGE:-Error: no runtime client exists: container is stopped}" >&2
+            exit 1
+        fi
+        exit 0
+        ;;
+esac
+exit 1
+'
+
+# Drives dx-migrate-persist with the fake container above: its `container
+# run` calls fail $1 times with message $2 before succeeding. Bounds the
+# helper's own retry loop to 3 attempts with no delay (regardless of the
+# production default) so this test runs instantly and deterministically.
+run_migrate_with_fake_race() {
+    rm -f "$race_counter"
+    DXE_FAKE_RUN_COUNTER="$race_counter" DXE_FAKE_RUN_FAIL_COUNT="$1" DXE_FAKE_RUN_FAIL_MESSAGE="$2" \
+        DX_MIGRATE_RUN_MAX_ATTEMPTS=3 DX_MIGRATE_RUN_RETRY_DELAY=0 \
+        PATH="$race_fake_dir:$PATH" \
+        DX_CONTAINER_NAME="dx-migrate-race-guard-$$" \
+        DX_LEGACY_WORKSPACE_VOLUME="dx-migrate-race-legacy-$$" \
+        DX_PERSIST_VOLUME="dx-migrate-race-persist-$$" \
+        "$DX_MIGRATE"
+}
+
+race_call_count() { cat "$race_counter" 2>/dev/null || printf 0; }
+
+RACE_MSG="Error: no runtime client exists: container is stopped"
+
+# A full successful migration makes exactly three `container run` calls
+# (read the sentinel, list the destination, copy). Failing only the first
+# invocation once means that one call retries once and the other two go
+# through clean, so a successful run makes 3 + 1 = 4 calls in total; more
+# than 3 is the proof a retry actually happened.
+if diag="$(
+    out="$(run_migrate_with_fake_race 1 "$RACE_MSG" 2>&1)"
+    rc=$?
+    calls="$(race_call_count)"
+    printf 'rc=%s calls=%s out=%s' "$rc" "$calls" "$out"
+    [ "$rc" -eq 0 ] && [ "$calls" -eq 4 ]
+)"; then
+    test_pass "migration helper retries past a single Apple Container runtime-client race and completes"
+else
+    test_fail "migration helper retries past a single Apple Container runtime-client race and completes ($diag)"
+fi
+
+if diag="$(
+    out="$(run_migrate_with_fake_race 999 "$RACE_MSG" 2>&1)"
+    rc=$?
+    calls="$(race_call_count)"
+    printf 'rc=%s calls=%s out=%s' "$rc" "$calls" "$out"
+    [ "$rc" -ne 0 ] && [ "$calls" -eq 3 ] && printf '%s' "$out" | stdin_matches -i error
+)"; then
+    test_pass "migration helper bounds its retries and fails clearly once the runtime-client race persists"
+else
+    test_fail "migration helper bounds its retries and fails clearly once the runtime-client race persists ($diag)"
+fi
+
+if diag="$(
+    out="$(run_migrate_with_fake_race 1 'Error: permission denied writing to persist volume' 2>&1)"
+    rc=$?
+    calls="$(race_call_count)"
+    printf 'rc=%s calls=%s out=%s' "$rc" "$calls" "$out"
+    [ "$rc" -ne 0 ] && [ "$calls" -eq 1 ] && printf '%s' "$out" | stdin_matches -i 'permission denied'
+)"; then
+    test_pass "migration helper does not retry or mask a genuine container-run error distinct from the runtime-client race"
+else
+    test_fail "migration helper does not retry or mask a genuine container-run error distinct from the runtime-client race ($diag)"
+fi
+
+rm -rf "$race_fake_dir"
 
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
     test_skip "live persistence guest runtime checks (--skip-integration)"
