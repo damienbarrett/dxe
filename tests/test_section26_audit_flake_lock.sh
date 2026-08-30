@@ -22,10 +22,21 @@
 # and is not touched by the fix below.
 #
 # Fixtures are the real lock files either side of the pin refresh this
-# helper was built to audit -- 59b0494's flake.lock (base) and 8ff05d8's
-# (candidate) -- tampered per case with jq, exactly as done by hand during
-# the original investigation. Real fixtures over synthetic ones catch
-# anything a hand-built JSON blob would accidentally simplify away.
+# helper was built to audit -- main's flake.lock (base) and
+# bump/lock-refresh's (candidate) -- tampered per case with jq, exactly as
+# done by hand during the original investigation. Real fixtures over
+# synthetic ones catch anything a hand-built JSON blob would accidentally
+# simplify away.
+#
+# They are checked in under tests/fixtures/audit-flake-lock/ rather than
+# read via `git show <sha>:<path>` at run time. The candidate side's commit
+# (once 8ff05d8) was a pre-rebase tip: after later rebases it stopped being
+# reachable from any ref and survived only in one machine's reflog, so a
+# fresh clone, CI, or a `git gc --prune` would have failed this suite with
+# no code change at fault. Committing the two files removes the history
+# dependency entirely; their SHA-256 is checked below so silent corruption
+# of the checked-in bytes still fails loudly. Do not reintroduce the
+# `git show` form.
 #
 # The fix for the first two holes added a required third CLI argument (the
 # expected-changed-nodes list) so the audit can require the changed set to
@@ -41,18 +52,49 @@ source "$SCRIPT_DIR/test_helpers.sh"
 test_section "Section 26: flake.lock refresh audit"
 
 AUDIT="$SCRIPT_DIR/lib/audit-flake-lock.sh"
-LOCK_REL="container/aarch64-darwin-apple-container-dx-nixos-26.05/flake.lock"
 EXPECTED_NODES="nixpkgs home-manager nixvim flake-parts"
+
+FIXTURE_SRC_DIR="$SCRIPT_DIR/fixtures/audit-flake-lock"
+FIXTURE_BASE_SRC="$FIXTURE_SRC_DIR/base.lock"
+FIXTURE_CAND_SRC="$FIXTURE_SRC_DIR/candidate.lock"
+# Verified once when these files were checked in; see the header comment
+# for why they are not read via `git show` instead.
+FIXTURE_BASE_SHA256="34f29312a2da3447515d68c3c470fda7c63e9a2497c9fc3d1769c4f5f92b8b9b"
+FIXTURE_CAND_SHA256="ee4d64dcb658b5e01b1e916965fcc3900a33b3dfaa20da30a0b8995fd4a4b6f9"
+
+# sha256 of a file, on either host: macOS ships shasum, Linux CI ships
+# sha256sum, and neither guarantees the other (see bin/lib/dx-container.sh
+# for the same fallback pattern used against the store digest).
+fixture_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
 
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-audit-flake-lock.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 
-if ! git -C "$BASE_DIR" show "59b0494:$LOCK_REL" > "$fixture/base.lock" 2>/dev/null \
-    || ! git -C "$BASE_DIR" show "8ff05d8:$LOCK_REL" > "$fixture/cand.lock" 2>/dev/null; then
-    test_fail "fixture commits 59b0494 and 8ff05d8 are present in this repository's history"
+fixture_ok=1
+if [ ! -f "$FIXTURE_BASE_SRC" ] || [ ! -f "$FIXTURE_CAND_SRC" ]; then
+    fixture_ok=0
+else
+    base_got_sha256="$(fixture_sha256 "$FIXTURE_BASE_SRC")"
+    cand_got_sha256="$(fixture_sha256 "$FIXTURE_CAND_SRC")"
+    if [ "$base_got_sha256" != "$FIXTURE_BASE_SHA256" ] || [ "$cand_got_sha256" != "$FIXTURE_CAND_SHA256" ]; then
+        fixture_ok=0
+    fi
+fi
+
+if [ "$fixture_ok" -ne 1 ]; then
+    test_fail "checked-in fixtures at $FIXTURE_SRC_DIR exist and match their recorded SHA-256"
     print_summary
     exit_with_code
 fi
+
+cp "$FIXTURE_BASE_SRC" "$fixture/base.lock"
+cp "$FIXTURE_CAND_SRC" "$fixture/cand.lock"
 
 # Captures both exit status and emitted text: several cases below need to
 # know *which* assertion failed, not merely that the run failed.
