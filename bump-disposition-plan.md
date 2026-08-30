@@ -2,20 +2,51 @@
 
 ## Status
 
-Open. Written 2026-08-30, after a session that fixed the guest SSH host
-identity, the image-store import, and the bootstrap launcher, and corrected two
-stale documents. This plan covers what is left, and deliberately scopes out the
-one thing that looks most interesting.
+Open. Written 2026-08-30 and revised the same day against an independent review
+(`bump-disposition-review.md`), which found two execution blockers in the first
+draft. Both are fixed below; every finding was verified before incorporation.
 
-The immediate problem is not a defect. It is that a **validated but uncommitted**
-lock refresh is sitting in a worktree while the canary runs it and the primary
+The immediate problem is not a defect. A **validated but uncommitted** lock
+refresh is sitting in a linked worktree while the canary runs it and the primary
 does not. That state decays: in two weeks nobody can tell whether the branch was
 validated or abandoned, and the validation cost real machine time.
 
+## Step 0 — Preserve the change before touching anything
+
+**The linked worktree is currently the sole holder of the refresh.**
+`bump/lock-refresh` points at `aa4ccac` and contains no lock change; the refresh
+exists only as an unstaged modification in `/Users/damien/Development/dxe-bump`.
+Consequences, both verified:
+
+- `git rebase main` refuses a dirty worktree, so the first draft's
+  rebase-then-commit order cannot run;
+- `git worktree remove` refuses while dirty, and forcing it would **discard the
+  only copy**.
+
+So, before any rebase, cleanup, or decision:
+
+1. Assert the worktree diff touches exactly
+   `container/aarch64-darwin-apple-container-dx-nixos-26.05/flake.lock` and that
+   `git diff --check` is clean.
+2. Commit it on `bump/lock-refresh` as a clearly labelled preservation commit.
+   Prefer a commit over a stash: the whole point is durable, discoverable state.
+3. Only then rebase onto current `main` (the branch predates `c985d0c`,
+   `21e48ca`, and `d396a0a`).
+
+**Parked** means: reachable from a named ref, worktree clean, reason and revisit
+trigger recorded. Only then may the linked worktree be removed.
+
 ## Step 1 — Land the lock refresh (recommended)
 
-`bump/lock-refresh` in the `dxe-bump` worktree holds a `flake.lock`-only change
-that moves the stable inputs on their existing 26.05 branches:
+A `flake.lock`-only change moving the stable inputs on their existing 26.05
+branches. Produced by the documented recipe, run in the guest:
+
+```
+nix flake update nixpkgs nixvim home-manager \
+    --flake container/aarch64-darwin-apple-container-dx-nixos-26.05
+```
+
+Direct inputs:
 
 | input | from | to |
 | --- | --- | --- |
@@ -23,78 +54,157 @@ that moves the stable inputs on their existing 26.05 branches:
 | `home-manager` | `868d0a69` | `65258d5c` |
 | `nixvim` | `667c8471` | `e2c3f9f3` |
 
-`nixpkgs-unstable` is deliberately untouched, per the documented recipe, so the
-optional AI set does not move during a stable refresh.
+Expected transitive change: `flake-parts` `f7c1a2d3…` → `427bf4bd…`, via
+`nixvim`. Unchanged, and required to stay unchanged: `nixpkgs-unstable` (so the
+optional AI set does not move during a stable refresh) and `systems`.
 
-Evidence it is safe:
+**Any lock node changing outside this inventory is an abort condition.** That is
+what makes "stable refresh only" mechanically reviewable rather than a claim.
 
-- full canary suite on `dx-test`: **1018 passed**, 1 failure since diagnosed as
-  a test depending on the developer's gitignored `dx_key` and fixed in `c985d0c`
-  — not a bump breakage;
-- the volume-reusing recreate imported **881 paths in 8s** and booted first
-  time, exercising the corrected importer at realistic scale;
-- `dx-test` has since run this lock continuously and healthily.
+### Evidence, and what it is not
 
-It is a lock-only change, so it adopts through `dx-recreate`; no salvage is
-required.
+Supporting evidence from the pre-rebase tree: a canary suite run at **1018
+passed, 1 failed**, the single failure since diagnosed as a test depending on
+the developer's gitignored `dx_key` and fixed in `c985d0c`; a volume-reusing
+recreate that imported **881 paths in 8s** and booted first time; and a day of
+healthy running on `dx-test`.
 
-**State the deviation explicitly in the commit.** The alignment rule
-(`docs/release-maintenance.md`) says the image tag should follow the locked
-release's default Nix, which is now 2.34.8 against a pinned 2.34.7. It cannot
-follow: moving the pin requires the destroy-and-rebuild-with-salvage procedure,
-because of the store-path collision recorded in that same document. The
-combination is empirically fine — the canary runs the bumped lock on the 2.34.7
-image — but it is a knowing deviation, and an unexplained mismatch is
-indistinguishable from an oversight to the next reader.
+That is a *diagnosed* result on a *dirty* tree at `aa4ccac`, not a green result
+on the candidate. `docs/release-maintenance.md` requires a clean worktree and a
+committed bump for canary validation. Note also that
+`tests/run-tier.sh unit/static` does **not** run section 9 — section 9 belongs
+to `host-contract` — so a unit/static gate would not rerun the very test that
+failed.
 
-Steps:
+Promotion therefore requires validating the exact rebased commit and recording,
+SHA-bound:
 
-1. Rebase `bump/lock-refresh` onto `main` (it predates `c985d0c` and `21e48ca`).
-2. Commit the lock with the deviation stated.
-3. Adopt on the primary with `dx-recreate` when convenient, and confirm the
-   import reports `copying N paths` with N > 0 and no
-   `did not materialise required bootstrap paths`.
+- candidate commit SHA and `flake.lock` SHA-256;
+- `tests/release-check.sh` on the clean candidate;
+- `tests/run-tier.sh unit/static`;
+- `tests/run-tier.sh host-contract` — explicitly covering the `c985d0c` fix;
+- the coverage gate;
+- `./bin/dx-profile dx-test tests/run_all_tests.sh`, ending unqualified
+  all-green on that commit.
 
-Alternative, if the deviation is unwelcome: park the branch and revisit when the
-pin bump is scheduled, since that event resolves both together. Do not leave it
-undecided.
+Continuous canary health is supporting evidence, not the gate.
 
-## Step 2 — Clean up
+### The policy deviation, stated precisely
 
-- Remove the `dxe-bump` worktree once the branch is landed or parked.
-- Let `dx-test` follow whatever `main` says, rather than sitting on a lock the
-  primary does not have.
+The alignment rule matches the **major.minor** of the locked release's default
+Nix, "taking the newest patch tag within that minor". The locked default is now
+2.34.8 against a pinned 2.34.7. **Major.minor still matches** — the exception is
+to the newest-patch clause only, which is a narrower deviation than the first
+draft implied.
 
-## Step 3 — `ensure_essentials_valid` ordering
+It cannot be satisfied: moving the pin requires the destroy-and-rebuild-with-
+salvage procedure, because of the store-path collision recorded in the same
+document. The combination is empirically fine — the canary runs the bumped lock
+on the 2.34.7 image — but it is a knowing exception.
 
-The last real correctness gap. `bootstrap_main` calls it *after*
-`nix_restore_image_default_profile`, which is the first consumer of the
-post-remount `PATH`, so the repair can never run — it is dead code in practice.
-`a428c55` originally placed it immediately after the remount.
+A commit message is not durable enough. It leaves the checked-in runbook
+asserting a rule the repository knowingly does not satisfy, and gives the next
+refresh nowhere to discover whether the exception still holds. The Containerfile
+test pins the expected literal digest; it does not prove the pin follows the
+locked `nix.version`, so it stays green throughout the mismatch.
 
-Reordering alone does not fix it: the function needs a working `nix`, which is
-exactly what is missing when it would be needed. This is a design question about
-what the guest can rely on between the remount and the first successful command,
-not a line move.
+If the refresh is landed, add a dated waiver adjacent to the alignment policy
+recording: exact scope (stable lock at the promoted SHA with image 2.34.7);
+reason; evidence (candidate commit and lock hash, green live run); residual risk
+and why accepted; decision maker; and an expiry trigger — the next image-pin
+maintenance event or the next stable-lock refresh, whichever comes first. Keep
+it a separate documentation commit if a strictly lock-only functional commit
+matters. If no waiver is acceptable, take the park path explicitly.
 
-Priority is genuinely third. The enumeration fix and the pre-remount check now
-stand in front of it, so it is a fallback that has never been reached rather
-than an exposure.
+### Promotion and rollback
 
-## Explicitly deferred — collision quarantine
+Not "when convenient" — that dissolves the urgency this plan opens with. Choose
+a decision date and one maintenance window covering land, canary, and primary
+adoption. Name the landing method and the resulting `main` commit.
 
-Making a volume-reusing pin bump possible means teaching the importer to
-quarantine or skip image store paths that collide by name and differ by content
-(`docs/release-maintenance.md`, "Bumping the Nix image pin"). That would make
-every future pin bump dramatically cheaper than the salvage procedure.
+Before touching the primary: assert the canary's `/guest-bootstrap/flake.lock`
+hashes to the committed candidate, and that the candidate gates are green.
 
-It is deliberately **not** next. It is a design change with consequences for
-what the booted guest can trust, and it deserves to be a deliberate decision
-rather than the thread that gets pulled because it is the most interesting one.
+After `dx-recreate` on the primary: require successful bootstrap, the **expected
+committed lock hash present in the primary**, `dx-status`, and the agreed live
+checks.
 
-## Verification
+`copying N paths` with N > 0 is a **diagnostic, not a success criterion**. The
+count is contextual — observed at 2, 13, and 881 on different boots — and the
+failed pin-bump attempt printed `copying 13 paths` immediately before erroring.
+Absence of `did not materialise required bootstrap paths` is likewise a
+diagnostic.
 
-Each step above is complete when `tests/run-tier.sh unit/static` is green and,
-where guest behaviour changed, the live tier is green on `dx-test` before the
-primary is touched. The coverage gate (`tests/run-coverage-linux.sh`) must stay
-at 100% over the declared scope.
+On failure: preserve logs, revert the lock commit, recreate with the unchanged
+image and retained volumes, confirm the primary is back on the previous lock
+hash. **A failed lock-only adoption must not be escalated into a factory reset
+or salvage operation without a new decision.**
+
+## Step 2 — Clean up, only after convergence
+
+Make `dx-test` and the primary match `main`. Then remove the clean linked
+worktree, and delete or retain `bump/lock-refresh` per the recorded disposition.
+
+## Step 3 — Post-remount trust root (separate design task)
+
+Previously described here as `ensure_essentials_valid` being "dead code". That
+was wrong, and the correction matters. It executes on every boot and can detect
+or repair damage in closure members consumed later, while its own prerequisites
+remain usable. The real defect is narrower and better named: a **recovery blind
+spot for the post-remount trust root**.
+
+`nix_restore_image_default_profile` runs after the remount and invokes
+`readlink`, `mkdir`, `mktemp`, `rm`, `ln`, `chown`, and `mv` before
+`ensure_essentials_valid` is reached. The verifier itself needs working shell
+utilities, `run_as_dx`, and `nix`. So it cannot recover when the corrupted path
+*is* one of its own prerequisites, or one of the earlier restore's.
+
+This is not an executable task yet — it has no selected design, reproducer, or
+definition of done. It needs its own plan:
+
+1. State the invariant: after remount, no binary from the persistent store may
+   be trusted to prove that same trust root sound.
+2. Enumerate failure cases: missing or corrupt core utilities, missing Nix,
+   corrupt later tools, offline repair, and a healthy reused volume.
+3. Compare designs explicitly — pre-remount verification of the target store
+   using image-resident tooling; an absolute captured image toolchain used as
+   the verifier; or deliberate fail-fast when independent repair is impossible.
+   Do not select one merely by moving the call.
+4. Add a failing regression where a prerequisite disappears between remount and
+   verification. Source-shape assertions are not enough.
+5. Preserve the existing invariant that the image-store identity marker is
+   published only after successful post-remount validation.
+6. Gate on unit and coverage plus isolated live and destructive recovery
+   exercises appropriate to a bootstrap-path change.
+
+Third priority stands: two newer defences sit in front of it, and it has never
+been reached.
+
+## Deferred — volume-reusing image-pin bump design
+
+Not "collision quarantine": that named a strategy before one was chosen.
+Skipping a same-name, different-content store path may violate the very content
+identity the guest is meant to trust.
+
+Record required safety properties instead of a design: no mismatched content may
+be executed; failure must remain pre-remount and recoverable; existing volumes
+must not be silently mutated into an ambiguous state; the fresh-volume path must
+remain valid.
+
+Revisit trigger: no later than the next required image-pin change. The alignment
+waiver above depends on this being resolved or scheduled, so it cannot stay
+open-ended.
+
+## Definition of done
+
+- the refresh is committed on `main` or preserved on a named parked ref;
+- no dirty linked worktree is the sole holder of the change;
+- the alignment policy is satisfied, or has a visible dated bounded waiver;
+- the complete direct **and transitive** lock delta is recorded;
+- the promoted commit has an all-green canary including the section-9 case that
+  previously failed;
+- on the land path, `main`, `dx-test`, and the primary share one committed lock
+  hash and the primary health gate is green;
+- rollback evidence retained until primary acceptance;
+- the post-remount trust root is tracked separately with testable acceptance
+  criteria, not treated as closed by this disposition.
