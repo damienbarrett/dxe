@@ -28,14 +28,41 @@ An unfilled field is a reason not to start.
 | Decision date | _unfilled_ |
 | Maintenance window | _unfilled_ (one window covering land, canary, primary adoption) |
 | Evidence destination | _unfilled_ — a directory **outside both worktrees** |
-| Previous `main` SHA | `3ce623b` (confirm at freeze time) |
+| Previous `main` SHA | `759240f` (was `3ce623b`; advanced by the doc stack and the test fixes — confirm at freeze time) |
 | Previous lock SHA-256 | `34f29312a2da3447515d68c3c470fda7c63e9a2497c9fc3d1769c4f5f92b8b9b` |
-| Raw lock commit SHA | _unfilled_ |
+| Raw lock commit SHA | `8ff05d8` (anchor only — needs rebase onto `759240f`; **not** the candidate tip) |
 | Candidate tip SHA | _unfilled_ |
 | Candidate lock SHA-256 | `ee4d64dcb658b5e01b1e916965fcc3900a33b3dfaa20da30a0b8995fd4a4b6f9` (reassert after rebase) |
 | Landing method | `git merge --ff-only`, asserting candidate tip SHA == resulting `main` SHA |
 | Rollback commit set | _unfilled_ — ordered, covering lock, fixes, and waiver |
 | Follow-up artifacts | `post-remount-trust-root-plan.md`, `image-pin-collision-plan.md` |
+
+### Gate status as of 2026-08-31
+
+Non-binding smoke checks, run before the record was filled. None of these are
+freeze evidence: they were gathered on `8ff05d8`, which is not the candidate
+tip.
+
+| Gate | Result |
+| --- | --- |
+| A — mechanical lock audit | PASS, but the helper **fails open** on a no-op refresh, a partial refresh, a deleted allowed field, and an added top-level key. Being closed under TDD before it can be credited. |
+| B — `release-check` | PASS |
+| B — `bash -n`, `/bin/bash` 3.2 syntax | PASS |
+| B — `host-contract` | PASS (97 / 24, 0 failed) after the `759240f` fixes |
+| B — `run-bash32-tests` | PASS |
+| B — ShellCheck 0.10.0 | Ran in the guest. `audit-flake-lock.sh` clean; pre-existing SC1090 debt elsewhere, unchanged by these commits |
+| B — coverage | NOT RUN |
+| C — `nix flake check` | PASS (`all checks passed!`) in the canary via `container exec` |
+| C — four output builds | NOT RUN |
+| D — reused-volume canary | NOT RUN |
+| D — fresh-volume canary | NOT RUN |
+| Running-generation proof | PASS on the canary: lease `20260830T021223Z-84395` = `current`, lock `ee4d64dc…` |
+
+Two host facts worth carrying into the window: ShellCheck is absent on the
+macOS host, so `tests/test_section0_lint.sh` **silently skips** and the
+mandatory lint gate does not run locally at all; and the canary's
+`authorized_keys` does not match `dx-test_key.pub`, so `dx-ssh` and `dx-put`
+fail until the canary is recreated.
 
 **Candidate** has exactly one meaning in this document: the branch tip carrying
 the *entire* intended stack — the preservation/lock commit, the waiver, and any
