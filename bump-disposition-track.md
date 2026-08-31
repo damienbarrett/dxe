@@ -720,3 +720,41 @@ intermediate snapshot.
    freeze; store raw results outside both worktrees; rerun gates; re-prove the
    canary and already-healthy primary; then mark status complete and clean up.
    Avoid further evidence commits between freeze and acceptance.
+
+## Correction, 2026-08-31
+
+Two claims published in earlier commits of this series were wrong. Both were
+checkable against this repository, and both are corrected here rather than left
+standing.
+
+**1. The reviewer's checkpoints were accurate; my commit said they were stale.**
+
+`7e5389d` stated that checkpoints between 23:43 and 04:43 "reported `main` at
+`3ce623b` and the audit helper as uncommitted for six hours after neither was
+true". The reflog disproves it:
+
+    59b0494 main@{2026-08-31 05:40:40 +1200}
+    3ce623b main@{2026-08-30 19:03:26 +1200}
+
+`main` was at `3ce623b` from 19:03 until 05:40. Every one of those checkpoints
+was contemporaneously correct. The error was mine: I assumed the documentation
+commit had landed hours earlier than it did, and then characterised an accurate
+observer as unreliable in a published commit message.
+
+**2. Node comparison is structural for allowlisted nodes, not order-sensitive.**
+
+`1b9ca68` stated that a claim of merely structural comparison "is false:
+reordering keys within a node already fails". That holds only for assertion 7,
+which covers `nixpkgs-unstable` and `systems` via `jq -c`. Assertion 6, which
+covers the allowlisted changed nodes, uses `jq -S` and sorts keys, so a
+reordered allowlisted node compares equal. Verified: reordering `nixpkgs` exits
+0, reordering `systems` exits 1.
+
+The original refutation tested `systems` — an assertion 7 node — and
+generalised from it. The reviewer's point stood for the assertion it was about.
+
+No behaviour changes. `jq -S` is the right comparison for allowlisted nodes,
+because key order carries no meaning in JSON; the defect was in how the
+behaviour was described, not in the behaviour. Assertion 7's label is corrected
+from "byte-for-byte identical", which `jq -c` does not provide since it
+normalises whitespace, to "identical, field order included".

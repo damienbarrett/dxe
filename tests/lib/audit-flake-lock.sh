@@ -223,11 +223,11 @@ else
     report_fail "6. only locked.{lastModified,narHash,rev} changed, only on allowlisted nodes" "$detail"
 fi
 
-# --- assertion 7: nixpkgs-unstable and systems byte-for-byte identical --
+# --- assertion 7: nixpkgs-unstable and systems identical, field order included --
 
 for name in nixpkgs-unstable systems; do
     if ! list_contains "$name" "$BASE_NODE_KEYS"; then
-        report_fail "7. node '$name' byte-for-byte identical" "node '$name' is not present in the base lock"
+        report_fail "7. node '$name' identical, field order included" "node '$name' is not present in the base lock"
         continue
     fi
     # -c (compact) with jq's default key order preserves the source's own
@@ -236,9 +236,9 @@ for name in nixpkgs-unstable systems; do
     b_bytes="$(jq -c --arg n "$name" '.nodes[$n]' "$BASE")"
     c_bytes="$(jq -c --arg n "$name" '.nodes[$n]' "$CANDIDATE")"
     if [ "$b_bytes" = "$c_bytes" ]; then
-        report_pass "7. node '$name' byte-for-byte identical"
+        report_pass "7. node '$name' identical, field order included"
     else
-        report_fail "7. node '$name' byte-for-byte identical" "nodes[\"$name\"] differs between base and candidate"
+        report_fail "7. node '$name' identical, field order included" "nodes[\"$name\"] differs between base and candidate"
     fi
 done
 

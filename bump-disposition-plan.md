@@ -192,8 +192,12 @@ or lock-format change. After rebase, compare the candidate lock to its new
 - root and transitive input edges and every `original` object are unchanged;
 - the only changed JSON paths are `locked.lastModified`, `locked.narHash`, and
   `locked.rev`, on the four inventoried nodes;
-- the complete `nixpkgs-unstable` and `systems` node objects are byte-for-byte
-  unchanged;
+- the complete `nixpkgs-unstable` and `systems` node objects are unchanged
+  including field order (assertion 7 compares with `jq -c`, which preserves the
+  source ordering; it normalises whitespace, so this is not literally
+  byte-for-byte). Allowlisted nodes are compared with `jq -S` and are therefore
+  key-order-insensitive, which is correct — key order carries no meaning in
+  JSON — but it does mean "structural", not "byte-for-byte";
 - the evidence records full revisions and `narHash` values, not short SHAs.
 
 Anything outside that allowlist is the abort condition stated above.
