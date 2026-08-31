@@ -2,7 +2,18 @@
 
 ## Status
 
-Open. Written 2026-08-30 and revised twice the same day against independent
+**Complete, with deviations recorded — 2026-08-31.** The refresh is landed on
+`main`, pushed to `origin`, and adopted by the primary, which was proved from
+its PID-1 lease to be running the committed lock. `main`, `dx-test`, and
+`dx-host` share lock `ee4d64dc…`. The linked worktree and `bump/lock-refresh`
+are removed; the branch was fully merged first.
+
+Not every requirement below was met the way the plan asked. Those gaps are
+named in "Deviations" and in
+`/Users/damien/Development/dxe-evidence-20260831/RECORD.md`, rather than being
+quietly satisfied by redefinition. Read this section together with that one.
+
+Written 2026-08-30 and revised twice the same day against independent
 reviews. The first review found two execution blockers; the second
 independent review raised twelve findings, F1–F12. Every finding was
 verified against the tree at `3ce623b` before incorporation. Two of the second
@@ -12,10 +23,11 @@ host has no Nix at all and the repository documents an in-guest path, and it
 switched lock-file flags without reconciling against the repository's existing
 spelling.
 
-The immediate problem is not a defect. A **validated but uncommitted** lock
-refresh is sitting in a linked worktree while the canary runs it and the primary
-does not. That state decays: in two weeks nobody can tell whether the branch was
-validated or abandoned, and the validation cost real machine time.
+The problem this plan opened with, kept for the record: a **validated but
+uncommitted** lock refresh was sitting in a linked worktree while the canary ran
+it and the primary did not. That state decays — in two weeks nobody could tell
+whether the branch was validated or abandoned, and the validation had cost real
+machine time. That condition is now resolved.
 
 ## Execution record — fill before the window opens
 
@@ -559,28 +571,65 @@ collision, the required safety properties rather than a design, and the revisit
 trigger: no later than the next required image-pin change. The alignment waiver
 above expires into that item, so it cannot stay open-ended.
 
+## Deviations from this plan
+
+Recorded because a plan that quietly redefines its own requirements is worth
+less than one that says where it fell short.
+
+1. **The execution record was backfilled, not filled before the window.** The
+   plan says an unfilled field is a reason not to start. Gates ran, the tip
+   landed, and the primary was promoted before those fields existed. They are
+   in `dxe-evidence-20260831/RECORD.md`, which states its own backfilled status.
+2. **Gate order was inverted.** The plan sequences the land-or-park decision
+   before the gates. In practice most gates ran first, at the user's explicit
+   choice, and the decision followed.
+3. **The freeze was invalidated repeatedly.** Every defect found during
+   validation produced a commit, moving the tip and forcing a rebase and a gate
+   rerun. This happened five times. The plan anticipates it but reads as though
+   it were exceptional; here it was the norm.
+4. **Two commits landed after the primary was promoted.** `5966c35` and
+   `1222c08` post-date adoption. Neither touches `flake.lock` or the bootstrap
+   payload — confirmed by `dx-sync-bootstrap` reporting the content unchanged on
+   a later recreate — so guest behaviour is unaffected, but the primary was not
+   byte-identical to `main` at the moment it was accepted.
+5. **`1222c08` couples two unrelated fixes.** The plan asks for independently
+   revertible changes. It is published, so the coupling is recorded rather than
+   rewritten.
+6. **Nix gates were not rerun on the final tip.** `flake.lock` is byte-identical
+   to the tip they passed on and nothing since has touched the flake, so they
+   were judged still valid rather than repeated.
+7. **Two published claims of mine were wrong and are corrected in `e07cb53`:**
+   that the external reviewer reported stale state (the reflog shows its
+   checkpoints were contemporaneously correct), and that node comparison is
+   order-sensitive (it is structural for allowlisted nodes under `jq -S`).
+
 ## Definition of done
 
-- the refresh is committed on `main` or preserved on a named parked ref, and no
-  dirty worktree is its sole holder;
-- the complete lock delta passes the gate group A allowlist, and the full
-  revisions, `narHash` values, and immutable lock hash are recorded;
-- the alignment policy is satisfied, or has a visible dated, owned, bounded
-  waiver scoped by the complete `tag@sha256:digest` reference;
-- **one immutable tip** carries green syntax, ShellCheck, `unit/static`,
-  `host-contract`, Bash 3.2, coverage, Nix evaluation, and the four
-  output-build gates;
-- **both** the reused-volume and fresh-volume canary paths are green on that
-  tip, including the section-9 case that previously failed;
-- canary and primary each proved their **running** bootstrap generation is
-  current and carries the committed lock — not merely that the published link
-  hashes correctly;
-- any compatibility change was developed Red → Green → Refactor with a focused
-  behavioral regression in its own commit;
-- `main`, `dx-test`, and the accepted primary share one committed lock hash and
-  the primary health gate is green;
-- rollback covers the full landed stack and the waiver lifecycle, with evidence
-  retained until primary acceptance;
-- `post-remount-trust-root-plan.md` and `image-pin-collision-plan.md` exist, are
-  linked from here, and carry testable acceptance criteria and revisit triggers —
-  neither is treated as closed by this disposition.
+Assessed 2026-08-31 against the landed result. **Met** means demonstrated, not
+asserted.
+
+| Criterion | Status |
+| --- | --- |
+| Refresh committed on `main`, no dirty worktree its sole holder | **Met** — `27cce6f`, ff-only, SHA-identical to the validated tip |
+| Complete lock delta passes the gate A allowlist; full revisions, `narHash`, lock hash recorded | **Met** — 9 assertions, fail-closed; evidence in `RECORD.md` |
+| Alignment policy satisfied, or a dated, owned, bounded waiver scoped by the complete `tag@sha256:digest` | **Met** — waiver in force, scoped to `2.34.7@sha256:bf1d938835ab…`, tag facts re-queried before writing |
+| One immutable tip carries green syntax, ShellCheck, `unit/static`, `host-contract`, Bash 3.2, coverage, Nix evaluation, four builds | **Met on `27cce6f`**; see deviation 6 — the Nix gates were not repeated on the later tip, since `flake.lock` is byte-identical |
+| Both canary paths green on that tip, including the section-9 case that previously failed | **Met** — 1045/0/9 each; reused-volume and fresh-volume after a factory reset |
+| Canary and primary each proved their **running** generation carries the committed lock | **Met** — four boots, three canary and one primary, each `ee4d64dc…` |
+| Any compatibility change developed Red → Green → Refactor with a focused regression in its own commit | **Met** — every fix has a demonstrated red; see deviation 5 for the one commit that couples two of them |
+| `main`, `dx-test`, and the accepted primary share one lock hash; primary health gate green | **Met** — all three at `ee4d64dc…`; `dx-status` and live checks green |
+| Rollback covers the full landed stack and waiver lifecycle, evidence retained until acceptance | **Met** — set recorded in `RECORD.md`, logs preserved outside both worktrees |
+| Follow-up artifacts exist, linked, with acceptance criteria and revisit triggers, not treated as closed | **Met** — `post-remount-trust-root-plan.md` and `image-pin-collision-plan.md`, both still open by design |
+| Execution record filled **before** the window | **Not met** — backfilled; deviation 1 |
+
+## Open after this disposition
+
+Neither blocks the landed refresh.
+
+- The four retry-interface follow-ups recorded above: the `DX_MIGRATE_RUN_*`
+  overrides sit outside `DXE_CONFIG_FIELDS`; the wrapper discards captured
+  stderr on success and stdout on terminal failure; `1222c08`'s coupling; and
+  the alignment probe having no durable contract.
+- `post-remount-trust-root-plan.md` — no design selected, third priority.
+- `image-pin-collision-plan.md` — the waiver expires into it, at the next
+  image-pin maintenance event or stable-lock refresh, whichever comes first.
