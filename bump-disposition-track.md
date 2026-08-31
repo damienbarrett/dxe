@@ -625,3 +625,98 @@ taken; this entry records that limitation rather than inventing one.
    are complete. Afterward, make the plan status truthful, decide whether remote
    publication is in this window, then remove only the clean linked worktree and
    handle the branch as recorded.
+
+## 2026-08-31 15:43 NZST — hourly checkpoint
+
+### Observed progress
+
+- `main` advanced to `1222c08`, addressing the broad retry predicate identified
+  at 13:12. A new focused case proves Red on the old helper: a distinct
+  `no runtime client exists: permission denied` error was retried into apparent
+  success (`rc=0`, four calls). Green matches the validated stopped-container
+  signature and fails the distinct error immediately while retaining the three
+  original retry cases.
+- Independent review reran the non-live Section 16 suite at 30 passed / 0 failed
+  / 2 skipped, with Bash 3.2 syntax and `git diff --check` clean. The commit also
+  records green unit/static, host-contract, and guest ShellCheck.
+- The same commit corrects the runbook's alignment probe from
+  `/guest-bootstrap` to `/guest-bootstrap/current`. The old command rejects the
+  compatibility lock symlink; the corrected read-only command was verified on
+  the promoted primary and evaluates the locked Nix version as `2.34.8`.
+- `bump/lock-refresh` remains at `27cce6f`, so `main` is now one implementation
+  commit beyond the nominal candidate branch. The execution record and owner
+  fields remain unchanged, and the primary continues to run the refreshed lock.
+
+### Findings and recommendations
+
+1. **Good — the signature finding is closed with real TDD.** The regression
+   fails against the old predicate for the diagnosed masking behavior, the
+   production change is one line, and the focused suite stays green. This is the
+   minimum behavior change the plan calls for.
+2. **Good — the runbook command was tested at its real boundary.** Retain the
+   captured old-command failure and `2.34.8` Green result in external evidence.
+   If this command is operationally critical beyond the window, add a durable
+   integration contract at the layer that owns the published-generation
+   symlink; a prose-only command can otherwise regress unnoticed.
+3. **Blocker — refreeze after integrating `1222c08`.** The validated temporary
+   tip and the branch now both predate a production-code change on `main`.
+   Fast-forward or rebase the intended branch topology deliberately, complete
+   the remaining corrections, then rerun all SHA-bound gates on one final tip.
+4. **The retry interface findings remain open.** `DX_MIGRATE_RUN_*` still sits
+   outside the central configuration contract, successful calls still discard
+   captured stderr, and terminal errors still discard stdout. Resolve those
+   contracts with focused tests before the new freeze.
+5. **Medium — keep unrelated fixes independently revertible.** `1222c08`
+   combines a production retry change with an unrelated runbook command repair.
+   Both are sound, but the plan asks for independently revertible compatibility
+   fixes. Before publication, consider splitting the commit while preserving
+   its Red/Green provenance; otherwise name the coupling explicitly in the
+   rollback set.
+
+## 2026-08-31 17:00 NZST — catch-up checkpoint
+
+The read-only Nix verification wait delayed the expected 16:43 observation.
+This checkpoint records only state observed at 17:00; it does not invent an
+intermediate snapshot.
+
+### Observed progress
+
+- `7e5389d` committed this observer log to `main`, making the primary worktree
+  clean at that instant and preserving the review history. No other plan,
+  implementation, owner, or evidence-record correction accompanied it.
+- `main` is now `7e5389d`; `bump/lock-refresh` remains two commits behind at
+  `27cce6f`; `origin/main` remains `3ce623b`. The live primary generation and
+  refreshed lock remain unchanged and healthy.
+- The commit message says the maintenance window is closed. The checked-in plan
+  still says `Open`, explicitly says blank record fields prevent starting, and
+  retains blank/stale decision, window, evidence, candidate, raw-lock, rollback,
+  and owner data.
+
+### Findings and recommendations
+
+1. **Do not use `7e5389d` as closure evidence.** Committing the tracker resolves
+   its untracked clean-tree issue, but it also creates another unvalidated tip
+   while monitoring and plan reconciliation are still active. The file itself
+   correctly says it is not the external SHA-bound gate record. Supply that
+   record separately and do not conflate “external reviewer” with “external
+   evidence directory.”
+2. **High — correct two inaccurate claims in the new commit narrative.** The
+   repository reflog places `59b0494` on `main` at 05:40 and the subsequent
+   audit commits at 06:05–06:30; therefore the cited 23:43–04:43 checkpoints
+   reporting `main` at `3ce623b` were contemporaneously correct, not six hours
+   stale. Also, assertion 6 reads both nodes through `jq -S`, which sorts keys;
+   reordering an allowlisted node is structurally equal. Assertion 7 is the
+   separate order-sensitive check for `nixpkgs-unstable` and `systems`. Amend
+   before publication or add a checked-in correction rather than permanently
+   labelling accurate observations unreliable.
+3. **The window cannot be called closed against the current definition of
+   done.** There is still no one immutable final tip with all gates, no filled
+   execution/rollback record, no owned image-pin follow-up, and no recorded
+   primary acceptance set. Either finish those requirements or explicitly
+   document a decision to deviate; silent omission is neither completion nor a
+   revised plan.
+4. **Recommended convergence sequence remains:** finish the retry interface and
+   all metadata in one deliberate final tree; update the branch topology;
+   freeze; store raw results outside both worktrees; rerun gates; re-prove the
+   canary and already-healthy primary; then mark status complete and clean up.
+   Avoid further evidence commits between freeze and acceptance.
