@@ -37,7 +37,7 @@ dx_migrate_container_run() {
         fi
         errtext="$(cat "$work_dir/err")"
         case "$errtext" in
-            *"no runtime client exists"*)
+            *"no runtime client exists: container is stopped"*)
                 if [ "$attempt" -ge "$DX_MIGRATE_RUN_MAX_ATTEMPTS" ]; then
                     echo "Error: container run did not stabilize after $DX_MIGRATE_RUN_MAX_ATTEMPTS attempts (Apple Container runtime-client race): $errtext" >&2
                     rm -rf "$work_dir"

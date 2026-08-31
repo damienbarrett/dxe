@@ -298,6 +298,24 @@ else
     test_fail "migration helper does not retry or mask a genuine container-run error distinct from the runtime-client race ($diag)"
 fi
 
+
+# A distinct failure that merely shares a substring with the race signature
+# ("no runtime client exists") but is not the validated full text ("...:
+# container is stopped") must not be retried or reported as the known race
+# -- the predicate has to match the full signature, not just a fragment of
+# it, or an unrelated failure gets silently retried and misreported.
+if diag="$(
+    out="$(run_migrate_with_fake_race 1 'Error: no runtime client exists: permission denied' 2>&1)"
+    rc=$?
+    calls="$(race_call_count)"
+    printf 'rc=%s calls=%s out=%s' "$rc" "$calls" "$out"
+    [ "$rc" -ne 0 ] && [ "$calls" -eq 1 ] && printf '%s' "$out" | stdin_matches -i 'permission denied'
+)"; then
+    test_pass "migration helper does not retry a distinct error that only shares a substring with the runtime-client race"
+else
+    test_fail "migration helper does not retry a distinct error that only shares a substring with the runtime-client race ($diag)"
+fi
+
 rm -rf "$race_fake_dir"
 
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then

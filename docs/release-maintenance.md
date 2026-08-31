@@ -110,7 +110,11 @@ This must match the tag's major.minor, and that in turn must match the
 release's default Nix — checked in the guest (the macOS host has no Nix):
 
 ```bash
-container exec dx-host nix eval --raw --no-update-lock-file --inputs-from /guest-bootstrap nixpkgs#nix.version
+# --inputs-from must point at the generation directory, not /guest-bootstrap:
+# /guest-bootstrap/flake.lock is a compatibility symlink through `current`, and
+# Nix rejects a symlinked lock with "path ... is a symlink". `current` is a
+# symlink to the directory, which resolves correctly.
+container exec dx-host nix eval --raw --no-update-lock-file --inputs-from /guest-bootstrap/current nixpkgs#nix.version
 ```
 
 The alignment is test-enforced rather than templated into the
