@@ -462,6 +462,27 @@ recovery. Retain rollback evidence until primary acceptance.
 **A failed lock-only adoption must not be escalated into a factory reset or
 salvage operation without a new decision.**
 
+## Open follow-ups from the retry fix
+
+Raised by the external reviewer against `5966c35`/`1222c08` and not addressed
+during this window. None affects the landed refresh; all concern the retry
+wrapper's interface rather than its behaviour.
+
+- `DX_MIGRATE_RUN_MAX_ATTEMPTS` and `DX_MIGRATE_RUN_RETRY_DELAY` sit outside
+  the central `DXE_CONFIG_FIELDS` registry, so they are neither profile-settable
+  nor documented with the other configuration. Decide whether they are supported
+  configuration or private test seams, and make that explicit either way.
+- The wrapper discards captured stderr on a successful attempt and captured
+  stdout on a terminal failure. Neither loss is currently observable, but both
+  are silent.
+- `1222c08` combines the retry narrowing with the unrelated alignment-command
+  repair. The plan asks for independently revertible fixes. It is already
+  published, so splitting it would rewrite public history; the coupling is
+  recorded here instead.
+- The alignment probe is prose-only. If it matters operationally beyond this
+  window, it needs a durable contract at the layer owning the published-
+  generation symlink, or it can regress unnoticed again.
+
 ## Step 2 — Clean up, only after convergence
 
 Make `dx-test` and the primary match `main`. Then remove the clean linked
