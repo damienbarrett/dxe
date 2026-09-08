@@ -451,3 +451,62 @@ An external review (`review.md`) checked this plan against the working tree. All
 5. **Final-review gate fails on a dirty tree** → **accepted.** The section-13 clean-tree requirement (`git status -uno --short`, excluding `README.md`) is now called out in both sections above, with guidance to scope around it during in-flight work.
 
 The review's Confirmed Observations also align with this plan: the repo still defaults to 25.11; the `nixos-26.05` / `release-26.05` branches exist; P3 is implemented and P5–P10 remain open. **Note (2026-07-04):** the base-image release-tag gate this paragraph originally described as unchanged has since been removed entirely — the base was replaced with the official, digest-pinned `nixos/nix` image, which does not carry a per-NixOS-release tag.
+
+# Backlog — unscheduled
+
+Items with no owner or phase yet. Each states the problem and the acceptance
+criteria; none has a design selected.
+
+## B1 — Back up the at-risk contents of `/persist` to the host
+
+**Why now.** As of 2026-09-07 every Apple container volume is excluded from Time
+Machine, including `dx-persist`. That was the right call for the host — a single
+16 GB `volume.img` whose mtime moves whenever the guest runs was re-copied whole
+on every hourly pass, and a file-level copy of a mounted ext4 image is not a
+dependable restore source anyway (see `docs/troubleshooting.md`, "`dx` hangs at
+Waiting for guest SSH on a loaded host"). But it leaves `/persist` with **no
+host-side backup at all**, and `dx-factory-reset` destroys it.
+
+**What to build.** A host-invoked, rsync-style incremental pull from `/persist`
+into a directory on the host, transferring only what changed since the last run.
+
+**The selection rule is the interesting part.** Do not copy everything. Copy only
+what could not be reconstructed from somewhere else:
+
+- Skip any file that is committed and unmodified in a git repository under
+  `/persist` *and* whose repository has that commit on a reachable remote — that
+  content is already safe, and it is the bulk of the bytes.
+- Keep uncommitted work: modified tracked files, staged changes, and untracked
+  files that are not ignored.
+- Keep files that live outside any git repository entirely (shell history,
+  credentials, caches worth keeping, scratch state).
+- Decide explicitly, and document, what happens to `.gitignore`d files — some are
+  pure build output, some are the only copy of a secret. Defaulting to "skip
+  ignored" is the safe-looking choice that silently drops the second category.
+- A repo with commits **not** pushed to any remote is not safe. Treat unpushed
+  commits as at-risk content, not as backed up.
+
+**Open questions.**
+
+- Transport. `rsync` is not currently in the guest toolchain, and adding it means
+  a `flake.nix` change plus a Nix rebuild; `tar` over `container exec` (the
+  `dx-get`/`dx-put` idiom) needs no new dependency but has no incremental mode.
+- Where the change detection lives. Asking git per repo is accurate but costs a
+  process per repo; a single `find -newer` pass against a timestamp is cheap and
+  wrong at the edges.
+- Whether this runs on demand, on `dx-stop-container`, or on a schedule.
+- Whether the destination should be excluded from Time Machine too. It should
+  not be — this backup exists precisely so that ordinary host backups can protect
+  guest state as normal files.
+
+**Acceptance criteria.**
+
+- A committed, pushed, unmodified file under `/persist/git/<repo>` is not
+  transferred; the same file with a local edit is.
+- A commit that exists only locally is treated as at-risk and its content is
+  captured.
+- A file outside any repository is always transferred.
+- A second consecutive run with no guest-side change transfers nothing.
+- Behaviour tests, per `constitution.md`: fake the guest boundary the way
+  `tests/lib/fake-tools.sh` does, and cover the ignored-file policy explicitly
+  rather than asserting on the command string.
