@@ -87,6 +87,8 @@ assert_file_contains_literal "$TROUBLESHOOTING" 'dx-bootstrap-essentials' "troub
 assert_file_contains_literal "$TROUBLESHOOTING" 'container volume delete dx-nix' "troubleshooting docs give the store-only recovery command"
 assert_file_contains "$TROUBLESHOOTING" 'dx-factory-reset' "troubleshooting docs warn which reset also destroys /persist"
 assert_file_contains "$TROUBLESHOOTING" 'dx-wait-ssh' "troubleshooting docs cover a healthy boot reported as a failure"
+assert_file_contains_literal "$TROUBLESHOOTING" 'banner exchange' "troubleshooting docs cover a host too loaded to complete the SSH banner exchange"
+assert_file_contains_literal "$TROUBLESHOOTING" 'tmutil addexclusion' "troubleshooting docs give the backup-exclusion fix for the container volumes"
 
 # The rule that would have caught both the ownership-laundering defect and the
 # read-only store defect, neither of which a stubbed boundary can observe.

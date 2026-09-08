@@ -77,6 +77,103 @@ container list -a | grep dx-host
 
 If the container is running and `dx-ssh` succeeds, the boot succeeded.
 
+### `dx` hangs at "Waiting for guest SSH" on a loaded host
+
+Symptom: `./bin/dx` prints `Waiting for guest SSH to become responsive...` and
+then dots for a very long time. `container logs dx-host` shows a *healthy*
+sshd — it is accepting publickey logins the whole time — alongside repeated
+`ssh_dispatch_run_fatal: Connection from ...: Broken pipe [preauth]`. A login
+you start yourself eventually succeeds, but takes a minute or more.
+
+The mechanism is always the same: the TCP connect is answered, then the guest is
+too starved to send its SSH banner inside `DX_SSH_CONNECT_TIMEOUT`, so every
+readiness probe dies with `Connection timed out during banner exchange` and the
+wait loop runs to its full budget (about 91 minutes by default). `dx-wait-ssh`
+now names this case in its timeout report instead of only printing the guest log
+tail, which shows a healthy sshd and so points away from the real cause.
+
+**Two different faults produce it, and the remedies are opposite.** Establish
+which one you have before acting -- both were seen in the same session on
+2026-09-07, and treating the second as the first wastes an hour:
+
+| | Starved host | Wedged guest |
+| --- | --- | --- |
+| Host load average | far above the core count | normal |
+| Host disk I/O | thousands of tps, 100+ MB/s | idle |
+| VM process CPU | high, alongside other busy processes | ~400-500% while the host is otherwise quiet |
+| Remedy | fix the host (below) | restart the container (below) |
+
+Confirm it from the host:
+
+```bash
+uptime                    # load average well above the core count
+iostat -d -w 1 -c 5       # sustained thousands of tps on disk0
+ps -Ao pcpu,pid,comm -r | head
+```
+
+The usual culprit is a backup or indexer walking the Apple `container` volume
+images. Each volume is a single sparse `volume.img` declared at 512 GB that the
+running guest mutates constantly, so a file-level backup re-reads tens of
+gigabytes on every pass and never converges:
+
+```bash
+du -sh ~/Library/Application\ Support/com.apple.container/volumes/*
+tmutil isexcluded ~/Library/Application\ Support/com.apple.container
+tmutil status            # a BackupPhase stuck for hours is its own problem
+```
+
+Exclude the container runtime state and the store cache. All of it is
+re-derivable, and none of it restores usefully from a file-level copy of a live
+disk image. `tmutil addexclusion` needs no `sudo` for paths you own:
+
+```bash
+C=~/Library/Application\ Support/com.apple.container
+tmutil addexclusion "$C"/snapshots "$C"/containers "$C"/content "$C"/kernels
+tmutil addexclusion "$C"/volumes/dx-nix "$C"/volumes/dx-bootstrap
+tmutil addexclusion "$C"/volumes/dx-test-nix "$C"/volumes/dx-test-persist \
+                    "$C"/volumes/dx-test-bootstrap
+tmutil addexclusion ~/.dx-cache
+tmutil isexcluded "$C"/volumes/dx-nix     # verify
+sudo tmutil stopbackup                    # only if a backup is wedged right now
+```
+
+`volumes/dx-persist` is the one that holds guest state, so it is the one worth
+thinking about rather than excluding reflexively. Note what including it costs:
+it is a *single* `volume.img` (16 GB of real blocks inside a 512 GB sparse
+declaration) whose mtime moves whenever the guest runs. Time Machine copies
+whole files, so an included `dx-persist` means re-copying the entire image on
+every hourly pass -- which is most of the I/O storm this section is about. A
+snapshot of a mounted ext4 image is also not a dependable restore source.
+
+Prefer backing up the contents: `./bin/dx-get` for files, or push repositories
+under `/persist` to a remote. To ride out a slow host without changing anything
+else, raise the probe budget for one run: `DX_SSH_CONNECT_TIMEOUT=60 ./bin/dx`.
+
+#### The other case: a wedged guest on a quiet host
+
+If the host is idle and the VM process alone is pinned near 400-500% with no
+disk I/O, the guest is burning its vCPUs on pure computation and cannot schedule
+anything new. The tell is that **`container exec` fails too** -- it does not go
+through sshd, so when both it and `ssh` time out, the fault is not SSH.
+
+There is no way in to diagnose it once it reaches that state; a restart is the
+remedy, and volumes survive it untouched:
+
+```bash
+./bin/dx-stop-container   # expect the graceful stop to time out; it escalates
+./bin/dx
+```
+
+Expect `container stop` *and* `container kill` to time out, leaving
+`dx-stop-container` to terminate the runtime process — that escalation is itself
+confirmation the guest was unresponsive rather than slow. `dx-nix` and
+`dx-persist` are unaffected, so nothing on disk is lost; in-guest session state
+(tmux, unsaved buffers) does not survive. Capture the culprit **before**
+restarting if you can: an already-authenticated `dx-ssh` session skips the
+banner exchange that is blocking new connections, so running
+`ps -eo pcpu,pid,etime,args --sort=-pcpu | head -20` in a terminal that is
+already attached will still work when nothing else does.
+
 ### Checking Bootstrap Logs
 After a factory reset, `./bin/dx` must repopulate the complete Nix store before
 SSH starts. The command waits for the full bounded retry period and prints a
