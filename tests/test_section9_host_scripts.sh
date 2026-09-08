@@ -208,6 +208,64 @@ else
 fi
 assert_file_contains_literal "$BASE_DIR/bin/dx-wait-ssh" 'print_container_logs 5' "bootstrap progress shows several recent guest log lines"
 assert_file_contains_literal "$BASE_DIR/bin/dx-wait-ssh" 'approximately' "bootstrap wait budget is rendered in human-readable minutes"
+
+# --- dx-wait-ssh readiness probe under host contention ---
+#
+# The readiness probe is the one SSH client in the repo that used to invent its
+# own connect budget: a hardcoded ConnectTimeout=2, against the configured
+# DX_SSH_CONNECT_TIMEOUT (default 15) that dx-ssh-common.sh and dx-tunnel.sh
+# both honour. OpenSSH's ConnectTimeout covers the banner exchange, not just
+# the TCP connect, so on a loaded host sshd answers the TCP connect and then
+# takes longer than 2s to send its banner. Every probe then dies with
+# "Connection timed out during banner exchange" (guest side: "Broken pipe
+# [preauth]"), and because the probe can never succeed, dx prints dots for its
+# full ~91-minute budget while sshd is healthy and accepting logins throughout.
+# Observed live 2026-09-07: host load average 55 on 10 cores, a real login took
+# 92s, and the 2s probe failed 100% of the time.
+if diag="$(
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_tool_write "$fake_dir" container 'exit 0'
+    fake_tool_write "$fake_dir" ssh 'for a in "$@"; do printf "%s\n" "$a"; done >> "$DX_FAKE_SSH_ARGV"; exit 0'
+    export PATH="$fake_dir:$PATH"
+    export DX_FAKE_SSH_ARGV="$fake_dir/argv"
+    : > "$DX_FAKE_SSH_ARGV"
+    : > "$fake_dir/ssh-key"
+    out="$(DX_SSH_KEY="$fake_dir/ssh-key" DX_SSH_CONNECT_TIMEOUT=17 "$BASE_DIR/bin/dx-wait-ssh" 2>&1)"
+    rc=$?
+    argv="$(cat "$DX_FAKE_SSH_ARGV")"
+    rm -rf "$fake_dir"
+    printf 'rc=%s argv=[%s] out=%s' "$rc" "$(printf '%s' "$argv" | tr '\n' ' ')" "$out"
+    [ "$rc" -eq 0 ] && printf '%s\n' "$argv" | grep -F -x -q 'ConnectTimeout=17'
+)"; then
+    test_pass "the readiness probe honours the configured DX_SSH_CONNECT_TIMEOUT"
+else
+    test_fail "the readiness probe honours the configured DX_SSH_CONNECT_TIMEOUT ($diag)"
+fi
+
+# A probe that never gets a banner is a *different* failure from one that is
+# refused outright: the first means sshd is alive but something is starved.
+# Timing out with nothing but dots and the tail of the guest log -- which shows
+# healthy sshd activity -- is what made the live incident take an hour to
+# recognise. Two faults produce it (a loaded host, and a guest wedged on its own
+# vCPUs while the host is idle) and they have opposite remedies, so the report
+# must name the banner-exchange failure and print the load average that tells
+# them apart.
+if diag="$(
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_tool_write "$fake_dir" container 'case "${1:-}" in list) printf "%s\n" dx-host ;; esac; exit 0'
+    fake_tool_write "$fake_dir" ssh 'echo "ssh: connect to host 127.0.0.1 port 2222: Connection timed out during banner exchange" >&2; exit 255'
+    export PATH="$fake_dir:$PATH"
+    : > "$fake_dir/ssh-key"
+    out="$(DX_SSH_KEY="$fake_dir/ssh-key" DX_SSH_WAIT_TIMEOUT=2 DX_SSH_POLL_INTERVAL=1 DX_SSH_PROGRESS_INTERVAL=1 "$BASE_DIR/bin/dx-wait-ssh" 2>&1)"
+    rc=$?
+    rm -rf "$fake_dir"
+    printf 'rc=%s out=%s' "$rc" "$out"
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches 'banner exchange' && printf '%s\n' "$out" | stdin_matches 'load'
+)"; then
+    test_pass "a probe that never completes the banner exchange is named as such, with the load average that discriminates the two causes"
+else
+    test_fail "a probe that never completes the banner exchange is named as such, with the load average that discriminates the two causes ($diag)"
+fi
 assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '-- "$DX_BOOTSTRAP_PATH"' "bootstrap path crosses the launcher boundary positionally"
 assert_file_contains_literal "$BASE_DIR/bin/dx-migrate-persist" "-- \"\$legacy_volume\" \"\$sentinel\"" "migration values cross fixed command boundaries positionally"
 

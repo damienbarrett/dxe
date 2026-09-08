@@ -24,9 +24,38 @@ SSH_CHECK_OPTS=(
     "-o" "StrictHostKeyChecking=no"
     "-o" "UserKnownHostsFile=/dev/null"
     "-o" "IdentitiesOnly=yes"
-    "-o" "ConnectTimeout=2"
+    "-o" "ConnectTimeout=$DX_SSH_CONNECT_TIMEOUT"
     "-o" "BatchMode=yes"
 )
+
+# The last probe's stderr, so a timeout can say *why* the probe never
+# succeeded. Rewritten on every attempt, so it always holds the final failure.
+PROBE_STDERR="$(mktemp "${TMPDIR:-/tmp}/dx-wait-ssh-probe.XXXXXX")"
+trap 'rm -f "$PROBE_STDERR"' EXIT
+
+# A refused connection means sshd is not listening yet -- the ordinary
+# bootstrap case, and what the guest log tail below explains well. A connect or
+# banner-exchange timeout is the opposite situation: the TCP connect *was*
+# answered, and sshd then failed to finish the banner exchange inside the
+# budget. Something is starved, and the guest log is actively misleading here
+# because it shows sshd happily accepting other logins. Naming that is the
+# point; the log tail alone cannot.
+#
+# Deliberately stops short of naming the cause. Two faults produce this, with
+# opposite remedies -- a host too loaded to schedule the guest, and a guest
+# wedged on its own vCPUs while the host is idle -- and this script cannot tell
+# them apart from inside a failed probe. Printing the load average hands over
+# the one number that discriminates them rather than guessing.
+print_probe_diagnosis() {
+    grep -q -e 'banner exchange' -e 'Connection timed out' -e 'Timeout, server' "$PROBE_STDERR" 2>/dev/null || return 0
+    echo "The guest answered the TCP connect but never finished the SSH banner exchange within ${DX_SSH_CONNECT_TIMEOUT}s."
+    echo "sshd is most likely healthy and starved, not dead, so rebuilding is the wrong first move."
+    printf 'Host load average now: %s\n' "$(uptime 2>/dev/null | sed 's/.*[Ll]oad average[s]*: *//' || true)"
+    echo "If that load is high, the host is the problem; free it up or retry with a larger DX_SSH_CONNECT_TIMEOUT."
+    echo "If the host is idle, the guest is wedged on its own vCPUs -- confirm with 'container exec $DX_CONTAINER_NAME true',"
+    echo "which bypasses sshd entirely; if that hangs too, restart the container. See docs/troubleshooting.md."
+    printf 'Last probe error: %s\n' "$(tail -n 1 "$PROBE_STDERR" 2>/dev/null || true)"
+}
 
 print_container_logs() {
     local lines="$1"
@@ -41,7 +70,7 @@ print_container_logs() {
 # ssh probe -- rather than only the time we ourselves spent sleeping.
 SECONDS=0
 NEXT_PROGRESS="$PROGRESS_INTERVAL"
-while ! ssh "${SSH_CHECK_OPTS[@]}" dx@127.0.0.1 "bash -lc 'true'" 2>/dev/null; do
+while ! ssh "${SSH_CHECK_OPTS[@]}" dx@127.0.0.1 "bash -lc 'true'" 2>"$PROBE_STDERR"; do
     ELAPSED=$SECONDS
     if container_exists "$DX_CONTAINER_NAME" && ! container_is_running "$DX_CONTAINER_NAME"; then
         echo "Error: Container $DX_CONTAINER_NAME stopped before SSH became responsive." >&2
@@ -51,6 +80,7 @@ while ! ssh "${SSH_CHECK_OPTS[@]}" dx@127.0.0.1 "bash -lc 'true'" 2>/dev/null; d
     fi
     if [ "$ELAPSED" -ge "$WAIT_TIMEOUT" ]; then
         echo "Error: Timed out after ${WAIT_TIMEOUT}s waiting for guest SSH service to become responsive." >&2
+        print_probe_diagnosis >&2
         if container_exists "$DX_CONTAINER_NAME"; then
             echo "Last 80 container log lines:" >&2
             print_container_logs 80 >&2
