@@ -3,9 +3,9 @@
 > **Scope.** This document covers two independent workstreams against the same repo:
 >
 > - **Part A — Release upgrade:** moving the dev container from NixOS 25.11 to 26.05 (the bulk of this plan).
-> - **Part B — Code-review fixes:** eight standalone correctness/quality fixes (originally `plan-3.md`…`plan-10.md`; there were no `plan-1`/`plan-2`) against the *current* 25.11 codebase. They are independent of the version bump and are sequenced into **Phase 1** so they land before promotion.
+> - **Part B — Code-review fixes:** eight standalone correctness/quality fixes (originally `plan-3.md`…`plan-10.md`; there were no `plan-1`/`plan-2`), independent of the version bump. Six have landed (P3–P6, P8–P9, one of them dropped as not-a-bug); two remain open (P7, P10). See [Consolidated Code-Review Fixes](#consolidated-code-review-fixes).
 >
-> Every fix was re-verified against the working tree on 2026-06-04 and again on 2026-06-12 (file:line references below are current as of the latter). One (P3) is already implemented, one (P4) was dropped after external review, and the rest (P5–P10) remain open. See the [Codebase Assessment](#codebase-assessment-2026-06-04) for the full delta, including two inaccuracies found in the original fix files.
+> A separate, unscheduled backlog item (B1) is recorded at the end of this document.
 
 **Contents**
 
@@ -348,50 +348,36 @@ The commands each phase gate depends on. Phases own *when* to run them (see [Pha
 
 ## Consolidated Code-Review Fixes
 
-These eight items came from a code review of the current `dx-nixos-25.11` codebase (originally `plan-3.md`…`plan-10.md`). They are folded into **Phase 1** because they fix code that exists today and carries forward unchanged into 26.05. All file/line references were re-verified against the working tree on 2026-06-04. Paths shown as `…/` are under the active container context dir, `container/aarch64-darwin-apple-container-dx-nixos-25.11/`. New test assertions should use the shared path helpers from [Test Harness Changes](#test-harness-changes) (`$BOOTSTRAP`, `$CONTAINERFILE`, `$FLAKE_NIX`, `$FLAKE_LOCK`, `$SHELL_NIX`) rather than re-deriving literal paths.
+Eight items came from a 2026-06-04 code review of the codebase (originally
+`plan-3.md`…`plan-10.md`; there was no `plan-1`/`plan-2`). Six have landed —
+their implementation and history remain in Git; see `plans.md`:
 
-**Decisions (2026-06-04; updated 2026-06-05 after external review):**
+- **P3** — `dx-sync-bootstrap` post-loop ready guard + configurable wait
+  timeout. Already implemented at the time of review.
+- **P4** — dropped after external review: the partial-hook-env "bug" in
+  `load_palette` is intentional race-avoidance behavior, not a defect.
+- **P5** — `dx_get_host_timezone` warns and defaults to `UTC` instead of
+  returning empty (`bin/lib/dx-host-util.sh:210`).
+- **P6** — `configure_timezone` resolves zoneinfo from the store and runs
+  after tool verification (`container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/system.sh:98`).
+- **P8** — dead `start_ssh` removed; no `start_ssh` remains anywhere.
+- **P9** — `DBUS_SESSION_BUS_ADDRESS` passed through the environment, not
+  interpolated into a command string
+  (`container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh:219`).
 
-- **Delivery — deferred.** Kept as plan only for now; whether to ship P5–P10 as a standalone PR on 25.11 or bundle them into the 26.05 upgrade is decided later. No implementation yet.
-- **P4 — dropped** after external review: the partial-hook-env "bug" is intentional race-avoidance behavior (see the P4 entry).
-- **P10 — wire it through, canonical default `64G`** (Option A; alternatives recorded in the P10 entry).
+Two items remain open:
 
-| ID  | Fix | Primary file | Severity | Status (2026-06-04) |
-|-----|-----|--------------|----------|---------------------|
-| P3  | `dx-sync-bootstrap` post-loop ready guard + configurable wait timeout | `bin/dx-sync-bootstrap` | Medium-High | ✅ Already implemented — no action |
-| P4  | ~~`load_palette` fall back to `tinty current` on partial hook env~~ | `…/scripts/dx-theme-write-tool-themes.sh:42` | Medium | ❌ Dropped — behavior is intentional (see entry) |
-| P5  | `dx_get_host_timezone` returns `UTC` + warns instead of an empty string | `bin/dx-lib.sh:322` | Medium | ⛔ Open |
-| P6  | `configure_timezone` resolves zoneinfo from the store and runs after tool verify | `…/bootstrap.sh:129` | Medium | ⛔ Open (step 3 corrected) |
-| P7  | `setup_nix_volume` uses exact FSTYPE match, not substring grep | `…/bootstrap.sh:43` | Low | ⛔ Open |
-| P8  | Remove dead `start_ssh` function | `…/bootstrap.sh:448` | Low | ⛔ Open |
-| P9  | D-Bus address passed via environment, not interpolated into the command string | `…/bootstrap.sh:379` | Low | ⛔ Open (`dx-ai.sh` part already fixed) |
-| P10 | Honour `DX_NIX_DISK_SIZE` (or remove it) and reconcile the 20G/64G mismatch | `bin/dx-lib.sh:40`, `…/bootstrap.sh:77` | Low | ⛔ Open |
+| ID  | Fix | Primary file | Severity |
+|-----|-----|--------------|----------|
+| P7  | Exact-match the mounted filesystem type instead of an unanchored substring grep | `container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/base-and-storage.sh:629` (`prepare_nix_volume_impl`) | Low |
+| P10 | Honour `DX_NIX_DISK_SIZE` end-to-end and reconcile the 20G/64G mismatch | `bin/lib/dx-config.sh:41`, `docs/configuration.md:27`, `container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/base-and-storage.sh:669`, `bin/dx-create-container:45` | Low |
 
-### P3 — `dx-sync-bootstrap` post-loop guard
+### P7 — unanchored `findmnt` match in `prepare_nix_volume_impl`
 
-**Already implemented**, recorded only to close it out. `bin/dx-sync-bootstrap:44-50` re-runs the marker check after the wait loop and exits non-zero with `entrypoint never became ready after ${DX_BOOTSTRAP_WAIT_TIMEOUT}s` plus a `container logs` hint. The loop is driven by `DX_BOOTSTRAP_WAIT_TIMEOUT` (`bin/dx-lib.sh:29`, default 30, used at `dx-sync-bootstrap:35`). Both test assertions exist (`tests/test_section9_host_scripts.sh:96` for the timeout var, `:126` for the `never became ready` message). No further work; `plan-3.md` is obsolete.
-
-### P4 — `load_palette` partial-env behavior (dropped after review)
-
-**Re-evaluated and dropped.** `plan-4.md` treated the zero-arg `load_palette_from_env || return 0` path — silent exit with no write when the hook palette env is present but incomplete — as a bug, and proposed falling back to `tinty current`. The external review (2026-06-05) correctly flagged this as a conflict: that fallback is **deliberately** avoided. `tests/test_section14_tinty_theming.sh:256-257` asserts that partial hook env must *not* fall back to `tinty current`, because re-querying mid-switch reintroduces the switch-time race the script is built to avoid (design comment at `:197-211`; TOCTOU guard at `:211` and `:473-492`). Partial hook env is also not a real Tinty state — all 48 slots are set together — so the "stale theme files" concern does not arise in normal operation, and brief staleness is the intended race-free trade-off.
-
-**No code change; the original `plan-4.md` fix is rejected.** If the silent partial-env exit were ever deemed worth surfacing, the only safe option is a `>&2` diagnostic that still neither writes nor re-queries `tinty current` — not currently warranted.
-
-### P5 — `dx_get_host_timezone` empty result
-
-`bin/dx-lib.sh:322-324` is still the one-liner `readlink /etc/localtime | sed 's#^.*/zoneinfo/##'`, which yields an empty string (silently baked into `HOST_TZ=`) when `/etc/localtime` is absent, a regular file, or lacks `zoneinfo/`. Fix: add a `systemsetup -gettimezone` fallback and an `/etc/timezone` fallback, then default to `UTC` with a stderr warning rather than empty. Add a use-site guard in `bin/dx-create-container` that warns if `HOST_TZ` is empty before `container create`. Tests: assert a non-empty return in `tests/test_section9_host_scripts.sh`; add a commented `HOST_TZ` doc line to `tests/profiles/default.env` (it currently has none). Related: P6.
-
-### P6 — `configure_timezone` ordering / profile dependency
-
-`…/bootstrap.sh:129-144` still asks the dx login shell for `TZDIR` (`run_as_dx 'printf %s "${TZDIR:-}"'` at `:133`) and is called at `bootstrap.sh:463` — after `configure_guest` but before `verify_guest_tools`. (It has since gained a `~/.nix-profile/share/zoneinfo` fallback when `TZDIR` comes back empty, which softens but does not remove the shell-init timing dependency; the store-direct primary lookup and the reorder are still open.) On a fresh boot the dx profile may not be fully settled, so `TZDIR` comes back empty and the guest silently stays UTC. Fix: resolve the zoneinfo directory directly, in order — nix store (`find /nix/store … zoneinfo | grep tzdata`) → `~/.nix-profile/share/zoneinfo/$HOST_TZ` → `run_as_dx TZDIR` as last resort — and move the call to **after** `verify_guest_tools` so the profile is proven available first.
-
-**Correction to plan-6 step 3.** The original file said "ensure `tzdata` is in `home/tools.nix`." That is inaccurate: `tzdata` is already an unconditional entry in `flake.nix:67` (`dxPackages`), and `home/shell.nix` already exports `TZDIR=${pkgs.tzdata}/share/zoneinfo` (lines 127 and 146). The package is present — the bug is purely shell-init timing, which the store-direct lookup plus the reorder eliminate. So **drop** the "add to `tools.nix`" step and instead just assert `tzdata` stays in `flake.nix` `dxPackages`. Related: P5.
-
-**Test update (required; from the 2026-06-05 review).** `tests/test_section3_bootstrap.sh:83` asserts `run_as_dx 'printf %s "${TZDIR:-}"'` as bootstrap's timezone lookup. Once P6 demotes that to a last-resort fallback (store-direct lookup becomes primary), update this assertion to check the new store-direct resolution; keep a softened TZDIR assertion only if the `run_as_dx TZDIR` fallback line is retained. The `shell.nix` TZDIR assertions at `:85,87` stay — they corroborate that `tzdata` is already wired. The sshd-ordering assertion at `:70-78` is unaffected by moving `configure_timezone` after `verify_guest_tools`.
-
-### P7 — `setup_nix_volume` unanchored `findmnt`
-
-`…/bootstrap.sh:43` still uses `findmnt -n -o TARGET,FSTYPE /nix | grep -q "$fs_type"`, an unanchored substring match. Recommended fix is an exact string compare, which also lets us warn on an unexpected existing type before re-formatting:
+`container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/base-and-storage.sh:629`
+still uses `findmnt -n -o TARGET,FSTYPE /nix | grep -q "$fs_type"`, an
+unanchored substring match. Recommended fix is an exact string compare, which
+also lets us warn on an unexpected existing type before re-formatting:
 
 ```bash
 local current_fstype
@@ -404,53 +390,51 @@ elif [ -n "$current_fstype" ]; then
 fi
 ```
 
-Test: `assert_file_not_contains "$BOOTSTRAP" 'grep -q "$fs_type"'` in the bootstrap section.
+Test: `assert_file_not_contains "$BOOTSTRAP" 'grep -q "$fs_type"'` in the
+bootstrap section.
 
-### P8 — dead `start_ssh`
-
-`start_ssh()` is defined at `…/bootstrap.sh:448-453` and never called — the main section `exec`s sshd directly at `:467-468`. Fix: delete the function (the `exec "$SSHD_BIN" -D -e -p 2222` block is authoritative). Test: `assert_file_not_contains "$BOOTSTRAP" "^start_ssh()"` in `tests/test_section9_host_scripts.sh`; `bash -n bootstrap.sh` must still pass.
-
-**Test update (required; from the 2026-06-05 review).** `tests/test_section3_bootstrap.sh:36-40` asserts bootstrap "checks if sshd is already running" via `grep -q 'sshd.*running\|pgrep.*sshd\|ps.*sshd'`. That pattern matches *only* the dead `start_ssh` body (`pgrep -x sshd`), so deleting the function makes the assertion fail. Remove that test — the authoritative `exec sshd` entrypoint performs no pre-start running-check and needs none (sshd is the container's main process); the assertion currently validates dead behavior.
-
-### P9 — D-Bus address quoting
-
-`…/bootstrap.sh:379` interpolates the bus address into a `run_as_dx` command string (`DBUS_SESSION_BUS_ADDRESS='$bus_addr' echo -n '' | gnome-keyring-daemon …`), which `run_as_dx` then re-evaluates via `bash -l -c`. With an unexpected address (e.g. containing spaces) this splits mid-token and fails silently (`2>/dev/null`). Fix: pass the address through the environment — have `run_as_dx` forward `DBUS_SESSION_BUS_ADDRESS` — or `printf '%q'` it before interpolation; add a warning when `bus_addr` is empty. The `scripts/dx-ai.sh` half of this fix is **already done**: the agy persistence work rewrote its keyring block to validate the bus socket (`dbus_address_is_live`) and `export` the address rather than interpolating it into a command string. Only the `bootstrap.sh` site remains. `bash -n` after the change.
+**Subject correction.** Earlier drafts of this item named `setup_nix_volume`.
+`setup_nix_volume` is now a timing wrapper around `setup_nix_volume_impl`
+(`base-and-storage.sh:707-721`) with no production callers; the live
+unanchored check lives in `prepare_nix_volume_impl` at `:629`, above. Fix
+belongs there, not in the wrapper. `refactor-v2-final.md` Phase 2 separately
+proposes deleting `setup_nix_volume`/`setup_nix_volume_impl` outright as dead
+code (disposition A2) — that would remove the wrapper this item used to name
+without touching the live defect; see `plans.md` for the recorded conflict.
 
 ### P10 — `DX_NIX_DISK_SIZE` ignored + 20G/64G mismatch
 
-`bin/dx-lib.sh:40` exports `DX_NIX_DISK_SIZE="${DX_NIX_DISK_SIZE:-20G}"`, but `…/bootstrap.sh:77` hardcodes `truncate -s 64G`, and `bin/dx-create-container` (`CREATE_FLAGS`, from line 31) does **not** forward the variable into the container. So the variable is inert *and* its advertised default (20G) does not even match real behaviour (64G). **Chosen approach — Option A, wire it through** (decided 2026-06-04):
+`bin/lib/dx-config.sh:41` registers the default as `20G`, and
+`docs/configuration.md:27` documents `20G`, but
+`container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/base-and-storage.sh:669`
+hardcodes `truncate -s 64G`, and `bin/dx-create-container` (`CREATE_FLAGS`,
+volumes from line 45) does **not** forward the variable into the container.
+So the variable is inert *and* its registered default (`20G`) does not match
+real behaviour (`64G`). **Chosen approach (2026-06-04) — Option A, wire it
+through, canonical default `64G`:**
 
-- Add `-e "DX_NIX_DISK_SIZE=$DX_NIX_DISK_SIZE"` to `CREATE_FLAGS` in `bin/dx-create-container`.
-- In `setup_nix_volume`, replace `64G` with `"${DX_NIX_DISK_SIZE:-64G}"` (and reflect the size in the echo).
-- **Reconcile the default to a single value:** set `dx-lib.sh` to `:-64G` so the documented default matches today's real allocation, and document `64G` in `tests/profiles/default.env`.
-- `DX_NIX_DISK` (`dx-lib.sh:39`) remains unused in the normal flow; keep it only if `dx-nix-disk` is still intended, otherwise drop both `DX_NIX_DISK*` exports in a follow-up.
-- Tests: `assert_file_contains "$BIN_DIR/dx-create-container" "DX_NIX_DISK_SIZE"` and `assert_file_not_contains "$BOOTSTRAP" 'truncate -s 64G'`.
+- Add `-e "DX_NIX_DISK_SIZE=$DX_NIX_DISK_SIZE"` to `CREATE_FLAGS` in
+  `bin/dx-create-container`.
+- In `prepare_nix_volume_impl`, replace `64G` with
+  `"${DX_NIX_DISK_SIZE:-64G}"` (and reflect the size in the echo).
+- **Reconcile the default to a single value:** set the registry
+  (`bin/lib/dx-config.sh`) to `:-64G` so the documented default matches
+  today's real allocation, and update `docs/configuration.md` to match.
+- `DX_NIX_DISK` remains unused in the normal flow; keep it only if
+  `dx-nix-disk` is still intended, otherwise drop both `DX_NIX_DISK*` exports
+  in a follow-up.
+- Tests: `assert_file_contains "$BIN_DIR/dx-create-container" "DX_NIX_DISK_SIZE"`
+  and `assert_file_not_contains "$BOOTSTRAP" 'truncate -s 64G'`.
 
-Alternatives considered and rejected: **Option B** — delete the `DX_NIX_DISK*` exports entirely (less surface, but discards a usable knob); **Option C** — document the fixed-64G limitation only (leaves the variable inert). Option A was chosen because it makes the already-exported, user-settable variable behave as documented.
+Alternatives considered and rejected: **Option B** — delete the
+`DX_NIX_DISK*` exports entirely (less surface, but discards a usable knob);
+**Option C** — document the fixed-64G limitation only (leaves the variable
+inert). Option A was chosen because it makes the already-exported,
+user-settable variable behave as documented.
 
-### Codebase Assessment (2026-06-04)
-
-What the verification against the working tree turned up:
-
-- **P3 is already fully implemented** — code plus both test assertions. `plan-3.md` is obsolete; the consolidated table records it as done.
-- **P5–P10 remain open** and were each confirmed present at the cited file:line. **P4 was dropped** after the 2026-06-05 external review — its partial-hook-env fix conflicts with the intentional race-avoidance behavior asserted by `test_section14:256-257`.
-- **plan-6 step 3 was wrong:** `tzdata` lives in `flake.nix` `dxPackages` (line 67) and is wired via `home/shell.nix` `TZDIR` (lines 127, 146), not `home/tools.nix`. The merged P6 corrects this.
-- **P10 carries a latent inconsistency** between the documented `20G` default and the hardcoded `64G`. The merged P10 resolves it to a single `64G` default.
-- **`tests/profiles/default.env` has no `HOST_TZ` or `DX_NIX_DISK_SIZE` entries today** (and still references `25.11`), so the P5/P10 doc steps are additions, not edits; the `25.11` reference is handled by the upgrade rename.
-- **Phase 1 harness work is done and committed (2026-06-12):** `tests/test_helpers.sh` defines the shared `CONTAINER_DIR/FLAKE_NIX/FLAKE_LOCK/NIXVIM_NIX/BOOTSTRAP/CONTAINERFILE/SHELL_NIX` paths, `tests/test_section13_final_review.sh` no longer references `todo.txt`, live helpers are profile-aware, and the suite has since grown sections 17 (dx-ai runtime) and 18 (mount-git). Land P5–P10 on top of this rather than re-deriving paths.
-- **Line numbers in the original fix files have drifted slightly** (e.g. P10's `truncate` is now `bootstrap.sh:77`, not the `:76` cited in `plan-10.md`); the references in this section are current.
-
-### External Review Reconciliation (2026-06-05)
-
-An external review (`review.md`) checked this plan against the working tree. All five findings were verified against the code and accepted:
-
-1. **P4 conflicts with intended behavior** → **accepted; P4 dropped.** The proposed `tinty current` fallback is exactly what `test_section14:256-257` forbids (switch-time race). See the P4 entry.
-2. **P6/P8 need test updates** → **accepted.** Added "Test update (required)" steps to P6 (`test_section3:83` TZDIR assertion) and P8 (`test_section3:36-40` pgrep-sshd assertion, which only the dead `start_ssh` satisfies).
-3. **Isolated profile missing expected-release env** → **accepted.** Added `DX_EXPECTED_NIXOS_RELEASE=26.05` / `DX_EXPECTED_NIXOS_BRANCH=nixos-26.05` to the `nixos-2605.env` block; otherwise `test_helpers.sh:28-29` runs 25.11 assertions against the 26.05 guest.
-4. **`--skip-integration` wording fuzzy + stale `--help`** → **accepted.** Documented the real runner surface (skips only 11–12; section 17 runs; help says `0-16`) in [Test Harness Changes](#test-harness-changes) and the [Command Reference](#command-reference).
-5. **Final-review gate fails on a dirty tree** → **accepted.** The section-13 clean-tree requirement (`git status -uno --short`, excluding `README.md`) is now called out in both sections above, with guidance to scope around it during in-flight work.
-
-The review's Confirmed Observations also align with this plan: the repo still defaults to 25.11; the `nixos-26.05` / `release-26.05` branches exist; P3 is implemented and P5–P10 remain open. **Note (2026-07-04):** the base-image release-tag gate this paragraph originally described as unchanged has since been removed entirely — the base was replaced with the official, digest-pinned `nixos/nix` image, which does not carry a per-NixOS-release tag.
+**This decision now conflicts with the registry's `20G` default**, which was
+set after this decision and is the newer of the two — P10 cannot be
+implemented without picking one; see `plans.md` for the recorded conflict.
 
 # Backlog — unscheduled
 
