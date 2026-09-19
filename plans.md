@@ -24,8 +24,7 @@ Every plan document below is listed under exactly one of these.
   already present. The exact filesystem-type check (P7) and wiring the
   documented `DX_NIX_DISK_SIZE` setting through container creation (P10) remain
   open. Backlog B1, an incremental host backup for at-risk `/persist` content,
-  is specified but not implemented. The plan's older status table still lists
-  some now-landed fixes as open.
+  is specified but not implemented.
 
   **Recorded conflict — P7 vs. `refactor-v2-final.md` Phase 2.** P7 fixes an
   unanchored FSTYPE match in `prepare_nix_volume_impl`
@@ -70,8 +69,8 @@ Every plan document below is listed under exactly one of these.
 - [`declarative-nix-plan-a.md`](declarative-nix-plan-a.md) — Audit proposing
   incremental Bash-to-Nix/Home Manager conversions. It puts Nix evaluation and
   coverage gates first, followed by smaller configuration conversions and the
-  larger Herdr TOML merger. This file is currently untracked in Git; its
-  recommendations have not been adopted as a committed implementation plan.
+  larger Herdr TOML merger. It is tracked in Git; its recommendations have not
+  been adopted as an implementation plan.
 
   **Recorded conflict — #12 vs. `refactor-v2-final.md` A1/Phase 4.** #12
   proposes replacing the coverage-ratchet ratio with a ceiling on uncovered
