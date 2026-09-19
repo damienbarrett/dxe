@@ -421,6 +421,11 @@ mkdir -p /var/lib/dx-nix-raw /nix
 # real-UID behaviour test in test_nix_store_import.sh.
 nix_seed_volume() { :; }
 nix_store_import_registered() { :; }
+# P10: DX_NIX_DISK_SIZE must reach the truncate call that creates the sparse
+# Nix store image, defaulting to 64G. These truncate stubs are recording
+# stubs, not no-ops: they capture the SIZE argument actually used so the
+# assertion proves the value in effect, not merely that truncate ran.
+p10_truncate_default_log="$fixture/p10-truncate-default.log"
 (
     grep() {
         if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 1; fi
@@ -428,7 +433,7 @@ nix_store_import_registered() { :; }
         command grep "$@"
     }
     findmnt() { return 1; }
-    truncate() { : > "${3:?}"; }
+    truncate() { printf '%s\n' "$2" >> "$p10_truncate_default_log"; : > "${3:?}"; }
     mkfs.ext4() { :; }
     mount() { :; }
     umount() { :; }
@@ -438,7 +443,9 @@ nix_store_import_registered() { :; }
     mkdir -p /mnt/tmp-nix/store
     setup_nix_volume
 )
+[ "$(cat "$p10_truncate_default_log" 2>/dev/null)" = 64G ] || { echo "Error: prepare_nix_volume_impl's default sparse-image size was '$(cat "$p10_truncate_default_log" 2>/dev/null)', expected 64G." >&2; exit 1; }
 rm -f /var/lib/dx-nix-raw/nix-store.btrfs
+p10_truncate_explicit_log="$fixture/p10-truncate-explicit.log"
 (
     grep() {
         if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi
@@ -446,14 +453,15 @@ rm -f /var/lib/dx-nix-raw/nix-store.btrfs
         command grep "$@"
     }
     findmnt() { return 1; }
-    truncate() { : > "${3:?}"; }
+    truncate() { printf '%s\n' "$2" >> "$p10_truncate_explicit_log"; : > "${3:?}"; }
     mkfs.btrfs() { :; }
     mount() { :; }
     umount() { :; }
     cp() { :; }
     blkid() { return 0; }
-    setup_nix_volume
+    DX_NIX_DISK_SIZE=200G setup_nix_volume
 )
+[ "$(cat "$p10_truncate_explicit_log" 2>/dev/null)" = 200G ] || { echo "Error: prepare_nix_volume_impl ignored an explicit DX_NIX_DISK_SIZE=200G; truncated at '$(cat "$p10_truncate_explicit_log" 2>/dev/null)'." >&2; exit 1; }
 # The block-device path is driven by shadowing is_block_device rather than by
 # creating a real device node. mknod for a block device needs CAP_MKNOD, which a
 # rootless container runner does not have, so the previous `if mknod ...` form

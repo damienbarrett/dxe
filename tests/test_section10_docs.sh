@@ -88,7 +88,7 @@ source "$BASE_DIR/bin/lib/dx-config.sh"
 for name in $DXE_CONFIG_FIELDS; do
     if grep -Fq -- "$name" "$CONFIG_DOC"; then test_pass "$name is generated/validated from the config registry"; else test_fail "$name is generated/validated from the config registry"; fi
 done
-for pair in 'DX_CONTAINER_NAME|dx-host' 'DX_IMAGE|dx-nixos-26.05' 'DX_SSH_PORT|2222' 'DX_NIX_VOLUME|dx-nix' 'DX_PERSIST_VOLUME|dx-persist' 'DX_BOOTSTRAP_VOLUME|dx-bootstrap' 'DX_CONTAINER_MEMORY|12G' 'DX_CONTAINER_CPUS|4'; do
+for pair in 'DX_CONTAINER_NAME|dx-host' 'DX_IMAGE|dx-nixos-26.05' 'DX_SSH_PORT|2222' 'DX_NIX_VOLUME|dx-nix' 'DX_NIX_DISK_SIZE|64G' 'DX_PERSIST_VOLUME|dx-persist' 'DX_BOOTSTRAP_VOLUME|dx-bootstrap' 'DX_CONTAINER_MEMORY|12G' 'DX_CONTAINER_CPUS|4'; do
     name=${pair%%|*}; value=${pair#*|}
     if grep -F -- "$name" "$CONFIG_DOC" | stdin_matches -F -- "$value"; then test_pass "$name documented default matches registry"; else test_fail "$name documented default matches registry"; fi
 done

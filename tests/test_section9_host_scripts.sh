@@ -267,6 +267,43 @@ else
     test_fail "a probe that never completes the banner exchange is named as such, with the load average that discriminates the two causes ($diag)"
 fi
 assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '-- "$DX_BOOTSTRAP_PATH"' "bootstrap path crosses the launcher boundary positionally"
+
+# --- P10: DX_NIX_DISK_SIZE reaches the guest via dx-create-container (plan.md) ---
+#
+# dx-create-container already forwards DX_GUEST_ACTIVATION_TIMEOUT and its
+# siblings into the guest with -e "VAR=$VAR" in CREATE_FLAGS; DX_NIX_DISK_SIZE
+# is the same shape of config-registry variable but was never added to that
+# list, so an explicitly configured disk size could never reach the guest
+# bootstrap's `truncate`. Drive the real script end to end with a fake
+# `container` on PATH and read back the actual `container create` invocation,
+# rather than grepping the script text for the variable's name.
+if diag="$(
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_tool_write "$fake_dir" container 'case "$1" in
+    list) exit 0 ;;
+    image) [ "${2:-}" = list ] && printf "%s\n" "$DX_IMAGE"; exit 0 ;;
+    create) printf "%s\n" "$@" >> "$DX_FAKE_CREATE_ARGV"; exit 0 ;;
+    *) exit 0 ;;
+esac'
+    export PATH="$fake_dir:$PATH"
+    export DX_FAKE_CREATE_ARGV="$fake_dir/create-argv.log"
+    explicit_home="$fake_dir/home-explicit"; mkdir -p "$explicit_home"
+    : > "$DX_FAKE_CREATE_ARGV"
+    HOME="$explicit_home" DX_CONTAINER_NAME=dxe-p10-explicit DX_NIX_DISK_SIZE=200G "$BASE_DIR/bin/dx-create-container" >/dev/null 2>&1
+    explicit_argv="$(cat "$DX_FAKE_CREATE_ARGV")"
+    default_home="$fake_dir/home-default"; mkdir -p "$default_home"
+    : > "$DX_FAKE_CREATE_ARGV"
+    HOME="$default_home" DX_CONTAINER_NAME=dxe-p10-default "$BASE_DIR/bin/dx-create-container" >/dev/null 2>&1
+    default_argv="$(cat "$DX_FAKE_CREATE_ARGV")"
+    rm -rf "$fake_dir"
+    printf 'explicit=[%s] default=[%s]' "$(printf '%s' "$explicit_argv" | tr '\n' ' ')" "$(printf '%s' "$default_argv" | tr '\n' ' ')"
+    printf '%s\n' "$explicit_argv" | stdin_matches -F -- 'DX_NIX_DISK_SIZE=200G' \
+        && printf '%s\n' "$default_argv" | stdin_matches -F -- 'DX_NIX_DISK_SIZE=64G'
+)"; then
+    test_pass "dx-create-container forwards DX_NIX_DISK_SIZE into the guest, defaulting to 64G"
+else
+    test_fail "dx-create-container forwards DX_NIX_DISK_SIZE into the guest, defaulting to 64G ($diag)"
+fi
 assert_file_contains_literal "$BASE_DIR/bin/dx-migrate-persist" "-- \"\$legacy_volume\" \"\$sentinel\"" "migration values cross fixed command boundaries positionally"
 
 # --- dx-herdr contracts ---

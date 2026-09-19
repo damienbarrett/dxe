@@ -673,8 +673,9 @@ prepare_nix_volume_impl() {
         echo "Detected directory-style mount at $raw_path. Using sparse image file."
         dev="$raw_path/nix-store.$fs_type"
         if [ ! -f "$dev" ]; then
-            echo "Creating 64G sparse image file at $dev..."
-            truncate -s 64G "$dev"
+            local disk_size="${DX_NIX_DISK_SIZE:-64G}"
+            echo "Creating $disk_size sparse image file at $dev..."
+            truncate -s "$disk_size" "$dev"
             if [ "$fs_type" == "btrfs" ]; then
                 mkfs.btrfs -f -L dx-nix -m single -d single "$dev"
             else

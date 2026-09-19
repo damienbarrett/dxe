@@ -38,7 +38,7 @@ dx_config_default() {
         DX_NIX_VOLUME) printf '%s' dx-nix ;;
         DX_NIX_MOUNT) printf '%s' /nix ;;
         DX_NIX_DISK) printf '%s/.dx-cache/nix-store.img' "${HOME:?}" ;;
-        DX_NIX_DISK_SIZE) printf '%s' 20G ;;
+        DX_NIX_DISK_SIZE) printf '%s' 64G ;;
         DX_PERSIST_VOLUME) printf '%s' dx-persist ;;
         DX_GIT_MOUNT_SOURCE) printf '%s' '' ;;
         DX_GIT_MOUNT_TARGET) printf '%s' /workspace ;;

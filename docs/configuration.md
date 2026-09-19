@@ -24,7 +24,7 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_NIX_VOLUME` | `dx-nix` | Named volume that backs the persistent Nix store. Apple Container surfaces it inside the guest at `/var/lib/dx-nix-raw`; the bootstrap reformats it as btrfs (or ext4 as a fallback) and remounts it at `/nix`. Override this for isolated test containers or parallel experiments so they do not share the default writable Nix store. |
 | `DX_NIX_MOUNT` | `/nix` | Guest mount point for the active Nix filesystem. Used by maintenance commands such as `dx-reclaim`. |
 | `DX_NIX_DISK` | `$HOME/.dx-cache/nix-store.img` | Host-side sparse Nix disk path used by disk maintenance helpers. |
-| `DX_NIX_DISK_SIZE` | `20G` | Default sparse Nix disk size. |
+| `DX_NIX_DISK_SIZE` | `64G` | Default sparse Nix disk size. Forwarded into the guest by `dx-create-container` and used by the bootstrap when it creates the sparse Nix store image. |
 | `DX_PERSIST_VOLUME` | `dx-persist` | Named volume mounted at the fixed guest path `/persist`. |
 | `DX_GIT_MOUNT_SOURCE` | empty | Optional host directory bind-mounted by `dx-create-container`. Leave empty for plain `dx`; use `dx-mount` to set it for an isolated side container. |
 | `DX_GIT_MOUNT_TARGET` | `/workspace` | Guest path for an explicit host checkout mount. |

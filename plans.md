@@ -20,11 +20,11 @@ Every plan document below is listed under exactly one of these.
 
 - [`plan.md`](plan.md) — The NixOS 26.05 upgrade and live validation are
   complete. In the separate code-review workstream, the timezone fallback and
-  ordering fixes, dead `start_ssh` removal, and D-Bus environment handling are
-  already present. The exact filesystem-type check (P7) and wiring the
-  documented `DX_NIX_DISK_SIZE` setting through container creation (P10) remain
-  open. Backlog B1, an incremental host backup for at-risk `/persist` content,
-  is specified but not implemented.
+  ordering fixes, dead `start_ssh` removal, D-Bus environment handling, the
+  exact filesystem-type check (P7), and wiring the documented
+  `DX_NIX_DISK_SIZE` setting through container creation (P10) are all now
+  present. Backlog B1, an incremental host backup for at-risk `/persist`
+  content, is specified but not implemented.
 
   **Recorded conflict — P7 vs. `refactor-v2-final.md` Phase 2.** P7 fixes an
   unanchored FSTYPE match in `prepare_nix_volume_impl`
@@ -35,12 +35,15 @@ Every plan document below is listed under exactly one of these.
   survives untouched. Resolution: P7's fix belongs in the preparation record
   Phase 2 builds, not in a standalone patch to the current function.
 
-  **Recorded conflict — P10 vs. the config registry.** `plan.md` decided
-  "canonical default `64G`" in 2026-06; `bin/lib/dx-config.sh:41` and
-  `docs/configuration.md:27` register/document `20G`; the code hardcodes
-  `truncate -s 64G` (`base-and-storage.sh:669`). P10 cannot be implemented
-  without picking one. Resolution: the registry is the newer decision —
-  reconcile to `20G`, not `64G`, when P10 lands.
+  **Recorded conflict — P10 vs. the config registry (resolved).** `plan.md`
+  decided "canonical default `64G`" in 2026-06; `bin/lib/dx-config.sh:41` and
+  `docs/configuration.md:27` registered/documented `20G`; the code hardcoded
+  `truncate -s 64G` (`base-and-storage.sh:669`). Resolved to `64G`, not `20G`:
+  `64G` is the value that has actually shipped, and reconciling down to `20G`
+  would silently lower a real, already-in-use disk cap. The registry and the
+  docs now both read `64G`, and `dx-create-container` forwards
+  `DX_NIX_DISK_SIZE` into the guest so a configured value actually reaches
+  `truncate`.
 - [`refactor-plan.md`](refactor-plan.md) — Phases 0 through 5 are checked off
   in `docs/refactor/checklists/`. Phase 6 is partly complete: README reduction,
   environment-variable inventory, documentation-test decoupling, and theme
