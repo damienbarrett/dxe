@@ -1,19 +1,82 @@
-# Plan: recovery blind spot for the post-remount trust root
+# Plan: verify the persistent store before trusting it
 
 ## Status
 
-Open, **no design selected**. Created 2026-08-30 as the durable tracking
-artifact split out of Step 3 of the completed lock-refresh disposition (now
-removed; see Git history). Third priority: two
-newer defences sit in front of this path and it has never been reached.
+Open, **no design selected**, for either problem below. Neither is
+implemented on the lock-refresh commit stack, and no mechanism has been
+chosen for either.
 
-Revisit trigger: any change to the post-remount bootstrap
-path, or the next boot failure that reaches `ensure_essentials_valid`.
+## Shared invariant
 
-This file records scope and acceptance criteria only. It is not implemented on
-the lock-refresh commit stack, and no mechanism has been chosen.
+Both problems in this document turn on the same invariant: **before anything
+is allowed to trust the persistent Nix store, that store's content must be
+verified against what should be there.** [Problem 1](#problem-1--volume-reusing-image-pin-bump)
+needs that verification at a pin change, before newly-imported content is
+allowed to collide with what a retained volume already holds. [Problem
+2](#problem-2--recovery-blind-spot-for-the-post-remount-trust-root) needs it
+after remount, before anything already resident on the volume is trusted to
+prove that same volume sound. Neither section below solves its problem; each
+records the constraints a solution must satisfy.
 
-## The defect, stated accurately
+## Problem 1 — volume-reusing image-pin bump
+
+Created 2026-08-30 as the durable tracking artifact split out of the
+completed lock-refresh disposition (now removed; see Git history). This
+section records the blocker and the required safety properties only. No
+mechanism has been chosen and nothing here is implemented on the lock-refresh
+commit stack.
+
+### The blocker
+
+There is currently **no valid, volume-reusing pin-bump procedure**. The blocker
+is a store-path *content* collision between image versions, observed directly on
+2026-08-30 while bumping the isolated `dx-test` profile from `nixos/nix:2.34.7`
+to `2.34.8` with its `/nix` volume retained: the same store path resolved to two
+different content hashes. Recorded in `docs/release-maintenance.md`, "Bumping
+the Nix image pin".
+
+Until this is resolved, a pin-changing bump reaches the primary the same way the
+base changeover did — full destroy-and-rebuild with salvage — and never via
+`dx-recreate`.
+
+### Not "collision quarantine"
+
+An earlier framing named that strategy before one was chosen. Skipping a
+same-name, different-content store path may violate the very content identity
+the guest is meant to trust. Record properties, not a solution.
+
+### Required safety properties
+
+- no mismatched content may be executed;
+- failure must remain **pre-remount** and recoverable;
+- existing volumes must not be silently mutated into an ambiguous state;
+- the fresh-volume path must remain valid.
+
+### Definition of done
+
+- one design selected against the four properties, with rejected alternatives
+  and reasons recorded;
+- a reproducer for the observed collision, and a behavioral test that the chosen
+  design resolves it without executing mismatched content;
+- the procedure documented in `docs/release-maintenance.md`, replacing the
+  current "no valid procedure" text;
+- the alignment waiver in `docs/release-maintenance.md` closed or re-scoped as part
+  of the same change.
+
+**Revisit trigger: no later than the next required image-pin change.** The
+alignment waiver recorded in `docs/release-maintenance.md` expires into this item,
+so it cannot stay open-ended.
+
+## Problem 2 — recovery blind spot for the post-remount trust root
+
+Created 2026-08-30 as the durable tracking artifact split out of Step 3 of
+the completed lock-refresh disposition (now removed; see Git history). Third
+priority: two newer defences sit in front of this path and it has never been
+reached. This section records scope and acceptance criteria only. It is not
+implemented on the lock-refresh commit stack, and no mechanism has been
+chosen.
+
+### The defect, stated accurately
 
 `ensure_essentials_valid` is **not** dead code — an earlier framing said so and
 was wrong. It executes on every boot and can detect or repair damage in closure
@@ -25,12 +88,12 @@ before `ensure_essentials_valid` is reached. The verifier itself needs working
 shell utilities, `run_as_dx`, and `nix`. So it cannot recover when the corrupted
 path **is** one of its own prerequisites, or one of the earlier restore's.
 
-## The invariant to state and defend
+### The invariant to state and defend
 
 After the remount, no binary from the persistent store may be trusted to prove
 that same trust root sound.
 
-## Required observable outcomes — decide before selecting a mechanism
+### Required observable outcomes — decide before selecting a mechanism
 
 | Failure state | Required observable decision |
 | --- | --- |
@@ -41,7 +104,7 @@ that same trust root sound.
 | Offline repair | Bounded success from retained image material, or bounded fail-fast — never an unbounded network wait |
 | Failed/interrupted recovery | No success marker; persistent state stays unambiguous; the documented retry/reset path works |
 
-## Designs to compare — do not select one by moving a call
+### Designs to compare — do not select one by moving a call
 
 1. Pre-remount verification of the target store using image-resident tooling.
 2. An absolute captured image toolchain used as the verifier.
@@ -51,7 +114,7 @@ A separately declared Nix output is declarative, but it is **not** automatically
 an independent trust root if its interpreter or libraries still resolve through
 the remounted `/nix/store`. Prove independence behaviorally.
 
-## Test contract
+### Test contract
 
 Red first: the regression must fail on then-current `main` **for the intended
 reason**, and that failure must be recorded before any production change.
@@ -75,7 +138,7 @@ Use the existing layers deliberately:
 Preserve the existing invariant that the image-store identity marker is
 published only after successful post-remount validation.
 
-## Implementation constraints
+### Implementation constraints
 
 - Preserve the visible `bootstrap_main` ordering and source-only module purity.
 - Prefer explicit arguments and results over new exported `DX_NIX_*` steering
@@ -101,7 +164,7 @@ published only after successful post-remount validation.
   on the finished tree, document any test-driven denominator change, and never
   lower it preemptively.
 
-## Definition of done
+### Definition of done
 
 - one design selected, with the rejected alternatives and the reason recorded;
 - every row of the outcome table has a passing behavioral test at the right
@@ -109,3 +172,6 @@ published only after successful post-remount validation.
 - the red reproducer and its recorded failure are in the history;
 - unit, coverage, and isolated live/destructive recovery gates green;
 - no new exported steering state and no production test-mode branch.
+
+Revisit trigger: any change to the post-remount bootstrap path, or the next
+boot failure that reaches `ensure_essentials_valid`.

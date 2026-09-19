@@ -27,13 +27,8 @@ Every plan document below is listed under exactly one of these.
 ## Open plans
 
 - [`consolidation-plan.md`](consolidation-plan.md) — The plan that drove this
-  documentation consolidation. R1 through R7 are executed — R6's remaining
-  piece was resolved by dropping the `Owner:` requirement from the status
-  vocabulary above rather than by naming owners, and R3 (delete `plan.md`
-  Part A) landed once `docs/refactor/checklists/phase-6.md` item 5 was
-  amended to no longer wait on B1. One refactor remains:
-  - **R8** — fold the two store-trust stubs into one document. Revisit
-    trigger: when R8 lands, this plan is retired (see below).
+  documentation consolidation. R1 through R8 are now executed; see Git
+  history for each.
 - [`declarative-nix-plan-a.md`](declarative-nix-plan-a.md) — Audit proposing
   incremental Bash-to-Nix/Home Manager conversions. It puts Nix evaluation and
   coverage gates first, followed by smaller configuration conversions and the
@@ -51,10 +46,6 @@ Every plan document below is listed under exactly one of these.
   generation defect: a recreated guest can start the previous payload because
   the host publishes the new one only after starting the container. It records
   constraints and desired behavior; no solution is selected.
-- [`image-pin-collision-plan.md`](image-pin-collision-plan.md) — No design yet
-  for safely changing the Nix base-image pin while reusing `/nix`, after a
-  same-store-path/different-content collision. Requires pre-remount failure,
-  no mismatched execution, and a valid fresh-volume path.
 - [`plan.md`](plan.md) — Backlog only: the NixOS 26.05 upgrade record and all
   eight code-review fixes (P3–P10) have landed and been removed from the
   document (see Git history; the upgrade procedure now lives in
@@ -62,10 +53,6 @@ Every plan document below is listed under exactly one of these.
   `/persist` content, is specified but not implemented. Revisit trigger: when
   an incremental `/persist` host backup is next scheduled, or the next time a
   `/persist` loss scare occurs.
-- [`post-remount-trust-root-plan.md`](post-remount-trust-root-plan.md) — No
-  design yet for recovery when post-remount verification tools themselves
-  depend on the persistent store being verified. Defines failure outcomes,
-  testing, and recovery constraints.
 - [`refactor-v2-final.md`](refactor-v2-final.md) — Follow-on bootstrap
   refactor plan. Its identity/publication threading, explicit Nix-volume state,
   and claim-cleanup phases remain open; the proposed sourceable-test split and
@@ -77,6 +64,15 @@ Every plan document below is listed under exactly one of these.
 
   **Recorded conflict.** Phase 4's coverage-ratchet gate vs.
   `declarative-nix-plan-a.md` #12 remains live — see that entry above.
+- [`store-trust-plan.md`](store-trust-plan.md) — Folds the two former
+  store-trust stubs (`image-pin-collision-plan.md` and
+  `post-remount-trust-root-plan.md`) into one document: no design yet for
+  safely changing the Nix base-image pin while reusing `/nix` after a
+  same-store-path/different-content collision (requires pre-remount failure,
+  no mismatched execution, and a valid fresh-volume path), and no design yet
+  for recovery when post-remount verification tools themselves depend on the
+  persistent store being verified (defines failure outcomes, testing, and
+  recovery constraints).
 
 ## Optional follow-up
 
