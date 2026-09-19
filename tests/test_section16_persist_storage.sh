@@ -191,8 +191,9 @@ fi
 # deterministically, so this fakes `container` to reproduce the exact
 # failure text on demand -- the durable regression guard. Per the
 # constitution's stub rule, this fake was validated against the real
-# boundary: the reproduction loop recorded in bump-disposition-plan.md
-# caught the identical error text from the real Apple Container CLI.
+# boundary: the reproduction loop recorded for the completed lock-refresh
+# disposition (removed after completion; see Git history) caught the
+# identical error text from the real Apple Container CLI.
 #
 # This needs neither the real container image nor a running dx-test
 # container, so unlike run_migration_helper_tests above it runs even under

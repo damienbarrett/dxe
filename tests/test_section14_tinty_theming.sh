@@ -758,11 +758,12 @@ DRIVER_EOF
     fi
 fi
 
-# --- Herdr chrome theming (herdr-theme-plan.md Layer 2) ---
+# --- Herdr chrome theming (Herdr theming plan Layer 2, removed; see Git history) ---
 #
-# herdr-theme-plan.md concluded this layer was unbuildable: Herdr accepted only
-# eight built-in theme names and no palette, so four of sixteen dx-theme
-# aliases -- including the default -- had no match. That conclusion was wrong.
+# The removed Herdr theming plan concluded this layer was unbuildable: Herdr
+# accepted only eight built-in theme names and no palette, so four of sixteen
+# dx-theme aliases -- including the default -- had no match. That conclusion
+# was wrong.
 # With `[theme] name = "terminal"`, Herdr honours a full custom palette under
 # `[theme.custom]`, so the base16 scheme maps exactly and no approximation is
 # needed. Confirmed against herdr 0.7.5: `herdr config check` reports unknown

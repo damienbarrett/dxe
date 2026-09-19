@@ -325,7 +325,7 @@ else
     test_pass "the shared SSH boundary does not set HERDR_* (F11)"
 fi
 
-# --- Theme restore precedes the Herdr program (herdr-theme-plan.md Layer 1) ---
+# --- Theme restore precedes the Herdr program (Herdr theming plan Layer 1, removed; see Git history) ---
 #
 # dx-herdr attached without ever restoring the guest's persisted scheme, so a
 # Herdr session inherited whatever palette the terminal was carrying while
@@ -682,8 +682,9 @@ fi
 # setup_herdr_persistence's `mkdir -p` creates persistent_config_parent,
 # persistent_state_parent, home_config_parent, and home_state_parent all as
 # root, but only the *persistent* targets are later chowned to dx:dx --
-# herdr-plan.md's "Create both persistent targets and their home-side
-# parents as dx:dx, mode 0700" was only half-implemented. On a fresh guest
+# the original Herdr implementation plan's (removed; see Git history)
+# "Create both persistent targets and their home-side parents as dx:dx,
+# mode 0700" requirement was only half-implemented. On a fresh guest
 # ~/.local/state does not yet exist (~/.config typically already does, from
 # setup_gh_persistence, which runs first in configure_guest), so root
 # creates it root-owned and the unprivileged `run_as_dx "ln -sfnT ..."`

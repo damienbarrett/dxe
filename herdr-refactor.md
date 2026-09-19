@@ -1,6 +1,7 @@
 # `dx-herdr` implementation review
 
-Initially reviewed 2026-08-03 against `herdr-plan.md`. The original blockers and
+Initially reviewed 2026-08-03 against the Herdr implementation plan (completed
+and removed; see Git history). The original blockers and
 findings were subsequently remediated and live-tested; that history is retained
 below.
 
@@ -814,7 +815,7 @@ introduced, and worth knowing before anything relaxes that directory.
 
 `flake.nix` adds `herdr` to `aiPackages` (line 111), but `flake.lock` is still on
 `nixpkgs-unstable` rev `27ac479f…` (`lastModified` 1780096917), the revision
-`herdr-plan.md` records as predating the package.
+the original Herdr plan recorded as predating the package.
 
 **Executed in the `dx-test` guest**, against the committed lock:
 

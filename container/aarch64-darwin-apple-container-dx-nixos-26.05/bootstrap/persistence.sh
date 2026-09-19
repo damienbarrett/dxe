@@ -309,9 +309,10 @@ setup_herdr_persistence() {
     # Live defect: mkdir -p above runs as root, so a freshly created
     # home-side parent is root-owned; the later `run_as_dx "ln -sfnT ..."`
     # calls below then fail with "Permission denied" (observed live on a
-    # fresh dx-recreate). herdr-plan.md requires both persistent targets
-    # *and* their home-side parents to be dx:dx -- only the persistent side
-    # was implemented.
+    # fresh dx-recreate). The original Herdr implementation plan (removed;
+    # see Git history) requires both persistent targets *and* their
+    # home-side parents to be dx:dx -- only the persistent side was
+    # implemented.
     # Ownership is repaired unconditionally (idempotent either way). Mode
     # 0700 is applied only to a parent this call actually created: ~/.config
     # in particular is shared with other tools (gh, Home Manager, ...), and

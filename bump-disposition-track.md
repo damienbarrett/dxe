@@ -2,9 +2,11 @@
 
 ## Purpose
 
-This is an hourly, read-only observer log for execution of
-`bump-disposition-plan.md`. It records repository-visible progress, risks, and
-actionable improvements without changing the candidate implementation.
+This is a historical, read-only observer log for the completed lock-refresh
+disposition. The disposition plan was removed after completion; its committed
+version remains in Git history. This log records repository-visible progress,
+risks, and actionable improvements without changing the candidate
+implementation.
 
 This file is not the plan's external, SHA-bound validation evidence. The
 candidate's gate logs still belong in the execution record's evidence directory

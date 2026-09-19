@@ -184,7 +184,7 @@ minor.
 
 **Expiry.** The next image-pin maintenance event, or the next stable-lock
 refresh, whichever comes first. Resolution is tracked in
-[`image-pin-collision-plan.md`](../image-pin-collision-plan.md); this waiver
+the open [image-pin collision plan](../image-pin-collision-plan.md); this waiver
 must be closed or re-scoped as part of that work.
 
 **Note on test enforcement.** `tests/test_section2_containerfile.sh` asserts

@@ -3,10 +3,11 @@
 ## Status
 
 Open, **no design selected**. Created 2026-08-30 as the durable tracking
-artifact split out of `bump-disposition-plan.md`. Owner: _unfilled_.
+artifact split out of the completed lock-refresh disposition (now removed;
+see Git history). Owner: _unfilled_.
 
 **Revisit trigger: no later than the next required image-pin change.** The
-alignment waiver recorded in `bump-disposition-plan.md` expires into this item,
+alignment waiver recorded in `docs/release-maintenance.md` expires into this item,
 so it cannot stay open-ended.
 
 This file records the blocker and the required safety properties only. No
@@ -47,5 +48,5 @@ the guest is meant to trust. Record properties, not a solution.
   design resolves it without executing mismatched content;
 - the procedure documented in `docs/release-maintenance.md`, replacing the
   current "no valid procedure" text;
-- the alignment waiver in `bump-disposition-plan.md` closed or re-scoped as part
+- the alignment waiver in `docs/release-maintenance.md` closed or re-scoped as part
   of the same change.

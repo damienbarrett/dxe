@@ -241,11 +241,14 @@ configure_guest() {
     fi
 
     # Activate Herdr persistence and seed config unconditionally (F4). This is
-    # a guest-invariant layout (herdr-plan.md H4/H9), not an AI-tools opt-in
-    # side effect: gating it on the AI-tools guard above meant a fresh guest's
-    # first Herdr session wrote into ordinary /home/dx directories, and the
-    # *next* bootstrap would then migrate or relocate them into a timestamped
-    # backup, silently changing where the user's first session lived.
+    # a guest-invariant layout, not an AI-tools opt-in side effect: the
+    # original Herdr plan (removed; see Git history) decided that persisting
+    # Herdr's config, sessions, pane history, and all of ~/.local/state/herdr
+    # must not depend on the AI-tools opt-in. Gating it on the AI-tools guard
+    # above meant a fresh guest's first Herdr session wrote into ordinary
+    # /home/dx directories, and the *next* bootstrap would then migrate or
+    # relocate them into a timestamped backup, silently changing where the
+    # user's first session lived.
     # Non-fatal by design. Seeding an optional tool's configuration must never
     # stop the guest from booting: sshd runs as the foreground process, so an
     # aborted bootstrap means no guest at all. A failure here is loud in the

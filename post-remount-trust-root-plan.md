@@ -3,7 +3,8 @@
 ## Status
 
 Open, **no design selected**. Created 2026-08-30 as the durable tracking
-artifact split out of `bump-disposition-plan.md` (Step 3). Third priority: two
+artifact split out of Step 3 of the completed lock-refresh disposition (now
+removed; see Git history). Third priority: two
 newer defences sit in front of this path and it has never been reached.
 
 Owner: _unfilled_. Revisit trigger: any change to the post-remount bootstrap
