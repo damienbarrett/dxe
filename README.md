@@ -133,6 +133,8 @@ Profile files and root `.env` are bounded `NAME=value` data, not shell scripts. 
 
 ## Project records
 
-See [plan.md](plan.md) for the release-upgrade record and
+See [docs/release-maintenance.md](docs/release-maintenance.md) for the
+release-upgrade and base-image changeover procedures, and
 [refactor-plan.md](refactor-plan.md) for the architecture decisions and
-operational migration gates retained by this refactor.
+operational migration gates retained by this refactor. [plan.md](plan.md) is
+now an unscheduled backlog item (see [plans.md](plans.md)).

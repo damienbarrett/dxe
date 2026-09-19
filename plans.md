@@ -18,50 +18,22 @@ Every plan document below is listed under exactly one of these.
 
 ## Partially complete
 
-- [`plan.md`](plan.md) — The NixOS 26.05 upgrade and live validation are
-  complete. In the separate code-review workstream, the timezone fallback and
-  ordering fixes, dead `start_ssh` removal, D-Bus environment handling, the
-  exact filesystem-type check (P7), and wiring the documented
-  `DX_NIX_DISK_SIZE` setting through container creation (P10) are all now
-  present. Backlog B1, an incremental host backup for at-risk `/persist`
-  content, is specified but not implemented.
-
-  **Recorded conflict — P7 vs. `refactor-v2-final.md` Phase 2.** P7 fixes an
-  unanchored FSTYPE match in `prepare_nix_volume_impl`
-  (`base-and-storage.sh:629`); Phase 2 separately deletes the *wrapper*
-  functions `setup_nix_volume`/`setup_nix_volume_impl` as dead code
-  (disposition A2). Neither touches the other's target, but landing Phase 2
-  first could read as "the FSTYPE item's area is gone" when the live defect
-  survives untouched. Resolution: P7's fix belongs in the preparation record
-  Phase 2 builds, not in a standalone patch to the current function.
-
-  **Recorded conflict — P10 vs. the config registry (resolved).** `plan.md`
-  decided "canonical default `64G`" in 2026-06; `bin/lib/dx-config.sh:41` and
-  `docs/configuration.md:27` registered/documented `20G`; the code hardcoded
-  `truncate -s 64G` (`base-and-storage.sh:669`). Resolved to `64G`, not `20G`:
-  `64G` is the value that has actually shipped, and reconciling down to `20G`
-  would silently lower a real, already-in-use disk cap. The registry and the
-  docs now both read `64G`, and `dx-create-container` forwards
-  `DX_NIX_DISK_SIZE` into the guest so a configured value actually reaches
-  `truncate`.
 - [`refactor-plan.md`](refactor-plan.md) — Phases 0 through 5 are checked off
-  in `docs/refactor/checklists/`. Phase 6 is partly complete: README reduction,
-  environment-variable inventory, documentation-test decoupling, and theme
-  writer work are done; removing old-base guards and archiving completed
-  upgrade material remain unchecked.
+  in `docs/refactor/checklists/`. Phase 6 is nearly complete: README
+  reduction, environment-variable inventory, documentation-test decoupling,
+  theme writer work, and archiving completed upgrade material are done;
+  removing old-base guards remains unchecked.
 
 ## Open plans
 
 - [`consolidation-plan.md`](consolidation-plan.md) — The plan that drove this
-  documentation consolidation. R1, R2, R4, R5, R6, and R7 are executed —
-  R6's remaining piece was resolved by dropping the `Owner:` requirement from
-  the status vocabulary above rather than by naming owners. Two refactors
-  remain, each blocked on a precondition this plan cannot itself satisfy:
-  - **R3** — delete `plan.md` Part A. Blocked on
-    `docs/refactor/checklists/phase-6.md` item 5, which is itself blocked on
-    P7, P10, and B1 closing. Revisit trigger: when P7, P10, and B1 all close.
+  documentation consolidation. R1 through R7 are executed — R6's remaining
+  piece was resolved by dropping the `Owner:` requirement from the status
+  vocabulary above rather than by naming owners, and R3 (delete `plan.md`
+  Part A) landed once `docs/refactor/checklists/phase-6.md` item 5 was
+  amended to no longer wait on B1. One refactor remains:
   - **R8** — fold the two store-trust stubs into one document. Revisit
-    trigger: when R3 and R8 land, this plan is retired (see below).
+    trigger: when R8 lands, this plan is retired (see below).
 - [`declarative-nix-plan-a.md`](declarative-nix-plan-a.md) — Audit proposing
   incremental Bash-to-Nix/Home Manager conversions. It puts Nix evaluation and
   coverage gates first, followed by smaller configuration conversions and the
@@ -83,6 +55,13 @@ Every plan document below is listed under exactly one of these.
   for safely changing the Nix base-image pin while reusing `/nix`, after a
   same-store-path/different-content collision. Requires pre-remount failure,
   no mismatched execution, and a valid fresh-volume path.
+- [`plan.md`](plan.md) — Backlog only: the NixOS 26.05 upgrade record and all
+  eight code-review fixes (P3–P10) have landed and been removed from the
+  document (see Git history; the upgrade procedure now lives in
+  `docs/release-maintenance.md`). B1, an incremental host backup for at-risk
+  `/persist` content, is specified but not implemented. Revisit trigger: when
+  an incremental `/persist` host backup is next scheduled, or the next time a
+  `/persist` loss scare occurs.
 - [`post-remount-trust-root-plan.md`](post-remount-trust-root-plan.md) — No
   design yet for recovery when post-remount verification tools themselves
   depend on the persistent store being verified. Defines failure outcomes,
@@ -93,8 +72,11 @@ Every plan document below is listed under exactly one of these.
   possible production-module split are also not complete. The current source
   still uses the environment variables this plan proposes to remove.
 
-  **Recorded conflicts.** Phase 2 vs. `plan.md` P7, and Phase 4's coverage-
-  ratchet gate vs. `declarative-nix-plan-a.md` #12 — see those entries above.
+  **Recorded conflict (resolved).** Phase 2 vs. `plan.md` P7 is moot: P7
+  landed directly in `prepare_nix_volume_impl`, which Phase 2 does not touch.
+
+  **Recorded conflict.** Phase 4's coverage-ratchet gate vs.
+  `declarative-nix-plan-a.md` #12 remains live — see that entry above.
 
 ## Optional follow-up
 

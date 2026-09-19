@@ -15,10 +15,12 @@
   Do not remove them based only on repository age — see the
   [old-base guard gate](../migration-gates.md#old-base-guards).
 
-  **Scope note:** the primary guest is already done. [`plan.md`](../../../plan.md#L64-L73)
-  records that the destructive salvage-and-rebuild changeover of the primary
-  completed on 2026-07-05 behind an `OLD_BASE_ABSENT` gate with the full suite
-  green. The remaining inventory is side containers and named profiles only.
+  **Scope note:** the primary guest is already done. See
+  [Base Image Changeover, "History"](../../release-maintenance.md#base-image-changeover-one-time)
+  for the destructive salvage-and-rebuild changeover of the primary
+  completing on 2026-07-05 behind an `OLD_BASE_ABSENT` gate with the full
+  suite green. The remaining inventory is side containers and named profiles
+  only.
 
   **Open by design (2026-08-01).** The guards are still present in both files.
   This item stays open until the
@@ -40,12 +42,15 @@
   - default-value consistency;
   - required safety statements.
 
-- [ ] **5. Archive completed upgrade material from [`plan.md`](../../../plan.md)** only
+- [x] **5. Archive completed upgrade material from [`plan.md`](../../../plan.md)** only
   after its remaining status items are confirmed complete.
 
-  **Open (2026-08-01).** `plan.md` is untouched by the refactor. Its remaining
-  status items have not been confirmed, so the precondition for archiving is not
-  met yet.
+  **Done (2026-09-19).** P7 and P10 closed; B1 remains, but as an
+  unscheduled backlog item standing on its own in `plans.md`, not an
+  in-flight status item this gate was protecting. Part A is archived —
+  deleted from `plan.md`, with its content in
+  [`docs/release-maintenance.md`](../../release-maintenance.md) and Git
+  history.
 
 - [x] **6. Keep the theme writer structurally as-is** unless it is being changed for
   a feature. It already has renderer functions and extensive behavior tests. If

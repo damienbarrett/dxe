@@ -43,8 +43,9 @@ Release maintenance is **not** thereby reduced to two flake edits: it still
 includes lock regeneration, `home.stateVersion` review, the aligned Nix
 image-pin review (below — a release bump can change the correct image
 tag), identity-name updates (context directory, local image name),
-release-string test updates, and revalidation — see
-[plan.md](../plan.md)'s playbook. Root bootstrap essentials follow the checked-in
+release-string test updates, and revalidation — see the
+[Upgrade / Bump](#upgrade--bump-new-nixos-release) runbook below. Root
+bootstrap essentials follow the checked-in
 flake lock through the `bootstrap-essentials` output, so this document does not
 rely on the global flake registry for their provenance.
 
@@ -70,9 +71,6 @@ tests/run_all_tests.sh
 
 For the complete step-by-step procedure (image pre-flight, canary, and the
 destructive apply), follow [Upgrade / Bump](#upgrade--bump-new-nixos-release).
-
-The full release playbook, including the context-directory rename and the
-parallel validation instance, is in [plan.md](../plan.md).
 
 ### Base-image alignment rule
 
@@ -340,6 +338,11 @@ is what the temporary old-base guards key on.
 
 ### 4. Make the bump (one revertible commit)
 
+**Optional staging.** If OLD's lock has accumulated routine same-channel
+drift, absorb it first with a plain `nix flake update` on OLD, tested on its
+own; then do the bump below as a separate commit, so its lock diff represents
+only the OLD → NEW jump and not also unrelated drift.
+
 Do these together so the lock diff has a single cause. TDD where a test
 encodes the change: flip the failing test first (`test_helpers.sh`'s
 `DX_EXPECTED_NIXOS_RELEASE`, `test_section2_containerfile.sh`'s exact `FROM`
@@ -371,7 +374,7 @@ line), watch it fail against OLD, then make it pass.
 
   Update `dx-nixos-OLD` image names, the `dx-nixos-OLD` assertions in
   `tests/test_section18_mount_git.sh`, profile `.env` comments, and this
-  file's examples. Leave `plan.md`'s OLD/NEW playbook framing as history.
+  file's own OLD/NEW examples once the bump they describe has landed.
 - Static gate — all green, plus a roomy `flake check`:
 
   ```bash
@@ -442,6 +445,54 @@ for a bump that does **not** change the Nix image pin, would an in-place
   guards (`guard_old_base` in `bootstrap.sh`, its twin in
   `dx-start-container`, and their tests) can be removed in a cleanup commit.
 
+### Rollback
+
+Rollback is **source-driven**: the Home Manager-managed environment
+reproduces from the committed source (`flake.nix` + `flake.lock`), which
+`bootstrap.sh` re-syncs and activates on every recreate, so pointing
+`DX_IMAGE` at the old image does **not** roll packages back on its own.
+
+- **Primary — source revert + rebuild.** `git revert <bump-sha>` (or check
+  out the pre-bump commit, or use a `git worktree`) restores `flake.nix`,
+  `flake.lock`, `Containerfile`, the `dx-lib.sh` defaults, `home.nix`
+  `stateVersion`, and the renamed context directory together. Only once the
+  source tree is back on OLD — so `DX_IMAGE`/`DX_CONTEXT_DIR` resolve to OLD
+  again and OLD's context directory exists — run `dx-recreate` to rebuild.
+  `/nix` and `/persist` are preserved. This is the **only** rollback path
+  once the bump changed the Nix image pin (see "Bumping the Nix image pin"
+  above): there is no valid volume-reusing pin bump in either direction.
+- **Fast, no-rebuild (pin unchanged, `/nix` not GC'd) — generation
+  rollback.** When the bump did not change the Nix image pin, the previous
+  Home Manager generation persists in `/nix`, so the environment can be
+  rolled back inside the guest without rebuilding. The `home-manager` CLI is
+  **not** installed (activation runs through `nix run …#activationPackage`),
+  so roll back through the Home Manager profile instead of
+  `home-manager generations`:
+
+  ```bash
+  PROFILE=~/.local/state/nix/profiles/home-manager
+  nix-env --list-generations -p "$PROFILE"      # pick the pre-upgrade generation
+  nix-env --rollback -p "$PROFILE"              # or: --switch-generation N
+  "$PROFILE"/activate                            # apply it
+  ```
+
+- **Rollback gotchas:**
+  - `dx-recreate` deletes the image for the *current* `DX_IMAGE`
+    (`dx-destroy` → `dx-destroy-image`) and rebuilds from `DX_CONTEXT_DIR`.
+    Never run it unless both `DX_IMAGE` and the source tree already point at
+    the version you want — otherwise it removes the wrong image and/or
+    rebuilds the wrong version.
+  - Do not garbage-collect (`dx-gc` / `nix-collect-garbage`) until NEW is
+    verified — it prunes the OLD generations and store paths the generation
+    rollback above depends on.
+  - `/persist` is never rolled back in either direction; hand-migrated data
+    is not reversed.
+  - `stateVersion` reverts cleanly as long as no configured service persists
+    version-specific state.
+  - Optional belt-and-suspenders: snapshot the Apple Container named volume
+    backing `DX_NIX_VOLUME` before the bump for a GC-independent instant
+    restore.
+
 ## Base Image Changeover (one-time)
 
 > This is a **one-time, destructive** cutover — not a recurring maintenance
@@ -453,6 +504,13 @@ for a bump that does **not** change the Nix image pin, would an in-place
 > each step copyable, with expected output, safe behavior when the resource
 > it targets is already absent, an abort condition, and a verification
 > before you continue to the next step.
+
+**History.** The primary machine completed this changeover on 2026-07-05,
+behind the `OLD_BASE_ABSENT` gate in step 7 below, with the full suite green.
+The [old-base guards](refactor/migration-gates.md#old-base-guards) this
+runbook's step 7 checks around remain temporarily in the tree only for the
+remaining inventory — side containers and named profiles, tracked in
+[`docs/refactor/checklists/phase-6.md`](refactor/checklists/phase-6.md) item 1.
 
 ### Clean-configuration precondition — required before every destructive step below
 

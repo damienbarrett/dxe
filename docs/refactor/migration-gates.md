@@ -113,10 +113,11 @@ and [`bin/dx-start-container`](../../bin/dx-start-container#L21-L44).
 **Removed by:** [Phase 6](checklists/phase-6.md) item 1.
 
 Removed once the default guest, side containers, and named profiles have all moved
-off the old base. The primary is already done —
-[`plan.md`](../../plan.md#L64-L73) records the changeover completing on 2026-07-05
-behind an `OLD_BASE_ABSENT` gate with the full suite green. The remaining inventory
-is side containers and named profiles.
+off the old base. The primary is already done — see
+[Base Image Changeover, "History"](../release-maintenance.md#base-image-changeover-one-time)
+for the changeover completing on 2026-07-05 behind an `OLD_BASE_ABSENT` gate
+with the full suite green. The remaining inventory is side containers and
+named profiles.
 
 - [ ] Satisfied on \_\_\_\_ (date), inventory: \_\_\_\_
 
