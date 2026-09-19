@@ -13,13 +13,6 @@ missed. The original plan cannot be executed as written: three of its four targe
 contracts were incomplete in ways that risk boot regressions, and one phase plus
 one invariant rested on premises that are no longer true.
 
-Prerequisite A1 is **already closed**: the coverage ratchet was re-measured to
-2267 bp at `7ffa66b`. Phase 4 depended on it. That figure is the measurement
-taken at that commit, not the live baseline: `tests/coverage/ratchet.env` has
-since moved to 2256 bp, lowered deliberately because the digest work added more
-lines to `tests/` than to the covered scope. Read the ratchet file, not this
-number, before touching the gate.
-
 This plan changes no production behavior. It makes state flow explicit, and it
 must not alter bootstrap ordering, persistence formats, marker formats, retry
 behavior, or public CLI behavior.
@@ -252,8 +245,9 @@ failure; Bash 3.2 and Linux behavior agree.
 
 **Two gates before any code moves:**
 
-1. The coverage ratchet is measured against the current tree — **closed at
-   `7ffa66b`** (2267 bp, no slack).
+1. The coverage ratchet is re-measured against the tree at the point Phases
+   1–3 land — read `tests/coverage/ratchet.env` for the live baseline and its
+   full history, not a number fixed here.
 2. A written **definition-move matrix** naming every function's destination
    module and its dependencies, including the cases the original categories left
    ambiguous: durable identity, essentials installation, default-profile
@@ -393,7 +387,7 @@ both at `cd20f62`.
 
 | Finding | Disposition |
 | --- | --- |
-| A1: coverage ratchet stale by ~330 bp | **Closed** at `7ffa66b` — re-measured to 2267 bp (3,695 / 16,298); was Phase 4's blocking gate |
+| A1: coverage ratchet stale by ~330 bp | Folded into Phase 4 gate 1: re-measure against the tree at that point, from `tests/coverage/ratchet.env` |
 | A2: Phase 2's compatibility adapter is unnecessary | Adapter removed from the plan; Phase 2 now deletes `setup_nix_volume`/`_impl` outright |
 | A3: Bash 3.2 is host-only; "no arrays" is wrong | Invariant rescoped to `bin/` per `run-bash32-tests.sh`; prohibition narrowed to associative arrays |
 | A4: undefaulted `DXE_SELF_PROCESS_IDENTITY` is a `set -u` hazard | Elevated into contract 4; Phase 3 must test the unset-on-entry case |
