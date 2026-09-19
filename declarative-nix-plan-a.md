@@ -10,6 +10,15 @@ coverage gate.
 Item numbers are stable identifiers, not an execution order. The order is at
 the end.
 
+## Status
+
+Open. Tracked in Git; its recommendations have not been adopted as an
+implementation plan.
+
+**Revisit trigger:** before the next NixOS release bump touches `flake.nix`,
+or when Tier 0's CI gates are next considered; at that point the audit is
+either adopted (Tier 0 + Tier 1) or archived, not left in a third state.
+
 ## The shape of the problem
 
 `container/aarch64-darwin-apple-container-dx-nixos-26.05/` is 1,130 lines of

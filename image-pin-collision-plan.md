@@ -4,7 +4,7 @@
 
 Open, **no design selected**. Created 2026-08-30 as the durable tracking
 artifact split out of the completed lock-refresh disposition (now removed;
-see Git history). Owner: _unfilled_.
+see Git history).
 
 **Revisit trigger: no later than the next required image-pin change.** The
 alignment waiver recorded in `docs/release-maintenance.md` expires into this item,

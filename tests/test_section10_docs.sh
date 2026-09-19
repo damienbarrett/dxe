@@ -76,6 +76,39 @@ done <"$PLAN_ALL_LINKS"
 
 rm -f "$PLAN_STATUS_HITS" "$PLAN_ALL_LINKS"
 
+# --- every document listed under "## Open plans" states a revisit trigger ---
+#
+# The status vocabulary above requires an Open entry to name a Revisit
+# trigger: an Open plan with none is a document nobody has a reason to ever
+# look at again. Walk plans.md a second time, this time scoped to just the
+# "## Open plans" section, and assert each linked document contains the line.
+OPEN_PLAN_LINKS="$(mktemp)"
+in_open_section=0
+while IFS= read -r plans_line; do
+    case "$plans_line" in
+        '## Open plans'*) in_open_section=1; continue ;;
+        '## '*) in_open_section=0; continue ;;
+    esac
+    [ "$in_open_section" -eq 1 ] || continue
+    while IFS= read -r reference; do
+        [ -n "$reference" ] || continue
+        target=${reference#']('}; target=${target%%#*}
+        case "$target" in ''|http:*|https:*|mailto:*) continue ;; esac
+        printf '%s\n' "$target" >>"$OPEN_PLAN_LINKS"
+    done < <(printf '%s\n' "$plans_line" | grep -oE '\]\([^)]+' || true)
+done <"$PLANS_INDEX"
+
+while IFS= read -r open_target; do
+    [ -n "$open_target" ] || continue
+    if [ -e "$BASE_DIR/$open_target" ] && grep -q 'Revisit trigger:' "$BASE_DIR/$open_target"; then
+        test_pass "$open_target states a Revisit trigger"
+    else
+        test_fail "$open_target states a Revisit trigger"
+    fi
+done <"$OPEN_PLAN_LINKS"
+
+rm -f "$OPEN_PLAN_LINKS"
+
 all_docs="$README $BASE_DIR/docs/lifecycle.md $CONFIG_DOC $BASE_DIR/docs/guest.md $BASE_DIR/docs/troubleshooting.md $BASE_DIR/docs/release-maintenance.md"
 for command in "$BASE_DIR"/bin/dx*; do
     [ -f "$command" ] || continue

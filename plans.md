@@ -9,8 +9,8 @@ and history remain in Git.
 ## Status vocabulary
 
 - **Partially complete** — landed work plus named open items.
-- **Open** — a problem statement or an unadopted audit; requires an
-  `Owner:` and a `Revisit trigger:`.
+- **Open** — a problem statement or an unadopted audit; requires a
+  `Revisit trigger:`.
 - **Historical** — a record only, kept for its evidence rather than as
   live work.
 
@@ -53,22 +53,15 @@ Every plan document below is listed under exactly one of these.
 ## Open plans
 
 - [`consolidation-plan.md`](consolidation-plan.md) — The plan that drove this
-  documentation consolidation. R1, R2, R4, R5, R6 (structural half), and R7
-  are executed; three refactors remain, each blocked on a precondition this
-  plan cannot itself satisfy:
+  documentation consolidation. R1, R2, R4, R5, R6, and R7 are executed —
+  R6's remaining piece was resolved by dropping the `Owner:` requirement from
+  the status vocabulary above rather than by naming owners. Two refactors
+  remain, each blocked on a precondition this plan cannot itself satisfy:
   - **R3** — delete `plan.md` Part A. Blocked on
     `docs/refactor/checklists/phase-6.md` item 5, which is itself blocked on
     P7, P10, and B1 closing. Revisit trigger: when P7, P10, and B1 all close.
-  - **R6's owner/revisit-trigger assertion** — the third Section 10
-    assertion the structural half deliberately deferred. Blocked on owners
-    being named for `image-pin-collision-plan.md`,
-    `post-remount-trust-root-plan.md`, and `dx-start-plan.md`, which all read
-    `Owner: _unfilled_`. Revisit trigger: when at least one of the three is
-    named.
-  - **R8** — fold the three no-design stubs into one open-items document.
-    Blocked on the same owner requirement as above; folding while unowned
-    would bury three live safety constraints. Revisit trigger: when all
-    three stubs are owned.
+  - **R8** — fold the two store-trust stubs into one document. Revisit
+    trigger: when R3 and R8 land, this plan is retired (see below).
 - [`declarative-nix-plan-a.md`](declarative-nix-plan-a.md) — Audit proposing
   incremental Bash-to-Nix/Home Manager conversions. It puts Nix evaluation and
   coverage gates first, followed by smaller configuration conversions and the

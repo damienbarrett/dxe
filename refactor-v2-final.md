@@ -17,6 +17,9 @@ This plan changes no production behavior. It makes state flow explicit, and it
 must not alter bootstrap ordering, persistence formats, marker formats, retry
 behavior, or public CLI behavior.
 
+**Revisit trigger:** when Phase 1 (identity and publication threading) is
+next scheduled, or when the coverage ratchet is next re-measured.
+
 ## Goals
 
 - Make the image-store identity **and the decision to publish its marker** values

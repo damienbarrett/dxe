@@ -7,7 +7,7 @@ artifact split out of Step 3 of the completed lock-refresh disposition (now
 removed; see Git history). Third priority: two
 newer defences sit in front of this path and it has never been reached.
 
-Owner: _unfilled_. Revisit trigger: any change to the post-remount bootstrap
+Revisit trigger: any change to the post-remount bootstrap
 path, or the next boot failure that reaches `ensure_essentials_valid`.
 
 This file records scope and acceptance criteria only. It is not implemented on

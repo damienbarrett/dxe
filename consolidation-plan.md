@@ -9,8 +9,8 @@ satisfy; see their sections below, and `plans.md`, where each is folded in as
 an entry with its own revisit trigger.
 
 Written 2026-09-19 against the tree on `fix/dx-wait-ssh-probe-budget`;
-executed the same day. Owner: _unfilled_. Revisit trigger: when the
-precondition on R3, R6, or R8 (below) is met.
+executed the same day. Revisit trigger: when R3 and R8 land (both land later
+in this same wave; commit 4 then deletes the file).
 
 Scope: the nine plan-shaped Markdown files at the repository root, the index
 `plans.md`, and the `docs/refactor/` material that already governs part of this

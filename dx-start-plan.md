@@ -16,6 +16,10 @@ Two claims in that earlier record are also incorrect and are corrected below:
 the recommended diagnostic does not work, and the condition is not a race that
 the host can occasionally win.
 
+**Revisit trigger:** any change to bootstrap publication or start/sync
+ordering, or the next recreate that is observed to run the previous
+generation.
+
 ## Symptom
 
 A bootstrap change is published, the guest is recreated, and the guest runs the
