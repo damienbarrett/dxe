@@ -26,6 +26,22 @@ Every plan document below is listed under exactly one of these.
   open. Backlog B1, an incremental host backup for at-risk `/persist` content,
   is specified but not implemented. The plan's older status table still lists
   some now-landed fixes as open.
+
+  **Recorded conflict — P7 vs. `refactor-v2-final.md` Phase 2.** P7 fixes an
+  unanchored FSTYPE match in `prepare_nix_volume_impl`
+  (`base-and-storage.sh:629`); Phase 2 separately deletes the *wrapper*
+  functions `setup_nix_volume`/`setup_nix_volume_impl` as dead code
+  (disposition A2). Neither touches the other's target, but landing Phase 2
+  first could read as "the FSTYPE item's area is gone" when the live defect
+  survives untouched. Resolution: P7's fix belongs in the preparation record
+  Phase 2 builds, not in a standalone patch to the current function.
+
+  **Recorded conflict — P10 vs. the config registry.** `plan.md` decided
+  "canonical default `64G`" in 2026-06; `bin/lib/dx-config.sh:41` and
+  `docs/configuration.md:27` register/document `20G`; the code hardcodes
+  `truncate -s 64G` (`base-and-storage.sh:669`). P10 cannot be implemented
+  without picking one. Resolution: the registry is the newer decision —
+  reconcile to `20G`, not `64G`, when P10 lands.
 - [`refactor-plan.md`](refactor-plan.md) — Phases 0 through 5 are checked off
   in `docs/refactor/checklists/`. Phase 6 is partly complete: README reduction,
   environment-variable inventory, documentation-test decoupling, and theme
@@ -39,6 +55,14 @@ Every plan document below is listed under exactly one of these.
   coverage gates first, followed by smaller configuration conversions and the
   larger Herdr TOML merger. This file is currently untracked in Git; its
   recommendations have not been adopted as a committed implementation plan.
+
+  **Recorded conflict — #12 vs. `refactor-v2-final.md` A1/Phase 4.** #12
+  proposes replacing the coverage-ratchet ratio with a ceiling on uncovered
+  production shell. `refactor-v2-final.md`'s A1 review finding was closed
+  against that ratio's measurement at `7ffa66b`, and its Phase 4 gate
+  re-measures the same ratio. If #12 lands first, both are against a metric
+  shape that no longer exists. Undecided which lands first; no owner named
+  for either document.
 - [`dx-start-plan.md`](dx-start-plan.md) — Documents the stale-bootstrap
   generation defect: a recreated guest can start the previous payload because
   the host publishes the new one only after starting the container. It records
@@ -56,6 +80,9 @@ Every plan document below is listed under exactly one of these.
   and claim-cleanup phases remain open; the proposed sourceable-test split and
   possible production-module split are also not complete. The current source
   still uses the environment variables this plan proposes to remove.
+
+  **Recorded conflicts.** Phase 2 vs. `plan.md` P7, and Phase 4's coverage-
+  ratchet gate vs. `declarative-nix-plan-a.md` #12 — see those entries above.
 
 ## Optional follow-up
 

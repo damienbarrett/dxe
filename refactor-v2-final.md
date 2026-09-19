@@ -220,6 +220,14 @@ no production callers — `bootstrap.sh:15,18` calls `prepare_nix_volume` and
 `tests/test_section3_bootstrap.sh:25`, plus two descriptive comments. Delete both
 functions and their tests alongside the globals.
 
+**Recorded conflict — `plan.md` P7.** P7 (Low) separately targets an
+unanchored FSTYPE match in `prepare_nix_volume_impl` (`base-and-storage.sh:629`)
+— the function this phase rewrites into the mode-tagged record above, not
+the wrapper being deleted. Land P7's exact-match fix as part of the
+preparation record this phase builds, not as a standalone patch to the
+current function beforehand; otherwise the rewrite risks reproducing the
+substring-grep bug it wasn't told about.
+
 Exit: no `export` of preparation outputs; cleanup covered under success, mount
 failure, import failure, and interrupted-process simulation.
 
@@ -247,7 +255,11 @@ failure; Bash 3.2 and Linux behavior agree.
 
 1. The coverage ratchet is re-measured against the tree at the point Phases
    1–3 land — read `tests/coverage/ratchet.env` for the live baseline and its
-   full history, not a number fixed here.
+   full history, not a number fixed here. **Recorded conflict —
+   `declarative-nix-plan-a.md` #12** proposes replacing the ratio this gate
+   re-measures with a ceiling on uncovered production shell; if that reform
+   lands first, re-measure against whatever `ratchet.env` defines at that
+   point, not this ratio. Undecided which lands first.
 2. A written **definition-move matrix** naming every function's destination
    module and its dependencies, including the cases the original categories left
    ambiguous: durable identity, essentials installation, default-profile

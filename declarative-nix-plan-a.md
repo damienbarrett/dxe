@@ -112,6 +112,14 @@ Changes `tests/run-coverage-linux.sh:65-68` and `tests/coverage/ratchet.env`.
 The 100% line-coverage assertion at `:51-63` is a separate, working gate and
 stays exactly as it is.
 
+**Recorded conflict — `refactor-v2-final.md` Phase 4 / A1.** Phase 4's first
+gate re-measures the coverage ratchet against the tree at the point it runs.
+A1 (a review finding on that same plan) was closed against the ratio's
+`7ffa66b` measurement. If this item's reform lands first, both that
+re-measurement and A1's closure are against a metric shape (a ratio) that no
+longer exists. Undecided which lands first; no owner named for either
+document yet.
+
 ### 17. Roughly ninety test assertions read these files as text
 
 This is the real cost of Tiers 1 and 2, and it is invisible until you start.
