@@ -1,8 +1,10 @@
 # Active plans
 
 Status checked against the repository on 2026-09-19. Completed plan documents
-for the lock refresh, Herdr integration, Herdr theming, and bootstrap performance
-have been removed; their implementation and history remain in Git.
+for the lock refresh, Herdr integration, Herdr theming, and bootstrap
+performance have been removed, along with the completed Herdr implementation
+review and the lock-refresh disposition tracking log; their implementation
+and history remain in Git.
 
 ## Partially complete
 
@@ -45,16 +47,14 @@ have been removed; their implementation and history remain in Git.
   possible production-module split are also not complete. The current source
   still uses the environment variables this plan proposes to remove.
 
-## Historical records
+## Optional follow-up
 
-[`herdr-refactor.md`](herdr-refactor.md) is an implementation review and
-remediation record, not an active plan. Its current verdict says the Herdr
-implementation and isolated live gate passed. The remaining low-priority
-inventory/snapshot cleanup is optional follow-up work.
-
-[`bump-disposition-track.md`](bump-disposition-track.md) is a historical,
-read-only observer log for the completed lock-refresh disposition. The
-disposition plan itself was already removed after completion, with its
-implementation and history remaining in Git; this log records
-repository-visible progress notes from executing it and is not the plan's
-external, SHA-bound validation evidence.
+- **Herdr tool-inventory consolidation and two snapshot/pane-history
+  acceptance cases.** Low-priority items noted in the completed Herdr
+  implementation review (removed; see Git history): the AI-tools inventory is
+  still repeated across the Nix package list, the host install message, and
+  prose, rather than unified into one source; and the corrupt/too-new
+  snapshot recovery path and the deletion half of pane-history cleanup remain
+  unautomated acceptance cases. Neither reopens the review's verdict that
+  remediation and the isolated live gate passed. No owner; pick up
+  opportunistically.

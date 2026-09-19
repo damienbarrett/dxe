@@ -365,7 +365,8 @@ assert_file_contains_literal "$persist_home/.config/herdr/config.toml" 'agent_pa
 # --- F7: table-scope-aware seeding regression guards ---
 #
 # Ported from Section 23 with the seeder itself. Each case reproduces a defect
-# the original grep-based seeder actually shipped (herdr-refactor.md F7): a key
+# the original grep-based seeder actually shipped (F7 in the completed Herdr
+# implementation review; see Git history): a key
 # name under an unrelated table suppressed seeding entirely; a header carrying
 # a trailing comment produced a *second*, duplicate table and so a TOML parse
 # error; and a key under a same-named sub-table also suppressed seeding. The

@@ -6,10 +6,11 @@ No solution is chosen here.
 
 ## Status
 
-Open. Known informally as **L6** in `herdr-refactor.md`, where it was recorded
-as a "workflow property … Documented — start twice". That classification is
-wrong, and the cost is no longer hypothetical: it took down `dx-host` on
-2026-08-04 and produced a silent, misleading failure.
+Open. Previously misclassified, in the now-removed Herdr implementation
+review (completed and removed; see Git history), as a benign "workflow
+property … Documented — start twice". That classification was wrong, and the
+cost is no longer hypothetical: it took down `dx-host` on 2026-08-04 and
+produced a silent, misleading failure.
 
 Two claims in that earlier record are also incorrect and are corrected below:
 the recommended diagnostic does not work, and the condition is not a race that
@@ -91,7 +92,8 @@ Nothing in the guest, the logs, or any host command reports this divergence.
 
 ## Detection is currently broken
 
-`herdr-refactor.md` recommends:
+The now-removed Herdr implementation review (see Git history) recommended
+detecting this by grepping the guest's boot log for its generation id:
 
 ```
 $ container logs dx-test | grep -oE 'generations/[0-9TZ-]+' | tail -2
@@ -120,9 +122,15 @@ in exactly the case that matters most, a guest whose bootstrap died.
 The develop-and-recreate loop is the one workflow that changes bootstrap code,
 and it is the one workflow this defect always hits. It also compounds any
 bootstrap-fatal bug into "the guest does not exist, and the reason looks like
-the fix failed" — which has already produced one confidently wrong diagnosis
-(L3's "bootstrap-delivery deadlock", recorded and retracted in
-`herdr-refactor.md`).
+the fix failed" — which has already produced one confidently wrong diagnosis:
+a recreate that reproduced an earlier failure right after its fix landed was
+first read as a bootstrap-delivery deadlock (the guest's payload volume
+survives recreation, and republishing needs a live container, so a guest
+whose bootstrap dies could never receive its own fix). That inference was
+wrong — `dx-sync-bootstrap` runs on every start regardless of what killed the
+last boot — and the recreate had simply been launched against a still-
+incomplete fix. Recorded and retracted in the now-removed Herdr
+implementation review; see Git history.
 
 ## Why the obvious fix does not work
 
@@ -177,9 +185,15 @@ the guest reads it, or move delivery off `container exec` entirely.
 
 ## Related
 
-- `herdr-refactor.md` — L3 (the retracted deadlock diagnosis), L6 (this
-  defect, previously under-rated), L7 (a second delivery-shaped trap: additions
-  to the essentials profile never reach an existing guest), and the
-  "Post-review corrections" section.
+- The now-removed Herdr implementation review (see Git history) misdiagnosed
+  this same publication-race pattern twice: once as this defect's original
+  "workflow property" misclassification (corrected above), and once as the
+  retracted "bootstrap-delivery deadlock" (corrected above). Its "Post-review
+  corrections" section records the same 2026-08-04 `dx-host` incident this
+  document's Symptom section already describes directly. A related but
+  distinct trap from the same review: additions to the bootstrap-essentials
+  profile never reach a guest that already has one, since the installer skips
+  a profile it finds already present — a different way for a published fix to
+  silently not reach a running guest.
 - `bin/dx-start-container`, `bin/dx-sync-bootstrap`, `bin/dx-create-container`,
   `dx_bootstrap_launch_command` in `bin/lib/dx-ssh-common.sh`.
