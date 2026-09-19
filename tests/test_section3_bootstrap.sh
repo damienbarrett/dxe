@@ -694,5 +694,51 @@ else
     test_fail "the pre-remount check covers the resolved essentials bin target, not just the profile root ($verify_bin_output)"
 fi
 
+# P7: findmnt's "TARGET,FSTYPE" line must be matched on the FSTYPE field
+# exactly, never grepped as a whole. The old unanchored
+# `findmnt ... | grep -q "$fs_type"` matched the *TARGET* half of the line
+# too, so a /nix mounted somewhere whose path happens to contain the fs_type
+# substring was reported as already correctly mounted -- skipping volume
+# setup on a false positive. This stub is a recording stub, not a no-op: it
+# logs the exact invocation so the assertion can tell the fix still consults
+# findmnt for the real FSTYPE, rather than merely no longer being fooled by
+# accident.
+p7_fp_log="$fixture/p7-findmnt-false-positive.log"
+p7_fp_output="$({
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
+    findmnt() {
+        printf '%s\n' "$*" >> "$p7_fp_log"
+        if [ "$*" = '-n -o TARGET,FSTYPE /nix' ]; then printf '%s\n' '/nix-btrfs-legacy ext4'; else return 1; fi
+    }
+    prepare_nix_volume_impl
+} 2>&1)"
+if [ -s "$p7_fp_log" ] \
+    && grep -qF -- '-n -o TARGET,FSTYPE /nix' "$p7_fp_log" \
+    && printf '%s\n' "$p7_fp_output" | stdin_matches -F 'dx-nix-raw not found' \
+    && ! printf '%s\n' "$p7_fp_output" | stdin_matches -F 'is already a btrfs mount'; then
+    test_pass "prepare_nix_volume_impl exact-matches the FSTYPE field instead of substring-matching the whole findmnt line"
+else
+    test_fail "prepare_nix_volume_impl exact-matches the FSTYPE field instead of substring-matching the whole findmnt line ($p7_fp_output)"
+fi
+
+# True positive: when FSTYPE genuinely matches, the already-mounted
+# short-circuit must still fire.
+p7_tp_log="$fixture/p7-findmnt-true-positive.log"
+p7_tp_output="$({
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
+    findmnt() {
+        printf '%s\n' "$*" >> "$p7_tp_log"
+        if [ "$*" = '-n -o TARGET,FSTYPE /nix' ]; then printf '%s\n' '/nix btrfs'; else return 1; fi
+    }
+    prepare_nix_volume_impl
+    echo "already_mounted=$DX_NIX_VOLUME_ALREADY_MOUNTED root=$DX_NIX_VOLUME_ROOT"
+} 2>&1)"
+if printf '%s\n' "$p7_tp_output" | stdin_matches -F 'is already a btrfs mount' \
+    && printf '%s\n' "$p7_tp_output" | stdin_matches -F 'already_mounted=true root=/nix'; then
+    test_pass "prepare_nix_volume_impl still short-circuits when the mounted FSTYPE genuinely matches"
+else
+    test_fail "prepare_nix_volume_impl still short-circuits when the mounted FSTYPE genuinely matches ($p7_tp_output)"
+fi
+
 print_summary
 exit_with_code

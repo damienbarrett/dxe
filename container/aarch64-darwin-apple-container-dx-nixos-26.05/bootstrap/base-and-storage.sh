@@ -625,8 +625,16 @@ prepare_nix_volume_impl() {
         mount_opts="noatime,errors=remount-ro"
     fi
 
-    # Check if /nix is already mounted with the desired filesystem
-    if findmnt -n -o TARGET,FSTYPE /nix | grep -q "$fs_type"; then
+    # Check if /nix is already mounted with the desired filesystem. Match the
+    # FSTYPE field exactly rather than grepping the whole "TARGET FSTYPE"
+    # line: an unanchored substring match also matches against TARGET, so a
+    # /nix mounted with a *different* filesystem whose path happened to
+    # contain fs_type as a substring was reported as already correctly
+    # mounted, skipping setup on a false positive.
+    local current_fstype
+    current_fstype="$(findmnt -n -o TARGET,FSTYPE /nix 2>/dev/null || true)"
+    current_fstype="${current_fstype##* }"
+    if [ -n "$current_fstype" ] && [ "$current_fstype" = "$fs_type" ]; then
         echo "/nix is already a $fs_type mount. Skipping setup."
         DX_NIX_VOLUME_ALREADY_MOUNTED=true
         DX_NIX_VOLUME_ROOT=/nix
