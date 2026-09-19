@@ -6,6 +6,16 @@ performance have been removed, along with the completed Herdr implementation
 review and the lock-refresh disposition tracking log; their implementation
 and history remain in Git.
 
+## Status vocabulary
+
+- **Partially complete** — landed work plus named open items.
+- **Open** — a problem statement or an unadopted audit; requires an
+  `Owner:` and a `Revisit trigger:`.
+- **Historical** — a record only, kept for its evidence rather than as
+  live work.
+
+Every plan document below is listed under exactly one of these.
+
 ## Partially complete
 
 - [`plan.md`](plan.md) — The NixOS 26.05 upgrade and live validation are

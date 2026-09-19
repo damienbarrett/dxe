@@ -24,6 +24,59 @@ while IFS= read -r markdown_file; do
 done < <(find "$BASE_DIR" -maxdepth 4 -type f -name '*.md' -not -path '*/.git/*' | sort)
 if [ -z "$broken_links" ]; then test_pass "local Markdown links resolve"; else test_fail "local Markdown links resolve:$broken_links"; fi
 
+# --- plans.md indexes every root plan document under exactly one status ---
+#
+# plans.md is prose: a plan document can be added, removed, or reassigned
+# between statuses without anything noticing. Enumerate every root plan
+# document -- every *.md at the repository root except this index itself,
+# the top-level README, and the constitution -- and assert it is listed in
+# plans.md under exactly one status section, and that every entry plans.md
+# links to resolves to a file that exists. The status vocabulary (Partially
+# complete, Open, Historical) is defined in plans.md itself.
+PLANS_INDEX="$BASE_DIR/plans.md"
+PLAN_STATUS_HITS="$(mktemp)"
+PLAN_ALL_LINKS="$(mktemp)"
+
+in_status_section=0
+while IFS= read -r plans_line; do
+    case "$plans_line" in
+        '## Partially complete'*|'## Open'*|'## Historical'*) in_status_section=1; continue ;;
+        '## '*) in_status_section=0; continue ;;
+    esac
+    while IFS= read -r reference; do
+        [ -n "$reference" ] || continue
+        target=${reference#']('}; target=${target%%#*}
+        case "$target" in ''|http:*|https:*|mailto:*) continue ;; esac
+        printf '%s\n' "$target" >>"$PLAN_ALL_LINKS"
+        if [ "$in_status_section" -eq 1 ]; then printf '%s\n' "$target" >>"$PLAN_STATUS_HITS"; fi
+    done < <(printf '%s\n' "$plans_line" | grep -oE '\]\([^)]+' || true)
+done <"$PLANS_INDEX"
+
+while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    case "$doc" in
+        README.md|constitution.md|plans.md) continue ;;
+        consolidate-plan*.md) continue ;;
+    esac
+    hit_count=$(grep -Fxc -- "$doc" "$PLAN_STATUS_HITS" || true)
+    if [ "$hit_count" -eq 1 ]; then
+        test_pass "plans.md lists $doc under exactly one status"
+    else
+        test_fail "plans.md lists $doc under exactly one status (found $hit_count)"
+    fi
+done < <(find "$BASE_DIR" -maxdepth 1 -type f -name '*.md' -exec basename {} \; | sort)
+
+while IFS= read -r plan_target; do
+    [ -n "$plan_target" ] || continue
+    if [ -e "$BASE_DIR/$plan_target" ]; then
+        test_pass "plans.md entry '$plan_target' resolves to a file"
+    else
+        test_fail "plans.md entry '$plan_target' resolves to a file"
+    fi
+done <"$PLAN_ALL_LINKS"
+
+rm -f "$PLAN_STATUS_HITS" "$PLAN_ALL_LINKS"
+
 all_docs="$README $BASE_DIR/docs/lifecycle.md $CONFIG_DOC $BASE_DIR/docs/guest.md $BASE_DIR/docs/troubleshooting.md $BASE_DIR/docs/release-maintenance.md"
 for command in "$BASE_DIR"/bin/dx*; do
     [ -f "$command" ] || continue
