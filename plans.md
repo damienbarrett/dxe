@@ -4,7 +4,10 @@ Status checked against the repository on 2026-09-19. Completed plan documents
 for the lock refresh, Herdr integration, Herdr theming, and bootstrap
 performance have been removed, along with the completed Herdr implementation
 review and the lock-refresh disposition tracking log; their implementation
-and history remain in Git.
+and history remain in Git. `consolidation-plan.md`, the plan that drove this
+documentation consolidation (R1 through R8), has also been removed now that
+all eight refactors are executed; its implementation and history remain in
+Git.
 
 ## Status vocabulary
 
@@ -26,9 +29,6 @@ Every plan document below is listed under exactly one of these.
 
 ## Open plans
 
-- [`consolidation-plan.md`](consolidation-plan.md) — The plan that drove this
-  documentation consolidation. R1 through R8 are now executed; see Git
-  history for each.
 - [`declarative-nix-plan-a.md`](declarative-nix-plan-a.md) — Audit proposing
   incremental Bash-to-Nix/Home Manager conversions. It puts Nix evaluation and
   coverage gates first, followed by smaller configuration conversions and the
