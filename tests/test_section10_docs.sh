@@ -56,7 +56,6 @@ while IFS= read -r doc; do
     [ -n "$doc" ] || continue
     case "$doc" in
         README.md|constitution.md|plans.md) continue ;;
-        consolidate-plan*.md) continue ;;
     esac
     hit_count=$(grep -Fxc -- "$doc" "$PLAN_STATUS_HITS" || true)
     if [ "$hit_count" -eq 1 ]; then
