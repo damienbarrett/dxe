@@ -135,7 +135,7 @@ assert_file_contains "$SHELL_NIX" '\^yazi ...$args --cwd-file $tmp' "nushell yaz
 assert_file_contains "$SHELL_NIX" 'str replace --all (char nul) ""' "nushell yazi cwd helper strips cwd file NUL terminator"
 
 # Test: AI CLI tools are excluded from the default dxPackages list
-if printf '%s\n' "$DX_PACKAGES_BLOCK" | stdin_matches -E "codex|gemini-cli|claude-code|antigravity-cli"; then
+if printf '%s\n' "$DX_PACKAGES_BLOCK" | stdin_matches -E "codex|gemini-cli|claude-code|antigravity-cli|opencode"; then
     test_fail "AI CLI tools excluded from default dxPackages"
 else
     test_pass "AI CLI tools excluded from default dxPackages"
@@ -216,6 +216,17 @@ if printf '%s\n' "$AI_PACKAGES_BLOCK" | stdin_matches -E "\bherdr\b"; then
 else
     test_fail "herdr is in aiPackages"
 fi
+
+if printf '%s\n' "$AI_PACKAGES_BLOCK" | stdin_matches -E "\bopencode\b"; then
+    test_pass "opencode is in aiPackages"
+else
+    test_fail "opencode is in aiPackages"
+fi
+
+assert_file_contains_literal "$DX_AI_SCRIPT" '$persist_home/.config/opencode' "guest dx-ai prepares persisted opencode config directory"
+assert_file_contains_literal "$DX_AI_SCRIPT" '$persist_home/.local/share/opencode' "guest dx-ai prepares persisted opencode data directory"
+assert_file_contains "$CONTAINER_DIR/bootstrap/activation.sh" "/persist/home/dx/.config/opencode" "bootstrap prepares persisted opencode config directory"
+assert_file_contains "$CONTAINER_DIR/bootstrap/activation.sh" "/persist/home/dx/.local/share/opencode" "bootstrap prepares persisted opencode data directory"
 
 # Test: shell startup guards optional prompt/environment hooks
 assert_file_contains "$SHELL_NIX" "command -v direnv" "bash direnv hook is guarded"
