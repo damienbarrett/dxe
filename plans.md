@@ -29,6 +29,14 @@ Every plan document below is listed under exactly one of these.
 
 ## Open plans
 
+- [`qnap-dxe-plan.md`](qnap-dxe-plan.md) — Implementation plan for a
+  Tailscale-reached, QNAP-hosted DXE controlled through Docker Engine over SSH.
+  It preserves the Apple runtime as the default, adds an explicit remote-Docker
+  adapter and direct `/nix` volume mode, handles native ARM64/x86_64 selection,
+  and defines isolated live, reboot, backup/restore, and destructive gates. No
+  implementation has landed. Revisit trigger: when the target QNAP is
+  available for the Phase 0 preflight, or when the runtime abstraction is
+  scheduled.
 - [`declarative-nix-plan-a.md`](declarative-nix-plan-a.md) — Audit proposing
   incremental Bash-to-Nix/Home Manager conversions. It puts Nix evaluation and
   coverage gates first, followed by smaller configuration conversions and the
