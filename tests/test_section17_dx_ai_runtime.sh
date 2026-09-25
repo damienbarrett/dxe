@@ -40,6 +40,18 @@ seed_ai_profile() {
 cp -a "$published/." "$state/generations/previous/"
 printf '%s\n' '' > "$state/generations/previous/.predecessor"
 seed_ai_profile "$state/generations/previous"
+# dx_ai_setup_credentials (used far below) calls GNU ln's -sfnT; translate
+# that single option for macOS's ln. Defined here, above this file's own
+# plain `ln -s` on the next line, so ShellCheck doesn't read that literal
+# call as invoking a function that isn't defined yet (SC2218) -- every
+# other invocation, including this one, passes through unchanged.
+ln() {
+    if [ "${1:-}" = -sfnT ]; then
+        command ln -sfn "$2" "$3"
+    else
+        command ln "$@"
+    fi
+}
 ln -s generations/previous "$state/current"
 real_mv="$(command -v mv)"
 mv() {
@@ -378,15 +390,7 @@ trap 'rm -rf "$creds_fixture"' EXIT
 creds_persist="$creds_fixture/persist/home/dx"
 creds_home="$creds_fixture/home/dx"
 mkdir -p "$creds_persist" "$creds_home"
-# Production runs in the Linux guest, where ln supports -T. Translate that
-# single option for this source-level behavior test when it runs on macOS.
-ln() {
-    if [ "${1:-}" = -sfnT ]; then
-        command ln -sfn "$2" "$3"
-    else
-        command ln "$@"
-    fi
-}
+# ln is already shimmed for GNU's -sfnT near the top of this file.
 if ! dx_ai_setup_credentials "$creds_persist" "$creds_home"; then
     test_fail "dx_ai_setup_credentials prepares the credential fixture"
 fi
