@@ -106,7 +106,7 @@ if [ "$herdr_present" -ne 0 ]; then
     fi
 
     echo "Herdr is not installed in the guest."
-    echo "Installing optional AI tools bundle (codex, gemini, claude, agy, herdr)..."
+    echo "Installing optional AI tools bundle (codex, gemini, claude, agy, herdr, opencode)..."
     echo "This may take a while on first install."
 
     # Stream the dx-ai install attempt (not captured, so progress output
