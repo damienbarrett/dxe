@@ -2,17 +2,36 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+container_dir="$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05"
 failures=0
 check() { if "$@"; then :; else echo "FAIL: $*" >&2; failures=$((failures + 1)); fi; }
 reject() { ! "$@"; }
 
-# Every library is import-only: no output and no caller control-state changes.
-for library in "$ROOT"/bin/lib/*.sh "$ROOT"/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/*.sh "$ROOT"/container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib/*.sh; do
+# Every library is import-only: no output on stdout or stderr, a zero exit
+# status, and no caller control-state changes.
+#
+# The host's /bin/bash is 3.2, which lacks Bash 4's `declare -A`. Sourcing a
+# guest library that uses it (e.g. bootstrap/herdr-config.sh) prints
+# "invalid option" diagnostics to stderr but still returns status 0, so a
+# check that only looked at stdout (as this one used to) saw nothing wrong.
+# Rather than let that pass silently, only the host libraries that actually
+# run under 3.2 are checked there; the guest libraries get the identical
+# strict check under Bash 5, which this file also runs under via
+# tests/run-coverage-linux.sh -> run-coverage-contracts.sh.
+libraries=("$ROOT"/bin/lib/*.sh)
+if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
+    libraries+=("$container_dir"/bootstrap/*.sh "$container_dir"/scripts/lib/*.sh)
+fi
+purity_stderr="$(mktemp "${TMPDIR:-/tmp}/dxe-purity-stderr.XXXXXX")"
+for library in "${libraries[@]}"; do
     before_flags=$-; before_ifs=$IFS; before_pwd=$PWD; before_umask="$(umask)"; before_traps="$(trap -p)"
     # shellcheck source=/dev/null
-    output="$(source "$library")"
-    check test -z "$output"; check test "$before_flags" = "$-"; check test "$before_ifs" = "$IFS"; check test "$before_pwd" = "$PWD"; check test "$before_umask" = "$(umask)"; check test "$before_traps" = "$(trap -p)"
+    output="$(source "$library" 2>"$purity_stderr")" && status=0 || status=$?
+    stderr_output="$(cat "$purity_stderr")"
+    check test -z "$output"; check test -z "$stderr_output"; check test "$status" -eq 0
+    check test "$before_flags" = "$-"; check test "$before_ifs" = "$IFS"; check test "$before_pwd" = "$PWD"; check test "$before_umask" = "$(umask)"; check test "$before_traps" = "$(trap -p)"
 done
+rm -f "$purity_stderr"
 
 source "$ROOT/bin/lib/dx-config.sh"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-config-test.XXXXXX")"
@@ -130,7 +149,6 @@ check test "$probe_status" -ne 0
 # attribute names (`claude` ships in `claude-code`, `gemini` in `gemini-cli`).
 # The contract asserted is the one that catches the real mistake: every tool
 # dx-ai will demand has *some* package whose attribute name starts with it.
-container_dir="$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05"
 declared_tools="$(sed -n 's/^DX_AI_TOOLS="\(.*\)"$/\1/p' "$container_dir/scripts/dx-ai.sh")"
 check test -n "$declared_tools"
 ai_packages="$(sed -n '/aiPackages = /,/^[[:space:]]*\];$/p' "$container_dir/flake.nix" | sed -n 's/^[[:space:]]*\([A-Za-z][A-Za-z0-9_.-]*\)$/\1/p')"
