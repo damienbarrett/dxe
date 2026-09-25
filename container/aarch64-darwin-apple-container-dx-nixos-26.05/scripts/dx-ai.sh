@@ -330,7 +330,7 @@ dx_ai_main() {
     stage=""
     export PATH="$state/current/profile/bin:$PATH"
     dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM
-    dx_ai_setup_credentials || return
+    dx_ai_setup_credentials /persist/home/dx "$HOME" || return
     dx_ai_ensure_keyring || return
     # Herdr is optional, so a missing or unhappy integration is reported but
     # never fails an otherwise successful AI update.
