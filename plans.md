@@ -30,12 +30,21 @@ Every plan document below is listed under exactly one of these.
   Sequencing plan for landing the remaining consolidation work as small,
   independently validated branches. Priority 1 (Branches 1-3: CI baseline,
   the OpenCode revert, the test-image fixture removal) is done, and Step 4's
-  baseline check of `main` passed. Branch 4a (the `container_is_running`/
-  `container_exists` SIGPIPE fix) has landed; Branch 4b (live-tier hygiene)
-  is next. Branch 5 (this document's own move into the repository, plus the
-  rest of `docs/plan-cleanup`) is in progress. Branches 6 through 13 are not
-  started, most gated on a named decision (Q1, Q3-Q7) recorded in the plan
-  itself.
+  baseline check of `main` passed. Branches 4a (the `container_is_running`/
+  `container_exists` SIGPIPE fix) and 4b (live-tier hygiene, seven commits,
+  live tier 1105/0/8) have landed; Branch 4c (the same SIGPIPE shape in guest
+  bootstrap and theme scripts) is in progress. Branch 5 (this document's own
+  move into the repository, plus the rest of `docs/plan-cleanup`) has landed.
+  The duplicate clone (`dxe-agent/`) and the August evidence clone
+  (`dxe-evidence-20260831/`) were retired on 2026-09-26, ahead of Branch 6:
+  the preserved OpenCode work now lives in this repository as local branch
+  `preserve/dxe-agent-opencode`. Of the seven decisions (Q1, Q3-Q7; Q2 was
+  already resolved), Q1, Q3, Q4, Q5 and Q6 are now resolved, and the QNAP part
+  of Q7 was already accepted; only the rest of Q7 (the two large refactor
+  proposals) remains open and is not urgent. Because Q1 resolved to "fix the
+  bug first," Branch 9 (`fix/bootstrap-start-generation`) now runs before
+  Branch 6 (`feat/opencode`). Branches 6 through 13 are otherwise not
+  started.
 
 ## Open plans
 

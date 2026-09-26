@@ -14,13 +14,17 @@ repository yet: this is still a plan.
 
 ### Where things stand
 
-Updated 2026-09-26, after Branches 1-3 and 4a landed, Step 4 passed, and
-Branch 5 landed.
+Updated 2026-09-26, after Branches 1-3, 4a, 5 and 4b landed, Step 4 passed,
+and the duplicate-repository retirement below (originally planned for after
+Branch 6 lands) was carried out early.
 
-- **`main` is now `9064bb9`.** Branches 1, 2, 3, 4a and 5 are all landed
+- **`main` is now `3e41f4a`.** Branches 1, 2, 3, 4a, 5 and 4b are all landed
   fast-forwards; CI is green on each. Step 4's baseline check passed on a
-  freshly recreated `dx-test`. Branch 4b (`test/live-tier-hygiene`) is in
-  progress.
+  freshly recreated `dx-test`. Branch 4b (`test/live-tier-hygiene`, seven
+  commits) is **done**: the full live tier ran 1105 passed / 0 failed / 8
+  skipped. Branch 4c (`fix/guest-sigpipe-pipelines`) is in progress; its
+  scope widened past the two guest theme scripts once the same SIGPIPE shape
+  turned up twice more in `bootstrap/activation.sh` (see its section below).
 - **This plan now lives in the repository** as `checkout-consolidation-plan.md`
   at the root (Branch 5 item 5, commit `9064bb9`). The coordinating session's
   external copy (`~/Development/dxe-consolidation-plan.md`) is retired: it now
@@ -42,14 +46,25 @@ Branch 5 landed.
   Branch 3 removes the download.
 - **OpenCode is off `main` and waits for one complete delivery (Branch 6).**
   - The original support (`0f71be4`) was reverted by Branch 2 on 2026-09-26.
-  - The rest is preserved on `dxe-agent`'s local branch
-    `preserve/dxe-agent-opencode`: safe migration of existing OpenCode
-    settings, rollback to older AI tool sets, and ownership repair.
+  - The rest is preserved on **this repository's own local branch**
+    `preserve/dxe-agent-opencode` (`ff8f6bd`): safe migration of existing
+    OpenCode settings, rollback to older AI tool sets, and ownership repair.
+    (It originally lived in `dxe-agent/`, deleted 2026-09-26 -- see below.)
   - Guests that already opted in keep their OpenCode data; nothing deletes it.
     Until Branch 6 lands, a `dx-ai` run installs without `opencode`.
-- **Two copies of the repository.** `dxe/` is the one to keep. `dxe-agent/`
-  is fully preserved and is retired after Branch 6. `dxe-evidence-20260831/`
-  holds August test logs that belong in the repository.
+- **The duplicate clone and its throwaway test profile are retired.**
+  `dxe-agent/` and `dxe-evidence-20260831/` were deleted on 2026-09-26 after
+  verification: the preserved OpenCode work now lives in `dxe` itself, as
+  local branch `preserve/dxe-agent-opencode` (`ff8f6bd`), and the August
+  evidence is imported at `docs/evidence/20260831/` (Branch 5). The
+  `dx-opencode` throwaway test-guest profile's container, volumes and image
+  tag were also deleted -- it was never a real launcher (see "Your notes,
+  answered" above), and this plan already runs its destructive tests against
+  `dx-test` instead. Every merged branch was retired locally and on
+  `origin`; `origin` now carries only `main`. This is most of "After Branch 6
+  merges: retire the duplicates" below, done early because nothing depended
+  on keeping the duplicate around until Branch 6 lands; that section now
+  lists only what remains.
 - **Some planning docs are stale.** For example, `refactor-v2-final.md` still
   asks for fix P7 to be landed, but it landed as `9ab640b`. `refactor-plan.md`
   says Phase 6 item 5 is open, but its checklist marked it done on 2026-09-19.
@@ -80,24 +95,24 @@ with an actual build-and-run check of `main`.
 | 3 | `fix/test-image-fixture` | Remove the unused `test-image.png` download so guest builds stop depending on a GitHub avatar | XS | Yes (Nix eval) | No | **Done**: `main` = `bd2418f`, CI green |
 | 4 | *(no branch)* | Baseline check: build every guest output from `main`, run it on a freshly recreated `dx-test`, and record evidence that `main` works | ~half day | Yes | No (`dx-test` is disposable) | **Passed**: fresh guest, live tier 1081/0/10; Section 12 in-guest run finishing |
 | 4a | `fix/container-running-sigpipe` | Fix the false "container stopped" abort in `dx-wait-ssh` (Step 4 finding 1) | S | No | No | **Done**: `main` = `596ac28`, CI green |
-| 4b | `test/live-tier-hygiene` | Make Section 12 run inside the guest as part of the live tier; make Section 4's SSH probe skip (not fail) without a guest; make Section 14's history probe immune to SSH's known-hosts warning | S | Yes (`dx-test`) | No | In progress |
-| 4c | `fix/guest-sigpipe-pipelines` | Fix the same `\| grep -q` / `\| head -n1` under `pipefail` SIGPIPE shape as Branch 4a, in the guest scripts `scripts/dx-theme.sh:30` and `scripts/dx-theme-write-tool-themes.sh:374` | S | No | No | Not started |
-| **Priority 2 — finish in-flight work and retire the duplicate clone** | | | | | | |
+| 4b | `test/live-tier-hygiene` | Make Section 12 run inside the guest as part of the live tier; make Section 4's SSH probe skip (not fail) without a guest; make Section 14's history probe immune to SSH's known-hosts warning | S | Yes (`dx-test`) | No | **Done**: `main` = `3e41f4a`, seven commits, live tier 1105/0/8 |
+| 4c | `fix/guest-sigpipe-pipelines` | Fix the same `\| grep -q` / `\| head -n1` under `pipefail` SIGPIPE shape as Branch 4a, in `bootstrap/activation.sh` and the guest scripts `scripts/dx-theme.sh:30` and `scripts/dx-theme-write-tool-themes.sh:374` | S | No | No | In progress |
+| **Priority 2 — fix the start-generation bug, then finish in-flight work (the duplicate clone was retired early)** | | | | | | |
 | 5 | `docs/plan-cleanup` | Remove stale plan text, delete the OpenCode handoff note, import August evidence, move this plan into the repo | S | No | No | **Done**: `main` = `9064bb9`, CI green |
-| 6 | `feat/opencode` | Land OpenCode as one complete delivery: the original support plus safe migration, rollback and ownership repair. Then retire `dxe-agent/` | M | Yes | Q1 | Code exists (archive and `dxe-agent`) |
+| 9 | `fix/bootstrap-start-generation` | Make a restarted guest run the bootstrap code that was just published, not the previous version | M | Yes | No (Q4 resolved: fail the start) | Not started |
+| 6 | `feat/opencode` | Land OpenCode as one complete delivery: the original support plus safe migration, rollback and ownership repair | M | Yes | No (Q1 resolved: after Branch 9) | Code exists, preserved as this repository's own local branch `preserve/dxe-agent-opencode` |
 | **Priority 3 — backlog** | | | | | | |
-| 7 | `test/herdr-acceptance` | Two missing Herdr tests: bad-snapshot recovery and pane-history deletion | S | Possibly | Q3 | Not started |
+| 7 | `test/herdr-acceptance` | Two missing Herdr tests: bad-snapshot recovery and pane-history deletion | S | Possibly | No (Q3 resolved: do them) | Not started |
 | 8 | `refactor/legacy-migration-cleanup` | Check that every guest has left the old base image, then delete the old-base guards. This finishes `refactor-plan.md` | S–M | Yes (inventory) | No | Not started |
-| 9 | `fix/bootstrap-start-generation` | Make a restarted guest run the bootstrap code that was just published, not the previous version | M | Yes | Q4 | Not started |
-| 10 | `feat/persist-backup` | "B1": incremental host backup and restore of the guest's `/persist` data | M | Yes | Q5 | Not started |
+| 10 | `feat/persist-backup` | "B1": incremental host backup and restore of the guest's `/persist` data | M | Yes | No (Q5 resolved) | Not started |
 | 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH. Phase 0 (inventory plus a throwaway spike, no repo code) may run any time after item 4 | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 optional early |
-| 12 | `fix/store-trust` (may split in two) | Safe handling of the two Nix-store trust problems in `store-trust-plan.md` | L | Yes | Q6 | Not started |
-| 13 | `refactor/bootstrap-v2`, `refactor/declarative-nix` | The two remaining large proposals. No branch until you accept one | L each | Yes | Q7 | Not started |
+| 12 | `fix/store-trust` (may split in two) | Safe handling of the two Nix-store trust problems in `store-trust-plan.md` | L | Yes | No (Q6 resolved: fail fast) | Not started |
+| 13 | `refactor/bootstrap-v2`, `refactor/declarative-nix` | The two remaining large proposals. No branch until you accept one | L each | Yes | Q7 (still open) | Not started |
 
 ```text
-Priority 1:  0 ✓ ─► 1 ✓ ─► 2 ✓ ─► 3 ✓ ─► 4 ✓ ─► 4a ✓ ─► 4b ─► 4c   (main complete, green, buildable, proven on a guest)
-Priority 2:  5 ✓ ─► 6 ─► retire dxe-agent
-Priority 3:  7 ─► 8 ─► 9 ─► 10 ─► 11 ─► 12 ─► 13 (only accepted proposals)
+Priority 1:  0 ✓ ─► 1 ✓ ─► 2 ✓ ─► 3 ✓ ─► 4 ✓ ─► 4a ✓ ─► 4b ✓ ─► 4c   (main complete, green, buildable, proven on a guest)
+Priority 2:  5 ✓ ─► 9 ─► 6   (duplicate clone already retired; see "Where things stand")
+Priority 3:  7 ─► 8 ─► 10 ─► 11 ─► 12 ─► 13 (only accepted proposals)
              QNAP Phase 0 (no code) can run any time after item 4
 ```
 
@@ -109,15 +124,24 @@ Why this order:
   the `main` you intend to keep.
 - Branch 5 is docs-only, so it doesn't make `main` work. It can be written any
   time.
-- Branch 6's code already exists, and merging it lets the duplicate clone go.
+- **Branch 9 (the start-generation fix) now comes before Branch 6.** Q1
+  (resolved 2026-09-26) chose to fix the "boots the previous version" bug
+  first rather than ship OpenCode behind a scripted workaround: OpenCode
+  changes bootstrap code, so it would otherwise hit the bug on the very next
+  restart of your primary guest.
+- Branch 6's code already exists, preserved as this repository's own local
+  branch `preserve/dxe-agent-opencode`. Merging it is now the only thing left
+  of the duplicate-clone retirement (Priority 2's other items were carried
+  out early -- see "Where things stand").
 - Branches 7–8 are small and finish existing plans.
 - QNAP (11) waits for the start-generation fix (9), because both change the
   same start and lifecycle scripts, and for backups (10), because the QNAP plan
   requires backup and restore first.
 - Store trust (12) doesn't block QNAP: a QNAP guest starts with fresh volumes.
 
-The **decisions at the end** (Q1–Q7): Q2 (revert) and QNAP are resolved.
-Q1 is the next one needed, before Branch 6.
+The **decisions at the end** (Q1–Q7): Q1, Q2 (revert), Q3, Q4, Q5, Q6 and the
+QNAP part of Q7 are resolved. The rest of Q7 (the two large proposals) is not
+urgent -- it's only needed before Branch 13.
 
 ### Your notes, answered
 
@@ -418,67 +442,92 @@ remaining gap is a named, recorded blocker with an owner.
 Fixes Step 4 finding 1. Developed in a linked worktree because Step 4 occupied
 the main checkout.
 
-## Branch 4b — `test/live-tier-hygiene` (size S; after 4a; in progress)
+## Branch 4b — `test/live-tier-hygiene` (size S; after 4a; done 2026-09-26)
 
-Four small Red → Green increments, one per Step 4 observation (plus a
-`requires_container` pipefail fix in the same family as Branch 4a):
+**Landed.** `main` fast-forwarded `596ac28` → `3e41f4a` (seven commits).
 
-0. **`requires_container` (`tests/test_helpers.sh`) has the same SIGPIPE-under-
-   `pipefail` shape Branch 4a fixed in production**: it pipes
-   `container list --quiet` into `grep -F -x -q`, while this same file
-   documents the pitfall and provides `stdin_matches` to avoid it. Red: the
-   same big-stub-list technique as Branch 4a's Section 20 regression block
-   makes `requires_container` report a running container as not running under
-   `pipefail`. Green: use `stdin_matches -F -x -- "$DX_CONTAINER_NAME"` instead.
-1. **Section 12 inside the guest.** Make the live tier run
-   `test_section12_validate_linux.sh` in the guest (copy the test and its
-   helpers over SSH the way other live sections use `run_guest`, or a small
-   wrapper section), reporting its results in the host run. Red: today the
-   section skips on macOS and runs nowhere. Keep the file itself runnable
-   standalone on Linux. In the same increment, deal with the stale
-   "bootstrap.sh has idempotency checks" heuristic (line 108): the live tier's
-   own container restart already re-runs bootstrap on retained volumes, which
-   is the real idempotency evidence, so delete the heuristic with a comment
-   pointing there rather than inventing a new source-text match.
-2. **Section 4's key-only SSH probe** skips like the other live checks when the
-   guest is not running, instead of failing.
-3. **Section 14's `write_history` probe** ignores SSH's known-hosts warning
-   (use the same SSH options the other probes use, or filter stderr), so the
-   check returns pass or fail rather than "inconclusive".
+| Commit | What it did |
+| --- | --- |
+| `71d9896` | Commit 0: updated this plan's status (4a and 5 done, 4b in progress) |
+| `dd2ce62` | Fixed `requires_container`'s (`tests/test_helpers.sh`) same SIGPIPE-under-`pipefail` shape Branch 4a fixed in production: it piped `container list --quiet` into `grep -F -x -q`. Red: the same big-stub-list technique as Branch 4a's Section 20 regression block made `requires_container` report a running container as not running under `pipefail`. Green: `stdin_matches -F -x -- "$DX_CONTAINER_NAME"` |
+| `b344146` | Made Section 4's key-only SSH probe skip cleanly (not fail) without a guest |
+| `233d51a` | Fixed Section 14's `write_history` probe: it reported "inconclusive", never fail. Two real bugs found live against `dx-test`: missing `-o LogLevel=ERROR` (SSH known-hosts warning polluted the captured probe output) and a wrong hardcoded history filename (project.nvim 4.1.1's real default is `project_history.json`, not `project_history`) |
+| `3e49f6b` | Ran Section 12 inside the guest (relayed over `dx-put`/`dx-ssh`) instead of always skipping on macOS; replaced the stale "bootstrap.sh has idempotency checks" source-text heuristic with a comment pointing at the live tier's own container-restart evidence |
+| `f3be4b7` | Fixed a pinned-ShellCheck 0.10.0 SC2034 false positive in Section 20, found during validation |
+| `3e41f4a` | Re-measured the scope-share ratchet after the live-tier hygiene fixes (2134 → 2120 bp) |
 
-Validation: G1, coverage ratchet, both CI jobs, and the live tier on `dx-test`
-for increments 1 and 3.
+Validated end to end: `run-bash32-tests.sh` (79/0/0); Ubuntu container-free
+contracts (`run_all_tests.sh --skip-integration`, all green, Section 0's
+ShellCheck lint confirmed running); pinned ShellCheck 0.10.0 over the full CI
+file set (clean); `run-coverage-linux.sh` (100% covered, ratchet re-measured
+and rebaselined); `nix flake check` (lock file unchanged); and the full live
+tier on `dx-test`: **1105 passed / 0 failed / 8 skipped**, including Section
+4's SSH probe, Section 12 running inside the guest, and Section 14's
+`write_history` probe all passing live.
 
 ---
 
-## Branch 4c — `fix/guest-sigpipe-pipelines` (size S; after 4b)
+## Branch 4c — `fix/guest-sigpipe-pipelines` (size S; after 4b; in progress)
 
 Branch 4a's SIGPIPE-under-`pipefail` audit (`ccc9fac`) found the same
 `| grep -q` / `| head` shape in two guest scripts, under their own
 `set -eo pipefail`, and left them untouched as out of that task's scope:
 `scripts/dx-theme.sh:30` and `scripts/dx-theme-write-tool-themes.sh:374`.
-Two increments, each with a stub-based red test in the style of Branch 4a's
-Section 20 regression block:
+Re-running that audit over all of `container/.../{bootstrap.sh,bootstrap,
+scripts}` at the start of this branch found the same shape twice more in
+`bootstrap/activation.sh` -- the AI-tools opt-in guard at line 218 and the
+ownership-marker content check at lines 136-137 -- and confirmed two other
+hits are false positives: `bootstrap/system.sh:47`'s
+`sed -n '...p' flake.nix | head -1` only ever emits the single `nixpkgs.url`
+line `flake.nix` actually contains, so there is nothing for `head` to race;
+and the `-quit` in `bootstrap/base-and-storage.sh:175`'s
+`find ... -print -quit | grep -q .` already stops `find` itself after one
+match, not by relying on the downstream `grep -q`. Four increments, each with
+a stub-based red test in the style of Branch 4a's Section 20 regression
+block:
 
-1. **`scripts/dx-theme.sh:30`** pipes into `grep -qx`, which exits at its
+1. **`bootstrap/activation.sh:218`** decides whether the AI tools are
+   installed by piping `run_as_dx "nix profile list"` into `grep -qE`, which
+   can intermittently read "installed" as "not installed" during boot on a
+   guest with a long profile list. Red: a stub `run_as_dx` whose output puts
+   the matching `Flake attribute: ...ai-tools` line first, then tens of
+   thousands of filler lines, makes the check read a real match as absent
+   under `pipefail`. Green: extract the predicate into a small named function
+   (kept in `activation.sh`, still 100%-covered kcov scope) using the
+   read-all idiom (`grep -E ... >/dev/null`).
+2. **`bootstrap/activation.sh:136-137`** has the same `grep -q` shape, over a
+   two-line ownership-marker file. A standalone probe confirmed the writer is
+   too small to make the race reproducible (the whole marker never exceeds
+   the pipe buffer), so this is a characterisation/consistency fix, not a
+   proven defect: the same read-all idiom, for consistency with the
+   documented `stdin_matches` idiom and increment 1's fix.
+3. **`scripts/dx-theme.sh:30`** pipes into `grep -qx`, which exits at its
    first match the same way `grep -q` does. Red: a stub that emits the target
    line first, then tens of thousands of filler lines, makes the check read a
    real match as absent under `pipefail`. Green: replace the early-exit
    `grep -qx` with the read-all idiom (`grep -x -- … >/dev/null`, matching
    `tests/test_helpers.sh`'s `stdin_matches` and Branch 4a's fix).
-2. **`scripts/dx-theme-write-tool-themes.sh:374`** pipes into
-   `grep -oE … | head -n1`: `head -n1` exits after its first line the same
-   way, closing the pipe on `grep -oE`'s writer. Red: the same big-stub
-   technique, now with `head -n1` as the SIGPIPE trigger, reproduces a dropped
-   match under `pipefail`. Green: replace `grep -oE … | head -n1` with
+4. **`scripts/dx-theme-write-tool-themes.sh:374`** pipes into
+   `grep -oE … | head -n1 || true`: `head -n1` exits after its first line the
+   same way, closing the pipe on `grep -oE`'s writer. A standalone probe (20
+   runs each on bash 5/Linux and bash 3.2/macOS) confirmed the trailing
+   `|| true` already absorbs the resulting SIGPIPE (rc 141 every time)
+   without ever losing the correct captured value, so this is a
+   hygiene/consistency fix -- it removes a needless, masked SIGPIPE rather
+   than a proven dropped match. Green: replace `grep -oE … | head -n1` with
    `grep -m1 -oE …` so `grep` itself stops after one match instead of relying
-   on a downstream `head` to do it.
+   on a downstream `head` to do it, and no longer needs `|| true` to hide a
+   SIGPIPE it no longer raises.
 
-Validation: G1, coverage ratchet (both files are guest `container/.../scripts/`,
-outside kcov's declared `scripts/lib` scope but counted in the ratchet's
-`total_lines`; changed lines need the Appendix C changed-code report the same
-way `dx-ai.sh` does), both CI jobs, `nix flake check`, and the live tier on
-`dx-test` (Section 14's theme-switching checks exercise both scripts).
+Validation: G1, coverage ratchet (`bootstrap/activation.sh` is in kcov's
+declared scope and must stay 100% covered; the two `scripts/` files are guest
+`container/.../scripts/`, outside kcov's declared `scripts/lib` scope but
+counted in the ratchet's `total_lines`; changed lines there need the
+Appendix C changed-code report the same way `dx-ai.sh` does), both CI jobs,
+`nix flake check` (not required -- no `.nix` files change -- but cheap to
+confirm nothing broke), and the live tier on `dx-test` (Section 17 confirms
+the AI bundle is detected as installed; Section 14's theme-switching checks
+exercise both theme scripts).
 
 ---
 
@@ -528,8 +577,10 @@ pass.
 
 ## Branch 6 — `feat/opencode` (size M, code exists)
 
-**Depends on:** Branches 1–3 merged and Step 4 passed. **Decision:** Q1 (how to
-roll out given the start-generation bug).
+**Depends on:** Branches 1–3 merged, Step 4 passed, and Branch 9 landed.
+**Decision:** Q1 -- **resolved 2026-09-26: fix the start-generation bug
+first.** Branch 9 now runs before this one (see the summary table and "Why
+this order").
 
 After Branch 2's revert, this branch re-lands OpenCode as **one complete
 delivery**:
@@ -546,10 +597,12 @@ delivery**:
 - Put `opencode` back into Section 6's "AI CLI tools excluded from default
   dxPackages" regex.
 
-### What gets imported from `dxe-agent/`
+### What gets imported from `preserve/dxe-agent-opencode`
 
-The source is local branch `preserve/dxe-agent-opencode` (`ff8f6bd`) in
-`dxe-agent/`, also in the Step 0 archive.
+The source is local branch `preserve/dxe-agent-opencode` (`ff8f6bd`), now
+local to this repository (`dxe`): it originally lived in `dxe-agent/`, which
+was deleted 2026-09-26 after verification, once the branch was confirmed safe
+in `dxe` and in the Step 0 archive (see "Where things stand").
 
 - Commit `f69d1e4`: tests for OpenCode generation persistence and Herdr
   behaviour.
@@ -618,19 +671,23 @@ instead.
 
 ### After Branch 6 merges: retire the duplicates
 
-1. Check nothing refers to `dxe-agent`: shell profile, launchers, editor
-   sessions, container mounts.
-2. Re-verify the private archive, including a final incremental snapshot if
-   `dxe-agent/` changed after Step 0.
-3. Delete `dxe-agent/` and `dxe-evidence-20260831/`. Their runtime volumes are
-   left alone.
-4. Delete `fix/dx-wait-ssh-probe-budget` locally and on `origin`, after
-   confirming it still equals a commit in `main` (it's at `71c2b50`).
-5. Confirm `gc.auto` is back to its prior setting (Step 0) and the
-   `refs/archive/unreachable/*` pins are gone (Branch 5).
-6. In a small docs-only commit, update this plan's status and the ledger.
-   Remove the completed consolidation steps (Steps 0 and 4, Branches 1, 2, 3, 5 and 6) from this
-   plan and keep only what remains.
+**Most of this was done early, on 2026-09-26**, ahead of Branch 6 landing
+(see "Where things stand"): `dxe-agent/` and `dxe-evidence-20260831/` are
+deleted; `preserve/dxe-agent-opencode` is a local branch in `dxe` itself;
+the `dx-opencode` test-guest profile's container, volumes and image tag are
+deleted; every merged branch (including `fix/dx-wait-ssh-probe-budget`) is
+retired locally and on `origin`; `origin` carries only `main`; `gc.auto` is
+back to its prior (unset/default) setting; and the `refs/archive/unreachable/*`
+pins are gone (Branch 5). What remains, once Branch 6 lands:
+
+1. Confirm nothing still refers to the deleted `dxe-agent/` path: shell
+   profile, launchers, editor sessions, container mounts.
+2. Re-verify the private archive covers `preserve/dxe-agent-opencode` as it
+   stands at merge time (it was already verified once, at deletion time;
+   repeat only if the branch changed since).
+3. In a small docs-only commit, update this plan's status and the ledger.
+   Remove the completed consolidation steps (Steps 0 and 4, Branches 1, 2, 3,
+   5, 6 and 9) from this plan and keep only what remains.
 
 ---
 
@@ -671,7 +728,13 @@ remove the old-base guards in `bootstrap.sh:11–29` and
 
 ---
 
-## Branch 9 — `fix/bootstrap-start-generation` (size M; Q4)
+## Branch 9 — `fix/bootstrap-start-generation` (size M; Q4 resolved; now runs before Branch 6)
+
+**Q4 -- resolved 2026-09-26: A, fail the start** if publishing the new
+bootstrap version fails or times out, with a manual start or reboot that has
+no publisher still just working. **Q1 -- resolved 2026-09-26:** this branch
+now lands before Branch 6, instead of OpenCode shipping behind a scripted
+restart-and-verify workaround (see the summary table and "Why this order").
 
 **Problem (`dx-start-plan.md`):** `dx-start-container` starts the guest
 *before* the host publishes the new bootstrap code. A guest with a retained
@@ -682,12 +745,13 @@ bootstrap edit. The only current workaround is starting it a second time.
    actually booted somewhere the host can read. Today it is only visible
    inside a lease file in a running guest. Red: a test that expects the
    record and finds none.
-2. **The fix:** publish before starting, or make the guest wait for a fresh
-   publication (a design choice, after characterising). Test these cases:
+2. **The fix:** fail the start with a clear error if publishing the new
+   version fails or times out (Q4 = A) -- nothing boots that wasn't asked
+   for. Test these cases:
    - an edited start;
    - first boot;
    - no-change start;
-   - manual start or reboot with no publisher;
+   - manual start or reboot with no publisher (must still just work);
    - timeout;
    - a dead guest.
 
@@ -810,10 +874,14 @@ as a whole phase stack.
 ## Decisions for you
 
 The questions are listed in the order they're needed. Each has the background
-you need to answer it. Q2 and the QNAP part of Q7 are resolved. **Q1** is the
-next one needed, before Branch 6. Branches 2–5 and Step 4 need no decisions.
+you need to answer it. As of 2026-09-26, Q1, Q2, Q3, Q4, Q5, Q6 and the QNAP
+part of Q7 are all resolved (each marked below with a short "Resolved
+2026-09-26" line, background kept for the record). Only the rest of **Q7**
+(the two large proposals other than QNAP) remains open, and it is not urgent
+-- it's only needed before Branch 13. Branches 2–5 and Step 4 needed no
+decisions.
 
-### Q1. Can OpenCode ship before the "boots the previous version" bug is fixed? *(needed for Branch 6)*
+### Q1. Can OpenCode ship before the "boots the previous version" bug is fixed? — **Resolved 2026-09-26: B, fix the bug first** *(needed for Branch 6)*
 
 **Background:**
 
@@ -838,6 +906,11 @@ next one needed, before Branch 6. Branches 2–5 and Step 4 need no decisions.
 because the workaround is verified by evidence, not assumed. Branch 9 stays
 next in line for bootstrap work.
 
+**Resolved 2026-09-26: B.** Against the recommendation above, you chose to
+fix the bug first: Branch 9 now runs before Branch 6 (see the summary table
+and "Why this order"). OpenCode waits for it; the scripted restart-and-verify
+workaround is not used.
+
 ### Q2. OpenCode is partly on `main`: finish it or pull it out? — **Resolved 2026-09-26: revert**
 
 You chose to remove the partial feature from `main` now (Branch 2) and re-land
@@ -851,7 +924,7 @@ Consequences:
 - **Don't expect `opencode` from `dx-ai`** on the primary guest between
   Branch 2 and Branch 6.
 
-### Q3. Herdr follow-ups: do them, and should the AI tool list live in one place? *(needed for Branch 7)*
+### Q3. Herdr follow-ups: do them, and should the AI tool list live in one place? — **Resolved 2026-09-26: do the tests; keep the three lists** *(needed for Branch 7)*
 
 **Background:**
 
@@ -871,7 +944,12 @@ Consequences:
 consistency test: it works, and one source of truth across Nix, host shell
 and prose would add machinery for little gain.
 
-### Q4. After a bootstrap edit, what should `dx-start-container` do if publishing the new version fails or times out? *(needed for Branch 9)*
+**Resolved 2026-09-26:** agreed as recommended. Do the two Herdr tests
+(Branch 7: bad-snapshot recovery and pane-history deletion). Keep the three
+tool lists, guarded by the existing consistency contract test, rather than
+generating them from one source.
+
+### Q4. After a bootstrap edit, what should `dx-start-container` do if publishing the new version fails or times out? — **Resolved 2026-09-26: A, fail the start** *(needed for Branch 9)*
 
 **Options:**
 
@@ -885,7 +963,11 @@ either way.
 **Recommendation: A.** Silently running old code is the bug being fixed.
 Option B would keep a milder form of it.
 
-### Q5. Backups: what, where, how long, how often? *(needed for Branch 10; only you can answer)*
+**Resolved 2026-09-26: A.** Fail the start with a clear error if publishing
+the new version fails or times out. A reboot or manual start with no
+publisher still just works either way. Branch 9 implements this.
+
+### Q5. Backups: what, where, how long, how often? — **Resolved 2026-09-26** *(needed for Branch 10)*
 
 **Please tell me:**
 
@@ -899,7 +981,16 @@ Option B would keep a milder form of it.
 exclude caches that can be rebuilt. Start with manual on-demand backup and a
 proven restore, then add the schedule.
 
-### Q6. Store trust: is "stop safely and tell me how to recover" acceptable, or must it self-repair? *(needed for Branch 12)*
+**Resolved 2026-09-26:**
+
+- **Destination:** a normal folder on the Mac, inside Time Machine's backup
+  scope (default `~/Backups/dxe-persist/`).
+- **Retention:** one current mirror -- no separate daily/weekly generations.
+- **Frequency:** on demand first, with a proven manual backup-and-restore;
+  a schedule is added later.
+- Branch 10 implements this.
+
+### Q6. Store trust: is "stop safely and tell me how to recover" acceptable, or must it self-repair? — **Resolved 2026-09-26: A, fail fast with a tested recovery path** *(needed for Branch 12)*
 
 **Background:** in some corrupted-store cases there may be no trustworthy
 tool left inside the guest to repair it automatically.
@@ -913,7 +1004,16 @@ tool left inside the guest to repair it automatically.
 
 **Recommendation: A.**
 
+**Resolved 2026-09-26: A.** Fail fast before running anything untrusted, with
+a tested recovery procedure (for example rebuilding the `/nix` volume from
+scratch). Option B (mandatory automatic repair in every case) is not
+required.
+
 ### Q7. The large proposals: accept, reject or keep parked? *(QNAP resolved; the others are needed before Branch 13, not urgent)*
+
+**Status 2026-09-26:** QNAP is resolved (accepted, Branch 11). The bootstrap
+refactor v2 and declarative-Nix audit proposals remain open -- still your
+call, still not urgent.
 
 For each proposal:
 
