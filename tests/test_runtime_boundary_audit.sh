@@ -46,10 +46,15 @@ audit_bin_tree() {
             # and every other bin/ file's actual `container` invocations
             # during Branch 11 / Phase 1's migration (2026-09-27).
             case "$line" in
-                # Narrative comments naming an operation, not calling it.
+                # Narrative comments naming an operation, not calling it. The
+                # `container run`/`container exec`/`container logs` arm below
+                # is a substring match, so it already covers every comment
+                # that names one of those backtick-quoted operations,
+                # including the longer explanatory comments in
+                # bin/dx-migrate-persist and bin/lib/dx-ssh-common.sh -- no
+                # separate arm needed for those (a narrower arm would be
+                # unreachable dead code here, ShellCheck SC2221/SC2222).
                 *'`container exec`'*|*'`container run'*|*'`container logs`'*) continue ;;
-                *'we asked the container to do, and every `container run` below'*) continue ;;
-                *"Apple Container's \`container run --rm\`"*) continue ;;
                 # "container system" here is English prose ("Apple container
                 # system is not running"), not the `container system` verb.
                 *'Apple container system is not running'*) continue ;;
