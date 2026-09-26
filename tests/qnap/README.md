@@ -142,6 +142,13 @@ tests/qnap/phase0-spike.sh --with-nas-reboot          # also attempt step 8c: a 
 tests/qnap/phase0-spike.sh --cleanup                  # remove only leftover dxe-spike-* resources from an earlier run
 ```
 
+Environment (in addition to `DXE_QNAP_HOST`/`DXE_QNAP_SSH_CONNECT_TIMEOUT`/
+`DXE_QNAP_DOCKER` above, which this script also honours):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DXE_QNAP_LISTENER_WAIT_SECONDS` | `180` | Step 7's bounded poll for the in-container listener to come up, in seconds (5s cadence) |
+
 The spike implements the plan's nine steps as individually numbered,
 reported steps (`PASS`/`FAIL`/`SKIP` with a reason). Every resource it
 creates is named `dxe-spike-<role>` **and** carries `--label
@@ -170,6 +177,21 @@ real image on the QNAP should follow the same pull+tag (or pull-only, if no
 local build is ever needed) shape for the same reason, reading the pin from
 the Containerfile rather than its own copy.
 
+Step 5's listener itself is fetched through Nix rather than assumed to
+already be on the image: the pinned `nixos/nix` base has bash, curl, and nix
+on `PATH`, but no busybox, `nc`, `socat`, `python3`, or `perl` (confirmed
+locally against the exact pinned digest -- a third real spike run hit this:
+the port was bound but nothing answered inside the container, so the
+direct connect was refused instantly). The container's command is `nix
+--extra-experimental-features "nix-command flakes" shell nixpkgs#busybox
+--command busybox httpd -f -p 2222 -h <dir>` serving a `PONG` index (the
+`--extra-experimental-features` flag is required -- confirmed locally that
+this image's `/etc/nix/nix.conf` does not enable `nix-command`/`flakes` by
+default). The first fetch needs outbound network access and, confirmed
+locally on a cold `/nix` store with no cache, took about a minute; expect
+similar or longer on the real NAS. `exec sleep infinity` remains only as
+the last-resort fallback if the whole `nix` invocation itself fails.
+
 Step 7 binds the guest SSH port to the NAS's own Tailscale address only --
 never loopback, never the LAN, never `0.0.0.0` -- discovered at run time
 over ssh (the Tailscale qpkg CLI's `ip -4`, falling back to reading the
@@ -184,14 +206,20 @@ favour of publishing directly to the discovered address and having the
 controller connect there over the tailnet with no jump host and no port
 forwarding -- exposure is governed entirely by Tailscale ACLs. Step 7 then
 verifies with `ss -ltn` that `2222` is bound to that address alone (no
-`0.0.0.0:2222`, no `[::]:2222`, no other address), then proves reachability
-with a direct TCP connect from the controller (`nc -z`, falling back to
-bash's `/dev/tcp`) and a fetch of the listener's response (`curl`, falling
-back to a `/dev/tcp` read), checking for the literal `PONG` the container's
-listener serves. If the address cannot be discovered, step 5 falls back to
-publishing `127.0.0.1` only (so the rest of the spike still runs) and step 7
-reports `FAIL` with a clear reason -- there is nothing tailnet-reachable to
-verify.
+`0.0.0.0:2222`, no `[::]:2222`, no other address). The host-side published
+port exists the instant the container starts, regardless of whether the
+nix-fetched listener inside has bound it yet, so step 7 *polls* the direct
+connect (`nc -z`, falling back to bash's `/dev/tcp`) rather than trying it
+once -- up to `DXE_QNAP_LISTENER_WAIT_SECONDS` seconds (default 180, every
+5s) -- before fetching the listener's response (`curl`, falling back to a
+`/dev/tcp` read) and checking for the literal `PONG` the container's
+listener serves, and reports how long it actually waited. If polling times
+out, step 7 reports `FAIL` with a clear reason (no listener ever answered
+within the bound -- the last-resort `exec sleep infinity` fallback, or a
+still-slower fetch than the bound allows). If the address cannot be
+discovered, step 5 falls back to publishing `127.0.0.1` only (so the rest
+of the spike still runs) and step 7 reports `FAIL` immediately with a clear
+reason -- there is nothing tailnet-reachable to verify.
 
 Step 8's three restarts are each guarded by their own flag and, without it,
 reported as skipped:
@@ -222,16 +250,15 @@ prefix convention.
 
 ### Known best-effort spots (not verifiable without the real NAS)
 
-Two pieces of the spike are necessarily best-effort until the first real
-run confirms or corrects them -- both are called out in comments at their
-definition in `tests/qnap/phase0-spike.sh`:
+One piece of the spike is necessarily best-effort until the first real run
+confirms or corrects it -- called out in a comment at its definition in
+`tests/qnap/phase0-spike.sh`. (Step 5's in-container listener is no longer
+best-effort: the exact `nix shell ... busybox httpd` command it runs was
+verified locally against the pinned base image in a throwaway Apple
+`container` run, including the `--extra-experimental-features` requirement
+and the fetch's cold-store timing -- see the comment on
+`dxe_spike_listener_command`.)
 
-- **Step 5's in-container listener** (`dxe_spike_listener_command`): the
-  minimal base image has no sshd, so the plan allows "a trivial listener
-  like `nc -l` or busybox httpd". The script tries busybox httpd, then
-  `nc`, then `socat`, in that order, and step 7's real run records which one
-  actually answered. Confirm this against the real image and simplify to
-  whichever tool is actually present.
 - **Step 8b's Container Station restart command**
   (`dxe_spike_container_station_restart_cmd`): a best guess following the
   common QNAP qpkg init-script convention. Confirm the qpkg's real

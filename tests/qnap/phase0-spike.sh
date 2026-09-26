@@ -178,12 +178,31 @@ dxe_spike_base_image_tag_only() {
 
 # --- Step 5's in-container listener (no sshd in the minimal base image) ---
 #
-# Tries, in order, a tool the base image is likely to have: busybox httpd,
-# then nc, then socat. Whichever answers is recorded by step 7's real run
-# (this script cannot itself observe which branch a real NAS takes without
-# running against one -- see tests/qnap/README.md and the task report).
+# Confirmed locally (Apple `container`, the same pinned base image this
+# Containerfile's FROM line names, run with no volume/cache so the fetch is
+# fully cold): the base image has bash, curl, and nix on PATH, but NO
+# busybox, nc, socat, python3, or perl -- so a chain that merely tries each
+# of those in turn always falls through to the final "else" branch and
+# never actually listens on 2222 (exactly what the second real NAS run hit:
+# the port was bound but nothing answered, so the direct connect was
+# refused instantly). The tool this image DOES reliably have is Nix itself,
+# so the listener is fetched through it instead: `nix shell nixpkgs#busybox
+# --command busybox httpd` pulls a busybox closure from the default flake
+# registry (nixpkgs -> github:NixOS/nixpkgs, resolved via cache.nixos.org)
+# and runs its httpd in the foreground. `--extra-experimental-features
+# "nix-command flakes"` is required on the invocation itself -- confirmed
+# locally that this image's /etc/nix/nix.conf does not enable either
+# feature by default (`nix show-config` reports "experimental Nix feature
+# 'nix-command' is disabled" with neither flag passed). The fetch needs
+# outbound network access and, confirmed locally on a cold store, took
+# ~67s; expect a minute or more on the real NAS too -- see step 7's bounded
+# retry below, which exists because of exactly this delay. `exec sleep
+# infinity` remains only as the last-resort fallback if the whole nix
+# invocation itself fails (e.g. no outbound network) -- step 7's bounded
+# poll then times out and reports FAIL with a clear reason instead of
+# hanging or reporting a misleading "connect refused" as the whole story.
 dxe_spike_listener_command() {
-    printf '%s' 'if command -v busybox >/dev/null 2>&1 && busybox httpd 2>&1 | grep -qi usage; then mkdir -p /tmp/dxe-spike-www && echo PONG > /tmp/dxe-spike-www/index.html && exec busybox httpd -f -p 2222 -h /tmp/dxe-spike-www; elif command -v nc >/dev/null 2>&1; then while true; do printf PONG | nc -l -p 2222 || nc -l 2222; done; elif command -v socat >/dev/null 2>&1; then exec socat TCP-LISTEN:2222,fork,reuseaddr SYSTEM:"printf PONG"; else exec sleep infinity; fi'
+    printf '%s' 'mkdir -p /tmp/dxe-spike-www && echo PONG > /tmp/dxe-spike-www/index.html && { nix --extra-experimental-features "nix-command flakes" shell nixpkgs#busybox --command busybox httpd -f -p 2222 -h /tmp/dxe-spike-www; } || exec sleep infinity'
 }
 
 # Best-guess QNAP service-restart command for Container Station, following
@@ -497,11 +516,20 @@ dxe_spike_run_steps() {
     # still no sshd in the spike container to reach via a normal ssh
     # connection (see the comment on dxe_spike_listener_command above), so
     # this step proves reachability with a plain TCP connect from the
-    # controller instead.
+    # controller instead. The host-side published port exists (and so
+    # ss -ltn above already sees it LISTEN-ing) the instant the container
+    # starts, regardless of whether the nix-fetched listener inside has
+    # bound it yet -- confirmed on the real NAS: a refused connect there
+    # looked identical to "will never listen", and only a bounded retry can
+    # tell "still starting" apart from "never will" (see
+    # dxe_spike_listener_command's comment: the nix shell fetch alone can
+    # take a minute or more). So the direct connect is polled, not tried
+    # once, up to DXE_QNAP_LISTENER_WAIT_SECONDS (default 180) every 5s.
     if [ "$DXE_DRY_RUN" = 1 ]; then
         # dxe_maybe_run is a pure preview here (DXE_DRY_RUN=1 always returns
         # without executing) against the placeholder address
         # dxe_qnap_ensure_tailnet_addr set above.
+        printf 'Step 7 will poll the direct connect up to DXE_QNAP_LISTENER_WAIT_SECONDS=%ss (default 180; 5s cadence) before declaring FAIL, since the listener now starts asynchronously; the commands below are one such attempt:\n' "${DXE_QNAP_LISTENER_WAIT_SECONDS:-180}"
         dxe_maybe_run nc -z -w 5 "$DXE_QNAP_TAILNET_ADDR" 2222
         dxe_maybe_run curl -s --http0.9 --max-time 5 "http://$DXE_QNAP_TAILNET_ADDR:2222/"
     elif [ -z "$DXE_QNAP_TAILNET_ADDR" ]; then
@@ -524,14 +552,29 @@ dxe_spike_run_steps() {
         done <<<"$ss_output"
         if [ "$tailnet_only" -eq 1 ]; then
             echo "Step 7: ss -ltn confirms 2222 is bound to the NAS's Tailscale address only (address recorded in the private report only)."
-            local connect_rc=0 pong_ok=0 fetch_out=""
-            if command -v nc >/dev/null 2>&1; then
-                nc -z -w 5 "$DXE_QNAP_TAILNET_ADDR" 2222 || connect_rc=$?
-            elif ( exec 3<>"/dev/tcp/$DXE_QNAP_TAILNET_ADDR/2222" ) 2>/dev/null; then
-                connect_rc=0
-            else
-                connect_rc=1
-            fi
+            # Poll the direct connect instead of trying it once: the
+            # listener inside the container starts asynchronously (it is
+            # fetched through nix on first use -- see
+            # dxe_spike_listener_command), so an immediate "connection
+            # refused" here does not yet mean the listener will never come
+            # up. Bounded so a genuinely absent listener (the last-resort
+            # "exec sleep infinity" fallback) still reports FAIL rather than
+            # hanging forever.
+            local wait_total="${DXE_QNAP_LISTENER_WAIT_SECONDS:-180}" wait_interval=5 waited=0
+            local connect_rc=1 pong_ok=0 fetch_out=""
+            while :; do
+                if command -v nc >/dev/null 2>&1; then
+                    connect_rc=0; nc -z -w 5 "$DXE_QNAP_TAILNET_ADDR" 2222 || connect_rc=$?
+                elif ( exec 3<>"/dev/tcp/$DXE_QNAP_TAILNET_ADDR/2222" ) 2>/dev/null; then
+                    connect_rc=0
+                else
+                    connect_rc=1
+                fi
+                [ "$connect_rc" -eq 0 ] && break
+                [ "$waited" -ge "$wait_total" ] && break
+                sleep "$wait_interval"
+                waited=$((waited + wait_interval))
+            done
             if [ "$connect_rc" -eq 0 ]; then
                 if command -v curl >/dev/null 2>&1; then
                     fetch_out="$(curl -s --http0.9 --max-time 5 "http://$DXE_QNAP_TAILNET_ADDR:2222/" 2>/dev/null || true)"
@@ -541,11 +584,11 @@ dxe_spike_run_steps() {
                 case "$fetch_out" in *PONG*) pong_ok=1 ;; esac
             fi
             if [ "$connect_rc" -eq 0 ] && [ "$pong_ok" -eq 1 ]; then
-                step_verdict 7 0 "bound to the tailnet address only, reachable directly from the controller, PONG confirmed"
+                step_verdict 7 0 "bound to the tailnet address only, reachable directly from the controller after ${waited}s, PONG confirmed"
             elif [ "$connect_rc" -eq 0 ]; then
-                step_verdict 7 1 "bound to the tailnet address only, direct TCP connect succeeded but PONG not confirmed"
+                step_verdict 7 1 "bound to the tailnet address only, direct TCP connect succeeded after ${waited}s but PONG not confirmed"
             else
-                step_verdict 7 1 "bound to the tailnet address only, but the direct TCP connect from the controller failed (rc=$connect_rc)"
+                step_verdict 7 1 "no listener available in the image (direct connect never succeeded after polling for ${waited}s, up to DXE_QNAP_LISTENER_WAIT_SECONDS=${wait_total}s; last rc=$connect_rc)"
             fi
         else
             step_verdict 7 1 "bound-to-tailnet-address-only NOT confirmed by ss -ltn"

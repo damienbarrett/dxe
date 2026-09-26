@@ -597,6 +597,32 @@ esac
 exit 1
 '
 
+# Fake "nc -z -w 5 <addr> <port>" that FAILS its first call and succeeds
+# from the second call onward -- proves step 7'"'"'s bounded retry loop
+# actually retries (not just a cosmetic single attempt), the way the real
+# listener'"'"'s asynchronous nix-shell fetch requires. Call count is tracked
+# in a file (DXE_TEST_NC_RETRY_COUNTER) rather than an env var, since each
+# invocation is a fresh process. Never succeeds for any address but the one
+# a test opts into.
+write_stub nc_retry '
+addr="${DXE_TEST_FAKE_TAILNET_ADDR:-}"
+counter_file="${DXE_TEST_NC_RETRY_COUNTER:?nc_retry requires DXE_TEST_NC_RETRY_COUNTER}"
+[ -n "$addr" ] || exit 1
+count=0
+[ -f "$counter_file" ] && count="$(cat "$counter_file")"
+count=$((count + 1))
+printf "%s" "$count" > "$counter_file"
+found=0
+for a in "$@"; do
+    case "$a" in
+        "$addr") found=1 ;;
+    esac
+done
+[ "$found" -eq 1 ] || exit 1
+[ "$count" -ge 2 ] && exit 0
+exit 1
+'
+
 run_with_stubs() {
     # $1: space-separated stub names to symlink as ssh/docker for this call;
     # remaining args: the command to run.
@@ -690,6 +716,55 @@ if printf '%s' "$step7_block" | stdin_matches -F -- "-W "; then
     test_fail "step 7's dry-run no longer previews an ssh -W tunnel through the NAS"
 else
     test_pass "step 7's dry-run no longer previews an ssh -W tunnel through the NAS"
+fi
+
+# --- (a1d) step 7's dry-run shows the bounded retry (the listener now    ---
+# --- starts asynchronously -- the nix shell fetch in step 5's command can ---
+# --- take a minute or more on a cold /nix store, confirmed locally).      ---
+if printf '%s' "$step7_block" | stdin_matches -F -- "poll" \
+    && printf '%s' "$step7_block" | stdin_matches -F -- "DXE_QNAP_LISTENER_WAIT_SECONDS" \
+    && printf '%s' "$step7_block" | stdin_matches -F -- "180"; then
+    test_pass "step 7's dry-run previews the bounded retry (env var and default seconds)"
+else
+    test_fail "step 7's dry-run previews the bounded retry (env var and default seconds)"
+fi
+
+# --- (a1e) step 5's dry-run shows the nix-shell busybox httpd listener, --
+# --- never the old busybox/nc/socat fallback chain (regression test for  --
+# --- the third real run: the pinned nixos/nix base image has none of      -
+# --- busybox/nc/socat/python3/perl, confirmed locally, so that chain      -
+# --- always fell through to "exec sleep infinity" and nothing ever        -
+# --- listened).                                                           -
+# Note: dxe_argv_desc's printf %q reconstruction (same as the
+# --with-service-restart comment above) backslash-escapes the spaces inside
+# this single-argument remote command string, so multi-word phrases like
+# "nix shell" or "sleep infinity" never appear literally -- these checks
+# use single, sufficiently distinctive tokens instead.
+step5_dry_block="$(printf '%s\n' "$spike_dry_out" | sed -n '/--- Step 5:/,/--- Step 6:/p')"
+if printf '%s' "$step5_dry_block" | stdin_matches -F -- "nixpkgs#busybox" \
+    && printf '%s' "$step5_dry_block" | stdin_matches -F -- "busybox" \
+    && printf '%s' "$step5_dry_block" | stdin_matches -F -- "httpd"; then
+    test_pass "step 5's dry-run shows the nix shell busybox httpd listener command"
+else
+    test_fail "step 5's dry-run shows the nix shell busybox httpd listener command"
+fi
+if printf '%s' "$step5_dry_block" | stdin_matches -F -- "nix-command" \
+    && printf '%s' "$step5_dry_block" | stdin_matches -F -- "flakes"; then
+    test_pass "step 5's dry-run shows --extra-experimental-features \"nix-command flakes\""
+else
+    test_fail "step 5's dry-run shows --extra-experimental-features \"nix-command flakes\""
+fi
+if printf '%s' "$step5_dry_block" | stdin_matches -F -- "sleep" \
+    && printf '%s' "$step5_dry_block" | stdin_matches -F -- "infinity"; then
+    test_pass "step 5's dry-run still shows exec sleep infinity as the last-resort fallback"
+else
+    test_fail "step 5's dry-run still shows exec sleep infinity as the last-resort fallback"
+fi
+if printf '%s' "$step5_dry_block" | stdin_matches -F -- "nc -l" \
+    || printf '%s' "$step5_dry_block" | stdin_matches -F -- "socat"; then
+    test_fail "step 5's dry-run no longer shows the old nc -l/socat fallback chain"
+else
+    test_pass "step 5's dry-run no longer shows the old nc -l/socat fallback chain"
 fi
 
 # --- (a2) step 3 tags the pulled base image instead of building remotely ---
@@ -1190,6 +1265,32 @@ if grep -qF -- "$FAKE_TAILNET_ADDR" "$SPIKE_SUMMARY"; then
     test_fail "the spike summary never contains the discovered tailnet address"
 else
     test_pass "the spike summary never contains the discovered tailnet address"
+fi
+
+# (g4) step 7's bounded retry actually retries: the fake direct-connect
+# tool fails its first call and only succeeds from the second call onward
+# (like the real listener, which starts asynchronously while step 5's nix
+# shell fetch is still running) -- proves the loop polls rather than
+# reporting FAIL (or hanging) after a single attempt. Bound is overridden
+# down to 6s (one 5s sleep) so this test does not need to wait anything
+# close to the real 180s default.
+NC_RETRY_COUNTER="$STUB_DIR/nc-retry-counter"
+rm -f "$NC_RETRY_COUNTER"
+reset_marker
+set +e
+retry_out="$(run_with_stubs "ssh docker nc_retry curl_ok" env DXE_QNAP_HOST=section27-host DXE_TEST_FAKE_TAILNET_ADDR="$FAKE_TAILNET_ADDR" DXE_TEST_NC_RETRY_COUNTER="$NC_RETRY_COUNTER" DXE_QNAP_LISTENER_WAIT_SECONDS=6 "$QNAP_SPIKE" --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" 2>&1)"
+set -e
+if [ -f "$NC_RETRY_COUNTER" ] && [ "$(cat "$NC_RETRY_COUNTER")" -ge 2 ]; then
+    test_pass "step 7's direct-connect check is actually retried, not attempted only once"
+else
+    test_fail "step 7's direct-connect check is actually retried, not attempted only once"
+fi
+if printf '%s' "$retry_out" | stdin_matches -F -- "Step 7: PASS" \
+    && printf '%s' "$retry_out" | stdin_matches -F -- "after 5s" \
+    && printf '%s' "$retry_out" | stdin_matches -F -- "PONG confirmed"; then
+    test_pass "step 7 passes once the retried connect succeeds, and reports how long it waited"
+else
+    test_fail "step 7 passes once the retried connect succeeds, and reports how long it waited"
 fi
 
 print_summary
