@@ -3,7 +3,17 @@
 # Additional isolated behavior probes for the D1 sourceable coverage scope.
 # This script may create guest-shaped paths and therefore runs only inside the
 # disposable pinned coverage environment.
-set -euo pipefail
+set -Eeuo pipefail
+
+# This file is a long, output-free probe: on success it prints nothing until
+# its final line, so an unexpected failure anywhere in it used to be
+# indistinguishable from CI silently killing the step -- a bare `set -e`
+# abort prints no diagnostic of its own. Report exactly what broke instead.
+# `cmd || true`/`cmd || { ...; }`-guarded *expected* failures never reach
+# this: bash does not run ERR for the command before the final `||` in a
+# list, only for a genuinely unhandled one (`-E` carries that into functions
+# and command substitutions too, not just this top-level script).
+trap 'echo "test_sourceable_coverage.sh:${LINENO}: unexpected failure (exit $?): ${BASH_COMMAND}" >&2' ERR
 
 # This probe script runs standalone (it never sources tests/test_helpers.sh),
 # so it carries its own copy. See the helper there for why `| grep -q` under
