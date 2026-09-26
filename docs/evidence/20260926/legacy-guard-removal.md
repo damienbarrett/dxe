@@ -78,3 +78,38 @@ the default guest, side containers, and named profiles have all moved off
 the old base. The remaining old-base image file and the leftover mount-key
 files are inert (no container references either) and their disposal is a
 separate, user-owned decision.
+
+## Live gate (G4, run by the coordinating session, 2026-09-27)
+
+The subagent's permission classifier refused the `dx-test` lifecycle
+commands, so the coordinating session ran the gate from this branch's
+worktree (pre-rebase tip `bc0887c`, i.e. these four commits on `main`
+`cf9f35f`), with no `DX_CONTAINER_MEMORY` override:
+
+- A first attempt found the existing `dx-test` unreachable over SSH: its
+  trusted key pair had been generated inside another branch's worktree and
+  was deleted with that worktree. Not a product defect; recorded as an
+  operating rule (keys live in the main checkout).
+- Fresh guest instead: `dx-factory-reset --force`, `dx-create-keys` (pair
+  copied to the main checkout), `dx-create-image`, `dx-create-volumes`,
+  `dx-create-container`, `dx-start-container`, `dx-wait-ssh` — "Guest is
+  ready" about 4 minutes after the start, on the guard-free host start path
+  and the guard-free guest bootstrap; `container list` showed 12288 MB.
+- `tests/run-tier.sh live`: 29 sections, **1281 passed, 0 failed,
+  8 skipped**, "All tests PASSED!".
+- `dx-stop-container` → `dx-start-container` → `dx-wait-ssh` ("Guest is
+  ready" in 7 s) → `dx-stop-container`. `dx-test` left stopped; `dx-host`
+  and the NAS untouched.
+
+## Landing (2026-09-27)
+
+Rebased onto `main` `bf49f4d` (Branch 14 had landed meanwhile); only
+`tests/coverage/ratchet.env` overlapped. This branch's own files are
+byte-identical before and after the rebase, so the results above stand for
+the rebased commits (`07ff94f`, `995123a`, `2690ba9`, `a004ec9`); Branch 14's
+change (`dx-ai` cache guard) is independent of the start path and was live-
+validated on its own. Ratchet re-measured on a clean export of the rebased
+tip: 4,144 / 23,232 = 1783 bp. Re-checked by the coordinating session on
+the rebased tip: bash-3.2 suite, Sections 1, 10 and 27, the Phase 0
+dry-runs, the private identifier scan. G5: GitHub Actions on the pushed
+rebased branch, green before `main` was fast-forwarded.
