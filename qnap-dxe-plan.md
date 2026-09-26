@@ -4,10 +4,22 @@ Plan created: 2026-09-21.
 
 ## Status
 
-Open. Implementation has not started.
+Open. Implementation has not started. Accepted for implementation on
+2026-09-26 and sequenced after the start-generation fix and the `/persist`
+backup (see `checkout-consolidation-plan.md`, Branch 11).
 
-Revisit trigger: when the target QNAP can be reached over Tailscale for the
-Phase 0 preflight, or when work on the runtime abstraction is scheduled.
+**Phase 0 outcome (2026-09-26, inventory only).** The read-only inventory ran
+against the target over Tailscale. Its native architecture is x86_64, so
+Phase 4 (an architecture-neutral guest) is required. Docker Engine is
+reachable non-interactively over plain SSH by invoking the Container Station
+CLI at its qpkg path, discovered at run time, while the Docker CLI's own
+`ssh://` transport fails because the remote non-interactive `PATH` does not
+include `docker`; the runtime adapter must therefore invoke the discovered
+absolute path (DQ1). The inventory and spike reports are private and are not
+committed (`tests/qnap/README.md`); the disposable spike has not run yet.
+
+Revisit trigger: when the Phase 0 spike has run, or when work on the runtime
+abstraction is scheduled.
 
 ## Outcome
 
