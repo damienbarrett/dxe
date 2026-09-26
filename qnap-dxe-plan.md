@@ -342,6 +342,30 @@ Using names prefixed `dxe-spike-`:
   current 12 GB/four-CPU defaults blindly.
 - No spike resource or port remains.
 
+### Phase 0 scripts
+
+Versioned, non-interactive, idempotent replacements for running the
+Inventory and Disposable spike sections above by hand:
+
+- `tests/qnap/phase0-inventory.sh` — runs the Inventory list's commands
+  over one SSH session plus the Mac-side `docker -H ssh://<alias> version`
+  control-plane check, and writes a sanitised, redacted Markdown report.
+- `tests/qnap/phase0-spike.sh` — runs the Disposable spike's nine steps as
+  individually reported steps, scoped throughout to `dxe-spike-*`-named,
+  `dxe.role=spike`-labelled resources; `--cleanup` alone removes only
+  those.
+- `tests/qnap/README.md` — access setup (the `ssh_config` alias and
+  authorized-keys step), how to run both scripts, how to read their
+  output, and this section's exit gate restated for operators.
+- `tests/test_section27_qnap_scripts.sh` — container-free contracts against
+  a stub `ssh`/`docker`, run in CI and via `tests/run-tier.sh unit/static`.
+
+Status unchanged: this is tooling for Phase 0, not a run of it. Nothing
+above has been executed against a real QNAP; see `tests/qnap/README.md`
+for the two spots (the spike's in-container listener choice and its
+Container Station restart command) that are necessarily best-effort until
+a real NAS is reachable.
+
 ## Phase 1 — Characterize and extract the runtime boundary
 
 This phase changes structure without adding QNAP behavior.
