@@ -105,7 +105,7 @@ with an actual build-and-run check of `main`.
 | 7 | `test/herdr-acceptance` | Two missing Herdr tests: bad-snapshot recovery and pane-history deletion | S | Yes (`dx-test`) | No (Q3 resolved: do them) | **Done**: landed on `main` 2026-09-26 (rebased onto `483aca4`, CI green): `d07cce1`, `fccf536`, `67a9578`; live Section 23 44/44 ×3; ratchet re-measured to 1821 bp |
 | 8 | `refactor/legacy-migration-cleanup` | Check that every guest has left the old base image, then delete the old-base guards. This finishes `refactor-plan.md` | S–M | Yes (inventory) | No | **Done**: landed on `main` 2026-09-27 (rebased onto `bf49f4d`, CI green; live tier on a fresh 12 GB `dx-test` 1281/0/8). Increments 1-4 (`07ff94f` inventory + gate sign-off, `995123a` guest-side guard removed, `2690ba9` host-side guard removed, plus this closing commit): old-base guard gate signed off 2026-09-26, `refactor-plan.md` closed. G1-G3 and the dual-target stand-in green. G4 (full Apple live tier on `dx-test`) pending -- `dx-test` is in use by Branch 14. Not yet merged into `main` |
 | 10 | `feat/persist-backup` | "B1": incremental host backup and restore of the guest's `/persist` data | M | Yes | No (Q5 resolved) | **Done**: landed on `main` 2026-09-27 (rebased onto `6d9a4ca`, CI green); live on `dx-test`: 240 files captured, no-change run 0 bytes, restore byte-identical incl. an unpushed commit, live tier 1394/0/8; see `docs/evidence/20260927/persist-backup.md` |
-| 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH. Phase 0 (inventory plus a throwaway spike, no repo code) may run any time after item 4 | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 **done** 2026-09-26: inventory and disposable spike passed on the NAS (steps 1-7, 8a, 9); steps 8b/8c await a maintenance window. Phases 1-7 not started |
+| 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH. Phase 0 (inventory plus a throwaway spike, no repo code) may run any time after item 4 | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 **done** 2026-09-26: inventory and disposable spike passed on the NAS (steps 1-7, 8a, 9); steps 8b/8c await a maintenance window. Phase 1 (runtime-boundary extraction) **landed on `main` 2026-09-27** (`refactor/runtime-boundary`, rebased onto `f3b7cb5`, CI green; live tier 1441/0/9 through the adapter; see `docs/evidence/20260927/runtime-boundary.md`). Phases 2-7 not started |
 | 12 | `fix/store-trust` (may split in two) | Safe handling of the two Nix-store trust problems in `store-trust-plan.md` | L | Yes | No (Q6 resolved: fail fast) | Not started |
 | 13 | `refactor/bootstrap-v2`, `refactor/declarative-nix` | The two remaining large proposals. No branch until you accept one | L each | Yes | Q7 (still open) | Not started |
 | 14 | `fix/dx-ai-no-source-builds` | Stop `dx-ai` from silently compiling heavy AI tools from source when a `nixpkgs-unstable` refresh misses the binary cache (found on Branch 6, 2026-09-26) | S–M | Yes (`dx-test`, disposable) | No | **Done**: landed on `main` 2026-09-27 (rebased onto `cf9f35f`, CI green); fresh 12 GB guest's first `dx-ai` from cache, peak ~8.6 GiB; live tier 1298/0/8; see `docs/evidence/20260927/dx-ai-no-source-builds.md` |
@@ -872,8 +872,10 @@ green, then fast-forwarded).
 
 ## Branch 11 — QNAP runtime (`qnap-dxe-plan.md`; accepted 2026-09-26)
 
-**Status 2026-09-27:** Phase 1 (runtime-boundary extraction) complete on
-`refactor/runtime-boundary` — all 7 items validated (container-free suite,
+**Status 2026-09-27:** Phase 1 (runtime-boundary extraction) **landed on
+`main`** (branch `refactor/runtime-boundary`, rebased onto `f3b7cb5`, CI green,
+then fast-forwarded; evidence in `docs/evidence/20260927/runtime-boundary.md`)
+— all 7 items validated (container-free suite,
 ShellCheck, Bash 3.2, 100% sourceable coverage, and the full Apple live
 tier against `dx-test`, including a layered bring-up and `dx-recreate`,
 all green); see `qnap-dxe-plan.md`'s Phase 1 exit-gate status for the full

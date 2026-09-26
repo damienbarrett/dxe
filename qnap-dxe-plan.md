@@ -464,7 +464,9 @@ This phase changes structure without adding QNAP behavior.
 - The repository is green between the mechanical extraction and any Docker
   implementation commit.
 
-**Status 2026-09-27: items 1-6 complete, on `refactor/runtime-boundary`.**
+**Status 2026-09-27: items 1-7 complete; landed on `main` (branch
+`refactor/runtime-boundary`, rebased onto `f3b7cb5`, CI green). Evidence:
+`docs/evidence/20260927/runtime-boundary.md`.**
 Every raw Apple `container` call the extraction's own inventory found (70
 call sites across 19 `bin/` files) now goes through
 `bin/lib/dx-runtime.sh`/`dx-runtime-apple.sh`; see
