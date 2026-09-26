@@ -4,4 +4,4 @@
 
 ## Redaction
 
-Local home-directory paths were replaced with `~/` throughout the baseline on 2026-09-26 before the public repository was released.
+Local home-directory paths were replaced with `~/` throughout the baseline on 2026-09-26 because the repository is public.
