@@ -29,6 +29,15 @@ case "${1:-}" in
     shift
     [ "${1:-}" != -i ] || shift
     shift
+    # dx-start-container'"'"'s temporary base-image-changeover guard greps the
+    # *real* guest for /bin/bash. Faked exec runs the guest command locally
+    # against a fixture root instead of a guest, and the real test host always
+    # has /bin/bash -- answer this one probe canned so it never shadows the
+    # exit code/message a dx-start-container contract test is actually
+    # checking.
+    case "$*" in
+      *OLD_BASE*) echo OLD_BASE_ABSENT; exit 0 ;;
+    esac
     exec "$@"
     ;;
 esac
@@ -332,6 +341,120 @@ if [ -f "$root/.dx-bootstrap-ready" ]; then
     test_pass "an unchanged sync still signals boot readiness"
 else
     test_fail "an unchanged sync still signals boot readiness"
+fi
+
+# --- D7 option 3: dx-start-container confirms, bounded, that a real publish
+# was actually picked up before declaring the start a success -- Q4 "fail the
+# start" (docs/refactor/decisions/D7-start-generation.md). Drive the real
+# bin/dx-start-container end to end against the same fake `container` (exec
+# maps to local execution) that already exercises the real dx-sync-bootstrap
+# above, so this exercises the actual wiring, not just the two helper
+# functions in isolation. Each scenario gets its own fresh bootstrap-path
+# root so none of this file's earlier fixture history (leases, generations)
+# can leak into what these assertions check.
+start_home="$fixture/start-container-home"
+
+run_start_container() {
+    env PATH="$fake_dir:$PATH" \
+        HOME="$start_home" \
+        DX_CONTAINER_NAME=dx-start-contract \
+        DX_NIX_VOLUME=dx-start-contract-nix \
+        DX_BOOTSTRAP_SOURCE="$1" \
+        DX_BOOTSTRAP_PATH="$2" \
+        DX_BOOTSTRAP_WAIT_TIMEOUT=1 \
+        DX_BOOTSTRAP_CONFIRM_TIMEOUT="${3:-2}" \
+        "$BASE_DIR/bin/dx-start-container"
+}
+
+# Write a PID-1 execution lease naming whatever generation a start under $1
+# just published, as soon as (optionally, after an extra delay) that
+# generation directory appears -- standing in for the guest launcher noticing
+# the publish and leasing it, without a real guest.
+lease_the_published_generation() {
+    local root="$1" delay="${2:-0}" gen=""
+    for _ in $(seq 1 100); do
+        # Exclude the transient .staging-<gen> directory a publish stages
+        # under before its atomic rename to the real generation id -- catching
+        # it here would lease a name the launcher (or, in this fixture, the
+        # confirm loop) can never actually see published.
+        gen="$(find "$root/generations" -mindepth 1 -maxdepth 1 -type d ! -name '.staging-*' 2>/dev/null | head -1)" || true
+        [ -n "$gen" ] && break
+        sleep 0.05
+    done
+    [ -n "$gen" ] || return 1
+    gen=${gen##*/}
+    [ "$delay" = 0 ] || sleep "$delay"
+    mkdir -p "$root/.locks/leases"
+    printf '%s\t%s\t%s\t%s\n' "$gen" test-boot-id 1 99 > "$root/.locks/leases/$gen.1"
+}
+
+# (a) Published, lease names the new generation within the bound: success.
+start_root_a="$fixture/start-a"; mkdir -p "$start_root_a"; : > "$start_root_a/.dx-bootstrap-waiting"
+lease_the_published_generation "$start_root_a" 0 &
+lease_a_pid=$!
+start_a_status=0
+start_a_out="$(run_start_container "$good" "$start_root_a" 3 2>&1)" || start_a_status=$?
+wait "$lease_a_pid" 2>/dev/null || true
+if [ "$start_a_status" -eq 0 ] && printf '%s\n' "$start_a_out" | stdin_matches -F 'is ready.' \
+    && ! printf '%s\n' "$start_a_out" | stdin_matches -F 'Error:'; then
+    test_pass "dx-start-container succeeds when the lease names the just-published generation within the bound"
+else
+    test_fail "dx-start-container succeeds when the lease names the just-published generation within the bound (status $start_a_status, out '$start_a_out')"
+fi
+
+# (b) Published, lease never names it: the start fails, naming both
+# generations and the remedy, with nothing left half-done (no lease writer at
+# all here -- the guest simply never picks the publish up).
+start_root_b="$fixture/start-b"; mkdir -p "$start_root_b"; : > "$start_root_b/.dx-bootstrap-waiting"
+start_b_status=0
+start_b_out="$(run_start_container "$good" "$start_root_b" 2 2>&1)" || start_b_status=$?
+start_b_published="$(printf '%s\n' "$start_b_out" | sed -n 's/^Bootstrap generation \(.*\) is ready\.$/\1/p' | tail -1)"
+if [ "$start_b_status" -ne 0 ] && [ -n "$start_b_published" ] \
+    && printf '%s\n' "$start_b_out" | stdin_matches -F "Error: dx-start-contract published bootstrap generation $start_b_published" \
+    && printf '%s\n' "$start_b_out" | stdin_matches -F 'dx-stop-container'; then
+    test_pass "dx-start-container fails the start when the lease never names the published generation, naming both and the remedy"
+else
+    test_fail "dx-start-container fails the start when the lease never names the published generation, naming both and the remedy (status $start_b_status, out '$start_b_out')"
+fi
+if [ -d "$start_root_b/.locks/publication" ]; then
+    test_fail "a failed confirmation leaves the publication lock held (no partial side effects)"
+else
+    test_pass "a failed confirmation leaves the publication lock held (no partial side effects)"
+fi
+
+# (c) Unchanged content (skip path): today's behaviour exactly -- no wait,
+# even with a generously large bound configured, proving the confirm loop
+# never runs on this path.
+start_root_c="$fixture/start-c"; mkdir -p "$start_root_c"; : > "$start_root_c/.dx-bootstrap-waiting"
+run_start_container "$good" "$start_root_c" 1 >/dev/null 2>&1 || true
+SECONDS=0
+start_c_status=0
+start_c_out="$(run_start_container "$good" "$start_root_c" 30 2>&1)" || start_c_status=$?
+start_c_elapsed=$SECONDS
+if [ "$start_c_status" -eq 0 ] && printf '%s\n' "$start_c_out" | stdin_matches -F 'stays current' \
+    && ! printf '%s\n' "$start_c_out" | stdin_matches -F 'Error:' && [ "$start_c_elapsed" -lt 5 ]; then
+    test_pass "dx-start-container's unchanged-content skip is unaffected: no wait despite a 30s bound"
+else
+    test_fail "dx-start-container's unchanged-content skip is unaffected: no wait despite a 30s bound (status $start_c_status, elapsed ${start_c_elapsed}s, out '$start_c_out')"
+fi
+
+# (e) Published, lease appears late but within the bound: still succeeds --
+# guards against the deadline being too tight, and against a poll loop that
+# only checks once instead of actually polling (a 2s writer delay forces at
+# least one full 1s sleep-and-recheck cycle before the match).
+start_root_e="$fixture/start-e"; mkdir -p "$start_root_e"; : > "$start_root_e/.dx-bootstrap-waiting"
+lease_the_published_generation "$start_root_e" 2 &
+lease_e_pid=$!
+SECONDS=0
+start_e_status=0
+start_e_out="$(run_start_container "$good" "$start_root_e" 5 2>&1)" || start_e_status=$?
+start_e_elapsed=$SECONDS
+wait "$lease_e_pid" 2>/dev/null || true
+if [ "$start_e_status" -eq 0 ] && [ "$start_e_elapsed" -ge 1 ] && [ "$start_e_elapsed" -lt 5 ] \
+    && ! printf '%s\n' "$start_e_out" | stdin_matches -F 'Error:'; then
+    test_pass "dx-start-container succeeds on a lease that appears late but within the bound (the poll loop actually polls)"
+else
+    test_fail "dx-start-container succeeds on a lease that appears late but within the bound (status $start_e_status, elapsed ${start_e_elapsed}s, out '$start_e_out')"
 fi
 
 print_summary

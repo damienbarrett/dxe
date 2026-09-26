@@ -19,18 +19,36 @@ else
     container start "$DX_CONTAINER_NAME"
 fi
 
-"$SCRIPT_DIR/dx-sync-bootstrap"
+dx_sync_output="$("$SCRIPT_DIR/dx-sync-bootstrap")"
+printf '%s\n' "$dx_sync_output"
 
-# Report, in the terminal that just published, when the guest is still running
-# an older generation than the one now current. Failures here are swallowed on
-# purpose: this is a diagnostic about the start that just happened, and it must
-# never be the reason a start fails.
+# Diagnostic reads about the state the sync just left the guest in. Failures
+# here are swallowed on purpose: they feed either a diagnostic (never the
+# reason a start fails) or a check that only fires when a real publish just
+# happened (see below) -- an unreadable current/lease listing must not be
+# mistaken for either.
 dx_running_generation=""
 dx_published_generation="$(container exec "$DX_CONTAINER_NAME" readlink "$DX_BOOTSTRAP_PATH/current" 2>/dev/null || true)"
 dx_published_generation="${dx_published_generation#generations/}"
 dx_lease_listing="$(container exec "$DX_CONTAINER_NAME" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$DX_BOOTSTRAP_PATH" 2>/dev/null || true)"
 [ -z "$dx_lease_listing" ] || dx_running_generation="$(dx_bootstrap_lease_generation "$dx_lease_listing" || true)"
-dx_bootstrap_report_drift "$dx_running_generation" "$dx_published_generation" "$DX_CONTAINER_NAME"
+
+if dx_sync_published_generation="$(dx_bootstrap_sync_published_generation "$dx_sync_output")"; then
+    # A real publish just happened for this start, not the unchanged-content
+    # skip. Confirm, bounded, that the guest has actually picked it up before
+    # declaring the start a success (Q4, D7 option 3): a swallowed warning is
+    # no longer good enough for a publish the guest hasn't run yet. Skip the
+    # round trip entirely when the pre-existing read above already shows a
+    # match -- no added delay on the common path.
+    if [ "$dx_running_generation" != "$dx_sync_published_generation" ]; then
+        dx_bootstrap_confirm_publication "$DX_CONTAINER_NAME" "$DX_BOOTSTRAP_PATH" "$dx_sync_published_generation" "$DX_BOOTSTRAP_CONFIRM_TIMEOUT" || exit 1
+    fi
+else
+    # Unchanged-content skip: no fresh publish to confirm. Report, as before,
+    # when the guest is still running something other than what's published --
+    # purely diagnostic, and must never fail the start.
+    dx_bootstrap_report_drift "$dx_running_generation" "$dx_published_generation" "$DX_CONTAINER_NAME"
+fi
 
 # Temporary old-base guard for the base-image changeover (README.md, "Base Image Changeover"): the official
 # base image never provides /bin/bash (regular file or dangling symlink), so
