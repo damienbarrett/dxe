@@ -79,7 +79,7 @@ dx_backup_fetch_listing() {
 dx_backup_fetch_listing_with_reason() {
     local container_name="$1"
     shift
-    container exec -u dx "$container_name" "$(dx_backup_selector_path)" --with-reason "$DX_BACKUP_GUEST_ROOT" "$@"
+    dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" --with-reason "$DX_BACKUP_GUEST_ROOT" "$@"
 }
 
 # Print the `--dry-run --summary` breakdown of a --with-reason listing file
@@ -142,7 +142,7 @@ dx_backup_sum_sizes() {
 # guest, unidirectionally
 #
 # `dx_backup_fetch_paths` originally pushed a large NUL-separated name list
-# through one `container exec -i`'s stdin while streaming the archive back
+# through one `-i` exec's stdin while streaming the archive back
 # through that SAME exec's stdout -- live-verified on `dx-host` to deadlock
 # on a large selection (51,262 files / 3.2 GB): the guest `tar` sat with no
 # output, the host extractor had received 0 bytes, the same code having
@@ -157,9 +157,9 @@ dx_backup_sum_sizes() {
 # These two helpers implement that shape once, shared by
 # dx_backup_fetch_paths (below) and dx_backup_restore_status's large-batch
 # path: ship a host list file into a guest temp file via a single
-# stdin-redirected `-i` exec (exactly bin/dx-put's file-push shape:
-# `container exec -i ... sh -c 'cat > "$1"' -- DEST < SOURCE`), then have
-# the caller point a stdin-closed, non-`-i` exec at that same guest path.
+# stdin-redirected `-i` exec (exactly bin/dx-put's file-push shape: run
+# `sh -c 'cat > "$1"' -- DEST < SOURCE` through the runtime `-i` exec), then
+# have the caller point a stdin-closed, non-`-i` exec at that same guest path.
 # ---------------------------------------------------------------------------
 
 # Copy host file $2 into a fresh guest temp file under /tmp and print that
