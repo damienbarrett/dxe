@@ -35,7 +35,7 @@ printf '%s\n' fixture > "$published/flake.lock"
 seed_ai_profile() {
     local generation="$1" tool
     mkdir -p "$generation/profile/bin"
-    for tool in codex gemini claude agy herdr; do printf '#!/bin/sh\n' > "$generation/profile/bin/$tool"; chmod 0755 "$generation/profile/bin/$tool"; done
+    for tool in codex gemini claude agy herdr opencode; do printf '#!/bin/sh\n' > "$generation/profile/bin/$tool"; chmod 0755 "$generation/profile/bin/$tool"; done
 }
 cp -a "$published/." "$state/generations/previous/"
 printf '%s\n' '' > "$state/generations/previous/.predecessor"
@@ -164,7 +164,7 @@ dx_ai_update_flake() { :; }
 dx_ai_install_profile() {
     local stage="$1" tool
     mkdir -p "$stage/profile/bin"
-    for tool in codex gemini claude agy herdr; do printf '#!/bin/sh\n' > "$stage/profile/bin/$tool"; chmod 0755 "$stage/profile/bin/$tool"; done
+    for tool in codex gemini claude agy herdr opencode; do printf '#!/bin/sh\n' > "$stage/profile/bin/$tool"; chmod 0755 "$stage/profile/bin/$tool"; done
 }
 dx_ai_setup_credentials() { :; }
 dx_ai_ensure_keyring() { :; }
@@ -205,11 +205,10 @@ else
     test_fail "--supports <tool> for a known tool exits 0 with no stdout"
 fi
 
-out="$(dx_ai_main --supports opencode)"; rc=$?
-if [ "$rc" -eq 1 ] && [ -z "$out" ]; then
-    test_pass "--supports opencode exits 1 with no stdout (feature reverted; re-lands complete in feat/opencode)"
+if out="$(dx_ai_main --supports opencode)" && [ -z "$out" ]; then
+    test_pass "--supports opencode exits 0 with no stdout"
 else
-    test_fail "--supports opencode exits 1 with no stdout (feature reverted; re-lands complete in feat/opencode)"
+    test_fail "--supports opencode exits 0 with no stdout"
 fi
 
 out="$(dx_ai_main --supports nonexistent-tool)"; rc=$?
@@ -279,14 +278,17 @@ herdr_installed_targets() {
 # reinstalled every healthy integration on every run in the field.
 all_missing="claude: not installed (/home/dx/.claude/hooks/herdr-agent-state.sh)
 codex: not installed (/home/dx/.codex/herdr-agent-state.sh)
-cursor: not installed (/home/dx/.cursor/herdr-agent-state.sh)"
+cursor: not installed (/home/dx/.cursor/herdr-agent-state.sh)
+opencode: not installed (/home/dx/.config/opencode/plugins/herdr-agent-state.js)"
 all_current="claude: current (v7) (/home/dx/.claude/hooks/herdr-agent-state.sh)
-codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)"
+codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)
+opencode: current (v7) (/home/dx/.config/opencode/plugins/herdr-agent-state.js)"
 all_outdated="claude: outdated (v6) (/home/dx/.claude/hooks/herdr-agent-state.sh)
-codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)"
+codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)
+opencode: current (v7) (/home/dx/.config/opencode/plugins/herdr-agent-state.js)"
 
 if run_herdr_integrations "$all_missing" "" >/dev/null 2>&1 \
-    && [ "$(herdr_installed_targets)" = "claude codex " ]; then
+    && [ "$(herdr_installed_targets)" = "claude codex opencode " ]; then
     test_pass "dx-ai installs the missing Herdr integrations for the agents it manages"
 else
     test_fail "dx-ai installs the missing Herdr integrations for the agents it manages"
@@ -321,9 +323,21 @@ else
     test_fail "dx-ai refreshes an integration the status listing marks outdated"
 fi
 
+# opencode-specific: when opencode is outdated, dx-ai triggers its reinstall
+all_opencode_outdated="claude: current (v7) (/home/dx/.claude/hooks/herdr-agent-state.sh)
+codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)
+opencode: outdated (v6) (/home/dx/.config/opencode/plugins/herdr-agent-state.js)"
+if run_herdr_integrations "$all_opencode_outdated" "" >/dev/null 2>&1 \
+    && [ "$(herdr_installed_targets)" = "opencode " ]; then
+    test_pass "dx-ai refreshes the opencode Herdr integration when it is outdated"
+else
+    test_fail "dx-ai refreshes the opencode Herdr integration when it is outdated"
+fi
+
 # An unrecognised state must not put dx-ai into a reinstall loop.
 if run_herdr_integrations "claude: bewildered (v9) (/home/dx/.claude/hooks/x.sh)
-codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)" "" >/dev/null 2>&1 \
+codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)
+opencode: current (v7) (/home/dx/.config/opencode/plugins/herdr-agent-state.js)" "" >/dev/null 2>&1 \
     && [ -z "$(herdr_installed_targets)" ]; then
     test_pass "an unrecognised Herdr integration state is left alone, not reinstalled"
 else
@@ -396,7 +410,7 @@ else
     test_fail "dx-ai ensures D-Bus keyring service"
 fi
 
-for tool in codex gemini claude agy herdr; do
+for tool in codex gemini claude agy herdr opencode; do
     if run_guest "command -v $tool" >/dev/null 2>&1; then
         test_pass "$tool is available after dx-ai"
     else

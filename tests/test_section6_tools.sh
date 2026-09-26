@@ -146,7 +146,7 @@ assert_file_contains "$SHELL_NIX" '\^yazi ...$args --cwd-file $tmp' "nushell yaz
 assert_file_contains "$SHELL_NIX" 'str replace --all (char nul) ""' "nushell yazi cwd helper strips cwd file NUL terminator"
 
 # Test: AI CLI tools are excluded from the default dxPackages list
-if printf '%s\n' "$DX_PACKAGES_BLOCK" | stdin_matches -E "codex|gemini-cli|claude-code|antigravity-cli"; then
+if printf '%s\n' "$DX_PACKAGES_BLOCK" | stdin_matches -E "codex|gemini-cli|claude-code|antigravity-cli|opencode"; then
     test_fail "AI CLI tools excluded from default dxPackages"
 else
     test_pass "AI CLI tools excluded from default dxPackages"
@@ -229,15 +229,17 @@ else
 fi
 
 if printf '%s\n' "$AI_PACKAGES_BLOCK" | stdin_matches -E "\bopencode\b"; then
-    test_fail "opencode is not in aiPackages (feature reverted; re-lands complete in feat/opencode)"
+    test_pass "opencode is in aiPackages"
 else
-    test_pass "opencode is not in aiPackages (feature reverted; re-lands complete in feat/opencode)"
+    test_fail "opencode is in aiPackages"
 fi
 
-assert_file_not_contains "$DX_AI_SCRIPT" '$persist_home/.config/opencode' "guest dx-ai no longer prepares a persisted opencode config directory"
-assert_file_not_contains "$DX_AI_SCRIPT" '$persist_home/.local/share/opencode' "guest dx-ai no longer prepares a persisted opencode data directory"
-assert_file_not_contains "$CONTAINER_DIR/bootstrap/activation.sh" "/persist/home/dx/.config/opencode" "bootstrap no longer prepares a persisted opencode config directory"
-assert_file_not_contains "$CONTAINER_DIR/bootstrap/activation.sh" "/persist/home/dx/.local/share/opencode" "bootstrap no longer prepares a persisted opencode data directory"
+# OpenCode persistence (migration, symlinks, ownership repair) is covered
+# behaviorally by Section 17 and the dx-opencode-persistence.sh unit tests in
+# test_sourceable_coverage.sh. A literal source-text assertion here would not
+# exercise the real behaviour once that logic lives in the shared helper
+# (scripts/lib/dx-opencode-persistence.sh) rather than inline in dx-ai.sh and
+# activation.sh, so it is intentionally not duplicated as a text check.
 
 # Test: shell startup guards optional prompt/environment hooks
 assert_file_contains "$SHELL_NIX" "command -v direnv" "bash direnv hook is guarded"
