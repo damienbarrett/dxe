@@ -111,6 +111,7 @@ with an actual build-and-run check of `main`.
 | 14 | `fix/dx-ai-no-source-builds` | Stop `dx-ai` from silently compiling heavy AI tools from source when a `nixpkgs-unstable` refresh misses the binary cache (found on Branch 6, 2026-09-26) | S–M | Yes (`dx-test`, disposable) | No | **Done**: landed on `main` 2026-09-27 (rebased onto `cf9f35f`, CI green); fresh 12 GB guest's first `dx-ai` from cache, peak ~8.6 GiB; live tier 1298/0/8; see `docs/evidence/20260927/dx-ai-no-source-builds.md` |
 | 15 | `fix/keyring-bootstrap-recreate` | Make `dx-recreate` of an AI-opted-in guest work: resolve the keyring binaries from the AI generation explicitly and warn instead of aborting bootstrap (found on Branch 14's live gate) | S | Yes (`dx-test`) | Policy B chosen 2026-09-27 | **Done**: landed on `main` 2026-09-27 (rebased onto `7f1a81d`, CI green; live: recreate ×2 clean, Section 17 99/0, live tier green); `dx-host` promotion pending |
 | 16 | `refactor/keyring-owned-by-dx-ai` | Move the guest keyring (D-Bus session bus + gnome-keyring, used only by `agy`) out of bootstrap: `dx-ai`/`dx-keyring` own it with a real liveness probe | S | Yes (`dx-test`) | Option 4 chosen 2026-09-27 | **Done**: landed on `main` 2026-09-27 (rebased onto `2acffa9`, CI green; live: restart reproduces the stale state, `dx-keyring start` recovers, Section 17 104/0); `dx-host` gets it at its next promotion |
+| 17 | `fix/dx-backup-transfer-stall` | Make `dx-backup`'s transfer unidirectional (it deadlocked on large selections) and add `--dry-run --summary` for the at-risk breakdown | S–M | Yes (`dx-test`) | No | **Done**: landed on `main` 2026-09-27 (CI green; live: old code stalled 300 s/0 bytes on 60k files, fix moved 60,168 files, second run 0 bytes, live tier 1482/0/8); follow-up: full-set restore dry-run is slow at 60k targets (see Observations) |
 
 ```text
 Priority 1:  0 ✓ ─► 1 ✓ ─► 2 ✓ ─► 3 ✓ ─► 4 ✓ ─► 4a ✓ ─► 4b ✓ ─► 4c   (main complete, green, buildable, proven on a guest)
@@ -1213,33 +1214,24 @@ the list is large. Not characterised further; the shape is removed instead.
    listing -- reviewable without characterising the selection any further,
    so the user can decide deny-list additions.
 
-**Status (2026-09-27): code complete, rebased onto `main` `863c376`
-(Branch 11 Phase 1's runtime-boundary extraction; every `container exec`
-call this branch adds now goes through `dx_runtime_exec`), G1/G2/G3 green,
-live phase not yet run.** G1: `tests/run-bash32-tests.sh` full run green
-(462/0/0 across 7 files), plus `test_runtime_boundary_audit.sh` (5/5) and
-`test_runtime_boundary_characterisation.sh` (26/26) explicitly; pinned
-ShellCheck 0.10.0 clean; `tests/run_all_tests.sh --skip-integration`
-green ("All tests PASSED!") on a self-contained local clone of the branch
-tip (a worktree's `.git` file cannot be resolved inside a container that
-mounts only the worktree -- this affected a couple of assertions that
-happen to shell out to `git`, not this branch's own code; a plain `git
-clone --local` sidesteps it and is what CI's own checkout produces anyway).
-G2: `covered=100%`, ratchet re-measured 1955 → 1997 bp (raised, not
-lowered: this branch adds real scope-line production code). G3: not
-applicable, no `.nix` file changed, `flake.lock` unchanged. Full detail:
+**Status (2026-09-27): landed on `main`** (already rebased onto `863c376`;
+CI green, then fast-forwarded). G1 (bash-3.2 full run, pinned ShellCheck
+0.10.0, container-free contracts incl. the runtime-boundary audit), G2
+(`covered=100%`, ratchet 1955 -> 1997) green; G3 not applicable. Live gate
+run by the coordinating session on `dx-test` (user decision (i), the
+subagent's classifier having refused the lifecycle commands): with a
+60,000-file fixture the OLD transfer stalled for the full 300 s bound with
+0 bytes received; the fixed two-phase transfer moved all 60,168 at-risk
+files in about a minute; a second run transferred 0 bytes; subset
+`dx-restore --dry-run`s (1,000 fixture files, the 167 home files) reported
+everything identical and a deliberately changed file produced exactly one
+conflict; `--dry-run --summary` classified the selection by directory and
+reason; full live tier 34 sections, 1482/0/8. Evidence:
 `docs/evidence/20260927/dx-backup-transfer-stall.md`.
 
-**Live phase blocked.** The coordinating session confirmed `dx-test` free
-(stopped, default 12 GB, AI generation present) and authorised starting it
-for this branch's live gate; the subagent's own permission classifier
-refused the container-start command ("Interfere With Workloads") before
-any container state changed. Per this task's own rule ("if your permission
-classifier refuses a command, stop and report which one"), the live
-red/green fixture test (60k files, old-code stall under `timeout 300`,
-fixed code completing, `dx-restore --dry-run` identical, `--dry-run
---summary` captured, full live tier, cold stop) has not run. G4 and the
-dual-target live gate are outstanding.
+**Live phase:** see the status above; the subagent stopped correctly when its
+classifier refused `dx-start-container`, and the coordinating session ran the
+gate.
 
 ---
 
@@ -1329,6 +1321,17 @@ dual-target live gate are outstanding.
   observable condition (bounded poll) instead of a fixed delay, the way the
   Herdr acceptance tests do, and prove it stable across three consecutive
   live runs.
+
+- **`dx-restore --dry-run` over a very large target set is slow (found on
+  Branch 17's live gate, 2026-09-27).** `dx_backup_restore_status` resolves
+  each target's guest hash by scanning the batch result per target, so a
+  full-mirror dry-run over 60,000 targets is effectively O(n^2) and had not
+  finished after 13 minutes (correctness was proven on 1,000- and 167-file
+  subsets, including a deliberate conflict). Realistic restores name a
+  subtree, so this is a performance backlog item, not a defect in the
+  restore semantics: join the local and guest hash lists in one pass (sort +
+  join, or a single awk over both files) and prove the full 60k dry-run
+  completes in well under a minute.
 
 ## Decisions for you
 

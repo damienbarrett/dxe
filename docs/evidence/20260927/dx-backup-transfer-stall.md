@@ -134,3 +134,43 @@ touched by this branch's work.
 See `docs/evidence/20260927/persist-backup.md`'s own "Follow-up" note for
 the cross-reference from Branch 10's original evidence record to this
 branch.
+
+## Live gate (run by the coordinating session, 2026-09-27)
+
+The subagent's permission classifier refused `dx-start-container` on
+`dx-test`; per the user's decision the coordinating session ran the gate
+from this worktree (default 12 GB, no memory override):
+
+- Fixture: 60,000 small files under `/persist/branch17-fixture` (created in
+  the guest in ~20 s), outside any repository, so all at risk.
+- OLD code (`main` `863c376`, one exec with the list on stdin and the archive
+  on stdout): `dx-backup` bounded to 300 s stalled for the whole bound with
+  **0 bytes** received and no manifest — killed by the bound; the orphaned
+  guest `tar` was terminated. (A first attempt used `timeout`, which macOS
+  lacks; the bound is a `perl -e 'alarm shift; exec @ARGV'` wrapper.)
+- NEW code: `dx-backup --dry-run --summary` reported 60,168 at-risk files /
+  1,067,170 bytes, by top-level directory (`branch17-fixture` 60,000,
+  `home` 167, one loose file) and by reason (all outside-repo). The real run
+  transferred **60,168 files, 1,067,170 bytes** (about a minute after
+  selection); the manifest has 60,168 entries and the mirror 60,164 regular
+  files plus 4 symlinks. A second run: **0 files, 0 bytes transferred.**
+- `dx-restore --dry-run` on `branch17-fixture/d1` (1,000 files) and on
+  `home` (167 files): all "already identical". After changing one fixture
+  file in the guest: 999 identical and exactly **1 "would OVERWRITE"**.
+- A full-set `dx-restore --dry-run` (60,168 targets) was too slow to
+  complete inside a 15-minute bound (per-target lookup over the batch hash
+  result); recorded as a performance follow-up in the plan's Observations —
+  the transfer fix and restore semantics are unaffected.
+- Fixture removed from the guest; full live tier: **34 sections, 1482 passed,
+  0 failed, 8 skipped**, "All tests PASSED!"; `dx-test` cold-stopped; the
+  key pair copied into the worktree for the run was removed afterwards.
+  `dx-host` and the NAS untouched.
+
+## Landing (2026-09-27)
+
+Already rebased onto `main` `863c376` by the subagent (Branch 11 Phase 1
+had landed; every new exec routed through `dx_runtime_exec`). Re-checked by
+the coordinating session on the tip: bash-3.2 suite, Sections 1, 10 and 27,
+the runtime-boundary audit and characterisation tests, the backup/restore
+test files, the Phase 0 dry-runs, the private identifier scan. G5: GitHub
+Actions on the pushed branch, green before `main` was fast-forwarded.
