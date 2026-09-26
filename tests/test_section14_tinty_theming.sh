@@ -552,6 +552,13 @@ shades-of-purple=base16-shades-of-purple'
             "-o" "IdentitiesOnly=yes"
             "-o" "BatchMode=yes"
             "-o" "ConnectTimeout=5"
+            # UserKnownHostsFile=/dev/null never persists a host key, so every
+            # connection re-triggers ssh's "Warning: Permanently added ... to
+            # the list of known hosts." on stderr. The probes below capture
+            # stdout+stderr together (2>&1) and grep -x an exact line out of
+            # it, so this bin/lib/dx-ssh-common.sh option (dx_ssh_common_options)
+            # is needed here too to keep that noise off the captured output.
+            "-o" "LogLevel=ERROR"
         )
         SSH_OPTS=("${SSH_COMMON_OPTS[@]}" "-p" "$DX_SSH_PORT")
         SCP_OPTS=("${SSH_COMMON_OPTS[@]}" "-P" "$DX_SSH_PORT")
@@ -704,13 +711,13 @@ DRIVER_EOF
         fi
 
         # --- project.nvim: a real recognised project can still write history.
-        # Best-effort: relies on project.nvim's own automatic (manual_mode =
-        # false) BufEnter detection firing for a real buffer opened inside a
-        # directory containing .git, then checks its on-disk history file.
-        # The exact history file location/format is not independently
-        # verified in this session, so an inconclusive result degrades to a
-        # skip rather than a fail -- the absence+control assertions above are
-        # the firm regression guard for the filter itself.
+        # Relies on project.nvim's own automatic (manual_mode = false)
+        # BufEnter detection firing for a real buffer opened inside a
+        # directory containing .git, then checks its on-disk history file:
+        # stdpath("data") .. "/project_nvim/<history.save_file>", where
+        # history.save_file defaults to "project_history.json" (project.nvim
+        # 4.1.1's project/config/defaults.lua) -- note the .json extension,
+        # confirmed against the real guest by inspecting the written file.
         PROJECT_REAL_PROBE_LOCAL=$(mktemp -t dx_project_real_probe.XXXXXX)
         cat > "$PROJECT_REAL_PROBE_LOCAL" <<'LUA_EOF'
 local ok_history, history = pcall(require, "project.util.history")
@@ -719,7 +726,7 @@ if ok_history and history and history.write_history then
   write_ok = pcall(history.write_history)
 end
 vim.wait(300)
-local hist_path = vim.fn.stdpath("data") .. "/project_nvim/project_history"
+local hist_path = vim.fn.stdpath("data") .. "/project_nvim/project_history.json"
 local has_data = (vim.fn.filereadable(hist_path) == 1) and (vim.fn.getfsize(hist_path) > 0)
 io.write("REQUIRE_OK=" .. tostring(ok_history) .. "\n")
 io.write("WRITE_OK=" .. tostring(write_ok) .. "\n")
@@ -753,7 +760,7 @@ DRIVER_EOF
         if printf '%s\n' "$PROJECT_REAL_OUT" | stdin_matches -x "HISTORY_HAS_DATA=true"; then
             test_pass "write_history() still persists data for a recognised (.git) project"
         else
-            test_skip "write_history() persisted-data check for a recognised project was inconclusive (probe output: $PROJECT_REAL_OUT)"
+            test_fail "write_history() still persists data for a recognised (.git) project (probe output: $PROJECT_REAL_OUT)"
         fi
     fi
 fi
