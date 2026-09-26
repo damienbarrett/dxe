@@ -556,6 +556,32 @@ for pair in 'same-gen same-gen' ' new-gen' 'old-gen '; do
     fi
 done
 
+# --- D7 option 3: dx-start-container must tell a real publish from the
+# unchanged-content skip using only dx-sync-bootstrap's own captured stdout,
+# since that is the only distinction available without re-deriving the
+# content digest itself (docs/refactor/decisions/D7-start-generation.md).
+if published="$(dx_bootstrap_sync_published_generation 'Syncing bootstrap generation 20260926T045923Z-7438 from /src to dx-test:/guest-bootstrap...
+Bootstrap generation 20260926T045923Z-7438 is ready.')" && [ "$published" = 20260926T045923Z-7438 ]; then
+    test_pass "a real publish's generation id is parsed from dx-sync-bootstrap's own terminal message"
+else
+    test_fail "a real publish's generation id is parsed from dx-sync-bootstrap's own terminal message (got '${published:-}')"
+fi
+if dx_bootstrap_sync_published_generation 'Bootstrap content is unchanged; generation 20260926T045923Z-7438 stays current.' >/dev/null 2>&1; then
+    test_fail "the unchanged-content skip message is never mistaken for a publish"
+else
+    test_pass "the unchanged-content skip message is never mistaken for a publish"
+fi
+if dx_bootstrap_sync_published_generation 'something unexpected happened' >/dev/null 2>&1; then
+    test_fail "unrecognised sync output is never mistaken for a publish"
+else
+    test_pass "unrecognised sync output is never mistaken for a publish"
+fi
+if dx_bootstrap_sync_published_generation '' >/dev/null 2>&1; then
+    test_fail "empty sync output is never mistaken for a publish"
+else
+    test_pass "empty sync output is never mistaken for a publish"
+fi
+
 # F12: cleanup_osc used to be defined without a dx_ namespace, leaking into
 # the caller's global namespace; and export TERM had no effect since the
 # remote env prefix hardcodes TERM=xterm-256color.

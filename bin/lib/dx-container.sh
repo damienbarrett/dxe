@@ -177,14 +177,14 @@ dx_bootstrap_content_digest() {
 }
 
 # Announce that the guest is running an older generation than the published
-# one. dx-start-container has to start the container before it can sync -- the
-# payload crosses `container exec`, which needs a running container -- and the
-# guest's launcher proceeds as soon as a `current` pointer exists, so a start
-# following a bootstrap edit boots the previous generation. This does not fix
-# that (see dx-start-plan.md); it makes the condition visible at the moment it
-# happens instead of leaving it to be rediscovered as "my fix did nothing".
-# Silent unless both generations are known and differ: an unsynced guest has no
-# lease, and an unchanged tree republishes the same id.
+# one. This is the diagnostic for the unchanged-content skip path only (see
+# dx_bootstrap_sync_published_generation below): a start whose sync actually
+# published a new generation is confirmed, bounded, by
+# dx_bootstrap_confirm_publication instead, which can fail the start outright
+# (D7 option 3, docs/refactor/decisions/D7-start-generation.md). This function
+# only makes a real drift visible when there was nothing to confirm -- an
+# unsynced guest has no lease, and an unchanged tree republishes the same id,
+# so it stays silent unless both generations are known and differ.
 dx_bootstrap_report_drift() {
     local running="$1" published="$2" name="$3"
     [ -n "$running" ] && [ -n "$published" ] && [ "$running" != "$published" ] || return 0
@@ -192,6 +192,68 @@ dx_bootstrap_report_drift() {
     echo "The guest boots whichever generation was current when it started, so a bootstrap change needs one more start to take effect." >&2
     echo "Run dx-start-container again to pick it up." >&2
     return 0
+}
+
+# Whether the sync that just ran (bin/dx-sync-bootstrap, captured stdout)
+# actually published a new generation, or skipped because the payload was
+# unchanged. dx-sync-bootstrap's own two terminal messages are the only
+# distinction available without re-deriving the content digest ourselves:
+# "Bootstrap generation <id> is ready." on a real publish, "... generation
+# <id> stays current." on a skip. Prints the published generation id and
+# returns 0 only for a real publish; a skip, or output matching neither
+# message (defensive -- dx-sync-bootstrap only ever reaches one of the two on
+# a successful exit), returns 1 with no output.
+dx_bootstrap_sync_published_generation() {
+    local output="$1" line generation
+    while IFS= read -r line; do
+        case "$line" in
+            "Bootstrap generation "*" is ready.")
+                generation=${line#Bootstrap generation }
+                generation=${generation% is ready.}
+                case "$generation" in ""|*/*|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
+                printf '%s\n' "$generation"
+                return 0
+                ;;
+        esac
+    done <<EOF
+$output
+EOF
+    return 1
+}
+
+# Bound how long a start waits for the guest's execution lease to confirm a
+# publish that just happened -- only called for a real publish (never the
+# unchanged-content skip, which dx_bootstrap_report_drift covers with no
+# wait). The guest launcher only needs to notice an already-set
+# .dx-bootstrap-ready on its next 1-second poll tick and lease immediately (it
+# does not wait out its own DX_BOOTSTRAP_PUBLISH_GRACE in this branch, since
+# ready is already present), so this polls at the same 1-second cadence as
+# every other bounded wait in this codebase. Live-measured publish-to-lease
+# latency on dx-test was 0.2-0.4s (docs/refactor/decisions/D7-start-generation.md);
+# DX_BOOTSTRAP_CONFIRM_TIMEOUT's default gives that over 10x headroom.
+#
+# A match within the bound returns 0 silently -- success, exactly as before
+# this existed. No match once the bound elapses is precisely Q4: the host
+# published, but the guest is provably not running it. Prints an error naming
+# both generations and the remedy to stderr and returns 1; the start that
+# calls this must fail (D7 option 3). Read-only: every read here already
+# tolerates failure (an absent lease, a guest that never leased at all), so
+# there are no partial side effects to clean up on either outcome.
+dx_bootstrap_confirm_publication() {
+    local name="$1" bootstrap_path="$2" published="$3" timeout="$4"
+    local waited=0 lease_listing running=""
+    while :; do
+        lease_listing="$(container exec "$name" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$bootstrap_path" 2>/dev/null || true)"
+        running=""
+        [ -z "$lease_listing" ] || running="$(dx_bootstrap_lease_generation "$lease_listing" || true)"
+        [ "$running" = "$published" ] && return 0
+        [ "$waited" -lt "$timeout" ] || break
+        sleep 1
+        waited=$((waited + 1))
+    done
+    echo "Error: $name published bootstrap generation $published, but after waiting ${timeout}s the guest is running ${running:-no leased generation (never synced, or still resolving)}." >&2
+    echo "The running guest will not pick this publish up on its own. Restart it so its launcher waits for publication fresh: ./bin/dx-stop-container && ./bin/dx-start-container." >&2
+    return 1
 }
 dx_nix_volume_claim_dir() { printf '%s/.dx-cache/nix-volume-claims\n' "${HOME:?}"; }
 
