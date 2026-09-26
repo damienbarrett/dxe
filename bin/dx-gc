@@ -13,9 +13,9 @@ fi
 # Nix must run as dx: the store is single-user dx-owned, and a root-invoked
 # nix re-owns /nix/store to root:nixbld, locking dx out.
 echo "Running Nix garbage collection in guest..."
-container exec -u dx "$DX_CONTAINER_NAME" bash -lc 'nix-collect-garbage --delete-older-than 14d'
+dx_runtime_exec -u dx "$DX_CONTAINER_NAME" bash -lc 'nix-collect-garbage --delete-older-than 14d'
 
 echo "Running Nix store optimization in guest..."
-container exec -u dx "$DX_CONTAINER_NAME" bash -lc 'nix-store --optimise'
+dx_runtime_exec -u dx "$DX_CONTAINER_NAME" bash -lc 'nix-store --optimise'
 
 echo "Nix maintenance complete."

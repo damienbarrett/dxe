@@ -27,7 +27,7 @@ host_image_size() {
 # Nix must run as dx: the store is single-user dx-owned, and a root-invoked
 # nix re-owns /nix/store to root:nixbld, locking dx out.
 run_in_guest() {
-    container exec -u dx "$DX_CONTAINER_NAME" /usr/bin/bash -lc "$1"
+    dx_runtime_exec -u dx "$DX_CONTAINER_NAME" /usr/bin/bash -lc "$1"
 }
 
 report_host_images() {
@@ -38,7 +38,7 @@ report_host_images() {
 
 report_guest_filesystems() {
     echo "Guest filesystem usage:"
-    container exec "$DX_CONTAINER_NAME" /usr/bin/bash -lc '
+    dx_runtime_exec "$DX_CONTAINER_NAME" /usr/bin/bash -lc '
         export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"
         store_path="$1/store"
         store_usage="$(du -sh "$store_path" 2>/dev/null)" || exit $?
@@ -62,7 +62,7 @@ report_usage() {
 
 trim_mount() {
     local mount_path="$1"
-    container exec "$DX_CONTAINER_NAME" /usr/bin/bash -lc '
+    dx_runtime_exec "$DX_CONTAINER_NAME" /usr/bin/bash -lc '
         export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"
         if fstrim -v "$1"; then
             exit 0
