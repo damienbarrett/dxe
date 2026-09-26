@@ -1,0 +1,791 @@
+Using container for the isolated coverage runner.
+#1 [resolver] fetching image...docker.io/library/ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile:
+#2 transferring dockerfile: 2B 0.2s done
+#2 DONE 0.2s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 0.1s
+#3 transferring context: 2B 0.1s done
+#3 DONE 0.1s
+
+#4 oci-layout://docker.io/library/ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
+#4 resolve docker.io/library/ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90 done
+#4 DONE 0.0s
+
+#5 [linux/arm64 1/2] RUN apt-get update  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends       bash binutils-dev build-essential ca-certificates cmake coreutils findutils git       libcurl4-openssl-dev libdw-dev libelf-dev libiberty-dev libssl-dev       libstdc++-12-dev python3 zlib1g-dev  && git clone --filter=blob:none https://github.com/SimonKagstrom/kcov.git /tmp/kcov  && git -C /tmp/kcov checkout "a39874f938ce13f7a65f253120d1ec946b349ffe"  && cmake -S /tmp/kcov -B /tmp/kcov/build -DCMAKE_BUILD_TYPE=Release  && cmake --build /tmp/kcov/build --parallel 2  && cmake --install /tmp/kcov/build  && rm -rf /tmp/kcov  && rm -rf /var/lib/apt/lists/*
+#5 CACHED
+
+#6 exporting to oci image format
+#6 exporting layers done
+#6 exporting manifest sha256:f25905ac4eed7cf746e967a94c479c5f426ad4f0624b6c9c96f4dae2ea2f3aa7 done
+#6 exporting config sha256:b4742e53611b9e3504ebe04f91909286cded9eaa6bf6ed0e586bdbdef0e20758 done
+#6 exporting manifest list sha256:6cef2e03a5ec8da72b3132dfdaa0975fd97804a3b7de2af12ca028fab785863d done
+#6 sending tarball
+#6 sending tarball 2.3s done
+#6 DONE 2.3s
+dxe-kcov:ubuntu-24.04
+[0/6] [0s]
+[1/6] Fetching image [0s]
+[2/6] Unpacking image [0s]
+[3/6] Fetching kernel [0s]
+[4/6] Fetching init image [0s]
+[5/6] Unpacking init image [0s]
+[6/6] Starting container [0s]
+[6/6] Starting container [0s]
+Error: /tmp/dxe-config-test.Jus0uu/hostile.env:1: quotes, escapes, substitutions, and control operators are not allowed
+Error: host port '80' is privileged; use a host port >= 1024.
+b' "quote'and\\slash" 'octal-A' 'utf8-é')
+
+[1;33m=== Refactor State-Machine Contracts ===[0m
+  [0;32m✓ PASS[0m: config precedence records root, environment, and default origins
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=one
+DX_CONTAINER_NAME=two
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=~name
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=$(id)
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=`id`
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=one;id
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME="quoted"
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=one\two
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=$HOME
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=one && id
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=one || id
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_SSH_KEY=/tmp/key&touch
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_SSH_KEY=/tmp/key|touch
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_SSH_KEY=/tmp/key>file
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_SSH_KEY=/tmp/key<file
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: UNKNOWN=value
+  [0;32m✓ PASS[0m: data parser rejects duplicate fields
+  [0;32m✓ PASS[0m: project-root placeholder is restricted to path fields
+  [0;32m✓ PASS[0m: migration export prefix and project-root path placeholder are accepted
+  [0;32m✓ PASS[0m: project-root placeholder resolves as data
+  [0;32m✓ PASS[0m: an absent data file clears prior parser output
+  [0;32m✓ PASS[0m: lock owner metadata matches the live process identity
+  [0;32m✓ PASS[0m: dead lock owner is reclaimed
+  [0;32m✓ PASS[0m: PID reuse prevents TERM and KILL
+  [0;32m✓ PASS[0m: bounded command timeout returns 124 and removes private bookkeeping
+  [0;32m✓ PASS[0m: legacy %q fixture 0 decodes
+  [0;32m✓ PASS[0m: legacy %q fixture 1 decodes
+  [0;32m✓ PASS[0m: legacy %q fixture 2 decodes
+  [0;32m✓ PASS[0m: legacy %q fixture 3 decodes
+  [0;32m✓ PASS[0m: legacy %q fixture 4 decodes
+  [0;32m✓ PASS[0m: legacy %q fixture 5 decodes
+  [0;32m✓ PASS[0m: legacy decoder rejects token: \$(id)
+  [0;32m✓ PASS[0m: legacy decoder rejects token: $HOME
+  [0;32m✓ PASS[0m: legacy decoder rejects token: value;id
+  [0;32m✓ PASS[0m: legacy decoder rejects token: value>file
+  [0;32m✓ PASS[0m: legacy decoder rejects token: $'badA'
+  [0;32m✓ PASS[0m: legacy decoder rejects token: value extra
+  [0;32m✓ PASS[0m: concurrent first publication has exactly one winner
+  [0;32m✓ PASS[0m: concurrent publication leaves one complete v2 manifest
+  [0;32m✓ PASS[0m: legacy migration dry run is report-only
+  [0;32m✓ PASS[0m: complete matching legacy manifest converts atomically
+  [0;32m✓ PASS[0m: incomplete legacy manifest refuses migration
+  [0;32m✓ PASS[0m: refused migration preserves incomplete authoritative file
+Forwarded http://127.0.0.1:15173 -> side:5173
+  [0;32m✓ PASS[0m: shared tunnel engine starts a forward
+  [0;32m✓ PASS[0m: published tunnel metadata is allowlisted and complete
+  [0;32m✓ PASS[0m: tunnel metadata records the active peer
+  [0;32m✓ PASS[0m: failed SSH master stop returns failure
+  [0;32m✓ PASS[0m: failed stop retains authoritative state
+Stopped http://127.0.0.1:15173
+  [0;32m✓ PASS[0m: successful stop removes retained state
+  [0;32m✓ PASS[0m: concurrent tunnel starts linearize to one SSH master
+Stopped http://127.0.0.1:16000
+  [0;32m✓ PASS[0m: concurrently-created tunnel remains stoppable
+  [0;32m✓ PASS[0m: concurrent tunnel start/stop serializes to a complete stopped state
+Forwarded http://127.0.0.1:15200 -> side:5200
+  [0;32m✓ PASS[0m: reaped-metadata fixture starts a forward
+Recovered dx-forward metadata for port 15200 from its running SSH master.
+Active http://127.0.0.1:15200 -> side:5200
+  [0;32m✓ PASS[0m: reaped metadata self-heals from the live SSH master
+  [0;32m✓ PASS[0m: recovery republishes the peer the master is actually forwarding
+  [0;32m✓ PASS[0m: recovered peer still refuses a conflicting mapping
+  [0;32m✓ PASS[0m: listing reports the recovered peer instead of unknown
+  [0;32m✓ PASS[0m: confirming an active tunnel restamps its metadata against the reaper
+  [0;32m✓ PASS[0m: recovery that cannot republish metadata fails loudly
+  [0;32m✓ PASS[0m: an out-of-range peer in the master argv is not trusted
+  [0;32m✓ PASS[0m: unrecoverable state names the command that clears it
+Stopped http://127.0.0.1:15200
+  [0;32m✓ PASS[0m: recovered tunnel remains stoppable
+Reverse forwarded side 127.0.0.1:18200 -> host 127.0.0.1:8200
+  [0;32m✓ PASS[0m: reverse fixture starts a reverse forward
+Recovered dx-reverse metadata for port 18200 from its running SSH master.
+Active side 127.0.0.1:18200 -> host 127.0.0.1:8200
+  [0;32m✓ PASS[0m: reverse recovery reads the -R mapping
+  [0;32m✓ PASS[0m: legacy socket recovery reports the peer without publishing new-layout state
+  [0;32m✓ PASS[0m: an unknown legacy peer reports nothing rather than failing its set -e caller
+Forwarded http://127.0.0.1:15400 -> side:5400
+  [0;32m✓ PASS[0m: orphan-discovery fixture starts a forward
+  [0;32m✓ PASS[0m: a socket with intact metadata is discovered exactly once
+  [0;32m✓ PASS[0m: listing a healthy tunnel prints one entry
+  [0;32m✓ PASS[0m: discovery finds a live socket whose metadata was reaped
+  [0;32m✓ PASS[0m: listing an orphaned socket reports its real peer
+  [0;32m✓ PASS[0m: a forward socket is never discovered as a reverse forward
+  [0;32m✓ PASS[0m: a key port outside the valid range is not trusted
+  [0;32m✓ PASS[0m: a key whose socket path does not round-trip is not trusted
+Stopped http://127.0.0.1:15400
+  [0;32m✓ PASS[0m: stop-all reclaims a socket that only the process table knew about
+  [0;32m✓ PASS[0m: reclaimed orphan leaves no socket behind
+  [0;32m✓ PASS[0m: metadata publication failure fails the start
+  [0;32m✓ PASS[0m: metadata failure cleans up the started master
+  [0;32m✓ PASS[0m: tunnel-state audit sweeps safely parsed named profiles
+
+==============================
+Results: [0;32m79 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+[1;33m=== Transactional Bootstrap Publication ===[0m
+  [0;32m✓ PASS[0m: valid staged bootstrap publishes
+  [0;32m✓ PASS[0m: current points at the complete staged generation
+  [0;32m✓ PASS[0m: flat-layout compatibility path follows current
+  [0;32m✓ PASS[0m: published bootstrap files are read-only
+  [0;32m✓ PASS[0m: incomplete staged bootstrap is rejected
+  [0;32m✓ PASS[0m: failed extraction/validation preserves last-known-good current
+  [0;32m✓ PASS[0m: failed bootstrap staging is collected
+  [0;32m✓ PASS[0m: collection retains a generation with a fully matching live lease
+  [0;32m✓ PASS[0m: collection rejects a stale lease after PID identity reuse
+  [0;32m✓ PASS[0m: concurrent syncs retain complete current and predecessor generations
+  [0;32m✓ PASS[0m: launcher creates its execution lease under the publication lock
+  [0;32m✓ PASS[0m: launcher executes the exact leased generation
+  [0;32m✓ PASS[0m: launcher logs the bootstrap generation it resolved
+  [0;32m✓ PASS[0m: launcher does not leak its lease umask into the guest bootstrap
+  [0;32m✓ PASS[0m: execution lease is still written privately
+  [0;32m✓ PASS[0m: re-syncing identical content publishes no new generation
+  [0;32m✓ PASS[0m: an unchanged sync says so rather than claiming a publication
+  [0;32m✓ PASS[0m: unchanged content skips even when the boot readiness marker is absent
+  [0;32m✓ PASS[0m: an unchanged sync prunes leases from earlier boots and keeps the live one
+  [0;32m✓ PASS[0m: a generation with no recorded digest republishes and records one
+  [0;32m✓ PASS[0m: changed content still publishes a new generation
+  [0;32m✓ PASS[0m: the launcher runs the generation published for this boot, not the previous boot's
+  [0;32m✓ PASS[0m: an unsignalled start falls back to the current generation after a bounded wait
+  [0;32m✓ PASS[0m: an unchanged sync still signals boot readiness
+
+==============================
+Results: [0;32m24 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+[1;33m=== Section 3: Sourceable Guest Bootstrap ===[0m
+  [0;32m✓ PASS[0m: bootstrap orchestrator exists
+  [0;32m✓ PASS[0m: bootstrap common phase exists
+  [0;32m✓ PASS[0m: bootstrap common phase is side-effect-free when sourced
+  [0;32m✓ PASS[0m: bootstrap base-and-storage phase exists
+  [0;32m✓ PASS[0m: bootstrap base-and-storage phase is side-effect-free when sourced
+  [0;32m✓ PASS[0m: bootstrap system phase exists
+  [0;32m✓ PASS[0m: bootstrap system phase is side-effect-free when sourced
+  [0;32m✓ PASS[0m: bootstrap persistence phase exists
+  [0;32m✓ PASS[0m: bootstrap persistence phase is side-effect-free when sourced
+  [0;32m✓ PASS[0m: bootstrap activation phase exists
+  [0;32m✓ PASS[0m: bootstrap activation phase is side-effect-free when sourced
+  [0;32m✓ PASS[0m: dx_validate_atomic_marker_path is directly sourceable
+  [0;32m✓ PASS[0m: dx_publish_atomic_marker is directly sourceable
+  [0;32m✓ PASS[0m: dx_pipeline_succeeded is directly sourceable
+  [0;32m✓ PASS[0m: essentials_profile_path is directly sourceable
+  [0;32m✓ PASS[0m: essentials_profile_store_path is directly sourceable
+  [0;32m✓ PASS[0m: install_essential_packages is directly sourceable
+  [0;32m✓ PASS[0m: essentials_store_valid is directly sourceable
+  [0;32m✓ PASS[0m: repair_store_closure is directly sourceable
+  [0;32m✓ PASS[0m: ensure_essentials_valid is directly sourceable
+  [0;32m✓ PASS[0m: generate_host_keys is directly sourceable
+  [0;32m✓ PASS[0m: install_essentials is directly sourceable
+  [0;32m✓ PASS[0m: link_system_bash is directly sourceable
+  [0;32m✓ PASS[0m: dx_seed_staged_entries is directly sourceable
+  [0;32m✓ PASS[0m: dx_move_missing_entries is directly sourceable
+  [0;32m✓ PASS[0m: cleanup_stale_nix_store_imports is directly sourceable
+  [0;32m✓ PASS[0m: nix_store_import_registered is directly sourceable
+  [0;32m✓ PASS[0m: nix_verify_imported_bootstrap_paths is directly sourceable
+  [0;32m✓ PASS[0m: nix_install_image_essentials_root is directly sourceable
+  [0;32m✓ PASS[0m: nix_seed_volume is directly sourceable
+  [0;32m✓ PASS[0m: record_durable_nix_identity is directly sourceable
+  [0;32m✓ PASS[0m: migrate_durable_nix_identity_if_needed is directly sourceable
+  [0;32m✓ PASS[0m: nix_image_registered_paths is directly sourceable
+  [0;32m✓ PASS[0m: nix_image_store_identity is directly sourceable
+  [0;32m✓ PASS[0m: nix_image_essentials_identity is directly sourceable
+  [0;32m✓ PASS[0m: nix_image_default_profile_store_path is directly sourceable
+  [0;32m✓ PASS[0m: capture_nix_image_default_profile is directly sourceable
+  [0;32m✓ PASS[0m: nix_restore_image_default_profile is directly sourceable
+  [0;32m✓ PASS[0m: nix_image_bootstrap_store_paths is directly sourceable
+  [0;32m✓ PASS[0m: nix_target_store_uri is directly sourceable
+  [0;32m✓ PASS[0m: nix_image_store_import_required is directly sourceable
+  [0;32m✓ PASS[0m: publish_nix_image_store_identity is directly sourceable
+  [0;32m✓ PASS[0m: prepare_nix_volume is directly sourceable
+  [0;32m✓ PASS[0m: prepare_nix_volume_impl is directly sourceable
+  [0;32m✓ PASS[0m: populate_prepared_nix_volume is directly sourceable
+  [0;32m✓ PASS[0m: setup_nix_volume is directly sourceable
+  [0;32m✓ PASS[0m: configure_single_user_nix is directly sourceable
+  [0;32m✓ PASS[0m: configure_release_identity is directly sourceable
+  [0;32m✓ PASS[0m: resolve_timezone_file is directly sourceable
+  [0;32m✓ PError: refusing to publish Nix ownership marker before the essentials closure is content-valid.
+Error: refusing to use Nix ownership sentinel; expected an absent or regular-file path: /tmp/dxe-bootstrap-test.GZbpzn/nix-ownership/symlink/.dx-owner-set
+Bootstrap phase: Nix ownership check/migration failed after 0s (exit 1).
+Error: refusing to use Nix ownership sentinel; expected an absent or regular-file path: /tmp/dxe-bootstrap-test.GZbpzn/nix-ownership/directory/.dx-owner-set
+Warning: Nix ownership marker publication did not complete; retrying on the next bootstrap.
+Bootstrap phase: Nix ownership check/migration failed after 0s (exit 1).
+ASS[0m: configure_timezone is directly sourceable
+  [0;32m✓ PASS[0m: materialize_auth_files is directly sourceable
+  [0;32m✓ PASS[0m: auth_entries_with_numeric_id is directly sourceable
+  [0;32m✓ PASS[0m: create_user is directly sourceable
+  [0;32m✓ PASS[0m: setup_persist is directly sourceable
+  [0;32m✓ PASS[0m: dx_ensure_tree_owner is directly sourceable
+  [0;32m✓ PASS[0m: dx_prepare_owned_directory is directly sourceable
+  [0;32m✓ PASS[0m: configure_ssh is directly sourceable
+  [0;32m✓ PASS[0m: dx_host_key_store_trusted is directly sourceable
+  [0;32m✓ PASS[0m: dx_host_key_store_populated is directly sourceable
+  [0;32m✓ PASS[0m: dx_harden_host_keys is directly sourceable
+  [0;32m✓ PASS[0m: dx_persist_host_keys is directly sourceable
+  [0;32m✓ PASS[0m: run_as_dx is directly sourceable
+  [0;32m✓ PASS[0m: run_home_manager_activation is directly sourceable
+  [0;32m✓ PASS[0m: publish_nix_ownership_marker is directly sourceable
+  [0;32m✓ PASS[0m: ensure_nix_ownership is directly sourceable
+  [0;32m✓ PASS[0m: setup_gh_persistence is directly sourceable
+  [0;32m✓ PASS[0m: setup_tmux_persistence is directly sourceable
+  [0;32m✓ PASS[0m: setup_herdr_persistence is directly sourceable
+  [0;32m✓ PASS[0m: setup_keyring_service is directly sourceable
+  [0;32m✓ PASS[0m: dx_seed_herdr_config is directly sourceable
+  [0;32m✓ PASS[0m: dx_activate_herdr is directly sourceable
+  [0;32m✓ PASS[0m: configure_guest is directly sourceable
+  [0;32m✓ PASS[0m: verify_guest_tools is directly sourceable
+  [0;32m✓ PASS[0m: essentials profile resolves before the Nix remount
+  [0;32m✓ PASS[0m: ownership migration publishes a marker and skips recursive repair thereafter
+  [0;32m✓ PASS[0m: owned directory preparation repairs the requested mode on an existing directory
+  [0;32m✓ PASS[0m: failed ownership marker publication is retried without a false success marker
+  [0;32m✓ PASS[0m: directory-valued ownership markers fail safely without nested temporary files
+  [0;32m✓ PASS[0m: GitHub and Herdr migrations leave persisted data usable without recurring recursive chowns
+  [0;32m✓ PASS[0m: fresh persist prepares ~/.local so dx can create an XDG state child
+  [0;32m✓ PASS[0m: fresh persist refuses a symlinked persist root
+Nix ownership layout marker published for 0:0.
+Nix ownership already set. Skipping recursive ownership repair.
+Nix ownership layout marker published for 0:0.
+Bootstrap phase: Nix ownership check/migration completed in 1s.
+Upgrading legacy Nix ownership marker without recursive repair.
+Nix ownership layout marker published for 0:0.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Migrating legacy Nix ownership (one time)...
+Nix ownership layout marker published for 0:0.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Nix ownership already set. Skipping recursive ownership repair.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Migrating legacy Nix ownership (one time)...
+Upgrading legacy Nix ownership marker without recursive repair.
+Nix ownership layout marker published for 0:0.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+  [0;32m✓ PASS[0m: Nix ownership markers publish atomically, upgrade legacy layouts cheaply, and retry after publication failure
+  [0;32m✓ PASS[0m: GitHub persistence propagates ownership-helper failure
+  [0;32m✓ PASS[0m: Herdr persistence propagates ownership-helper failure
+  [0;32m✓ PASS[0m: auth materialization preserves data and replaces symlinks
+  [0;32m✓ PASS[0m: old-base guard accepts the official base shape
+  [0;32m✓ PASS[0m: old-base guard rejects a dangling /bin/bash signature
+  [0;32m✓ PASS[0m: bootstrap main runs only when executed
+  [0;32m✓ PASS[0m: bootstrap has no production test-mode branch
+  [0;32m✓ PASS[0m: bootstrap never hands published payload ownership to dx
+  [0;32m✓ PASS[0m: normal activation does not recursively re-own the home tree
+  [0;32m✓ PASS[0m: normal activation does not recursively re-own persisted AI state
+  [0;32m✓ PASS[0m: normal activation does not recursively re-own a validated Nix volume
+  [0;32m✓ PASS[0m: SSH setup does not recursively re-own existing user SSH contents
+  [0;32m✓ PASS[0m: persistence setup does not recursively re-own persisted home on every boot
+  [0;32m✓ PASS[0m: persisted-tree ownership uses a marker-guarded migration helper
+  [0;32m✓ PASS[0m: activation uses bounded ownership checks for mutable roots
+  [0;32m✓ PASS[0m: essentials installation reports elapsed time
+  [0;32m✓ PASS[0m: Nix volume prepare/mount reports elapsed time
+  [0;32m✓ PASS[0m: essentials verification/repair reports elapsed time
+  [0;32m✓ PASS[0m: Nix ownership check/migration reports elapsed time
+  [0;32m✓ PASS[0m: Home Manager activation reports elapsed time
+  [0;32m✓ PASS[0m: final guest tool verification reports elapsed time
+  [0;32m✓ PASS[0m: Herdr persistence and config seeding are non-fatal bootstrap activation steps
+  [0;32m✓ PASS[0m: validated Nix imports pass content validation only from bootstrap into guest setup
+  [0;32m✓ PASS[0m: bootstrap uses explicit Nix volume lifecycle seams
+  [0;32m✓ PASS[0m: bootstrap does not export ownership steering state
+  [0;32m✓ PASS[0m: essentials install uses the checked-in locked bootstrap output
+  [0;32m✓ PASS[0m: essentials install does not resolve the global flake registry
+  [0;32m✓ PASS[0m: flake defines the locked bootstrap essentials output
+  [0;32m✓ PASS[0m: foreground sshd remains the final bootstrap action
+  [0;32m✓ PASS[0m: Home Manager timing preserves activation failure status
+  [0;32m✓ PASS[0m: final tool verification timing preserves failure status
+  [0;32m✓ PASS[0m: release identity is written world-readable
+  [0;32m✓ PASS[0m: release identity records the derived release
+  [0;32m✓ PASS[0m: release identity repairs an existing unreadable file
+  [0;32m✓ PASS[0m: release identity is readable even under a restrictive umask
+  [0;32m✓ PASS[0m: setup_keyring_service reports an explicit diagnostic when dbus-daemon is missing, instead of dying silently
+  [0;32m✓ PASS[0m: a fresh persist store generates host keys and backfills them for the next boot
+  [0;32m✓ PASS[0m: a persisted host identity is restored and re-hardened instead of regenerated
+  [0;32m✓ PASS[0m: a persisted host-key store dx could have substituted is refused, not restored
+  [0;32m✓ PASS[0m: host-key persistence refuses a symlinked store before any mutation
+  [0;32m✓ PASS[0m: host-key persistence refuses a symlinked /etc/ssh before any mutation
+  [0;32m✓ PASS[0m: an unmounted persist volume still yields a bootable host identity
+  [0;32m✓ PASS[0m: the registered image set is read through a view that sees this boot's registrations
+  [0;32m✓ PASS[0m: the importer streams this boot's essentials closure into the copy
+  [0;32m✓ PASS[0m: an import that did not materialise a required bootstrap path fails before the remount
+  [0;32m✓ PASS[0m: a fully materialised bootstrap set passes the pre-remount check
+  [0;32m✓ PASS[0m: the pre-remount check covers the resolved essentials bin target, not just the profile root
+
+==============================
+Results: [0;32m129 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+[1;33m=== Section 17: dx-ai Runtime ===[0m
+  [0;32m✓ PASS[0m: dx-ai is a sourceable main with focused generation functions
+  [0;32m✓ PASS[0m: dx-ai never changes into the published payload
+  [0;32m✓ PASS[0m: dx-ai pin refresh is independent of Nix source formatting
+  [0;32m✓ PASS[0m: dx-ai mutable generations live under persist
+  [0;32m✓ PASS[0m: AI staging records predecessor without mutating published bootstrap
+  [0;32m✓ PASS[0m: AI publication atomically advances current and retains predecessor
+  [0;32m✓ PASS[0m: AI pointer publication failure is reported
+  [0;32m✓ PASS[0m: failed AI pointer switch preserves current and predecessor
+  [0;32m✓ PASWarning: malformed agy manifest. Keeping current pin.
+Terminating host runtime process for container side: 4242
+Runtime process for side ignored TERM; sending KILL: 4242
+id: 'dx': no such user
+id: 'dx': no such user
+/work/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/base-and-storage.sh: line 338: nix: command not found
+Error: could not enumerate registered image Nix paths.
+Warning: ignoring unsafe durable Nix identity '0:0'; scheduling Nix-volume migration.
+id: 'dx': no such user
+id: 'dx': no such user
+Error: refusing durable Nix ownership migration for unsafe dx identity ':'.
+/work/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/base-and-storage.sh: line 338: nix: command not found
+Error: could not enumerate registered image Nix paths.
+Warning: ignoring unsafe durable Nix identity '0:0'; scheduling Nix-volume migration.
+id: 'dx': no such user
+id: 'dx': no such user
+Error: refusing durable Nix ownership migration for unsafe dx identity ':'.
+/work/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/base-and-storage.sh: line 338: nix: command not found
+Error: could not enumerate registered image Nix paths.
+S[0m: AI recovery atomically selects the retained predecessor
+Refreshing Antigravity CLI manifest...
+  [0;32m✓ PASS[0m: malformed upstream AI manifest is non-destructive
+  [0;32m✓ PASS[0m: malformed AI manifest leaves pin unchanged
+  [0;32m✓ PASS[0m: dx-ai refuses lock acquisition when all process identities are unavailable (R5)
+  [0;32m✓ PASS[0m: dx-ai parses proc stat starttime in Bash with a complex comm field (R5)
+  [0;32m✓ PASS[0m: dx-ai preserves raw UUID boot identities for existing owner records (R5)
+  [0;32m✓ PASS[0m: dx-ai falls back to an explicit proc btime boot identity (R5)
+  [0;32m✓ PASS[0m: dx-ai acquires a lock with the btime fallback identity (R5)
+  [0;32m✓ PASS[0m: a successful sourced dx_ai_main releases its lock and clears its EXIT trap
+  [0;32m✓ PASS[0m: --supports <tool> for a known tool exits 0 with no stdout
+  [0;32m✓ PASS[0m: --supports <tool> for an unknown tool exits 1 with no stdout
+  [0;32m✓ PASS[0m: --supports with no tool name is a usage error (exit 64)
+  [0;32m✓ PASS[0m: --supports rejects trailing arguments (exit 64)
+  [0;32m✓ PASS[0m: dx-ai installs the missing Herdr integrations for the agents it manages
+  [0;32m✓ PASS[0m: dx-ai leaves Herdr integrations for unmanaged agents alone
+  [0;32m✓ PASS[0m: a repeated dx-ai run reinstalls no current Herdr integration
+  [0;32m✓ PASS[0m: dx-ai refreshes a Herdr integration that upstream reports outdated
+  [0;32m✓ PASS[0m: dx-ai refreshes an integration the status listing marks outdated
+  [0;32m✓ PASS[0m: an unrecognised Herdr integration state is left alone, not reinstalled
+  [0;32m✓ PASS[0m: dx-ai treats an absent Herdr as a skip, not a failure
+  [0;32m✓ PASS[0m: a failed Herdr integration install does not fail the AI update
+  [0;32m✓ PASS[0m: an unreadable Herdr integration status installs nothing and does not fail
+  [0;32m✓ PASS[0m: dx-ai runs the Herdr integration step from its main flow
+  [0;32m✓ PASS[0m: dx-ai never lets an optional Herdr integration fail the update
+  [1;33m○ SKIP[0m: dx-ai guest runtime checks (--skip-integration)
+
+==============================
+Results: [0;32m32 passed[0m, [0;31m0 failed[0m, [1;33m1 skipped[0m
+==============================
+Installing essential tools...
+Bootstrap phase: essentials installation completed in 0s.
+Bootstrap phase: essentials installation completed in 0s.
+Setting up dedicated Nix volume...
+Warning: Kernel does not support btrfs. Falling back to ext4.
+Warning: /var/lib/dx-nix-raw not found. Skipping dedicated volume setup.
+Bootstrap phase: Nix volume prepare/mount completed in 0s.
+Setting up dedicated Nix volume...
+/nix is already a btrfs mount. Skipping setup.
+Bootstrap phase: Nix volume prepare/mount completed in 0s.
+Setting up dedicated Nix volume...
+Warning: Kernel does not support btrfs. Falling back to ext4.
+Detected directory-style mount at /var/lib/dx-nix-raw. Using sparse image file.
+Creating 64G sparse image file at /var/lib/dx-nix-raw/nix-store.ext4...
+Mounting /var/lib/dx-nix-raw/nix-store.ext4 to /nix...
+Nix volume image import completed in 0s.
+Adding /nix to /etc/fstab...
+Bootstrap phase: Nix volume prepare/mount completed in 0s.
+Setting up dedicated Nix volume...
+Warning: Kernel does not support btrfs. Falling back to ext4.
+Detected directory-style mount at /var/lib/dx-nix-raw. Using sparse image file.
+Mounting /var/lib/dx-nix-raw/nix-store.ext4 to /nix...
+Nix volume image import completed in 0s.
+Adding /nix to /etc/fstab...
+Bootstrap phase: Nix volume prepare/mount completed in 0s.
+Setting up dedicated Nix volume...
+Detected directory-style mount at /var/lib/dx-nix-raw. Using sparse image file.
+Creating 64G sparse image file at /var/lib/dx-nix-raw/nix-store.btrfs...
+Mounting /var/lib/dx-nix-raw/nix-store.btrfs to /nix...
+Nix volume image import completed in 0s.
+Adding /nix to /etc/fstab...
+Bootstrap phase: Nix volume prepare/mount completed in 0s.
+Setting up dedicated Nix volume...
+Detected block device backing /var/lib/dx-nix-raw: /tmp/dxe-sourceable-coverage.kpVpeK/fake-blocWarning: ignoring unsafe durable Nix identity '0:0'; scheduling Nix-volume migration.
+id: 'dx': no such user
+id: 'dx': no such user
+Error: refusing durable Nix ownership migration for unsafe dx identity ':'.
+/work/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/base-and-storage.sh: line 338: nix: command not found
+Error: could not enumerate registered image Nix paths.
+Warning: ignoring unsafe durable Nix identity '0:0'; scheduling Nix-volume migration.
+id: 'dx': no such user
+id: 'dx': no such user
+Error: refusing durable Nix ownership migration for unsafe dx identity ':'.
+/work/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/base-and-storage.sh: line 338: nix: command not found
+Error: could not enumerate registered image Nix paths.
+setpriv: failed to parse reuid: 'dx'
+# persisted config; explicit user values and occupied key bindings win.
+[keys]
+prefix = "ctrl+space"
+detach = "prefix+d"
+reload_config = "prefix+r"
+goto = "prefix+f"
+close_tab = "prefix+ampersand"
+rename_pane = "prefix+comma"
+split_horizontal = "prefix+percent"
+split_vertical = "prefix+double_quote"
+resize_mode = "prefix+shift+r"
+swap_pane_left = "prefix+alt+h"
+swap_pane_down = "prefix+alt+j"
+swap_pane_up = "prefix+alt+k"
+swap_pane_right = "prefix+alt+l"
+previous_agent = "prefix+shift+up"
+next_agent = "prefix+shift+down"
+focus_agent = "prefix+alt+1..9"
+
+[[keys.command]]
+key = "ctrl+h"
+type = "shell"
+command = "$HOME/.local/bin/dx-herdr-navigate left ctrl+h"
+description = "navigate left across Herdr and Neovim panes"
+
+[[keys.command]]
+key = "ctrl+j"
+type = "shell"
+command = "$HOME/.local/bin/dx-herdr-navigate down ctrl+j"
+description = "navigate down across Herdr and Neovim panes"
+
+[[keys.command]]
+key = "ctrl+k"
+type = "shell"
+command = "$HOME/.local/bin/dx-herdr-navigate up ctrl+k"
+description = "navigate up across Herdr and Neovim panes"
+
+[[keys.command]]
+key = "ctrl+l"
+type = "shell"
+command = "$HOME/.local/bin/dx-herdr-navigate right ctrl+l"
+description = "navigate right across Herdr and Neovim panes"
+
+[[keys.command]]
+key = "prefix+shift+h"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" pane resize --pane \"$HERDR_ACTIVE_PANE_ID\" --direction left"
+description = "resize pane left"
+
+[[keys.command]]
+key = "prefix+shift+j"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" pane resize --pane \"$HERDR_ACTIVE_PANE_ID\" --direction down"
+description = "resize pane down"
+
+[[keys.command]]
+key = "prefix+shift+k"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" pane resize --pane \"$HERDR_ACTIVE_PANE_ID\" --direction up"
+description = "resize pane up"
+
+[[keys.command]]
+key = "prefix+shift+l"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" pane resize --pane \"$HERDR_ACTIVE_PANE_ID\" --direction right"
+description = "resize pane right"
+
+[[keys.command]]
+key = "prefix+g"
+type = "popup"
+command = "lazygit"
+description = "open lazygit"
+width = "90%"
+height = "90%"
+
+[[keys.command]]
+key = "prefix+shift+p"
+type = "popup"
+command = "exec \"${SHELL:-/bin/sh}\" -l"
+description = "open scratch shell"
+width = "80%"
+height = "80%"
+
+[ui]
+agent_panel_sort = "priority"
+show_agent_labels_on_pane_borders = true
+
+[ui.sidebar.agents]
+rows = [["state_icon", "agent", "state_text"], ["workspace", "tab"]]
+
+[experimental]
+pane_history = true
+
+[advanced]
+scrollback_limit_bytes = 10000000'
+[keys]
+detach = "prefix+q"
+
+[[keys.command]]
+key = "prefix+g"
+type = "popup"
+command = "mine"
+
+[ui]
+sidebar_width = 31
+
+[other]
+untouched = true
+'
+id: 'dx': no such user
+id: 'dx': no such user
+k
+Formatting /tmp/dxe-sourceable-coverage.kpVpeK/fake-block with btrfs...
+Mounting /tmp/dxe-sourceable-coverage.kpVpeK/fake-block to /nix...
+Nix volume image import completed in 0s.
+Bootstrap phase: Nix volume prepare/mount completed in 0s.
+Setting up dedicated Nix volume...
+Warning: Kernel does not support btrfs. Falling back to ext4.
+Detected block device backing /var/lib/dx-nix-raw: /tmp/dxe-sourceable-coverage.kpVpeK/fake-block
+Formatting /tmp/dxe-sourceable-coverage.kpVpeK/fake-block with ext4...
+Mounting /tmp/dxe-sourceable-coverage.kpVpeK/fake-block to /nix...
+Nix volume image import completed in 0s.
+Bootstrap phase: Nix volume prepare/mount completed in 0s.
+Configuring direct single-user Nix...
+Configuring timezone to Test/Profile...
+Configuring timezone to Test/Missing...
+Warning: Timezone file for Test/Missing not found. Is tzdata in dxPackages?
+Creating user dx...
+Configuring SSH...
+Configuring SSH...
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Moved non-directory GitHub CLI config target to /persist/home/dx/.config/gh.non-directory-backup.20260830231952
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Moved ephemeral GitHub CLI config to /persist/home/dx/.config/gh.ephemeral-backup.20260830231952
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Setting up D-Bus keyring service for credential persistence...
+Setting up D-Bus keyring service for credential persistence...
+Setting up D-Bus keyring service for credential persistence...
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Moved non-directory herdr config target to /persist/home/dx/.config/herdr.non-directory-backup.20260830231953
+Moved non-directory herdr state target to /persist/home/dx/.local/state/herdr.non-directory-backup.20260830231953
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Moved ephemeral herdr config to /persist/home/dx/.config/herdr.ephemeral-backup.20260830231953
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Moved ephemeral herdr state to /persist/home/dx/.local/state/herdr.ephemeral-backup.20260830231953
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Warning: persisted guest home ownership marker is stale; repeating its bounded migration.
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Running Home Manager activation (attempt 1/1, timeout 1s)...
+Bootstrap pWarning: Home Manager activation timed out after 1s.
+Error: Nix ownership migration did not make the store writable by dx.
+Bootstrap phase: Nix ownership check/migration failed after 0s (exit 1).
+id: 'dx': no such user
+id: 'dx': no such user
+Error: Herdr persistence links or configuration did not verify after activation.
+Warning: Herdr activation failed; continuing bootstrap without it.
+Warning: ignoring unsafe durable Nix identity '0:0'; scheduling Nix-volume migration.
+Warning: ignoring unsafe persisted-home identity '0:0'.
+Error: refusing to use image store identity marker; expected an absent or regular-file path: /tmp/dxe-sourceable-coverage.kpVpeK/core-nix-branches/gate-directory/.dx-image-store-identity
+mount: /mnt/tmp-nix: permission denied.
+       dmesg(1) may have more information after failed mount system call.
+Error: Nix volume coverage-nix is already claimed by container first; destroy it or choose a distinct DX_NIX_VOLUME.
+Error: refusing unsafe Nix-volume claim name.
+Error: refusing malformed Nix-volume claim /tmp/dxe-sourceable-coverage.kpVpeK/claim-home/.dx-cache/nix-volume-claims/malformed-nix.
+Error: refusing malformed Nix-volume claim /tmp/dxe-sourceable-coverage.kpVpeK/claim-home/.dx-cache/nix-volume-claims/multiline-nix.
+Error: Nix volume reserved-nix is reserved while container creating is being created.
+hase: Home Manager activation completed in 0s.
+Running Home Manager activation (attempt 1/2, timeout 1s)...
+Retrying Home Manager activation in 1s...
+Running Home Manager activation (attempt 2/2, timeout 1s)...
+Bootstrap phase: Home Manager activation completed in 0s.
+Migrating legacy Nix ownership (one time)...
+Nix ownership layout marker published for 1000:1000.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Nix ownership already set. Skipping recursive ownership repair.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Nix ownership already set. Skipping recursive ownership repair.
+Nix ownership layout marker published for 1000:1000.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Upgrading legacy Nix ownership marker without recursive repair.
+Nix ownership layout marker published for 1000:1000.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Migrating legacy Nix ownership (one time)...
+Migrating legacy Nix ownership (one time)...
+Nix ownership layout marker published for 1000:1000.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Nix ownership layout marker published for 1000:1000.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Configuring guest environment with Home Manager...
+Migrating legacy guest home ownership (one time)...
+Bootstrap phase: guest home ownership migration completed in 0s.
+Bootstrap phase: guest home ownership setup completed in 0s.
+Migrating legacy Nix cache ownership (one time)...
+Bootstrap phase: Nix cache ownership migration completed in 0s.
+Bootstrap phase: Nix cache ownership setup completed in 0s.
+Bootstrap phase: GitHub persistence completed in 0s.
+Bootstrap phase: tmux persistence completed in 0s.
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Bootstrap phase: AI persistence ownership setup completed in 0s.
+Bootstrap phase: Herdr persistence completed in 0s.
+Bootstrap phase: keyring persistence completed in 0s.
+Setting nushell as the default shell...
+Configuring guest environment with Home Manager...
+Migrating legacy guest home ownership (one time)...
+Bootstrap phase: guest home ownership migration completed in 0s.
+Bootstrap phase: guest home ownership setup completed in 0s.
+Warning: Nix cache ownership marker is stale; repeating its bounded migration.
+Migrating legacy Nix cache ownership (one time)...
+Bootstrap phase: Nix cache ownership migration completed in 0s.
+Bootstrap phase: Nix cache ownership setup completed in 0s.
+Bootstrap phase: GitHub persistence completed in 0s.
+Bootstrap phase: tmux persistence completed in 0s.
+Migrating legacy persisted guest home ownership (one time)...
+Bootstrap phase: persisted guest home ownership migration completed in 0s.
+Bootstrap phase: Herdr persistence completed in 0s.
+Setting nushell as the default shell...
+Setting up dedicated Nix volume...
+Warning: Kernel does not support btrfs. Falling back to ext4.
+Detected directory-style mount at /var/lib/dx-nix-raw. Using sparse image file.
+Mounting /var/lib/dx-nix-raw/nix-store.ext4 to /nix...
+Reusing durable identity 1000:1000 for dx.
+Creating user dx...
+Creating dx with durable Nix UID:GID 42420:42420...
+Image Nix essentials identity is unchanged; skipping image-store import.
+Nix volume image import completed in 0s.
+Nix ownership layout marker published for 1000:1000.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Restoring the persisted SSH host identity.
+Isolated sourceable coverage probes passed.
+
+[1;33m=== Nix store import behaviour ===[0m
+  [0;32m✓ PASS[0m: essentials profile lookup tolerates absent profile links
+  [0;32m✓ PASS[0m: essentials installation resolves the checked-in locked bootstrap output
+  [0;32m✓ PASS[0m: image default profile target is retained in bootstrap GC roots
+  [0;32m✓ PASS[0m: remount repair replaces a deleted default generation with a direct retained target
+  [0;32m✓ PASS[0m: retained image default target is published as a GC root
+  [0;32m✓ PASS[0mError: refusing to replace a non-symlinked default Nix profile.
+Bootstrap essentials closure is incomplete after the /nix volume remount; repairing it...
+Warning: ssh-keygen -A failed (attempt 1/3, exit 0); repairing OpenSSH and retrying.
+Warning: durable Nix UID/GID is unavailable or occupied; allocating a safe dx identity and scheduling one migration.
+Warning: durable Nix UID/GID is unavailable or occupied; allocating a safe dx identity and scheduling one migration.
+Error: bootstrap essentials profile is unavailable after the /nix volume remount.
+Bootstrap phase: essentials verification/repair failed after 0s.
+Warning: ssh-keygen -A failed (attempt 1/3, exit 0); repairing OpenSSH and retrying.
+Warning: ssh-keygen -A failed (attempt 2/3, exit 0); repairing OpenSSH and retrying.
+Warning: ssh-keygen -A failed (attempt 3/3, exit 0); repairing OpenSSH and retrying.
+Error: ssh-keygen -A failed after bounded repair attempts.
+Error: Nix could not import and register the image store closure.
+Error: Nix could not import and register the image store closure.
+Error: refusing to publish an empty image GC-root set.
+Error: image Nix tree is missing /tmp/dxe-nix-import.vazMnJ/no-source/store.
+Error: refusing to seed over existing Nix entry /tmp/dxe-nix-import.vazMnJ/collision-target/store.
+Warning: durable Nix identity 42420:42420 differs from /tmp/dxe-nix-import.vazMnJ/durable-persist identity 1:1; reusing Nix identity and scheduling persisted-home migration.
+Warning: ignoring unsafe durable Nix identity '0:0'; scheduling Nix-volume migration.
+Error: refusing durable Nix ownership migration for unsafe dx identity '0:0'.
+tar: This does not look like a tar archive
+tar: Exiting with failure status due to previous errors
+Error: could not stage the initial Nix volume; no tree was published.
+: same-identity root publication upgrades an old layout before pruning it
+  [0;32m✓ PASS[0m: default profile repair does not follow a symlink to a live directory
+  [0;32m✓ PASS[0m: default profile repair refuses a non-symlinked publication target
+  [0;32m✓ PASS[0m: default profile repair cleans up a failed atomic publication
+Bootstrap phase: essentials verification/repair completed in 0s.
+  [0;32m✓ PASS[0m: essentials validation repairs a registered-but-incomplete closure
+  [0;32m✓ PASS[0m: host-key generation retries after bounded closure repair
+Creating user dx...
+Creating dx with durable Nix UID:GID 42420:42420...
+  [0;32m✓ PASS[0m: occupied materialized durable uid falls back without getent
+Creating user dx...
+Creating dx with durable Nix UID:GID 42420:42420...
+  [0;32m✓ PASS[0m: occupied materialized durable gid falls back without getent
+Creating user dx...
+Creating dx with durable Nix UID:GID 42420:42420...
+  [0;32m✓ PASS[0m: existing durable dx group is reused when the user is absent
+  [0;32m✓ PASS[0m: missing essentials profile fails before any repair attempt
+  [0;32m✓ PASS[0m: host-key generation reports bounded retry exhaustion
+Discarding incomplete image-store import staging directory .dx-store-import-stage.partial...
+  [0;32m✓ PASS[0m: incomplete import staging is discarded
+Recovering interrupted image-store import staging directory .dx-store-import-stage.ready...
+  [0;32m✓ PASS[0m: ready legacy staging restores store and quarantine entries
+Importing registered image Nix closure...
+  [0;32m✓ PASS[0m: native import rejects a failed source-store enumeration
+Importing registered image Nix closure...
+  [0;32m✓ PASS[0m: native import rejects a failed Nix-copy consumer
+  [0;32m✓ PASS[0m: empty image GC root sets are rejected
+  [0;32m✓ PASS[0m: fresh seed rejects an image without a store
+Seeding Nix volume from image...
+  [0;32m✓ PASS[0m: fresh seed refuses to overwrite an existing volume entry
+  [0;32m✓ PASS[0m: seed helper moves hidden entries without leaking caller glob state
+  [0;32m✓ PASS[0m: seed helper reports a staged move failure without false success
+  [0;32m✓ PASS[0m: recovery helper moves hidden entries without changing caller glob state
+Reusing durable identity 42420:42420 for dx.
+  [0;32m✓ PASS[0m: Nix identity wins a durable Nix/persist mismatch and schedules migration
+Reusing durable identity 42420:42420 for dx.
+  [0;32m✓ PASS[0m: root-owned Nix store DB and big-lock defer to safe persist identity and schedule migration
+  [0;32m✓ PASS[0m: root durable identity is rejected before ownership migration
+Migrating durable Nix ownership once for the selected safe dx identity...
+  [0;32m✓ PASS[0m: durable identity migration publishes versioned and compatibility markers
+Seeding Nix volume from image...
+  [0;32m✓ PASS[0m: fresh image store seeds through the parameterized boundary
+  [0;32m✓ PASS[0m: fresh destination store receives the durable non-root owner
+  [0;32m✓ PASS[0m: new and repaired paths are assigned the durable owner while written
+  [0;32m✓ PASS[0m: hard links and symlinks survive the import
+  [0;32m✓ PASS[0m: dotfiles, modes, and timestamps survive the import
+  [0;32m✓ PASS[0m: successful imports leave no staging directory visible
+  [0;32m✓ PASS[0m: matching image identity and complete essentials closure skip the image-store walk
+  [0;32m✓ PASS[0m: matching image identity verifies local contents without requiring signatures
+  [0;32m✓ PASS[0m: missing essentials reopens a matching image identity gate
+Recovering interrupted image-store import staging directory .dx-store-import-stage.crash...
+  [0;32m✓ PASS[0m: ready interrupted stages recover without deleting the only valid copy
+Seeding Nix volume from image...
+  [0;32m✓ PASS[0m: a failed tar producer makes the import fail without publication
+  [0;32m✓ PASS[0m: failed staging publishes no final store path
+Importing registered image Nix closure...
+  [0;32m✓ PASS[0m: incremental import uses Nix's registereError: refusing to use durable Nix identity marker; expected an absent or regular-file path: /tmp/dxe-nix-import.vazMnJ/migration-root/.dx-durable-identity-v1
+Warning: existing dx identity 1000:1000 conflicts with durable identity 42420:42420; keeping the safe existing identity and scheduling one migration.
+d copy transaction
+  [0;32m✓ PASS[0m: registered copy targets the mounted store database and accepts image paths
+  [0;32m✓ PASS[0m: image identity derives from the complete registered path set
+Reusing durable identity 42420:42420 for dx.
+  [0;32m✓ PASS[0m: persist-only durable identity is reused
+  [0;32m✓ PASS[0m: failed image marker ownership prevents publication
+  [0;32m✓ PASS[0m: failed image marker publication cleans temporary state
+  [0;32m✓ PASS[0m: directory-valued image identity markers fail without nested temporary files
+  [0;32m✓ PASS[0m: interrupted GC-root publication reports failure
+  [0;32m✓ PASS[0m: interrupted GC-root publication retains the only prior valid roots
+  [0;32m✓ PASS[0m: completed GC-root publication atomically replaces stale root sets
+  [0;32m✓ PASS[0m: symlinked durable ownership markers are rejected
+  [0;32m✓ PASS[0m: directory-valued durable identity markers retain migration state safely
+  [0;32m✓ PASS[0m: existing dx identity conflict keeps the safe account and schedules migration
+
+==============================
+Results: [0;32m55 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+covered=100% scope_share=21.78%

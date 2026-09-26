@@ -1,0 +1,1166 @@
+NOTE: Section 25 Nix-store importer behavior requires the isolated Linux runner; run tests/run-coverage-linux.sh for that gate.
+/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 12: declare: -A: invalid option
+declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
+/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 13: declare: -A: invalid option
+declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
+/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 14: declare: -A: invalid option
+declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
+/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 15: declare: -A: invalid option
+declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
+/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 16: declare: -A: invalid option
+declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
+/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 17: declare: -A: invalid option
+declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
+/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 18: declare: -A: invalid option
+declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
+Error: /var/folders/c9/rtkf4m_s5bb17tt2zs7v8ylc0000gn/T//dxe-config-test.Aj5fjY/hostile.env:1: quotes, escapes, substitutions, and control operators are not allowed
+Error: host port '80' is privileged; use a host port >= 1024.
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section1_secrets.sh
+---
+
+[1;33m=== Section 1: Protect Local Secrets And Generated Files ===[0m
+  [0;32m✓ PASS[0m: .gitignore exists
+  [0;32m✓ PASS[0m: dx_key is in .gitignore
+  [0;32m✓ PASS[0m: dx_key.pub is in .gitignore
+  [0;32m✓ PASS[0m: .DS_Store is in .gitignore
+  [0;32m✓ PASS[0m: *.swp is in .gitignore
+  [0;32m✓ PASS[0m: dx-host-export*.tar is in .gitignore
+  [0;32m✓ PASS[0m: dx_key is not tracked by git
+  [0;32m✓ PASS[0m: dx_key.pub is not tracked by git
+  [0;32m✓ PASS[0m: No .DS_Store files in working tree
+  [0;32m✓ PASS[0m: git status does not show dx_key
+  [0;32m✓ PASS[0m: git status does not show dx_key.pub
+  [0;32m✓ PASS[0m: git status does not show .DS_Store
+
+==============================
+Results: [0;32m12 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section2_containerfile.sh
+---
+
+[1;33m=== Section 2: Make The Containerfile Lightweight ===[0m
+  [0;32m✓ PASS[0m: Containerfile exists
+  [0;32m✓ PASS[0m: Containerfile does not install tools via nix profile
+  [0;32m✓ PASS[0m: Containerfile does not run build-time commands
+  [0;32m✓ PASS[0m: Containerfile does not install git
+  [0;32m✓ PASS[0m: Containerfile does not install openssh
+  [0;32m✓ PASS[0m: Containerfile does not install sudo
+  [0;32m✓ PASS[0m: Containerfile does not install shadow
+  [0;32m✓ PASS[0m: Containerfile does not install tar
+  [0;32m✓ PASS[0m: Containerfile does not install gzip
+  [0;32m✓ PASS[0m: Containerfile has base image
+  [0;32m✓ PASS[0m: Containerfile does not configure runtime environment
+  [0;32m✓ PASS[0m: Containerfile does not copy repo files
+  [0;32m✓ PASS[0m: Containerfile does not define runtime bootstrap command
+  [0;32m✓ PASS[0m: Containerfile does not contain bootstrap sync logic
+  [0;32m✓ PASS[0m: Containerfile only selects the base image
+  [0;32m✓ PASS[0m: Containerfile's non-blank line exactly matches the adopted official base reference
+
+==============================
+Results: [0;32m16 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section3_bootstrap.sh
+---
+
+[1;33m=== Section 3: Sourceable Guest Bootstrap ===[0m
+  [0;32m✓ PASS[0m: bootstrap orchestrator exists
+  [0;32m✓ PASS[0m: bootstrap common phase exists
+  [0;32m✓ PASS[0m: bootstrap common phase is side-effect-free when sourced
+  [0;32m✓ PASS[0m: bootstrap base-and-storage phase exists
+  [0;32m✓ PASS[0m: bootstrap base-and-storage phase is side-effect-free when sourced
+  [0;32m✓ PASS[0m: bootstrap system phase exists
+  [0;32m✓ PASS[0m: bootstrap system phase is side-effect-free when sourced
+  [0;32m✓ PASS[0m: bootstrap persistence phase exists
+  [0;32m✓ PASS[0m: bootstrap persistence phase is side-effect-free when sourced
+  [0;32m✓ PASS[0m: bootstrap activation phase exists
+  [0;32m✓ PASS[0m: bootstrap activation phase is side-effect-free when sourced
+  [0;32m✓ PASS[0m: dx_validate_atomic_marker_path is directly sourceable
+  [0;32m✓ PASS[0m: dx_publish_atomic_marker is directly sourceable
+  [0;32m✓ PASS[0m: dx_pipeline_succeeded is directly sourceable
+  [0;32m✓ PASS[0m: essentials_profile_path is directly sourceable
+  [0;32m✓ PASS[0m: essentials_profile_store_path is directly sourceable
+  [0;32m✓ PASS[0m: install_essential_packages is directly sourceable
+  [0;32m✓ PASS[0m: essentials_store_valid is directly sourceable
+  [0;32m✓ PASS[0m: repair_store_closure is directly sourceable
+  [0;32m✓ PASS[0m: ensure_essentials_valid is directly sourceable
+  [0;32m✓ PASS[0m: generate_host_keys is directly sourceable
+  [0;32m✓ PASS[0m: install_essentials is directly sourceable
+  [0;32m✓ PASS[0m: link_system_bash is directly sourceable
+  [0;32m✓ PASS[0m: dx_seed_staged_entries is directly sourceable
+  [0;32m✓ PASS[0m: dx_move_missing_entries is directly sourceable
+  [0;32m✓ PASS[0m: cleanup_stale_nix_store_imports is directly sourceable
+  [0;32m✓ PASS[0m: nix_store_import_registered is directly sourceable
+  [0;32m✓ PASS[0m: nix_verify_imported_bootstrap_paths is directly sourceable
+  [0;32m✓ PASS[0m: nix_install_image_essentials_root is directly sourceable
+  [0;32m✓ PASS[0m: nix_seed_volume is directly sourceable
+  [0;32m✓ PASS[0m: record_durable_nix_identity is directly sourceable
+  [0;32m✓ PASS[0m: migrate_durable_nix_identity_if_needed is directly sourceable
+  [0;32m✓ PASS[0m: nix_image_registered_paths is directly sourceable
+  [0;32m✓ PASS[0m: nix_image_store_identity is directly sourceable
+  [0;32m✓ PASS[0m: nix_image_essentials_identity is directly sourceable
+  [0;32m✓ PASS[0m: nix_image_default_profile_store_path is directly sourceable
+  [0;32m✓ PASS[0m: capture_nix_image_default_profile is directly sourceable
+  [0;32m✓ PASS[0m: nix_restore_image_default_profile is directly sourceable
+  [0;32m✓ PASS[0m: nix_image_bootstrap_store_paths is directly sourceable
+  [0;32m✓ PASS[0m: nix_target_store_uri is directly sourceable
+  [0;32m✓ PASS[0m: nix_image_store_import_required is directly sourceable
+  [0;32m✓ PASS[0m: publish_nix_image_store_identity is directly sourceable
+  [0;32m✓ PASS[0m: prepare_nix_volume is directly sourceable
+  [0;32m✓ PASS[0m: prepare_nix_volume_impl is directly sourceable
+  [0;32m✓ PASS[0m: populate_prepared_nix_volume is directly sourceable
+  [0;32m✓ PASS[0m: setup_nix_volume is directly sourceable
+  [0;32m✓ PASS[0m: configure_single_user_nix is directly sourceable
+  [0;32m✓ PASS[0m: configure_release_identity is directly sourceable
+  [0;32m✓ PASS[0m: resolve_timezone_file is directly sourceable
+  [0;32m✓ PASS[0m: configure_timezone is directly sourceable
+  [0;32m✓ PASS[0m: materialize_auth_files is directly sourceable
+  [0;32m✓ PASS[0m: auth_entries_with_numeric_id is directly sourceable
+  [0;32m✓ PASS[0m: create_user is directly sourceable
+  [0;32m✓ PASS[0m: setup_persist is directly sourceable
+  [0;32m✓ PASS[0m: dx_ensure_tree_owner is directly sourceable
+  [0;32m✓ PASS[0m: dx_prepare_owned_directory is directly sourceable
+  [0;32m✓ PASS[0m: configure_ssh is directly sourceable
+  [0;32m✓ PASS[0m: dx_host_key_store_trusted is directly sourceable
+  [0;32m✓ PASS[0m: dx_host_key_store_populated is directly sourceable
+  [0;32m✓ PASS[0m: dx_harden_host_keys is directly sourceable
+  [0;32m✓ PASS[0m: dx_persist_host_keys is directly sourceable
+  [0;32m✓ PASS[0m: run_as_dx is directly sourceable
+  [0;32m✓ PASS[0m: run_home_manager_activation is directly sourceable
+  [0;32m✓ PASS[0m: publish_nix_ownership_marker is directly sourceable
+  [0;32m✓ PASS[0m: ensure_nix_ownership is directly sourceable
+  [0;32m✓ PASS[0m: setup_gh_persistence is directly sourceable
+  [0;32m✓ PASS[0m: setup_tmux_persistence is directly sourceable
+  [0;32m✓ PASS[0m: setup_herdr_persistence is directly sourceable
+  [0;32m✓ PASS[0m: setup_keyring_service is directly sourceable
+  [0;32m✓ PASS[0m: dx_seed_herdr_config is directly sourceable
+  [0;32m✓ PASS[0m: dx_activate_herdr is directly sourceable
+  [0;32m✓ PASS[0m: configure_guest is directly sourceable
+  [0;32m✓ PASS[0m: verify_guest_tools is directly sourceable
+  [0;32m✓ PASS[0m: essentials profile resolves before the Nix remount
+  [0;32m✓ PASS[0m: ownership migration publishes a marker and skips recursive repair thereafter
+  [0;32m✓ PASS[0m: owned directory preparation repairs the requested mode on an existing directory
+  [0;32m✓ PASS[0m: failed ownership marker publication is retried without a false success marker
+  [0;32m✓ PASS[0m: directory-valued ownership markers fail safely without nested temporary files
+  [0;32m✓ PASS[0m: GitHub and Herdr migrations leave persisted data usable without recurring recursive chowns
+  [0;32m✓ PASS[0m: fresh persist prepares ~/.local so dx can create an XDG state child
+  [0;32m✓ PASS[0m: fresh persist refuses a symlinked persist root
+Nix ownership layout marker published for 501:20.
+Nix ownership already set. Skipping recursive ownership repair.
+Nix ownership layout marker published for 501:20.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Error: refusing to publish Nix ownership marker before the essentials closure is content-valid.
+Error: refusing to use Nix ownership sentinel; expected an absent or regular-file path: /var/folders/c9/rtkf4m_s5bb17tt2zs7v8ylc0000gn/T//dxe-bootstrap-test.j7AFtN/nix-ownership/symlink/.dx-owner-set
+Bootstrap phase: Nix ownership check/migration failed after 0s (exit 1).
+Error: refusing to use Nix ownership sentinel; expected an absent or regular-file path: /var/folders/c9/rtkf4m_s5bb17tt2zs7v8ylc0000gn/T//dxe-bootstrap-test.j7AFtN/nix-ownership/directory/.dx-owner-set
+Upgrading legacy Nix ownership marker without recursive repair.
+Nix ownership layout marker published for 501:20.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Migrating legacy Nix ownership (one time)...
+Nix ownership layout marker published for 501:20.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Nix ownership already set. Skipping recursive ownership repair.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+Migrating legacy Nix ownership (one time)...
+Warning: Nix ownership marker publication did not complete; retrying on the next bootstrap.
+Bootstrap phase: Nix ownership check/migration failed after 0s (exit 1).
+Upgrading legacy Nix ownership marker without recursive repair.
+Nix ownership layout marker published for 501:20.
+Bootstrap phase: Nix ownership check/migration completed in 0s.
+  [0;32m✓ PASS[0m: Nix ownership markers publish atomically, upgrade legacy layouts cheaply, and retry after publication failure
+  [0;32m✓ PASS[0m: GitHub persistence propagates ownership-helper failure
+  [0;32m✓ PASS[0m: Herdr persistence propagates ownership-helper failure
+  [0;32m✓ PASS[0m: auth materialization preserves data and replaces symlinks
+  [0;32m✓ PASS[0m: old-base guard accepts the official base shape
+  [0;32m✓ PASS[0m: old-base guard rejects a dangling /bin/bash signature
+  [0;32m✓ PASS[0m: bootstrap main runs only when executed
+  [0;32m✓ PASS[0m: bootstrap has no production test-mode branch
+  [0;32m✓ PASS[0m: bootstrap never hands published payload ownership to dx
+  [0;32m✓ PASS[0m: normal activation does not recursively re-own the home tree
+  [0;32m✓ PASS[0m: normal activation does not recursively re-own persisted AI state
+  [0;32m✓ PASS[0m: normal activation does not recursively re-own a validated Nix volume
+  [0;32m✓ PASS[0m: SSH setup does not recursively re-own existing user SSH contents
+  [0;32m✓ PASS[0m: persistence setup does not recursively re-own persisted home on every boot
+  [0;32m✓ PASS[0m: persisted-tree ownership uses a marker-guarded migration helper
+  [0;32m✓ PASS[0m: activation uses bounded ownership checks for mutable roots
+  [0;32m✓ PASS[0m: essentials installation reports elapsed time
+  [0;32m✓ PASS[0m: Nix volume prepare/mount reports elapsed time
+  [0;32m✓ PASS[0m: essentials verification/repair reports elapsed time
+  [0;32m✓ PASS[0m: Nix ownership check/migration reports elapsed time
+  [0;32m✓ PASS[0m: Home Manager activation reports elapsed time
+  [0;32m✓ PASS[0m: final guest tool verification reports elapsed time
+  [0;32m✓ PASS[0m: Herdr persistence and config seeding are non-fatal bootstrap activation steps
+  [0;32m✓ PASS[0m: validated Nix imports pass content validation only from bootstrap into guest setup
+  [0;32m✓ PASS[0m: bootstrap uses explicit Nix volume lifecycle seams
+  [0;32m✓ PASS[0m: bootstrap does not export ownership steering state
+  [0;32m✓ PASS[0m: essentials install uses the checked-in locked bootstrap output
+  [0;32m✓ PASS[0m: essentials install does not resolve the global flake registry
+  [0;32m✓ PASS[0m: flake defines the locked bootstrap essentials output
+  [0;32m✓ PASS[0m: foreground sshd remains the final bootstrap action
+  [0;32m✓ PASS[0m: Home Manager timing preserves activation failure status
+  [0;32m✓ PASS[0m: final tool verification timing preserves failure status
+  [0;32m✓ PASS[0m: release identity is written world-readable
+  [0;32m✓ PASS[0m: release identity records the derived release
+  [0;32m✓ PASS[0m: release identity repairs an existing unreadable file
+  [0;32m✓ PASS[0m: release identity is readable even under a restrictive umask
+  [0;32m✓ PASS[0m: setup_keyring_service reports an explicit diagnostic when dbus-daemon is missing, instead of dying silently
+  [0;32m✓ PASS[0m: a fresh persist store generates host keys and backfills them for the next boot
+  [0;32m✓ PASS[0m: a persisted host identity is restored and re-hardened instead of regenerated
+  [0;32m✓ PASS[0m: a persisted host-key store dx could have substituted is refused, not restored
+  [0;32m✓ PASS[0m: host-key persistence refuses a symlinked store before any mutation
+  [0;32m✓ PASS[0m: host-key persistence refuses a symlinked /etc/ssh before any mutation
+  [0;32m✓ PASS[0m: an unmounted persist volume still yields a bootable host identity
+  [0;32m✓ PASS[0m: the registered image set is read through a view that sees this boot's registrations
+  [0;32m✓ PASS[0m: the importer streams this boot's essentials closure into the copy
+  [0;32m✓ PASS[0m: an import that did not materialise a required bootstrap path fails before the remount
+  [0;32m✓ PASS[0m: a fully materialised bootstrap set passes the pre-remount check
+  [0;32m✓ PASS[0m: the pre-remount check covers the resolved essentials bin target, not just the profile root
+
+==============================
+Results: [0;32m129 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section5_nix.sh
+---
+
+[1;33m=== Section 5: Pin Nix Inputs ===[0m
+  [0;32m✓ PASS[0m: flake.lock exists
+  [0;32m✓ PASS[0m: flake.lock is not ignored by git
+  [0;32m✓ PASS[0m: nixpkgs entry in flake.lock
+  [0;32m✓ PASS[0m: nixpkgs has revision pinned
+  [0;32m✓ PASS[0m: nixvim entry in flake.lock
+  [0;32m✓ PASS[0m: flake.nix uses nixos-26.05
+  [1;33m○ SKIP[0m: nix not available, skipping flake check
+  [1;33m○ SKIP[0m: Nix release identity live checks skipped by --skip-integration
+  [1;33m○ SKIP[0m: Nix store enumeration behaviour skipped by --skip-integration
+
+==============================
+Results: [0;32m6 passed[0m, [0;31m0 failed[0m, [1;33m3 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section6_tools.sh
+---
+
+[1;33m=== Section 6: Improve Guest Tooling ===[0m
+  [0;32m✓ PASS[0m: flake.nix exists
+  [0;32m✓ PASS[0m: coreutils in flake.nix
+  [0;32m✓ PASS[0m: gnused in flake.nix
+  [0;32m✓ PASS[0m: gnugrep in flake.nix
+  [0;32m✓ PASS[0m: findutils in flake.nix
+  [0;32m✓ PASS[0m: procps in flake.nix
+  [0;32m✓ PASS[0m: util-linux in flake.nix
+  [0;32m✓ PASS[0m: less in flake.nix
+  [0;32m✓ PASS[0m: man-db in flake.nix
+  [0;32m✓ PASS[0m: file in flake.nix
+  [0;32m✓ PASS[0m: git preserved in flake.nix
+  [0;32m✓ PASS[0m: nix preserved in flake.nix
+  [0;32m✓ PASS[0m: openssh preserved in flake.nix
+  [0;32m✓ PASS[0m: tmux preserved in flake.nix
+  [0;32m✓ PASS[0m: nixvim preserved in flake.nix
+  [0;32m✓ PASS[0m: ripgrep preserved in flake.nix
+  [0;32m✓ PASS[0m: fd preserved in flake.nix
+  [0;32m✓ PASS[0m: curl preserved in flake.nix
+  [0;32m✓ PASS[0m: jq preserved in flake.nix
+  [0;32m✓ PASS[0m: GitHub CLI is in default dxPackages
+  [0;32m✓ PASS[0m: direnv preserved in flake.nix
+  [0;32m✓ PASS[0m: nix-direnv preserved in flake.nix
+  [0;32m✓ PASS[0m: just preserved in flake.nix
+  [0;32m✓ PASS[0m: go-task preserved in flake.nix
+  [0;32m✓ PASS[0m: lazygit preserved in flake.nix
+  [0;32m✓ PASS[0m: yazi preserved in flake.nix
+  [0;32m✓ PASS[0m: tmux display panes timeout is 3s
+  [0;32m✓ PASS[0m: tmux base-index is wired as a typed Home Manager option
+  [0;32m✓ PASS[0m: tmux key mode is wired as a typed Home Manager option
+  [0;32m✓ PASS[0m: tmux keeps emacs status-keys despite vi keyMode
+  [0;32m✓ PASS[0m: tmux pane navigation/resize is wired as a typed Home Manager option
+  [0;32m✓ PASS[0m: tmux kill-pane/window skip the confirmation prompt via typed option
+  [0;32m✓ PASS[0m: tmux loads tmux-sensible defaults beneath the typed options
+  [0;32m✓ PASS[0m: tmux-resurrect is declared as a Home Manager tmux plugin
+  [0;32m✓ PASS[0m: tmux-resurrect saves to the persisted directory
+  [0;32m✓ PASS[0m: tmux-continuum is declared as a Home Manager tmux plugin
+  [0;32m✓ PASS[0m: tmux-continuum restores sessions on server start
+  [0;32m✓ PASS[0m: tmux-continuum auto-saves on an interval
+  [0;32m✓ PASS[0m: tmux side of vim-tmux-navigator is declared in tmux plugins
+  [0;32m✓ PASS[0m: Neovim side of vim-tmux-navigator is a self-contained module
+  [0;32m✓ PASS[0m: Neovim navigator maps Ctrl-h to TmuxNavigateLeft
+  [0;32m✓ PASS[0m: Neovim navigator module is imported by nixvim
+  [0;32m✓ PASS[0m: Herdr pane navigator helper exists
+  [0;32m✓ PASS[0m: Herdr navigator inspects the foreground pane process
+  [0;32m✓ PASS[0m: Herdr navigator forwards Ctrl navigation into Neovim
+  [0;32m✓ PASS[0m: Herdr navigator focuses adjacent Herdr panes
+  [0;32m✓ PASS[0m: Herdr navigator helper is installed by Home Manager
+  [0;32m✓ PASS[0m: Herdr-aware Neovim edge navigation is installed by Home Manager
+  [0;32m✓ PASS[0m: Herdr navigator helper passes bash syntax check
+  [0;32m✓ PASS[0m: bootstrap creates the persisted resurrect directory
+  [0;32m✓ PASS[0m: tmux renumbers windows on close
+  [0;32m✓ PASS[0m: tmux main pane width is 50 percent
+  [0;32m✓ PASS[0m: tmux prefix plus selects tiled layout
+  [0;32m✓ PASS[0m: tmux prefix a selects main-vertical layout
+  [0;32m✓ PASS[0m: tmux prefix-a shows pane picker that swaps into the main pane
+  [0;32m✓ PASS[0m: tmux activity picker remains bound on prefix-b
+  [0;32m✓ PASS[0m: bash yazi cwd helper is configured
+  [0;32m✓ PASS[0m: bash yazi cwd helper writes cwd file
+  [0;32m✓ PASS[0m: fish yazi cwd helper is configured
+  [0;32m✓ PASS[0m: fish yazi cwd helper writes cwd file
+  [0;32m✓ PASS[0m: nushell yazi cwd helper is configured
+  [0;32m✓ PASS[0m: nushell yazi cwd helper writes cwd file
+  [0;32m✓ PASS[0m: nushell yazi cwd helper strips cwd file NUL terminator
+  [0;32m✓ PASS[0m: AI CLI tools excluded from default dxPackages
+  [0;32m✓ PASS[0m: aiPackages list exists
+  [0;32m✓ PASS[0m: ai-tools package output exists
+  [0;32m✓ PASS[0m: ai-tools package uses aiPackages
+  [0;32m✓ PASS[0m: aiPackages use unstable package set
+  [0;32m✓ PASS[0m: guest dx-ai script exists
+  [0;32m✓ PASS[0m: guest dx-ai script is tracked for flake source inclusion
+  [0;32m✓ PASS[0m: guest dx-ai command is installed by Home Manager
+  [0;32m✓ PASS[0m: guest dx-ai script passes bash syntax check
+  [0;32m✓ PASS[0m: guest dx-ai updates nixpkgs-unstable
+  [0;32m✓ PASS[0m: guest dx-ai has an agy updater manifest URL
+  [0;32m✓ PASS[0m: guest dx-ai refreshes the agy manifest before install
+  [0;32m✓ PASS[0m: guest dx-ai converts agy manifest hash to Nix SRI
+  [0;32m✓ PASS[0m: guest dx-ai updates the structured agy pin
+  [0;32m✓ PASS[0m: guest dx-ai does not rewrite Nix source ranges
+  [0;32m✓ PASS[0m: guest dx-ai does not create empty Claude JSON config
+  [0;32m✓ PASS[0m: guest dx-ai initializes empty Claude config as JSON
+  [0;32m✓ PASS[0m: agy pin uses a version with OAuth persistence fixes
+  [0;32m✓ PASS[0m: agy pin uses the 1.0.5 Linux arm64 tarball
+  [0;32m✓ PASS[0m: agy pin has the expected 1.0.5 SRI hash
+  [0;32m✓ PASS[0m: agy derivation is not pinned to the OAuth persistence bug version
+  [0;32m✓ PASS[0m: guest dx-ai prepares persisted agy state directory
+  [0;32m✓ PASS[0m: bootstrap prepares persisted agy state directory
+  [0;32m✓ PASS[0m: codex is in aiPackages
+  [0;32m✓ PASS[0m: gemini-cli is in aiPackages
+  [0;32m✓ PASS[0m: claude-code is in aiPackages
+  [0;32m✓ PASS[0m: agy (Antigravity CLI) is in aiPackages
+  [0;32m✓ PASS[0m: herdr is in aiPackages
+  [0;32m✓ PASS[0m: bash direnv hook is guarded
+  [0;32m✓ PASS[0m: bash starship hook is guarded
+  [0;32m✓ PASS[0m: fish direnv hook is guarded
+  [0;32m✓ PASS[0m: fish starship hook is guarded
+  [0;32m✓ PASS[0m: shell.nix configures agy with --dangerously-skip-permissions
+  [0;32m✓ PASS[0m: shell.nix configures claude with --dangerously-skip-permissions
+  [0;32m✓ PASS[0m: shell.nix configures codex with --dangerously-bypass-approvals-and-sandbox
+  [0;32m✓ PASS[0m: shell.nix configures gemini with --yolo
+  [1;33m○ SKIP[0m: guest tool live checks skipped by --skip-integration
+
+==============================
+Results: [0;32m99 passed[0m, [0;31m0 failed[0m, [1;33m1 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section7_lazyvim.sh
+---
+
+[1;33m=== Section 7: Remove lazy.nvim ===[0m
+  [0;32m✓ PASS[0m: flake.nix is the canonical editor configuration
+  [0;32m✓ PASS[0m: nvim/lua/core/lazy.lua not in committed source tree
+  [0;32m✓ PASS[0m: nvim/lazy-lock.json not in committed source tree
+  [0;32m✓ PASS[0m: no committed file bootstraps plugins with lazy.nvim
+  [0;32m✓ PASS[0m: rg -n lazy.nvim returns no active runtime config
+  [0;32m✓ PASS[0m: nvim/ directory removed
+  [1;33m○ SKIP[0m: NixVim live launch skipped by --skip-integration
+
+==============================
+Results: [0;32m6 passed[0m, [0;31m0 failed[0m, [1;33m1 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section8_nixvim_config.sh
+---
+
+[1;33m=== Section 8: Clean Up NixVim Configuration ===[0m
+  [0;32m✓ PASS[0m: flake.nix exists
+  [0;32m✓ PASS[0m: nixvim.nix exists
+  [0;32m✓ PASS[0m: Herdr-aware Neovim navigator exists
+  [0;32m✓ PASS[0m: Neovim navigator targets its containing Herdr pane
+  [0;32m✓ PASS[0m: Neovim navigator tries editor splits first
+  [0;32m✓ PASS[0m: Neovim navigator invokes the Herdr pane API at an editor edge
+  [0;32m✓ PASS[0m: Neovim navigator focuses an adjacent Herdr pane at an editor edge
+  [0;32m✓ PASS[0m: undotree not configured both as NixVim module and manually
+  [0;32m✓ PASS[0m: Comment.nvim not configured both as NixVim module and in extraConfigLua
+  [0;32m✓ PASS[0m: minimize use of extraPlugins (current: 6)
+  [0;32m✓ PASS[0m: plugins in extraPlugins pinned to commit, not main
+  [0;32m✓ PASS[0m: hashes for custom plugin sources present
+  [0;32m✓ PASS[0m: render-markdown NixVim module is enabled for in-buffer markdown rendering
+  [0;32m✓ PASS[0m: nixvim.nix imports nvim/plugins/render-markdown.nix
+  [1;33m○ SKIP[0m: nix not available, skipping flake check
+  [1;33m○ SKIP[0m: NixVim live launch skipped by --skip-integration
+
+==============================
+Results: [0;32m14 passed[0m, [0;31m0 failed[0m, [1;33m2 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section10_docs.sh
+---
+
+[1;33m=== Section 10: Documentation Contracts ===[0m
+  [0;32m✓ PASS[0m: README exists
+  [0;32m✓ PASS[0m: README is a focused quick start and index
+  [0;32m✓ PASS[0m: focused lifecycle documentation exists
+  [0;32m✓ PASS[0m: README links lifecycle documentation
+  [0;32m✓ PASS[0m: focused configuration documentation exists
+  [0;32m✓ PASS[0m: README links configuration documentation
+  [0;32m✓ PASS[0m: focused guest documentation exists
+  [0;32m✓ PASS[0m: README links guest documentation
+  [0;32m✓ PASS[0m: focused troubleshooting documentation exists
+  [0;32m✓ PASS[0m: README links troubleshooting documentation
+  [0;32m✓ PASS[0m: focused release-maintenance documentation exists
+  [0;32m✓ PASS[0m: README links release-maintenance documentation
+  [0;32m✓ PASS[0m: local Markdown links resolve
+  [0;32m✓ PASS[0m: dx is discoverable
+  [0;32m✓ PASS[0m: dx-create-container is discoverable
+  [0;32m✓ PASS[0m: dx-create-image is discoverable
+  [0;32m✓ PASS[0m: dx-create-keys is discoverable
+  [0;32m✓ PASS[0m: dx-create-volumes is discoverable
+  [0;32m✓ PASS[0m: dx-destroy is discoverable
+  [0;32m✓ PASS[0m: dx-destroy-container is discoverable
+  [0;32m✓ PASS[0m: dx-destroy-image is discoverable
+  [0;32m✓ PASS[0m: dx-destroy-keys is discoverable
+  [0;32m✓ PASS[0m: dx-destroy-volumes is discoverable
+  [0;32m✓ PASS[0m: dx-enter is discoverable
+  [0;32m✓ PASS[0m: dx-export is discoverable
+  [0;32m✓ PASS[0m: dx-factory-reset is discoverable
+  [0;32m✓ PASS[0m: dx-forward is discoverable
+  [0;32m✓ PASS[0m: dx-gc is discoverable
+  [0;32m✓ PASS[0m: dx-get is discoverable
+  [0;32m✓ PASS[0m: dx-herdr is discoverable
+  [0;32m✓ PASS[0m: dx-migrate-persist is discoverable
+  [0;32m✓ PASS[0m: dx-mount is discoverable
+  [0;32m✓ PASS[0m: dx-nix-disk is discoverable
+  [0;32m✓ PASS[0m: dx-profile is discoverable
+  [0;32m✓ PASS[0m: dx-put is discoverable
+  [0;32m✓ PASS[0m: dx-reclaim is discoverable
+  [0;32m✓ PASS[0m: dx-recreate is discoverable
+  [0;32m✓ PASS[0m: dx-reverse is discoverable
+  [0;32m✓ PASS[0m: dx-ssh is discoverable
+  [0;32m✓ PASS[0m: dx-start-container is discoverable
+  [0;32m✓ PASS[0m: dx-status is discoverable
+  [0;32m✓ PASS[0m: dx-stop-container is discoverable
+  [0;32m✓ PASS[0m: dx-sync-bootstrap is discoverable
+  [0;32m✓ PASS[0m: dx-wait-ssh is discoverable
+  [0;32m✓ PASS[0m: DX_CONTAINER_NAME is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_IMAGE is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_SSH_PORT is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_SSH_KEY is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_SSH_KEY_PUB is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_SSH_CONNECT_TIMEOUT is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_CONTEXT_DIR is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_BOOTSTRAP_SOURCE is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_BOOTSTRAP_VOLUME is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_BOOTSTRAP_PATH is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_BOOTSTRAP_WAIT_TIMEOUT is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_GUEST_ACTIVATION_TIMEOUT is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_GUEST_ACTIVATION_ATTEMPTS is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_GUEST_ACTIVATION_RETRY_DELAY is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_NIX_VOLUME is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_NIX_MOUNT is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_NIX_DISK is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_NIX_DISK_SIZE is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_PERSIST_VOLUME is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_GIT_MOUNT_SOURCE is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_GIT_MOUNT_TARGET is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_GUEST_WORKDIR is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_CONTAINER_MEMORY is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_CONTAINER_CPUS is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_CONTAINER_VOLUME_DIR is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_STOP_GRACE_SECONDS is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_STOP_COMMAND_TIMEOUT is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_STOP_WAIT_TIMEOUT is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_DELETE_COMMAND_TIMEOUT is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_MOUNT_IDENTITY_DIR is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_TUNNEL_LOCK_TIMEOUT is generated/validated from the config registry
+  [0;32m✓ PASS[0m: DX_CONTAINER_NAME documented default matches registry
+  [0;32m✓ PASS[0m: DX_IMAGE documented default matches registry
+  [0;32m✓ PASS[0m: DX_SSH_PORT documented default matches registry
+  [0;32m✓ PASS[0m: DX_NIX_VOLUME documented default matches registry
+  [0;32m✓ PASS[0m: DX_PERSIST_VOLUME documented default matches registry
+  [0;32m✓ PASS[0m: DX_BOOTSTRAP_VOLUME documented default matches registry
+  [0;32m✓ PASS[0m: DX_CONTAINER_MEMORY documented default matches registry
+  [0;32m✓ PASS[0m: DX_CONTAINER_CPUS documented default matches registry
+  [0;32m✓ PASS[0m: configuration trust boundary is explicit
+  [0;32m✓ PASS[0m: profiles are not advertised as sourceable code
+  [0;32m✓ PASS[0m: the sole data expansion is documented
+  [0;32m✓ PASS[0m: snapshot failure modes are documented
+  [0;32m✓ PASS[0m: destructive refusal behavior remains documented
+  [0;32m✓ PASS[0m: temporary guard procedure remains discoverable
+  [0;32m✓ PASS[0m: guest docs identify the persisted Herdr config path
+  [0;32m✓ PASS[0m: guest docs identify the persisted Herdr session path
+  [0;32m✓ PASS[0m: guest docs identify the repository-owned Herdr defaults
+  [0;32m✓ PASS[0m: guest docs explain the Herdr merge policy
+  [0;32m✓ PASS[0m: dx-herdr install-without-confirming behavior is documented accurately
+  [0;32m✓ PASS[0m: the sensitive pane-history file is named for the documented cleanup path
+  [0;32m✓ PASS[0m: history cleanup warns it ends live pane processes
+  [0;32m✓ PASS[0m: cold-upgrade workflow states no live upgrade exists
+  [0;32m✓ PASS[0m: ordinary dx-herdr launches are documented as never refreshing an installed bundle
+  [0;32m✓ PASS[0m: dx-ai's immutable bootstrap/source boundary is documented accurately (R6)
+  [0;32m✓ PASS[0m: dx-herdr's persistence-ready preflight is documented (R3)
+  [0;32m✓ PASS[0m: the packaged herdr license is documented
+  [0;32m✓ PASS[0m: the license claim cites its nixpkgs source
+  [0;32m✓ PASS[0m: guest docs explain the Nix single-user ownership model
+  [0;32m✓ PASS[0m: guest docs explain bounded ownership markers
+  [0;32m✓ PASS[0m: guest documentation records the Nix-volume single-writer constraint
+  [0;32m✓ PASS[0m: guest documentation records the required claim transfer boundary
+  [0;32m✓ PASS[0m: configuration documents the host Nix-volume claim boundary
+  [0;32m✓ PASS[0m: configuration documents the required Nix-volume claim transfer boundary
+  [0;32m✓ PASS[0m: troubleshooting documents non-destructive Nix-volume recovery
+  [0;32m✓ PASS[0m: release maintenance documents locked bootstrap essentials provenance
+  [0;32m✓ PASS[0m: troubleshooting docs identify one-time ownership migration output
+  [0;32m✓ PASS[0m: troubleshooting docs explain safe migration interruption
+  [0;32m✓ PASS[0m: troubleshooting docs identify the missing-toolchain boot failure
+  [0;32m✓ PASS[0m: troubleshooting docs give the store-only recovery command
+  [0;32m✓ PASS[0m: troubleshooting docs warn which reset also destroys /persist
+  [0;32m✓ PASS[0m: troubleshooting docs cover a healthy boot reported as a failure
+  [0;32m✓ PASS[0m: the constitution states the real-boundary testing rule
+  [0;32m✓ PASS[0m: release maintenance records the observed pin-bump blocker
+  [0;32m✓ PASS[0m: release maintenance marks the superseded store-reuse diagnoses
+
+==============================
+Results: [0;32m119 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section13_final_review.sh
+---
+
+[1;33m=== Section 13: Final Review ===[0m
+  [0;32m✓ PASS[0m: no private keys are tracked by git
+  [0;32m✓ PASS[0m: no .DS_Store files are tracked by git
+  [0;32m✓ PASS[0m: flake.lock is present and not ignored
+  [0;32m✓ PASS[0m: nvim/ lazy.nvim runtime config removed or quarantined
+  [0;32m✓ PASS[0m: Containerfile does not install tools
+  [0;32m✓ PASS[0m: SSH has PubkeyAuthentication yes
+  [0;32m✓ PASS[0m: SSH has PasswordAuthentication no
+  [0;32m✓ PASS[0m: SSH has PermitEmptyPasswords no
+  [0;32m✓ PASS[0m: passwordless sudo works for dx
+
+==============================
+Results: [0;32m9 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section14_tinty_theming.sh
+---
+
+[1;33m=== Section 14: Tinty Theming ===[0m
+  [0;32m✓ PASS[0m: flake.nix exists
+  [0;32m✓ PASS[0m: home.nix exists
+  [0;32m✓ PASS[0m: tinted-nvim plugin module exists
+  [0;32m✓ PASS[0m: flake.nix includes tinty
+  [0;32m✓ PASS[0m: flake.nix includes lazygit for CLI theming
+  [0;32m✓ PASS[0m: flake.nix includes btop
+  [0;32m✓ PASS[0m: home.nix declares Tinty config
+  [0;32m✓ PASS[0m: Tinty config uses preferred-schemes schema
+  [0;32m✓ PASS[0m: Tinty config includes dark scheme
+  [0;32m✓ PASS[0m: dark alias uses warm Mocha background
+  [0;32m✓ PASS[0m: Tinty config includes light scheme
+  [0;32m✓ PASS[0m: Tinty config includes Rose Pine
+  [0;32m✓ PASS[0m: Tinty config includes Rose Pine Moon
+  [0;32m✓ PASS[0m: Tinty config includes Rose Pine Dawn
+  [0;32m✓ PASS[0m: theme.nix declares dxThemes alias registry
+  [0;32m✓ PASS[0m: theme.nix emits dx/themes.json runtime registry
+  [0;32m✓ PASS[0m: dx-theme.sh does not hardcode per-alias variables
+  [0;32m✓ PASS[0m: dx-theme.sh dispatch is not alias-enumerating
+  [0;32m✓ PASS[0m: theme registry includes catppuccin-mocha
+  [0;32m✓ PASS[0m: theme registry includes explicit gruvbox-dark alias
+  [0;32m✓ PASS[0m: theme registry includes everforest-dark
+  [0;32m✓ PASS[0m: theme registry includes solarized-light
+  [0;32m✓ PASS[0m: theme registry includes solarized-dark
+  [0;32m✓ PASS[0m: theme registry includes Shades of Purple
+  [0;32m✓ PASS[0m: home/theme.nix declares dx-theme
+  [0;32m✓ PASS[0m: home.nix declares Tinty copy hook
+  [0;32m✓ PASS[0m: home.nix declares Tinty OSC hook
+  [0;32m✓ PASS[0m: home.nix declares Tinty login restore
+  [0;32m✓ PASS[0m: hooks use TINTY_THEME_FILE_PATH
+  [0;32m✓ PASS[0m: OSC hook reads hook palette environment
+  [0;32m✓ PASS[0m: dx-theme current reads Tinty's native state
+  [0;32m✓ PASS[0m: dx-theme writes optional DX theme mirror
+  [0;32m✓ PASS[0m: dx-theme explicitly manages runtime Tinty repos
+  [0;32m✓ PASS[0m: no guessed generated tinted-shell script path
+  [0;32m✓ PASS[0m: zsh is not added for Tinty
+  [0;32m✓ PASS[0m: Nushell support is documented as unproven
+  [0;32m✓ PASS[0m: tmux passthrough remains enabled
+  [0;32m✓ PASS[0m: Tinty tmux item is configured
+  [0;32m✓ PASS[0m: Tinty lazygit item is configured
+  [0;32m✓ PASS[0m: btop config is declared
+  [0;32m✓ PASS[0m: btop uses generated Tinty theme
+  [0;32m✓ PASS[0m: tool theme writer is installed
+  [0;32m✓ PASS[0m: tool theme writer writes btop theme
+  [0;32m✓ PASS[0m: tool theme writer writes Yazi theme
+  [0;32m✓ PASS[0m: tool theme writer writes Starship theme
+  [0;32m✓ PASS[0m: tool theme writer maps Base16 blue slot
+  [0;32m✓ PASS[0m: tool theme writer reads Tinty palette independently
+  [0;32m✓ PASS[0m: dx-theme refreshes tool themes after every apply
+  [0;32m✓ PASS[0m: activation refreshes tool themes for existing theme
+  [0;32m✓ PASS[0m: login restore emits foreground OSC
+  [0;32m✓ PASS[0m: login restore emits background OSC
+  [0;32m✓ PASS[0m: Nushell runs Tinty login restore
+  [0;32m✓ PASS[0m: tool theme writer accepts a direct Base16 palette
+  [0;32m✓ PASS[0m: btop generated theme uses base0E title accent
+  [0;32m✓ PASS[0m: Yazi generated theme uses base0E normal-mode accent
+  [0;32m✓ PASS[0m: Starship generated theme uses base0E success prompt
+  [0;32m✓ PASS[0m: tmux config sets status-position top at bootstrap
+  [0;32m✓ PASS[0m: tmux config invokes the tool-theme writer (gated on the script existing)
+  [0;32m✓ PASS[0m: tmux config binds S to the synchronize-panes toggle
+  [0;32m✓ PASS[0m: synchronize-panes toggle forces an immediate status-bar redraw
+  [0;32m✓ PASS[0m: apply_tmux_pills batches options through a single tmux source-file call
+  [0;32m✓ PASS[0m: apply_tmux_pills pins tmux status-position to top
+  [0;32m✓ PASS[0m: apply_tmux_pills derives status-style from the Base16 palette
+  [0;32m✓ PASS[0m: apply_tmux_pills sets window-status-activity-style (prevents reverse breaking pill caps)
+  [0;32m✓ PASS[0m: apply_tmux_pills sets window-status-bell-style (prevents reverse breaking pill caps)
+  [0;32m✓ PASS[0m: writer no longer uses purple_primary (renamed to accent_primary)
+  [0;32m✓ PASS[0m: writer no longer uses purple_secondary (renamed to accent_secondary)
+  [0;32m✓ PASS[0m: writer uses accent_primary as the base0E (theme accent) hex alias
+  [0;32m✓ PASS[0m: writer uses starship_accent_primary as the base0E palette-ref alias
+  [0;32m✓ PASS[0m: writer prepends ~/.nix-profile/bin to PATH when tinty is not found
+  [0;32m✓ PASS[0m: writer reads TINTY_SCHEME_PALETTE_* hook env vars in 0-arg mode
+  [0;32m✓ PASS[0m: copy-hook invokes the tool-theme writer after sourcing tmux.conf
+  [0;32m✓ PASS[0m: copy-hook does not duplicate the env-var-to-palette expansion
+  [0;32m✓ PASS[0m: writer accepts zero-arg invocation driven by TINTY_SCHEME_PALETTE_* env vars
+  [0;32m✓ PASS[0m: env-var mode: btop theme uses palette base0E for title accent
+  [0;32m✓ PASS[0m: env-var mode: Yazi theme uses palette base0E for normal-mode accent
+  [0;32m✓ PASS[0m: env-var mode: Starship theme uses palette base0E for success prompt
+  [0;32m✓ PASS[0m: writer exits 0 when 0-arg + no env palette + no tinty
+  [0;32m✓ PASS[0m: writer leaves theme files untouched when it cannot resolve a palette
+  [0;32m✓ PASS[0m: writer exits 0 for incomplete TINTY_SCHEME_PALETTE_* env
+  [0;32m✓ PASS[0m: writer leaves theme files untouched for incomplete hook env
+  [0;32m✓ PASS[0m: writer drives apply_tmux_pills when tmux is reachable
+  [0;32m✓ PASS[0m: apply_tmux_pills issues a tmux source-file call
+  [0;32m✓ PASS[0m: sourced config sets pane-border-status to bottom
+  [0;32m✓ PASS[0m: pane-border-format right-aligns pill and uses conditional for active/inactive
+  [0;32m✓ PASS[0m: active pane label uses space-separated attrs (comma-safe for #{?} conditionals)
+  [0;32m✓ PASS[0m: pane-active-border-style sets bg to base00 so pill caps blend correctly
+  [0;32m✓ PASS[0m: pane-border-style is set (inactive pane border uses palette fg)
+  [0;32m✓ PASS[0m: pane-border-style sets bg to base00 so pill caps blend on inactive panes
+  [0;32m✓ PASS[0m: sourced config pins status-position top
+  [0;32m✓ PASS[0m: sourced config derives status-style from the Base16 palette
+  [0;32m✓ PASS[0m: sourced config sets window-status-activity-style to bar palette (not reverse)
+  [0;32m✓ PASS[0m: sourced config sets window-status-bell-style to base08 accent on bar bg
+  [0;32m✓ PASS[0m: sourced status-right gates the SYNC pill on synchronize-panes
+  [0;32m✓ PASS[0m: sourced status-right contains a SYNC label
+  [0;32m✓ PASS[0m: SYNC pill uses base08 (red) as accent against the bar bg
+  [0;32m✓ PASS[0m: sourced status-right gates the PREFIX pill on client_prefix
+  [0;32m✓ PASS[0m: PREFIX pill uses base09 (orange) as accent against the bar bg
+  [0;32m✓ PASS[0m: pill generator preserves continuum auto-save token in status-right
+  [0;32m✓ PASS[0m: sourced pills include U+E0B6 left end-cap glyph
+  [0;32m✓ PASS[0m: sourced pills include U+E0B4 right end-cap glyph
+  [0;32m✓ PASS[0m: nixvim imports tinted-nvim plugin
+  [0;32m✓ PASS[0m: Neovim uses packaged tinted-nvim first
+  [0;32m✓ PASS[0m: Neovim theming no longer uses the deprecated tinted-colorscheme module
+  [0;32m✓ PASS[0m: Neovim uses the new tinted-nvim setup API
+  [0;32m✓ PASS[0m: tinted-nvim selector reads Tinty's current scheme file
+  [0;32m✓ PASS[0m: tinted-nvim selector watches for live theme changes
+  [0;32m✓ PASS[0m: lualine uses tinted theme
+  [0;32m✓ PASS[0m: lualine no longer hard-codes rose-pine
+  [0;32m✓ PASS[0m: Rose Pine remains packaged as fallback
+  [0;32m✓ PASS[0m: test runner help advertises current section range
+  [0;32m✓ PASS[0m: test runner explicitly runs section 14
+  [0;32m✓ PASS[0m: Stylix dependency was not added
+  [1;33m○ SKIP[0m: Tinty integration skipped by --skip-integration
+  [0;32m✓ PASS[0m: the tool theme writer themes Herdr's chrome
+  [0;32m✓ PASS[0m: the tool theme writer repaints attached Herdr host terminals
+  [0;32m✓ PASS[0m: Herdr is put in terminal-palette mode rather than a built-in theme name
+  [0;32m✓ PASS[0m: theme restore detects a Herdr pane
+  [0;32m✓ PASS[0m: the OSC hook detects a Herdr pane
+  [0;32m✓ PASS[0m: dx-theme-osc-hook survives a Herdr pane with no writer installed
+  [0;32m✓ PASS[0m: dx-theme-restore survives a Herdr pane with no writer installed
+  [0;32m✓ PASS[0m: Herdr chrome receives the exact base16 palette, not an approximation
+  [0;32m✓ PASS[0m: seeded Herdr key bindings survive a theme switch
+  [0;32m✓ PASS[0m: rewriting the same Herdr theme is byte-idempotent
+  [0;32m✓ PASS[0m: a Herdr config the validator rejects leaves the live config untouched
+  [0;32m✓ PASS[0m: a rejected Herdr theme leaves no temp file behind
+
+==============================
+Results: [0;32m125 passed[0m, [0;31m0 failed[0m, [1;33m1 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section15_nushell_env.sh
+---
+
+[1;33m=== Section 15: Nushell Environment ===[0m
+  [0;32m✓ PASS[0m: home/shell.nix exists
+  [0;32m✓ PASS[0m: shell.nix avoids literal '($home) in nushell envFile
+  [0;32m✓ PASS[0m: shell.nix SSL_CERT_FILE uses $"($nu.home-dir)/..." interpolation
+  [0;32m✓ PASS[0m: shell.nix NIX_SSL_CERT_FILE uses $"($nu.home-dir)/..." interpolation
+  [0;32m✓ PASS[0m: shell.nix adds ~/.local/bin to nushell PATH
+  [0;32m✓ PASS[0m: shell.nix points nushell TZ at /etc/localtime
+  [0;32m✓ PASS[0m: shell.nix configures lazygit config conditionally
+  [0;32m✓ PASS[0m: nushell keyring env parsing avoids unsupported split row --max
+  [0;32m✓ PASS[0m: fish shell init avoids Nix-breaking adjacent single quotes
+  [1;33m○ SKIP[0m: nushell SSH/SCP guest runtime checks (--skip-integration)
+
+==============================
+Results: [0;32m9 passed[0m, [0;31m0 failed[0m, [1;33m1 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section16_persist_storage.sh
+---
+
+[1;33m=== Section 16: Persist Storage ===[0m
+  [0;32m✓ PASS[0m: bin/dx-lib.sh exists
+  [0;32m✓ PASS[0m: bin/dx-create-container exists
+  [0;32m✓ PASS[0m: bin/dx-create-volumes exists
+  [0;32m✓ PASS[0m: bin/dx-migrate-persist exists
+  [0;32m✓ PASS[0m: home/shell.nix exists
+  [0;32m✓ PASS[0m: config registry declares DX_PERSIST_VOLUME (default dx-persist)
+  [0;32m✓ PASS[0m: dx-lib.sh does not declare DX_PERSIST_PATH
+  [0;32m✓ PASS[0m: dx-lib.sh rejects DX_WORKSPACE_VOLUME
+  [0;32m✓ PASS[0m: dx-lib.sh rejects DX_WORKSPACE_PATH
+  [0;32m✓ PASS[0m: bootstrap launch command creates fixed /persist path
+  [0;32m✓ PASS[0m: dx-create-container references DX_PERSIST_VOLUME
+  [0;32m✓ PASS[0m: dx-create-container mounts the persist volume at /persist
+  [0;32m✓ PASS[0m: dx-create-container does not consume DX_PERSIST_PATH
+  [0;32m✓ PASS[0m: dx-create-volumes ensures the persist volume exists
+  [0;32m✓ PASS[0m: dx-create-volumes checks legacy migration source
+  [0;32m✓ PASS[0m: dx-create-volumes tells users to run the migration helper
+  [0;32m✓ PASS[0m: shell.nix declares PERSIST env var (POSIX shells)
+  [0;32m✓ PASS[0m: shell.nix declares $env.PERSIST in nushell envFile
+  [0;32m✓ PASS[0m: shell.nix does not declare WORKSPACE
+  [0;32m✓ PASS[0m: bootstrap creates /home/dx/persist
+  [0;32m✓ PASS[0m: bootstrap does not create /home/dx/workspace
+  [0;32m✓ PASS[0m: migration helper defaults the legacy source to dx-workspace
+  [0;32m✓ PASS[0m: migration helper preserves copied filesystem contents
+  [0;32m✓ PASS[0m: migration helper writes an idempotency sentinel
+  [0;32m✓ PASS[0m: migration helper rejects non-empty destination without sentinel
+  [0;32m✓ PASS[0m: no stale workspace runtime references outside explicit legacy docs/tests
+  [1;33m○ SKIP[0m: migration helper integration checks (--skip-integration)
+  [0;32m✓ PASS[0m: migration helper retries past a single Apple Container runtime-client race and completes
+  [0;32m✓ PASS[0m: migration helper bounds its retries and fails clearly once the runtime-client race persists
+  [0;32m✓ PASS[0m: migration helper does not retry or mask a genuine container-run error distinct from the runtime-client race
+  [1;33m○ SKIP[0m: live persistence guest runtime checks (--skip-integration)
+
+==============================
+Results: [0;32m29 passed[0m, [0;31m0 failed[0m, [1;33m2 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section17_dx_ai_runtime.sh
+---
+
+[1;33m=== Section 17: dx-ai Runtime ===[0m
+  [0;32m✓ PASS[0m: dx-ai is a sourceable main with focused generation functions
+  [0;32m✓ PASS[0m: dx-ai never changes into the published payload
+  [0;32m✓ PASS[0m: dx-ai pin refresh is independent of Nix source formatting
+  [0;32m✓ PASS[0m: dx-ai mutable generations live under persist
+  [0;32m✓ PASS[0m: AI staging records predecessor without mutating published bootstrap
+  [0;32m✓ PASS[0m: AI publication atomically advances current and retains predecessor
+  [0;32m✓ PASS[0m: AI pointer publication failure is reported
+  [0;32m✓ PASS[0m: failed AI pointer switch preserves current and predecessor
+  [0;32m✓ PASS[0m: AI recovery atomically selects the retained predecessor
+Refreshing Antigravity CLI manifest...
+Warning: malformed agy manifest. Keeping current pin.
+  [0;32m✓ PASS[0m: malformed upstream AI manifest is non-destructive
+  [0;32m✓ PASS[0m: malformed AI manifest leaves pin unchanged
+  [0;32m✓ PASS[0m: dx-ai refuses lock acquisition when all process identities are unavailable (R5)
+  [0;32m✓ PASS[0m: dx-ai parses proc stat starttime in Bash with a complex comm field (R5)
+  [0;32m✓ PASS[0m: dx-ai preserves raw UUID boot identities for existing owner records (R5)
+  [0;32m✓ PASS[0m: dx-ai falls back to an explicit proc btime boot identity (R5)
+  [0;32m✓ PASS[0m: dx-ai acquires a lock with the btime fallback identity (R5)
+  [0;32m✓ PASS[0m: a successful sourced dx_ai_main releases its lock and clears its EXIT trap
+  [0;32m✓ PASS[0m: --supports <tool> for a known tool exits 0 with no stdout
+  [0;32m✓ PASS[0m: --supports <tool> for an unknown tool exits 1 with no stdout
+  [0;32m✓ PASS[0m: --supports with no tool name is a usage error (exit 64)
+  [0;32m✓ PASS[0m: --supports rejects trailing arguments (exit 64)
+  [0;32m✓ PASS[0m: dx-ai installs the missing Herdr integrations for the agents it manages
+  [0;32m✓ PASS[0m: dx-ai leaves Herdr integrations for unmanaged agents alone
+  [0;32m✓ PASS[0m: a repeated dx-ai run reinstalls no current Herdr integration
+  [0;32m✓ PASS[0m: dx-ai refreshes a Herdr integration that upstream reports outdated
+  [0;32m✓ PASS[0m: dx-ai refreshes an integration the status listing marks outdated
+  [0;32m✓ PASS[0m: an unrecognised Herdr integration state is left alone, not reinstalled
+  [0;32m✓ PASS[0m: dx-ai treats an absent Herdr as a skip, not a failure
+  [0;32m✓ PASS[0m: a failed Herdr integration install does not fail the AI update
+  [0;32m✓ PASS[0m: an unreadable Herdr integration status installs nothing and does not fail
+  [0;32m✓ PASS[0m: dx-ai runs the Herdr integration step from its main flow
+  [0;32m✓ PASS[0m: dx-ai never lets an optional Herdr integration fail the update
+  [1;33m○ SKIP[0m: dx-ai guest runtime checks (--skip-integration)
+
+==============================
+Results: [0;32m32 passed[0m, [0;31m0 failed[0m, [1;33m1 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section20_skip_integration.sh
+---
+
+[1;33m=== Section 20: --skip-integration Truthfulness ===[0m
+  [0;32m✓ PASS[0m: stub container binary satisfies container_is_running's parsing of `container list`
+  [0;32m✓ PASS[0m: stub container binary satisfies container_exists's parsing of `container list -a`
+  [0;32m✓ PASS[0m: section 15 exits 0 under --skip-integration
+  [0;32m✓ PASS[0m: section 15 invokes no container/ssh/scp/dx-ai command under --skip-integration
+  [0;32m✓ PASS[0m: section 16 exits 0 under --skip-integration
+  [0;32m✓ PASS[0m: section 16 invokes no container/ssh/scp/dx-ai command under --skip-integration
+  [0;32m✓ PASS[0m: section 17 exits 0 under --skip-integration
+  [0;32m✓ PASS[0m: section 17 invokes no container/ssh/scp/dx-ai command under --skip-integration
+  [0;32m✓ PASS[0m: unknown --section fails instead of reporting an empty success
+  [0;32m✓ PASS[0m: a dispatchable --section still runs
+
+==============================
+Results: [0;32m10 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_refactor_state_machines.sh
+---
+
+[1;33m=== Refactor State-Machine Contracts ===[0m
+  [0;32m✓ PASS[0m: config precedence records root, environment, and default origins
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=one
+DX_CONTAINER_NAME=two
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=~name
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=$(id)
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=`id`
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=one;id
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME="quoted"
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=one\two
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=$HOME
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=one && id
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_CONTAINER_NAME=one || id
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_SSH_KEY=/tmp/key&touch
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_SSH_KEY=/tmp/key|touch
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_SSH_KEY=/tmp/key>file
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: DX_SSH_KEY=/tmp/key<file
+  [0;32m✓ PASS[0m: data parser rejects unsupported syntax: UNKNOWN=value
+  [0;32m✓ PASS[0m: data parser rejects duplicate fields
+  [0;32m✓ PASS[0m: project-root placeholder is restricted to path fields
+  [0;32m✓ PASS[0m: migration export prefix and project-root path placeholder are accepted
+  [0;32m✓ PASS[0m: project-root placeholder resolves as data
+  [0;32m✓ PASS[0m: an absent data file clears prior parser output
+  [0;32m✓ PASS[0m: lock owner metadata matches the live process identity
+  [0;32m✓ PASS[0m: dead lock owner is reclaimed
+  [0;32m✓ PASS[0m: PID reuse prevents TERM and KILL
+  [0;32m✓ PASS[0m: bounded command timeout returns 124 and removes private bookkeeping
+  [0;32m✓ PASS[0m: legacy %q fixture 0 decodes
+  [0;32m✓ PASS[0m: legacy %q fixture 1 decodes
+  [0;32m✓ PASS[0m: legacy %q fixture 2 decodes
+  [0;32m✓ PASS[0m: legacy %q fixture 3 decodes
+  [0;32m✓ PASS[0m: legacy %q fixture 4 decodes
+  [0;32m✓ PASS[0m: legacy %q fixture 5 decodes
+  [0;32m✓ PASS[0m: legacy decoder rejects token: \$(id)
+  [0;32m✓ PASS[0m: legacy decoder rejects token: $HOME
+  [0;32m✓ PASS[0m: legacy decoder rejects token: value;id
+  [0;32m✓ PASS[0m: legacy decoder rejects token: value>file
+  [0;32m✓ PASS[0m: legacy decoder rejects token: $'badA'
+  [0;32m✓ PASS[0m: legacy decoder rejects token: value extra
+  [0;32m✓ PASS[0m: concurrent first publication has exactly one winner
+  [0;32m✓ PASS[0m: concurrent publication leaves one complete v2 manifest
+  [0;32m✓ PASS[0m: legacy migration dry run is report-only
+  [0;32m✓ PASS[0m: complete matching legacy manifest converts atomically
+  [0;32m✓ PASS[0m: incomplete legacy manifest refuses migration
+  [0;32m✓ PASS[0m: refused migration preserves incomplete authoritative file
+Forwarded http://127.0.0.1:15173 -> side:5173
+  [0;32m✓ PASS[0m: shared tunnel engine starts a forward
+  [0;32m✓ PASS[0m: published tunnel metadata is allowlisted and complete
+  [0;32m✓ PASS[0m: tunnel metadata records the active peer
+  [0;32m✓ PASS[0m: failed SSH master stop returns failure
+  [0;32m✓ PASS[0m: failed stop retains authoritative state
+Stopped http://127.0.0.1:15173
+  [0;32m✓ PASS[0m: successful stop removes retained state
+  [0;32m✓ PASS[0m: concurrent tunnel starts linearize to one SSH master
+Stopped http://127.0.0.1:16000
+  [0;32m✓ PASS[0m: concurrently-created tunnel remains stoppable
+  [0;32m✓ PASS[0m: concurrent tunnel start/stop serializes to a complete stopped state
+Forwarded http://127.0.0.1:15200 -> side:5200
+  [0;32m✓ PASS[0m: reaped-metadata fixture starts a forward
+Recovered dx-forward metadata for port 15200 from its running SSH master.
+Active http://127.0.0.1:15200 -> side:5200
+  [0;32m✓ PASS[0m: reaped metadata self-heals from the live SSH master
+  [0;32m✓ PASS[0m: recovery republishes the peer the master is actually forwarding
+  [0;32m✓ PASS[0m: recovered peer still refuses a conflicting mapping
+  [0;32m✓ PASS[0m: listing reports the recovered peer instead of unknown
+  [0;32m✓ PASS[0m: confirming an active tunnel restamps its metadata against the reaper
+  [0;32m✓ PASS[0m: recovery that cannot republish metadata fails loudly
+  [0;32m✓ PASS[0m: an out-of-range peer in the master argv is not trusted
+  [0;32m✓ PASS[0m: unrecoverable state names the command that clears it
+Stopped http://127.0.0.1:15200
+  [0;32m✓ PASS[0m: recovered tunnel remains stoppable
+Reverse forwarded side 127.0.0.1:18200 -> host 127.0.0.1:8200
+  [0;32m✓ PASS[0m: reverse fixture starts a reverse forward
+Recovered dx-reverse metadata for port 18200 from its running SSH master.
+Active side 127.0.0.1:18200 -> host 127.0.0.1:8200
+  [0;32m✓ PASS[0m: reverse recovery reads the -R mapping
+  [0;32m✓ PASS[0m: legacy socket recovery reports the peer without publishing new-layout state
+  [0;32m✓ PASS[0m: an unknown legacy peer reports nothing rather than failing its set -e caller
+Forwarded http://127.0.0.1:15400 -> side:5400
+  [0;32m✓ PASS[0m: orphan-discovery fixture starts a forward
+  [0;32m✓ PASS[0m: a socket with intact metadata is discovered exactly once
+  [0;32m✓ PASS[0m: listing a healthy tunnel prints one entry
+  [0;32m✓ PASS[0m: discovery finds a live socket whose metadata was reaped
+  [0;32m✓ PASS[0m: listing an orphaned socket reports its real peer
+  [0;32m✓ PASS[0m: a forward socket is never discovered as a reverse forward
+  [0;32m✓ PASS[0m: a key port outside the valid range is not trusted
+  [0;32m✓ PASS[0m: a key whose socket path does not round-trip is not trusted
+Stopped http://127.0.0.1:15400
+  [0;32m✓ PASS[0m: stop-all reclaims a socket that only the process table knew about
+  [0;32m✓ PASS[0m: reclaimed orphan leaves no socket behind
+  [0;32m✓ PASS[0m: metadata publication failure fails the start
+  [0;32m✓ PASS[0m: metadata failure cleans up the started master
+  [0;32m✓ PASS[0m: tunnel-state audit sweeps safely parsed named profiles
+
+==============================
+Results: [0;32m79 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_bootstrap_publication.sh
+---
+
+[1;33m=== Transactional Bootstrap Publication ===[0m
+  [0;32m✓ PASS[0m: valid staged bootstrap publishes
+  [0;32m✓ PASS[0m: current points at the complete staged generation
+  [0;32m✓ PASS[0m: flat-layout compatibility path follows current
+  [0;32m✓ PASS[0m: published bootstrap files are read-only
+  [0;32m✓ PASS[0m: incomplete staged bootstrap is rejected
+  [0;32m✓ PASS[0m: failed extraction/validation preserves last-known-good current
+  [0;32m✓ PASS[0m: failed bootstrap staging is collected
+  [0;32m✓ PASS[0m: collection retains a generation with a fully matching live lease
+  [0;32m✓ PASS[0m: collection rejects a stale lease after PID identity reuse
+  [0;32m✓ PASS[0m: concurrent syncs retain complete current and predecessor generations
+  [0;32m✓ PASS[0m: launcher creates its execution lease under the publication lock
+  [0;32m✓ PASS[0m: launcher executes the exact leased generation
+  [0;32m✓ PASS[0m: launcher logs the bootstrap generation it resolved
+  [0;32m✓ PASS[0m: launcher does not leak its lease umask into the guest bootstrap
+  [0;32m✓ PASS[0m: execution lease is still written privately
+  [0;32m✓ PASS[0m: re-syncing identical content publishes no new generation
+  [0;32m✓ PASS[0m: an unchanged sync says so rather than claiming a publication
+  [0;32m✓ PASS[0m: unchanged content skips even when the boot readiness marker is absent
+  [0;32m✓ PASS[0m: an unchanged sync prunes leases from earlier boots and keeps the live one
+  [0;32m✓ PASS[0m: a generation with no recorded digest republishes and records one
+  [0;32m✓ PASS[0m: changed content still publishes a new generation
+  [0;32m✓ PASS[0m: the launcher runs the generation published for this boot, not the previous boot's
+  [0;32m✓ PASS[0m: an unsignalled start falls back to the current generation after a bounded wait
+  [0;32m✓ PASS[0m: an unchanged sync still signals boot readiness
+
+==============================
+Results: [0;32m24 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section23_herdr.sh
+---
+
+[1;33m=== Section 23: Herdr Integration ===[0m
+  [0;32m✓ PASS[0m: dx-herdr host script exists
+  [0;32m✓ PASS[0m: dx-herdr owns strict mode
+  [0;32m✓ PASS[0m: dx-herdr passes bash syntax
+  [0;32m✓ PASS[0m: dx-herdr fails when container is not running
+  [0;32m✓ PASS[0m: dx-herdr refuses an unready persistence layout before attaching (R3)
+  [0;32m✓ PASS[0m: dx-herdr rejects unsafe persistent targets or readiness markers (R3)
+  [0;32m✓ PASS[0m: dx-herdr gives dx-recreate diagnostic when helper lacks Herdr capability
+  [0;32m✓ PASS[0m: dx-herdr auto-installs Herdr via dx-ai when supported and attaches
+  [0;32m✓ PASS[0m: dx-herdr crosses the bash -lc boundary for every guest command (F1 regression guard)
+  [0;32m✓ PASS[0m: dx-herdr reports an SSH transport failure distinctly from a missing-capability diagnostic (F2)
+  [0;32m✓ PASS[0m: dx-herdr checks $DX_SSH_KEY before probing, not after (F2)
+  [0;32m✓ PASS[0m: dx-herdr contains no ssh invocation of its own (F10)
+  [0;32m✓ PASS[0m: dx-herdr builds no SSH option array of its own (F10)
+  [0;32m✓ PASS[0m: the shared SSH boundary does not set HERDR_* (F11)
+  [0;32m✓ PASS[0m: dx-herdr restores the guest theme before starting herdr (Layer 1)
+  [0;32m✓ PASS[0m: the shared SSH boundary owns the theme-restore prefix
+  [0;32m✓ PASS[0m: dx-herdr takes the theme-restore prefix from the shared boundary
+  [0;32m✓ PASS[0m: dx-herdr no longer attaches without restoring the theme
+  [0;32m✓ PASS[0m: activation delegates Herdr seeding to the repository-owned merger
+  [0;32m✓ PASS[0m: activation fails closed when the merger is missing
+  [0;32m✓ PASS[0m: activation never appends in-place to the live Herdr config (F7)
+  [0;32m✓ PASS[0m: the Herdr config merger is a bootstrap module
+  [0;32m✓ PASS[0m: bootstrap sources the Herdr config merger
+  [0;32m✓ PASS[0m: setup_herdr_persistence rejects a symlinked persistent target before any mutation (F5)
+  [0;32m✓ PASS[0m: setup_herdr_persistence rejects a symlinked parent directory before any mutation (F5)
+  [0;32m✓ PASS[0m: setup_herdr_persistence rejects a symlinked persist-home ancestor before mutation (R1)
+  [0;32m✓ PASS[0m: setup_herdr_persistence rejects a symlinked .local ancestor before mutation (R1)
+  [0;32m✓ PASS[0m: setup_herdr_persistence returns after the first failed mutation (R2)
+  [0;32m✓ PASS[0m: setup_herdr_persistence invalidates a migrated config marker before state setup (R3)
+  [0;32m✓ PASS[0m: dx_activate_herdr never deletes a readiness marker through a symlinked config target (R1/R3)
+  [0;32m✓ PASS[0m: dx_activate_herdr publishes no readiness marker when preparation fails (R3)
+  [0;32m✓ PASS[0m: setup_herdr_persistence gives timestamped backups explicit ownership and mode 0700 (F5)
+  [0;32m✓ PASS[0m: setup_herdr_persistence's repeat activation is a no-op apart from repairing declared ownership/modes (F5)
+  [0;32m✓ PASS[0m: setup_herdr_persistence chowns a freshly created ~/.local/state to dx:dx so the symlink can be written, without clobbering a pre-existing shared ~/.config mode (live dx-recreate Permission denied defect)
+  [0;32m✓ PASS[0m: configure_guest activates Herdr persistence even when the AI-tools guard is false (F4)
+  [0;32m✓ PASS[0m: configure_guest survives a failing Herdr activation
+  [1;33m○ SKIP[0m: Herdr live tests skipped by --skip-integration
+
+==============================
+Results: [0;32m36 passed[0m, [0;31m0 failed[0m, [1;33m1 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_nix_store_import.sh
+---
+
+[1;33m=== Nix store import behaviour ===[0m
+  [1;33m○ SKIP[0m: requires root in the isolated Linux GNU-tar runner
+
+==============================
+Results: [0;32m0 passed[0m, [0;31m0 failed[0m, [1;33m1 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section26_audit_flake_lock.sh
+---
+
+[1;33m=== Section 26: flake.lock refresh audit ===[0m
+  [0;32m✓ PASS[0m: an unmodified pair (no-op refresh) is rejected
+  [0;32m✓ PASS[0m: a partial refresh (3 of 4 claimed nodes left unchanged) is rejected
+  [0;32m✓ PASS[0m: deleting an allowed leaf (nixpkgs.locked.rev) from a changed node is rejected
+  [0;32m✓ PASS[0m: an added top-level document field ('.sneaky') is rejected
+  [0;32m✓ PASS[0m: the real, complete four-node refresh passes
+  [0;32m✓ PASS[0m: evidence record names changed node 'nixpkgs'
+  [0;32m✓ PASS[0m: evidence record for 'nixpkgs' carries the full rev transition
+  [0;32m✓ PASS[0m: evidence record for 'nixpkgs' carries the full narHash transition
+  [0;32m✓ PASS[0m: evidence record for 'nixpkgs' carries the full lastModified transition
+  [0;32m✓ PASS[0m: evidence record names changed node 'home-manager'
+  [0;32m✓ PASS[0m: evidence record for 'home-manager' carries the full rev transition
+  [0;32m✓ PASS[0m: evidence record for 'home-manager' carries the full narHash transition
+  [0;32m✓ PASS[0m: evidence record for 'home-manager' carries the full lastModified transition
+  [0;32m✓ PASS[0m: evidence record names changed node 'nixvim'
+  [0;32m✓ PASS[0m: evidence record for 'nixvim' carries the full rev transition
+  [0;32m✓ PASS[0m: evidence record for 'nixvim' carries the full narHash transition
+  [0;32m✓ PASS[0m: evidence record for 'nixvim' carries the full lastModified transition
+  [0;32m✓ PASS[0m: evidence record names changed node 'flake-parts'
+  [0;32m✓ PASS[0m: evidence record for 'flake-parts' carries the full rev transition
+  [0;32m✓ PASS[0m: evidence record for 'flake-parts' carries the full narHash transition
+  [0;32m✓ PASS[0m: evidence record for 'flake-parts' carries the full lastModified transition
+
+==============================
+Results: [0;32m21 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================

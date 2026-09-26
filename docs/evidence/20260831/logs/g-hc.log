@@ -1,0 +1,161 @@
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section9_host_scripts.sh
+---
+
+[1;33m=== Section 9: Host Library And Command Contracts ===[0m
+  [0;32m✓ PASS[0m: dx owns strict mode
+  [0;32m✓ PASS[0m: dx-create-container owns strict mode
+  [0;32m✓ PASS[0m: dx-create-image owns strict mode
+  [0;32m✓ PASS[0m: dx-create-keys owns strict mode
+  [0;32m✓ PASS[0m: dx-create-volumes owns strict mode
+  [0;32m✓ PASS[0m: dx-destroy owns strict mode
+  [0;32m✓ PASS[0m: dx-destroy-container owns strict mode
+  [0;32m✓ PASS[0m: dx-destroy-image owns strict mode
+  [0;32m✓ PASS[0m: dx-destroy-keys owns strict mode
+  [0;32m✓ PASS[0m: dx-destroy-volumes owns strict mode
+  [0;32m✓ PASS[0m: dx-enter owns strict mode
+  [0;32m✓ PASS[0m: dx-export owns strict mode
+  [0;32m✓ PASS[0m: dx-factory-reset owns strict mode
+  [0;32m✓ PASS[0m: dx-forward owns strict mode
+  [0;32m✓ PASS[0m: dx-gc owns strict mode
+  [0;32m✓ PASS[0m: dx-get owns strict mode
+  [0;32m✓ PASS[0m: dx-herdr owns strict mode
+  [0;32m✓ PASS[0m: dx-migrate-persist owns strict mode
+  [0;32m✓ PASS[0m: dx-mount owns strict mode
+  [0;32m✓ PASS[0m: dx-nix-disk owns strict mode
+  [0;32m✓ PASS[0m: dx-profile owns strict mode
+  [0;32m✓ PASS[0m: dx-put owns strict mode
+  [0;32m✓ PASS[0m: dx-reclaim owns strict mode
+  [0;32m✓ PASS[0m: dx-recreate owns strict mode
+  [0;32m✓ PASS[0m: dx-reverse owns strict mode
+  [0;32m✓ PASS[0m: dx-ssh owns strict mode
+  [0;32m✓ PASS[0m: dx-start-container owns strict mode
+  [0;32m✓ PASS[0m: dx-status owns strict mode
+  [0;32m✓ PASS[0m: dx-stop-container owns strict mode
+  [0;32m✓ PASS[0m: dx-sync-bootstrap owns strict mode
+  [0;32m✓ PASS[0m: dx-wait-ssh owns strict mode
+  [0;32m✓ PASS[0m: dx-config.sh does not set caller shell options
+  [0;32m✓ PASS[0m: dx-config.sh is import-only
+  [0;32m✓ PASS[0m: dx-container.sh does not set caller shell options
+  [0;32m✓ PASS[0m: dx-container.sh is import-only
+  [0;32m✓ PASS[0m: dx-host-util.sh does not set caller shell options
+  [0;32m✓ PASS[0m: dx-host-util.sh is import-only
+  [0;32m✓ PASS[0m: dx-mount-plan.sh does not set caller shell options
+  [0;32m✓ PASS[0m: dx-mount-plan.sh is import-only
+  [0;32m✓ PASS[0m: dx-ssh-common.sh does not set caller shell options
+  [0;32m✓ PASS[0m: dx-ssh-common.sh is import-only
+  [0;32m✓ PASS[0m: dx-tunnel.sh does not set caller shell options
+  [0;32m✓ PASS[0m: dx-tunnel.sh is import-only
+  [0;32m✓ PASS[0m: root/profile grammar is parsed as bounded data
+  [0;32m✓ PASS[0m: config rejects DX_CONTAINER_NAME=$(id)
+  [0;32m✓ PASS[0m: config rejects DX_CONTAINER_NAME=$HOME
+  [0;32m✓ PASS[0m: config rejects DX_CONTAINER_NAME="quoted"
+  [0;32m✓ PASS[0m: config rejects UNKNOWN=value
+  [0;32m✓ PASS[0m: complete versioned configuration snapshot validates
+  [0;32m✓ PASS[0m: partial snapshot fails closed
+  [0;32m✓ PASS[0m: runtime discovery matches exact --uuid argument/value pairs
+Error: Nix volume shared-nix is already claimed by container first; destroy it or choose a distinct DX_NIX_VOLUME.
+Error: Nix volume shared-nix is already claimed by container first; destroy it or choose a distinct DX_NIX_VOLUME.
+Error: Nix volume shared-nix is already claimed by container second; destroy it or choose a distinct DX_NIX_VOLUME.
+Error: refusing malformed Nix-volume claim /var/folders/c9/rtkf4m_s5bb17tt2zs7v8ylc0000gn/T//dxe-host-config.Vg7Jio/claim-home/.dx-cache/nix-volume-claims/multiline-nix.
+  [0;32m✓ PASS[0m: Nix-volume lifecycle claims reject running and stopped owners and recover stale claims
+Error: Nix volume concurrent-nix is reserved while container first is being created.
+  [0;32m✓ PASS[0m: live create reservations cannot be stolen before container creation
+  [0;32m✓ PASS[0m: forward wrapper parses direction-specific mappings
+  [0;32m✓ PASS[0m: forward wrapper rejects privileged host ports
+  [0;32m✓ PASS[0m: reverse wrapper parses direction-specific mappings
+  [0;32m✓ PASS[0m: forward has no production test seam
+  [0;32m✓ PASS[0m: reverse has no production test seam
+  [0;32m✓ PASS[0m: reclaim filesystem reporting does not require guest sed
+  [0;32m✓ PASS[0m: reclaim uses the GC-rooted essentials profile PATH
+  [0;32m✓ PASS[0m: reclaim reports guest filesystems without a guest sed binary
+  [0;32m✓ PASS[0m: bootstrap progress shows several recent guest log lines
+  [0;32m✓ PASS[0m: bootstrap wait budget is rendered in human-readable minutes
+  [0;32m✓ PASS[0m: bootstrap path crosses the launcher boundary positionally
+  [0;32m✓ PASS[0m: migration values cross fixed command boundaries positionally
+  [0;32m✓ PASS[0m: dx-herdr --help prints usage
+  [0;32m✓ PASS[0m: dx-herdr -h prints usage
+  [0;32m✓ PASS[0m: dx-herdr rejects arguments in v1 (exit 64)
+  [0;32m✓ PASS[0m: dx-herdr rejects trailing arguments after --help (R6)
+  [0;32m✓ PASS[0m: interactive dx-ssh prints the connect banner once and restores Apple Terminal colours after the session ends (F3)
+  [0;32m✓ PASS[0m: dx-ssh-common.sh no longer execs into ssh, which used to discard the cleanup trap (F3)
+  [0;32m✓ PASS[0m: the interactive SSH helper is renamed to stop claiming to exec (F3)
+  [0;32m✓ PASS[0m: the interactive SSH helper has no dead quiet parameter (F3)
+  [0;32m✓ PASS[0m: dx_run_interactive_ssh looks up the host timezone exactly once per call (F3)
+  [0;32m✓ PASS[0m: SSH boundary literal 'IdentitiesOnly=yes' has a single source of truth (F10)
+  [0;32m✓ PASS[0m: SSH boundary literal '.nix-profile/bin:/home/dx/.local/bin' has a single source of truth (F10)
+  [0;32m✓ PASS[0m: SSH boundary literal 'NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt' has a single source of truth (F10)
+  [0;32m✓ PASS[0m: SSH boundary literal 'printf '%q'' has a single source of truth (F10)
+  [0;32m✓ PASS[0m: dx-ssh's argument branch reuses the shared SSH option source of truth (F10)
+  [0;32m✓ PASS[0m: shared SSH boundary transports complex workdirs without nested-quote breakage (R4)
+  [0;32m✓ PASS[0m: shared SSH boundary transports a command body opaquely, apostrophes included (R4)
+  [0;32m✓ PASS[0m: a successful match survives pipefail on a long-running writer
+  [0;32m✓ PASS[0m: running generation is read from the launcher's PID 1 lease
+  [0;32m✓ PASS[0m: a non-launcher lease is never mistaken for the running generation
+  [0;32m✓ PASS[0m: an absent launcher lease reports no running generation
+  [0;32m✓ PASS[0m: a drifted guest is reported with both generations and the container
+  [0;32m✓ PASS[0m: no drift warning for 'same-gen same-gen'
+  [0;32m✓ PASS[0m: no drift warning for ' new-gen'
+  [0;32m✓ PASS[0m: no drift warning for 'old-gen '
+  [0;32m✓ PASS[0m: the OSC cleanup helper is dx_-namespaced rather than leaking a bare global (F12)
+  [0;32m✓ PASS[0m: the OSC cleanup helper exists under the dx_ namespace (F12)
+  [0;32m✓ PASS[0m: the shared SSH boundary no longer mutates the caller's TERM to no effect (F12)
+  [0;32m✓ PASS[0m: bootstrap content digest is stable across runs
+  [0;32m✓ PASS[0m: bootstrap content digest changes when a file's contents change
+  [0;32m✓ PASS[0m: bootstrap content digest changes when a file is renamed
+  [0;32m✓ PASS[0m: bootstrap content digest ignores file modes
+  [0;32m✓ PASS[0m: bootstrap content digest rejects a non-directory source
+
+==============================
+Results: [0;32m97 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
+======================================
+DX Experience Test Suite
+======================================
+
+
+Running: test_section18_mount_git.sh
+---
+
+[1;33m=== Section 18: Mount Plans And Manifests ===[0m
+  [0;32m✓ PASS[0m: dx-mount help documents --container NAME
+  [0;32m✓ PASS[0m: dx-mount help documents --print-env
+  [0;32m✓ PASS[0m: dx-mount help documents --destroy
+  [0;32m✓ PASS[0m: dx-mount help documents --print-destroy-plan
+  [0;32m✓ PASS[0m: dx-mount help documents --audit-manifests
+  [0;32m✓ PASS[0m: dx-mount help documents --migrate-manifests
+  [0;32m✓ PASS[0m: dx-mount help documents --apply
+  [0;32m✓ PASS[0m: mount modes are mutually exclusive
+  [0;32m✓ PASS[0m: unsafe container names are rejected before path construction
+  [0;32m✓ PASS[0m: planner canonicalizes repository source and guest workdir
+  [0;32m✓ PASS[0m: planner derives private nix volume
+  [0;32m✓ PASS[0m: planner derives private persist volume
+  [0;32m✓ PASS[0m: planner derives private bootstrap volume
+  [0;32m✓ PASS[0m: bounded legacy decoder accepts supported Bash 3.2 %q records
+  [0;32m✓ PASS[0m: hostile legacy manifest is rejected without evaluation
+  [0;32m✓ PASS[0m: manifest text never executes
+  [0;32m✓ PASS[0m: v2 manifest round-trips through canonical base64 data records
+  [0;32m✓ PASS[0m: identity directory is private
+  [0;32m✓ PASS[0m: manifest is private
+  [0;32m✓ PASS[0m: first publication is semantically write-once
+  [0;32m✓ PASS[0m: failed publication preserves authoritative manifest
+Error: unsafe or malformed legacy mount manifest: /var/folders/c9/rtkf4m_s5bb17tt2zs7v8ylc0000gn/T//dxe-mount-state.ColFWV/hostile.env
+  [0;32m✓ PASS[0m: manifest audit reports v2 completeness
+  [0;32m✓ PASS[0m: dx-mount has no production test seam
+  [0;32m✓ PASS[0m: dx-mount never sources persisted identity data
+
+==============================
+Results: [0;32m24 passed[0m, [0;31m0 failed[0m, [1;33m0 skipped[0m
+==============================
+
+======================================
+All tests PASSED!
+======================================
