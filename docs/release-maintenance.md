@@ -334,8 +334,9 @@ mkdir -p /tmp/pf && printf 'FROM %s\n' "$NEW_IMG" > /tmp/pf/Containerfile \
     && container image rm dx-preflight        # digest-pinned FROM must build
 ```
 
-`OK-no-bin-bash` is required — the official base ships no `/bin/bash`, which
-is what the temporary old-base guards key on.
+`OK-no-bin-bash` is required — the official base ships no `/bin/bash`, the
+signature the now-removed old-base guards used to key on (see
+[Base Image Changeover](#base-image-changeover-one-time), "History").
 
 ### 4. Make the bump (one revertible commit)
 
@@ -442,9 +443,6 @@ for a bump that does **not** change the Nix image pin, would an in-place
 - Update the concrete release numbers and the current digest in **this**
   section and in [Release and Pin Maintenance](#release-and-pin-maintenance)
   so the next bump starts from accurate examples.
-- Once every machine and profile is on the new base, the temporary old-base
-  guards (`guard_old_base` in `bootstrap.sh`, its twin in
-  `dx-start-container`, and their tests) can be removed in a cleanup commit.
 
 ### Rollback
 
@@ -509,9 +507,12 @@ reproduces from the committed source (`flake.nix` + `flake.lock`), which
 **History.** The primary machine completed this changeover on 2026-07-05,
 behind the `OLD_BASE_ABSENT` gate in step 7 below, with the full suite green.
 The [old-base guards](refactor/migration-gates.md#old-base-guards) this
-runbook's step 7 checks around remain temporarily in the tree only for the
-remaining inventory — side containers and named profiles, tracked in
-[`docs/refactor/checklists/phase-6.md`](refactor/checklists/phase-6.md) item 1.
+runbook's step 7 checks around remained temporarily in the tree for the
+rest of the inventory — side containers and named profiles — until the
+gate's 2026-09-26 inventory
+([`docs/evidence/20260926/legacy-guard-removal.md`](evidence/20260926/legacy-guard-removal.md))
+confirmed all of them off the old base too; both guards were then removed
+([Phase 6](refactor/checklists/phase-6.md) item 1).
 
 ### Clean-configuration precondition — required before every destructive step below
 
@@ -757,12 +758,12 @@ you stop partway, and nothing destroys the primary before step 4.
    ```
 
    Expected output: `OK: old flakes base excluded (no /bin/bash)`. Any
-   other output is a hard stop. The same invariant is also enforced by a
-   pair of temporary guards on every container boot and every
-   `dx-start-container` bring-up, for as long as they remain in the tree
-   (see the temporary old-base guards described above) — this manual gate exists because a
-   bring-up against an **already-running** container only re-syncs the
-   bootstrap payload; it does not by itself prove which image is running.
+   other output is a hard stop. Until their removal (see "History" above),
+   the same invariant was also enforced by a pair of temporary guards on
+   every container boot and every `dx-start-container` bring-up — this
+   manual gate exists because a bring-up against an **already-running**
+   container only re-syncs the bootstrap payload; it does not by itself
+   prove which image is running.
 
    **Accepted residual window**: `dx-ssh` and `dx-enter` bypass
    `dx-start-container`, so a direct session against an
@@ -775,8 +776,7 @@ you stop partway, and nothing destroys the primary before step 4.
 
    - [ ] `./bin/dx` completed bootstrap; sshd reachable; `dx-enter` works.
    - [ ] Full test suite passes.
-   - [ ] Old-base exclusion gate (step 7) passes; neither temporary guard
-         fired during the rebuild.
+   - [ ] Old-base exclusion gate (step 7) passes.
    - [ ] AI-tools opt-in path (`dx-ai`, keyring, persistence links) works.
    - [ ] Timezone, persist links, and `gh` persistence are intact after a
          `dx-destroy && dx` cycle — same-base volume reuse is revalidated,

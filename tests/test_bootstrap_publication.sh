@@ -29,15 +29,6 @@ case "${1:-}" in
     shift
     [ "${1:-}" != -i ] || shift
     shift
-    # dx-start-container'"'"'s temporary base-image-changeover guard greps the
-    # *real* guest for /bin/bash. Faked exec runs the guest command locally
-    # against a fixture root instead of a guest, and the real test host always
-    # has /bin/bash -- answer this one probe canned so it never shadows the
-    # exit code/message a dx-start-container contract test is actually
-    # checking.
-    case "$*" in
-      *OLD_BASE*) echo OLD_BASE_ABSENT; exit 0 ;;
-    esac
     exec "$@"
     ;;
 esac
@@ -456,6 +447,8 @@ if [ "$start_e_status" -eq 0 ] && [ "$start_e_elapsed" -ge 1 ] && [ "$start_e_el
 else
     test_fail "dx-start-container succeeds on a lease that appears late but within the bound (status $start_e_status, elapsed ${start_e_elapsed}s, out '$start_e_out')"
 fi
+
+assert_file_not_contains "$BASE_DIR/bin/dx-start-container" 'OLD_BASE' "dx-start-container no longer probes the guest for the old-base signature (docs/refactor/migration-gates.md#old-base-guards)"
 
 print_summary
 exit_with_code
