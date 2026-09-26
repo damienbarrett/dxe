@@ -11,4 +11,4 @@ if ! container_image_exists "$DX_IMAGE"; then
 fi
 
 echo "Removing image $DX_IMAGE..."
-container image rm "$DX_IMAGE" >/dev/null
+dx_runtime_image_delete "$DX_IMAGE" >/dev/null
