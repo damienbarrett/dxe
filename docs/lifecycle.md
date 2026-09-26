@@ -90,6 +90,8 @@ or perform maintenance operations.
 | [`bin/dx-reclaim`](../bin/dx-reclaim) | Reclaims host disk space by deleting old Nix generations in the guest and trimming persistent filesystems. |
 | [`bin/dx-export`](../bin/dx-export) | Archives the container to a tar file. |
 | [`bin/dx-nix-disk`](../bin/dx-nix-disk) | Prepares a sparse Nix disk image; lifecycle-adjacent storage prep. |
+| [`bin/dx-backup`](../bin/dx-backup) | Captures the at-risk contents of `/persist` into a Mac folder, incrementally. |
+| [`bin/dx-restore`](../bin/dx-restore) | Pushes a captured mirror (or a named subpath of it) back into a running guest's `/persist`. |
 | [`container/.../bootstrap.sh`](../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh) | Runs the ordered sourceable phases from the atomically published, leased bootstrap generation. |
 
 ### Reclaiming host disk space
@@ -117,6 +119,102 @@ This does not delete persisted files. It removes only unreferenced Nix store
 paths and discards blocks the guest filesystem has already marked free. It is
 reasonable to run occasionally after large rebuilds or dependency churn, but it
 does not need to run constantly or on a tight schedule.
+
+### Backing up and restoring /persist
+
+Every Apple container volume is excluded from Time Machine, including
+`dx-persist` — a single sparse `volume.img` whose mtime moves whenever the
+guest runs would otherwise be re-copied whole on every hourly pass, and a
+file-level copy of a mounted filesystem image is not a dependable restore
+source anyway (see `docs/troubleshooting.md`, "`dx` hangs at Waiting for
+guest SSH on a loaded host"). That leaves `/persist` with no host-side backup
+at all, and `dx-factory-reset` destroys it. `dx-backup` and `dx-restore`
+close that gap: an on-demand, incremental, git-aware capture of the contents
+of `/persist` that a rebuild could not reconstruct, mirrored into a normal
+Mac folder that Time Machine (or any other host backup tool) already
+protects. Unlike the excluded container volumes, this destination is
+deliberately left **inside** Time Machine's scope — that is the entire point
+of moving the at-risk content out of a volume Time Machine skips and into
+plain files it doesn't.
+
+```bash
+./bin/dx-backup              # capture; prints "N files, N bytes transferred"
+./bin/dx-backup --dry-run    # show the at-risk selection and would-be transfer only
+
+./bin/dx-restore              # push the whole mirror back into a running guest
+./bin/dx-restore PATH...      # push only the named subpath(s) (relative to /persist)
+./bin/dx-restore --dry-run    # show what would change, without pushing
+./bin/dx-restore --force      # push even where the guest already has different content
+```
+
+**Destination:** `DX_BACKUP_DIR`, default `~/Backups/dxe-persist/<DX_CONTAINER_NAME>/`
+(so `dx-host` and `dx-test` never share a mirror). Inside it:
+
+| Path | Contents |
+| --- | --- |
+| `current/` | One mirror of the at-risk set. No dated generations — every run updates the same tree in place. |
+| `manifest.tsv` | `path<TAB>size<TAB>mtime<TAB>sha256` for every mirrored file, written atomically (via a temp file plus `mv`) only after a run's transfer fully succeeds. |
+| `last-run.log` | One line per completed run: timestamp and the transfer summary. |
+
+**What is captured (the at-risk set).** `dx-backup` runs a selector inside the
+guest, as `dx`, over `/persist`. For every git work tree it finds there (a
+directory containing a `.git` **directory** — a `.git` *file*, as used by a
+linked worktree or a submodule, is not treated as a repository boundary; see
+the warning it prints if it encounters one):
+
+- A repository with commits on a local branch that are not on any remote, or
+  with no remote at all (`git log --branches --not --remotes --oneline`
+  non-empty, or `git remote` empty), is **at-risk as a whole**: the entire
+  work tree is mirrored, `.git/` included, so the commits themselves survive.
+- Otherwise, the repository is treated as safe, and only its modified,
+  staged, and untracked-but-not-ignored files are mirrored. A committed file
+  that is unmodified and already reachable through the remote is **not**
+  copied — that is the bulk of the bytes this backup deliberately skips.
+
+Files outside any repository are always at-risk. **Ignored files are
+included by default** — a `.gitignore`d secret must never be dropped
+silently — except for a deny-list of rebuildable caches:
+
+```
+node_modules/  target/  .direnv/  result  result-*  __pycache__/
+.cache/  dist/  build/  .venv/  .tox/  .pytest_cache/  .mypy_cache/
+```
+
+plus the guest's own Nix-profile generation trees
+(`home/dx/.local/state/dx-ai/generations/*/profile`). This deny-list applies
+everywhere (inside an at-risk-whole repository too, and outside any
+repository), not only to the "ignored by default" case: it exists purely to
+keep rebuildable bulk out of the backup. Extend it with
+`DX_BACKUP_EXCLUDE_FILE=/path/to/file`, one glob pattern per line (matched
+against the full path relative to `/persist`; blank lines and `#` comments
+are skipped). Symlinks are mirrored as symlinks (a changed target is a
+detected change). Sockets, fifos, and device files are skipped and counted,
+never mirrored.
+
+**Incremental transfer.** The guest selector emits a listing
+(`path size mtime sha256`) for the current at-risk set; the host diffs it
+against `manifest.tsv` and fetches only new or changed paths in one tar
+stream over the existing `container exec` transport (the same idiom as
+`dx-get`/`dx-put` — no new guest dependency, no `rsync`). A path that is no
+longer at-risk (for example, a repository that got pushed) is removed from
+the mirror. A second run with nothing changed in the guest transfers "0
+files, 0 bytes" — only the listing pass still runs.
+
+**Restoring.** `dx-restore` needs a running guest: it pushes `current/` (or
+the exact paths you name) back into `/persist`, preserving file modes and
+restoring `dx:dx` ownership. It refuses the whole run — without `--force` —
+if any target already exists in the guest with different content, so it never
+silently overwrites newer guest-side work; `--dry-run` reports, for every
+target, whether it would be created, is already identical, or would
+overwrite a conflict. To restore into a **freshly created** guest (after
+`dx-factory-reset`, or onto a new machine): bring the guest up as usual
+(`./bin/dx`) so `/persist` exists and is running, then run `dx-restore` with
+the same `DX_BACKUP_DIR` the backup was taken into.
+
+**What this does not do (yet).** Capture is on demand only — there is no
+schedule. Run it yourself before anything that could lose `/persist` (a
+factory reset, a storage migration, a base-image pin change) and whenever you
+want a fresh recovery point.
 
 ### Migration from earlier versions
 

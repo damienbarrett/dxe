@@ -89,13 +89,6 @@ Every plan document below is listed under exactly one of these.
   re-measures the same ratio. If #12 lands first, both are against a metric
   shape that no longer exists. Undecided which lands first; no owner named
   for either document.
-- [`plan.md`](plan.md) — Backlog only: the NixOS 26.05 upgrade record and all
-  eight code-review fixes (P3–P10) have landed and been removed from the
-  document (see Git history; the upgrade procedure now lives in
-  `docs/release-maintenance.md`). B1, an incremental host backup for at-risk
-  `/persist` content, is specified but not implemented. Revisit trigger: when
-  an incremental `/persist` host backup is next scheduled, or the next time a
-  `/persist` loss scare occurs.
 - [`refactor-v2-final.md`](refactor-v2-final.md) — Follow-on bootstrap
   refactor plan. Its identity/publication threading, explicit Nix-volume state,
   and claim-cleanup phases remain open; the proposed sourceable-test split and

@@ -846,6 +846,24 @@ contents of the guest's `/persist`.
 
 This backup is needed before any future storage migration and before QNAP.
 
+**Done.** `bin/dx-backup` and `bin/dx-restore`, shared logic in
+`bin/lib/dx-backup.sh`, and the guest selection-rule library shipped through
+the bootstrap volume (`container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib/dx-persist-backup-select.sh`,
+sourceable and fixture-testable with no container, exactly like
+`dx-opencode-persistence.sh`). Selection rules, the deny-list, the
+incremental capture, and restore (dry-run, `--force` refusal, a full round
+trip including an unpushed repository's `.git` history) are covered by
+`tests/test_persist_backup_select.sh`, `tests/test_dx_backup.sh`, and
+`tests/test_dx_restore.sh` over the fake-`container` boundary. Item 4 above
+(a schedule) does not apply: Q5 resolved on-demand only, no schedule yet.
+`plan.md` (B1 was its only content) and its `plans.md` entry are deleted;
+operation is documented in
+[`docs/lifecycle.md`](docs/lifecycle.md#backing-up-and-restoring-persist).
+Live-verified on `dx-test` once the coordinating session confirms the guest
+is free (see the branch's progress file for the exact commands and results).
+
+Not yet merged into `main` -- the coordinating session merges after review.
+
 ---
 
 ## Branch 11 — QNAP runtime (`qnap-dxe-plan.md`; accepted 2026-09-26)

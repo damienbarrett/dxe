@@ -44,7 +44,7 @@
   - default-value consistency;
   - required safety statements.
 
-- [x] **5. Archive completed upgrade material from [`plan.md`](../../../plan.md)** only
+- [x] **5. Archive completed upgrade material from `plan.md`** only
   after its remaining status items are confirmed complete.
 
   **Done (2026-09-19).** P7 and P10 closed; B1 remains, but as an
@@ -53,6 +53,11 @@
   deleted from `plan.md`, with its content in
   [`docs/release-maintenance.md`](../../release-maintenance.md) and Git
   history.
+
+  **Update (Branch 10, `feat/persist-backup`):** B1 is now implemented —
+  see ["Backing up and restoring /persist"](../../lifecycle.md) — and
+  `plan.md` itself (now empty of open items) has been deleted; its entry in
+  `plans.md` is removed with it.
 
 - [x] **6. Keep the theme writer structurally as-is** unless it is being changed for
   a feature. It already has renderer functions and extensive behavior tests. If

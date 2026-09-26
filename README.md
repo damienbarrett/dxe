@@ -139,5 +139,7 @@ release-upgrade and base-image changeover procedures, and
 decisions and operational migration gates the completed refactor retained
 (its summary plan document, `refactor-plan.md`, is closed and removed; see
 Git history and [`docs/refactor/baselines.md`](docs/refactor/baselines.md)
-for its measurable-targets baseline). [plan.md](plan.md) is
-now an unscheduled backlog item (see [plans.md](plans.md)).
+for its measurable-targets baseline). `plan.md`'s one backlog item, B1 (an
+incremental `/persist` backup), is implemented — see
+["Backing up and restoring /persist"](docs/lifecycle.md#backing-up-and-restoring-persist)
+— and that plan document has been removed too (see [plans.md](plans.md)).

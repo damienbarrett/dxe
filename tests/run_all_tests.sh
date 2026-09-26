@@ -16,7 +16,7 @@ SKIP_INTEGRATION=false
 # Every section this runner can dispatch. An unknown --section= must fail rather
 # than report success over an empty run: tests/run-tier.sh selects whole tiers by
 # section number, so a silent no-op would shrink a tier without failing CI.
-KNOWN_SECTIONS="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27"
+KNOWN_SECTIONS="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30"
 
 for arg in "$@"; do
     case $arg in
@@ -116,6 +116,13 @@ run_test "$SCRIPT_DIR/test_herdr_config_persistence.sh" "24"
 run_test "$SCRIPT_DIR/test_nix_store_import.sh" "25"
 run_test "$SCRIPT_DIR/test_section18_mount_git.sh" "18"
 run_test "$SCRIPT_DIR/test_section19_reverse_forward.sh" "19"
+
+# Persist backup (Branch 10, feat/persist-backup): selection rules against
+# fixture trees, and dx-backup/dx-restore over the fake-container boundary.
+# No real container needed for any of these.
+run_test "$SCRIPT_DIR/test_persist_backup_select.sh" "28"
+run_test "$SCRIPT_DIR/test_dx_backup.sh" "29"
+run_test "$SCRIPT_DIR/test_dx_restore.sh" "30"
 
 echo ""
 echo "======================================"
