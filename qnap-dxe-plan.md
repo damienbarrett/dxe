@@ -66,7 +66,9 @@ The Apple Container implementation remains the default and must not regress.
   Station remains the QNAP UI, while automation uses Docker's supported CLI/API
   boundary.
 - Do not install Tailscale inside the DX guest. Only the QNAP host needs to be
-  a tailnet node.
+  a tailnet node. *(Under review: Phase 5 item 9 below evaluates
+  the opposite as a design spike; this non-goal stands until that spike's
+  go/no-go.)*
 - Do not run the QNAP container in privileged mode.
 - Do not emulate an unsupported CPU architecture for the production guest.
 - Do not make a QNAP implementation commit refresh `flake.lock`, upgrade the
@@ -534,6 +536,20 @@ Develop with fake `docker` and `ssh` boundaries first.
 7. Add capability checks and fail-closed messages for `dx-mount`, `dx-nix-disk`,
    and unsupported reclaim operations.
 8. Persist and pin the guest SSH host identity for the QNAP profile.
+
+9. **Design spike (decided 2026-09-26, after the current work completes):**
+   evaluate running `tailscaled` *inside* the DX guest, so every guest is its
+   own tailnet node reached by MagicDNS name regardless of which host runs
+   it. Shape to prototype: userspace-networking mode (no `/dev/net/tun`, no
+   added capabilities; inbound connections are delivered to local listeners),
+   `tailscaled` supervised by bootstrap the way D-Bus and gnome-keyring are,
+   its state directory on `/persist`, and a tagged pre-authorised auth key or
+   OAuth client as a new managed secret (provisioning, rotation, expiry, and
+   backup to be designed). Prototype on the Mac's `dx-test` first, then
+   decide go/no-go. If it goes, it becomes the access model for both targets,
+   DQ5's host-address binding becomes the fallback, and the Non-goals bullet
+   about Tailscale in the guest is retired; if not, this item closes with the
+   reason.
 
 ### Exit gate
 
