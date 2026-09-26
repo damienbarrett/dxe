@@ -584,23 +584,30 @@ pass.
 
 ---
 
-## Branch 6 — `feat/opencode` (size M, code exists; in progress 2026-09-26)
+## Branch 6 — `feat/opencode` (size M, code exists; done on the branch 2026-09-26)
 
 **Depends on:** Branches 1–3 merged, Step 4 passed, and Branch 9 landed.
 **Decision:** Q1 -- **resolved 2026-09-26: fix the start-generation bug
 first.** Branch 9 now runs before this one (see the summary table and "Why
 this order").
 
-**Progress (2026-09-26, on the branch, not yet merged to `main`):**
-increments 4.1–4.4 below are done: original support re-landed, the
-persistence helper (`scripts/lib/dx-opencode-persistence.sh`) added at
-100% line coverage intent (kcov confirmation pending the G2 pass),
-activation and `dx-ai` wired to it with the `ln -sfnT` hardening restored,
-and per-generation tool manifests plus recovery. Remaining: 4.5's
-two-loader-paths reduction/justification review (justified in the
-increment 3 commit message, not reduced), 4.6 (Section 12, done as part
-of increment 1), the full G1–G5 validation pass, and the live `dx-test`
-tests below.
+**Status (2026-09-26): all work and validation complete on the branch,
+not yet merged to `main`** (that fast-forward, and the Appendix D
+promotion decision, are for the coordinating session and the user, not
+this subagent). All six increments below are done, including 4.5 (the
+two-loader-paths design is justified, not reduced -- see the increment 3
+commit message) and 4.6 (Section 12 present/absent assertions, done as
+part of increment 1). G1 (bash32, runner-matched Ubuntu contracts,
+pinned ShellCheck 0.10.0), G2 (100% kcov coverage, ratchet re-measured
+1910 → 1921 → 1917 bp across the branch), and G3 (`nix flake check`,
+`flake.lock` unchanged) are all green. The full live-`dx-test` list below
+is done: fresh opt-in (a), the full live tier (b, 1247/0/8), and
+retained-state migration with a real five-tool recovery (c) all passed;
+`dx-test` is stopped (d). Evidence:
+`docs/evidence/20260926/opencode-relanding.md`. One live-guest finding,
+unrelated to OpenCode, recorded separately below ("Observations from
+Branches 1–2"): building `codex` from source can OOM under the profile's
+default 12 GB container allocation.
 
 After Branch 2's revert, this branch re-lands OpenCode as **one complete
 delivery**:
