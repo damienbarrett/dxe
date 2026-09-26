@@ -36,3 +36,5 @@ real local username and hostname. Nothing else in this directory matched a
 scan for private keys, `BEGIN OPENSSH`/`BEGIN ... PRIVATE KEY` markers, token
 prefixes (`ghp_`, `sk-`, etc.), passwords, `Authorization:` headers, or
 tailnet keys.
+
+Local home-directory paths were replaced with `~/` throughout the logs on 2026-09-26 before the public repository was released.

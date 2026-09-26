@@ -1,17 +1,17 @@
 NOTE: Section 25 Nix-store importer behavior requires the isolated Linux runner; run tests/run-coverage-linux.sh for that gate.
-/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 12: declare: -A: invalid option
+~/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 12: declare: -A: invalid option
 declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
-/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 13: declare: -A: invalid option
+~/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 13: declare: -A: invalid option
 declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
-/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 14: declare: -A: invalid option
+~/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 14: declare: -A: invalid option
 declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
-/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 15: declare: -A: invalid option
+~/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 15: declare: -A: invalid option
 declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
-/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 16: declare: -A: invalid option
+~/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 16: declare: -A: invalid option
 declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
-/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 17: declare: -A: invalid option
+~/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 17: declare: -A: invalid option
 declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
-/Users/damien/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 18: declare: -A: invalid option
+~/Development/dxe-bump/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/herdr-config.sh: line 18: declare: -A: invalid option
 declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
 Error: /var/folders/c9/rtkf4m_s5bb17tt2zs7v8ylc0000gn/T//dxe-config-test.Aj5fjY/hostile.env:1: quotes, escapes, substitutions, and control operators are not allowed
 Error: host port '80' is privileged; use a host port >= 1024.
