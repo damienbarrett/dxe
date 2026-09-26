@@ -28,8 +28,12 @@ dx_container_list_names() {
     fi
 }
 
-container_exists() { dx_container_list_names true | grep -F -x -q -- "$1"; }
-container_is_running() { dx_container_list_names false | grep -F -x -q -- "$1"; }
+# No `-q`: see tests/test_helpers.sh's stdin_matches comment for why
+# `writer | grep -q` is unsafe under `set -o pipefail` (every caller of these
+# two functions). Redirecting to /dev/null instead keeps grep reading to EOF
+# so the writer's later `printf` calls never see a closed pipe.
+container_exists() { dx_container_list_names true | grep -F -x -- "$1" >/dev/null; }
+container_is_running() { dx_container_list_names false | grep -F -x -- "$1" >/dev/null; }
 container_image_exists() {
     local wanted="$1" output
     output="$(container image list --quiet 2>/dev/null)" && {

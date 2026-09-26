@@ -91,6 +91,97 @@ else
 fi
 rm -f "$SANITY_MARKER"
 
+# Regression: container_is_running/container_exists must not report a real
+# match as "not found" under set -o pipefail.
+#
+# dx_container_list_names captures the whole `container list [-a] --quiet`
+# output into a variable, then re-emits it with a single
+# `printf '%s\n' "$output"` into the pipe that container_exists/
+# container_is_running read with `grep -F -x -q`. `grep -q` stops reading and
+# closes its end of the pipe as soon as it finds a match; if printf still has
+# unwritten output queued (because the captured list is bigger than the pipe
+# buffer), its next write() gets EPIPE ("printf: write error: Broken pipe"),
+# and under `set -o pipefail` -- true for every caller here, e.g.
+# bin/dx-wait-ssh -- that failure, not grep's success, becomes the pipeline's
+# exit status: a real match reported as absent. See tests/test_helpers.sh's
+# stdin_matches comment for the general shape of this bug; this is
+# bin/lib/dx-container.sh's own copy of it, observed for real during a Step 4
+# bring-up (dxe-recovery/progress/logs/step4-bringup.log lines 52, 67-68):
+# dx-wait-ssh reported "Container dx-test stopped before SSH became
+# responsive" while the guest was in fact running and bootstrapping.
+#
+# Reproduce deterministically with a stub `container` whose `list`/`list -a`
+# output puts the target name FIRST, then tens of thousands of filler lines --
+# enough that the captured output exceeds the pipe buffer and grep is certain
+# to have exited (and closed the pipe) before printf finishes writing the
+# rest.
+BIGLIST_STUB_DIR="$(mktemp -d -t dxe-biglist-stub-bin.XXXXXX)"
+BIGLIST_TARGET="dxe-biglist-target-$$"
+BIGLIST_ABSENT="dxe-biglist-absent-$$"
+BIGLIST_FILLER_LINES=20000
+
+cleanup_biglist_stub_dir() {
+    rm -rf "$BIGLIST_STUB_DIR"
+}
+trap 'cleanup_stub_dir; cleanup_biglist_stub_dir' EXIT
+
+cat > "$BIGLIST_STUB_DIR/container" <<STUBEOF
+#!/bin/bash
+case "\$1" in
+    list)
+        printf '%s\n' "$BIGLIST_TARGET"
+        i=1
+        while [ "\$i" -le $BIGLIST_FILLER_LINES ]; do
+            printf 'other-%d\n' "\$i"
+            i=\$((i + 1))
+        done
+        ;;
+esac
+exit 0
+STUBEOF
+chmod +x "$BIGLIST_STUB_DIR/container"
+
+# Call container_is_running/container_exists from a fresh subshell with
+# pipefail on and the big-list stub first on PATH, so the pipe inside the
+# library function is the one under test rather than anything in this test
+# script's own pipeline.
+biglist_is_running() (
+    set -o pipefail
+    PATH="$BIGLIST_STUB_DIR:$PATH"
+    source "$BASE_DIR/bin/lib/dx-container.sh"
+    container_is_running "$1"
+)
+biglist_exists() (
+    set -o pipefail
+    PATH="$BIGLIST_STUB_DIR:$PATH"
+    source "$BASE_DIR/bin/lib/dx-container.sh"
+    container_exists "$1"
+)
+
+if biglist_is_running "$BIGLIST_TARGET"; then
+    test_pass "container_is_running finds a match past a large stub list under pipefail"
+else
+    test_fail "container_is_running finds a match past a large stub list under pipefail"
+fi
+
+if biglist_exists "$BIGLIST_TARGET"; then
+    test_pass "container_exists finds a match past a large stub list under pipefail"
+else
+    test_fail "container_exists finds a match past a large stub list under pipefail"
+fi
+
+if biglist_is_running "$BIGLIST_ABSENT"; then
+    test_fail "container_is_running correctly reports an absent name as not running"
+else
+    test_pass "container_is_running correctly reports an absent name as not running"
+fi
+
+if biglist_exists "$BIGLIST_ABSENT"; then
+    test_fail "container_exists correctly reports an absent name as not existing"
+else
+    test_pass "container_exists correctly reports an absent name as not existing"
+fi
+
 # Run one real section script under SKIP_INTEGRATION=true with the stub PATH
 # and fake (always "running") container name, then assert it did no guest
 # work and exited cleanly.
