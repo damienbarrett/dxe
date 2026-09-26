@@ -1358,7 +1358,7 @@ configure_guest
 echo "STUB: configure_guest returned normally"
 INNER
 rc=0
-output="$(DXE_TEST_GUEST="$GUEST" DXE_TEST_DBUS_BIN="$fixture/dbus-order/bin/dbus-daemon" bash "$order_script" 2>&1)" || rc=$?
+output="$(DXE_TEST_GUEST="$GUEST" DXE_TEST_DBUS_BIN="$fixture/dbus-order/bin/dbus-daemon" DX_BOOTSTRAP_ROOT="$GUEST" bash "$order_script" 2>&1)" || rc=$?
 rm -f "$order_script"
 if [ "$rc" -ne 0 ]; then
     echo "Error: configure_guest did not complete (rc=$rc). Output:" >&2
@@ -1380,6 +1380,16 @@ if ! printf '%s\n' "$output" | stdin_matches -F 'STUB: configure_guest returned 
     printf '%s\n' "$output" >&2
     exit 1
 fi
+
+# Exercise configure_guest's fail-closed fallback when the helper was not
+# preloaded and the configured bootstrap root does not contain it.
+(
+    unset -f dx_ai_opencode_persistence dx_ai_opencode_prepare_activation_ancestors
+    ensure_nix_ownership() { :; }; chown() { :; }; run_as_dx() { :; }
+    setup_gh_persistence() { :; }; setup_tmux_persistence() { :; }; dx_activate_herdr() { :; }; setup_keyring_service() { :; }
+    run_home_manager_activation() { :; }; usermod() { :; }; grep() { return 1; }
+    DX_BOOTSTRAP_ROOT="$fixture/missing-bootstrap" configure_guest >/dev/null 2>&1 || true
+)
 
 rm -rf /persist/home/dx /home/dx
 

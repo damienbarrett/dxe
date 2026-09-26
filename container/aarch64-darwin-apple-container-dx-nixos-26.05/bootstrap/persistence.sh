@@ -117,6 +117,7 @@ setup_persist() {
         # ownership, preserving the marker-based no-recursive-chown design.
         dx_prepare_owned_directory "$persist_root/home/dx/.local" 0755 || return 1
         dx_prepare_owned_directory "$persist_root/home/dx/.local/state" 0755 || return 1
+        dx_prepare_owned_directory "$persist_root/home/dx/.local/share" 0755 || return 1
     fi
 }
 

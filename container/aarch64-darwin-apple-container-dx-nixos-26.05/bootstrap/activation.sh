@@ -210,6 +210,7 @@ configure_guest() {
     echo "Configuring guest environment with Home Manager..."
     local ai_tools_enabled=false
     local phase_started
+    local opencode_persistence_library
 
     # Hand over Nix ownership to dx for true single-user operation (§7)
     ensure_nix_ownership "$content_validated"
@@ -242,6 +243,23 @@ configure_guest() {
     if ai_tools_opted_in; then
         phase_started=$SECONDS
         dx_ensure_tree_owner /persist/home/dx /persist/home/dx/.dxe-owner-v1 "persisted guest home" || return 1
+        # Validate and migrate OpenCode paths before any privileged mkdir/chown
+        # can traverse a symlinked persistent ancestor.
+        if ! declare -F dx_ai_opencode_persistence >/dev/null; then
+            opencode_persistence_library="${DX_BOOTSTRAP_ROOT:-/guest-bootstrap}/scripts/lib/dx-opencode-persistence.sh"
+            if [ ! -r "$opencode_persistence_library" ]; then
+                echo "Error: OpenCode persistence library is missing: $opencode_persistence_library" >&2
+                return 1
+            fi
+            # shellcheck source=/dev/null
+            source "$opencode_persistence_library"
+        fi
+        # dx-ai itself runs as dx, so it cannot repair a common persisted XDG
+        # ancestor that an earlier root-run setup left root-owned. Do that
+        # bounded repair only here, after the helper has preflighted every
+        # ancestor without traversing a symlink.
+        dx_ai_opencode_prepare_activation_ancestors /persist/home/dx || return 1
+        dx_ai_opencode_persistence /persist/home/dx /home/dx || return 1
         dx_prepare_owned_directory /persist/home/dx/.gemini/antigravity-cli 0700 || return 1
         dx_prepare_owned_directory /persist/home/dx/.claude 0700 || return 1
         dx_prepare_owned_directory /persist/home/dx/.codex 0700 || return 1

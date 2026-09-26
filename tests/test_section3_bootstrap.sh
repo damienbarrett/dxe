@@ -175,9 +175,10 @@ else
 fi
 
 # A factory-reset persist volume has no pre-existing XDG tree.  The bootstrap
-# must establish the shared ~/.local parent as dx before later services create
-# ~/.local/state children; otherwise the first dx-ai invocation cannot create
-# its own state directory.  Keep this fixture scoped to a temporary persist
+# must establish the shared ~/.local parent and its state/share children as dx
+# before later services create their own XDG children; otherwise the first
+# dx-ai invocation cannot create ~/.local/state/dx-ai or
+# ~/.local/share/opencode.  Keep this fixture scoped to a temporary persist
 # root so the sourceable test never touches the host's /persist volume.
 fresh_persist="$fixture/fresh-persist/home/dx"
 fresh_persist_behavior="$({
@@ -192,21 +193,26 @@ fresh_persist_behavior="$({
     install() { command mkdir -p "${!#}"; }
     mkdir -p "$fixture/fresh-persist"
     setup_persist "$fixture/fresh-persist"
-    if [ ! -d "$fresh_persist/.local" ] || [ ! -d "$fresh_persist/.local/state" ]; then
+    if [ ! -d "$fresh_persist/.local" ] || [ ! -d "$fresh_persist/.local/state" ] \
+        || [ ! -d "$fresh_persist/.local/share" ]; then
         echo "xdg-parent-missing"
     else
         echo "xdg-parent-ready"
     fi
     mkdir -p "$fresh_persist/.local/state/dx-ai"
     touch "$fresh_persist/.local/state/dx-ai/child-created-by-dx"
+    mkdir -p "$fresh_persist/.local/share/opencode"
+    touch "$fresh_persist/.local/share/opencode/child-created-by-dx"
 } 2>&1)"
 if [ -d "$fresh_persist/.local" ] \
     && [ -d "$fresh_persist/.local/state/dx-ai" ] \
     && [ -f "$fresh_persist/.local/state/dx-ai/child-created-by-dx" ] \
+    && [ -d "$fresh_persist/.local/share/opencode" ] \
+    && [ -f "$fresh_persist/.local/share/opencode/child-created-by-dx" ] \
     && printf '%s\n' "$fresh_persist_behavior" | stdin_matches 'xdg-parent-ready'; then
-    test_pass "fresh persist prepares ~/.local so dx can create an XDG state child"
+    test_pass "fresh persist prepares ~/.local/share so dx can create an OpenCode data child"
 else
-    test_fail "fresh persist prepares ~/.local so dx can create an XDG state child ($fresh_persist_behavior)"
+    test_fail "fresh persist prepares ~/.local/share so dx can create an OpenCode data child ($fresh_persist_behavior)"
 fi
 
 # The persist root itself is a trust boundary: setup must refuse a symlink

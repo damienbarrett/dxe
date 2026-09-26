@@ -136,6 +136,12 @@
     source = ../scripts/dx-ai.sh;
   };
 
+  # dx-ai loads this at runtime (it is a source-only library, not a command);
+  # see scripts/dx-ai.sh's dx_ai_load_opencode_persistence for why it also
+  # looks for a copy on the bootstrap volume.
+  home.file.".local/lib/dx/dx-opencode-persistence.sh".source =
+    ../scripts/lib/dx-opencode-persistence.sh;
+
   home.file.".local/bin/dx-claude-statusline" = {
     executable = true;
     source = ../scripts/dx-claude-statusline.sh;

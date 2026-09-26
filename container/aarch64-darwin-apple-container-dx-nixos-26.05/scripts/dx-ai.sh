@@ -10,6 +10,28 @@ DX_AI_TOOLS="codex gemini claude agy herdr opencode"
 # ships. Herdr has no target for gemini or agy, so they are absent by design.
 DX_AI_HERDR_INTEGRATIONS=(claude codex opencode)
 
+# dx-ai is packaged both as a Home Manager `home.file` (for normal guest use,
+# once the AI generation itself has been published) and loadable straight off
+# the bootstrap volume (so a fresh guest's very first dx-ai run, before any AI
+# generation exists, can still resolve it). Try the script's own directory
+# first since it is already colocated there in both installs.
+dx_ai_load_opencode_persistence() {
+    local script_directory candidate
+    declare -F dx_ai_opencode_persistence >/dev/null && return 0
+    script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+    for candidate in \
+        "$script_directory/lib/dx-opencode-persistence.sh" \
+        "$HOME/.local/lib/dx/dx-opencode-persistence.sh" \
+        "${DX_AI_BOOTSTRAP_ROOT:-/guest-bootstrap}/scripts/lib/dx-opencode-persistence.sh"; do
+        [ -r "$candidate" ] || continue
+        # shellcheck source=/dev/null
+        source "$candidate" || return 1
+        declare -F dx_ai_opencode_persistence >/dev/null && return 0
+    done
+    echo "Error: OpenCode persistence library is unavailable." >&2
+    return 1
+}
+
 dx_ai_usage() {
     cat <<'EOF'
 Usage: dx-ai [--recover] [--supports <tool>]
@@ -210,12 +232,15 @@ dx_ai_recover_generation() {
 }
 
 dx_ai_setup_credentials() {
-    local persist_home=/persist/home/dx settings tmp
-    mkdir -p "$persist_home/.gemini/antigravity-cli" "$persist_home/.claude" "$persist_home/.codex" "$persist_home/.local/share/keyrings"
+    local persist_home="${1:-/persist/home/dx}" home="${2:-$HOME}" settings tmp
+    dx_ai_load_opencode_persistence || return 1
+    dx_ai_opencode_persistence "$persist_home" "$home" || return 1
+    mkdir -p "$persist_home/.gemini/antigravity-cli" "$persist_home/.claude" "$persist_home/.codex" \
+        "$persist_home/.local/share/keyrings" "$home/.config" "$home/.local/share"
     [ -s "$persist_home/.claude.json" ] || printf '%s\n' '{}' > "$persist_home/.claude.json"
-    ln -sfn "$persist_home/.gemini" ~/.gemini; ln -sfn "$persist_home/.claude" ~/.claude
-    ln -sfn "$persist_home/.claude.json" ~/.claude.json; ln -sfn "$persist_home/.codex" ~/.codex
-    mkdir -p ~/.local/share; ln -sfnT "$persist_home/.local/share/keyrings" ~/.local/share/keyrings
+    ln -sfnT "$persist_home/.gemini" "$home/.gemini"; ln -sfnT "$persist_home/.claude" "$home/.claude"
+    ln -sfnT "$persist_home/.claude.json" "$home/.claude.json"; ln -sfnT "$persist_home/.codex" "$home/.codex"
+    ln -sfnT "$persist_home/.local/share/keyrings" "$home/.local/share/keyrings"
     settings="$persist_home/.claude/settings.json"; [ -s "$settings" ] || printf '%s\n' '{}' > "$settings"
     if ! jq -e '.statusLine' "$settings" >/dev/null 2>&1; then tmp="$settings.tmp.$$"; jq '. + {statusLine: {type: "command", command: "dx-claude-statusline"}}' "$settings" > "$tmp"; mv "$tmp" "$settings"; fi
 }

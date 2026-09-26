@@ -369,6 +369,141 @@ fi
 assert_grep_in_file "$AI_SCRIPT" '^ +dx_ai_install_herdr_integrations$' "dx-ai runs the Herdr integration step from its main flow"
 assert_file_not_contains "$AI_SCRIPT" 'dx_ai_install_herdr_integrations || return' "dx-ai never lets an optional Herdr integration fail the update"
 
+# --- dx_ai_setup_credentials: OpenCode persistence is wired through the
+# shared helper, and the pre-existing four (.gemini/.claude/.claude.json/
+# .codex) get the ln -sfnT hardening back. dx-ai runs as dx and must never
+# touch the real $HOME or /persist, so every case below is a fully isolated
+# fixture passed as the function's two explicit arguments.
+#
+# Production runs in the Linux guest, where ln supports -T. This repository's
+# macOS bash-3.2 job has no such -T (BSD ln rejects the option outright), so
+# translate that one option for the functional (non-hardening) cases below --
+# they are about the symlinks getting created and staying stable, not about
+# -T's specific real-directory refusal, which the dedicated, unshimmed
+# hardening case further down tests directly.
+creds_ln_shim() { ln() { if [ "${1:-}" = -sfnT ]; then command ln -sfn "$2" "$3"; else command ln "$@"; fi; }; }
+creds_ln_unshim() { unset -f ln; }
+
+creds_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-creds-test.XXXXXX")"
+creds_fixture="$(cd "$creds_fixture" && pwd -P)"
+trap 'rm -rf "$creds_fixture"' EXIT
+creds_persist="$creds_fixture/persist/home/dx"
+creds_home="$creds_fixture/home/dx"
+mkdir -p "$creds_persist" "$creds_home"
+creds_ln_shim
+if dx_ai_setup_credentials "$creds_persist" "$creds_home"; then
+    test_pass "dx_ai_setup_credentials succeeds against a fresh fixture"
+else
+    test_fail "dx_ai_setup_credentials succeeds against a fresh fixture"
+fi
+creds_ln_unshim
+if [ -L "$creds_home/.config/opencode" ] \
+    && [ "$(readlink "$creds_home/.config/opencode")" = "$creds_persist/.config/opencode" ]; then
+    test_pass "dx_ai_setup_credentials symlinks ~/.config/opencode to persist"
+else
+    test_fail "dx_ai_setup_credentials symlinks ~/.config/opencode to persist"
+fi
+if [ -L "$creds_home/.local/share/opencode" ] \
+    && [ "$(readlink "$creds_home/.local/share/opencode")" = "$creds_persist/.local/share/opencode" ]; then
+    test_pass "dx_ai_setup_credentials symlinks ~/.local/share/opencode to persist"
+else
+    test_fail "dx_ai_setup_credentials symlinks ~/.local/share/opencode to persist"
+fi
+for legacy_link in .gemini .claude .codex; do
+    if [ -L "$creds_home/$legacy_link" ] && [ "$(readlink "$creds_home/$legacy_link")" = "$creds_persist/$legacy_link" ]; then
+        test_pass "dx_ai_setup_credentials symlinks ~/$legacy_link to persist"
+    else
+        test_fail "dx_ai_setup_credentials symlinks ~/$legacy_link to persist"
+    fi
+done
+if [ -L "$creds_home/.claude.json" ] && [ "$(readlink "$creds_home/.claude.json")" = "$creds_persist/.claude.json" ]; then
+    test_pass "dx_ai_setup_credentials symlinks ~/.claude.json to persist"
+else
+    test_fail "dx_ai_setup_credentials symlinks ~/.claude.json to persist"
+fi
+rm -rf "$creds_fixture"
+
+# Repeated setup (a second guest activation, or a second dx-ai run) must be
+# side-effect-free once every link is already correct.
+idempotent_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-creds-idempotent.XXXXXX")"
+idempotent_fixture="$(cd "$idempotent_fixture" && pwd -P)"
+idempotent_persist="$idempotent_fixture/persist/home/dx"
+idempotent_home="$idempotent_fixture/home/dx"
+mkdir -p "$idempotent_persist" "$idempotent_home"
+creds_ln_shim
+dx_ai_setup_credentials "$idempotent_persist" "$idempotent_home" >/dev/null
+before_claude_link="$(readlink "$idempotent_home/.claude")"
+before_opencode_link="$(readlink "$idempotent_home/.config/opencode")"
+printf '%s\n' marker > "$idempotent_persist/.claude/marker"
+if dx_ai_setup_credentials "$idempotent_persist" "$idempotent_home" \
+    && [ "$(readlink "$idempotent_home/.claude")" = "$before_claude_link" ] \
+    && [ "$(readlink "$idempotent_home/.config/opencode")" = "$before_opencode_link" ] \
+    && [ "$(cat "$idempotent_persist/.claude/marker")" = marker ]; then
+    test_pass "a repeated dx_ai_setup_credentials run is side-effect-free"
+else
+    test_fail "a repeated dx_ai_setup_credentials run is side-effect-free"
+fi
+creds_ln_unshim
+rm -rf "$idempotent_fixture"
+
+# A symlinked persist ancestor must be refused end to end through the wired
+# helper, exactly as tested directly against the helper in
+# test_sourceable_coverage.sh -- this proves dx_ai_setup_credentials actually
+# calls it and propagates its failure rather than proceeding regardless.
+unsafe_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-creds-unsafe.XXXXXX")"
+unsafe_fixture="$(cd "$unsafe_fixture" && pwd -P)"
+unsafe_outside="$unsafe_fixture/outside"; unsafe_home="$unsafe_fixture/home/dx"
+mkdir -p "$unsafe_outside" "$unsafe_home"
+ln -s "$unsafe_outside" "$unsafe_fixture/persist"
+if dx_ai_setup_credentials "$unsafe_fixture/persist/home/dx" "$unsafe_home" >/dev/null 2>&1; then
+    test_fail "unsafe persistent ancestry is rejected without traversal"
+else
+    test_pass "unsafe persistent ancestry is rejected without traversal"
+fi
+if [ ! -e "$unsafe_outside/home" ]; then
+    test_pass "unsafe persistent ancestry remains untouched"
+else
+    test_fail "unsafe persistent ancestry remains untouched"
+fi
+rm -rf "$unsafe_fixture"
+
+# --- ln -sfnT hardening: a pre-existing REAL directory at one of the four
+# legacy link targets must produce an error, not a nested symlink placed
+# inside it (the bug Branch 2's revert reintroduced by removing -T; see
+# checkout-consolidation-plan.md's Branch 2 section). dx_ai_setup_credentials
+# does not itself check each ln's exit status (neither did the code Branch 2
+# reverted), so its own return code stays 0 either way; the observable
+# contract this hardening buys is that the failing ln call reports an error
+# on stderr instead of nothing, and -- the actually load-bearing part --
+# leaves the real directory and its content alone rather than nesting a
+# symlink inside it. This runs deliberately unshimmed: GNU ln -T genuinely
+# refuses a real directory target on Linux, and this repository's macOS
+# bash-3.2 job proves the same observable contract for a different reason --
+# BSD ln has no -T option at all, so the call fails there too -- but either
+# way nothing is silently swallowed and nothing is nested.
+hardening_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-creds-hardening.XXXXXX")"
+hardening_fixture="$(cd "$hardening_fixture" && pwd -P)"
+hardening_persist="$hardening_fixture/persist/home/dx"
+hardening_home="$hardening_fixture/home/dx"
+mkdir -p "$hardening_persist" "$hardening_home/.claude"
+printf '%s\n' pre-existing-real-file > "$hardening_home/.claude/keep-me"
+hardening_stderr="$(dx_ai_setup_credentials "$hardening_persist" "$hardening_home" 2>&1 >/dev/null)"
+if [ -n "$hardening_stderr" ]; then
+    test_pass "a pre-existing real ~/.claude directory produces an error, not silence"
+else
+    test_fail "a pre-existing real ~/.claude directory produces an error, not silence"
+fi
+if [ -d "$hardening_home/.claude" ] && [ ! -L "$hardening_home/.claude" ] \
+    && [ "$(cat "$hardening_home/.claude/keep-me")" = pre-existing-real-file ] \
+    && [ ! -e "$hardening_home/.claude/.claude" ]; then
+    test_pass "the pre-existing real ~/.claude directory and its content survive untouched, not nested into"
+else
+    test_fail "the pre-existing real ~/.claude directory and its content survive untouched, not nested into"
+fi
+rm -rf "$hardening_fixture"
+# Reinstall the fixture-cleanup trap the blocks above replaced.
+trap 'chmod -R u+w "$ai_fixture" 2>/dev/null || true; rm -rf "$ai_fixture"' EXIT
+
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
     test_skip "dx-ai guest runtime checks (--skip-integration)"
     print_summary
@@ -434,6 +569,18 @@ if run_guest 'marker=".dxe-agy-persistence-test-$$"; echo persisted > "$HOME/.ge
     test_pass "agy persisted state path is writable through ~/.gemini"
 else
     test_fail "agy persisted state path is writable through ~/.gemini"
+fi
+
+if run_guest 'test -L ~/.config/opencode && test "$(readlink ~/.config/opencode)" = /persist/home/dx/.config/opencode' >/dev/null 2>&1; then
+    test_pass "opencode config directory is symlinked to persist"
+else
+    test_fail "opencode config directory is symlinked to persist"
+fi
+
+if run_guest 'test -L ~/.local/share/opencode && test "$(readlink ~/.local/share/opencode)" = /persist/home/dx/.local/share/opencode' >/dev/null 2>&1; then
+    test_pass "opencode data directory is symlinked to persist"
+else
+    test_fail "opencode data directory is symlinked to persist"
 fi
 
 if run_guest 'address_file=/persist/home/dx/.local/state/dx/keyring-address; test -s "$address_file" && IFS= read -r address < "$address_file" && case "$address" in unix:path=/*) exit 0 ;; *) exit 1 ;; esac' >/dev/null 2>&1; then
