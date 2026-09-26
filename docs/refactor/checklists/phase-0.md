@@ -46,7 +46,7 @@ belongs here rather than in Phase 1b.
   `assert_file_contains`/`assert_file_not_contains` calls and `sed`/`awk`
   extractions of production files. Current totals are 492 and 5; the per-file
   breakdown is what later phases are measured against. See
-  [measurable targets](../../../refactor-plan.md#measurable-targets).
+  [measurable targets](../baselines.md#measurable-targets).
 
 - [x] **6. Add table-driven contract cases for:**
   - the **current** config precedence and repeated-load behavior across caller

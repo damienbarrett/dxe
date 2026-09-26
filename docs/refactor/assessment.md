@@ -2,7 +2,7 @@
 
 Assessment snapshot: 2026-07-31. Verified against the repository 2026-08-01.
 
-Part of the [refactor plan](../../refactor-plan.md).
+Part of the completed refactor; its summary document, `refactor-plan.md`, is closed and removed (see Git history).
 
 ## What is already working well
 
@@ -62,8 +62,8 @@ The large test-to-production ratio is not itself a problem. The issue is that
 many checks assert source strings or extract functions by file layout, so a
 behavior-preserving move creates widespread test churn. That cost is measured:
 **492** `assert_file_contains`/`assert_file_not_contains` calls and **5**
-`sed`-extractions of production files. See the metrics table in the
-[plan](../../refactor-plan.md#measurable-targets).
+`sed`-extractions of production files. See the metrics table in
+[baselines.md](baselines.md#measurable-targets).
 
 ## Highest-value findings
 

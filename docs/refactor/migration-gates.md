@@ -1,6 +1,6 @@
 # Migration gates
 
-Part of the [refactor plan](../../refactor-plan.md).
+Part of the completed refactor; its summary document, `refactor-plan.md`, is closed and removed (see Git history).
 
 Every persisted-format change follows **read old + read new → write new → observe
 migration window → remove old reader**. The removal step needs a *gate*, not an

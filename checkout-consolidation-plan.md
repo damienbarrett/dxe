@@ -103,7 +103,7 @@ with an actual build-and-run check of `main`.
 | 6 | `feat/opencode` | Land OpenCode as one complete delivery: the original support plus safe migration, rollback and ownership repair | M | Yes | No (Q1 resolved: after Branch 9) | **Done**: landed on `main` 2026-09-26 (rebased onto `d5ca161`, CI green, live tier 1247/0/8 on `dx-test`); `dx-host` promotion is a separate open decision (Appendix D) |
 | **Priority 3 — backlog** | | | | | | |
 | 7 | `test/herdr-acceptance` | Two missing Herdr tests: bad-snapshot recovery and pane-history deletion | S | Yes (`dx-test`) | No (Q3 resolved: do them) | **Done**: landed on `main` 2026-09-26 (rebased onto `483aca4`, CI green): `d07cce1`, `fccf536`, `67a9578`; live Section 23 44/44 ×3; ratchet re-measured to 1821 bp |
-| 8 | `refactor/legacy-migration-cleanup` | Check that every guest has left the old base image, then delete the old-base guards. This finishes `refactor-plan.md` | S–M | Yes (inventory) | No | Not started |
+| 8 | `refactor/legacy-migration-cleanup` | Check that every guest has left the old base image, then delete the old-base guards. This finishes `refactor-plan.md` | S–M | Yes (inventory) | No | **Increments 1-4 done** (`319e62a` inventory + gate sign-off, `8fe2448` guest-side guard removed, `24933e2` host-side guard removed, plus this closing commit): old-base guard gate signed off 2026-09-26, `refactor-plan.md` closed. G1-G3 and the dual-target stand-in green. G4 (full Apple live tier on `dx-test`) pending -- `dx-test` is in use by Branch 14. Not yet merged into `main` |
 | 10 | `feat/persist-backup` | "B1": incremental host backup and restore of the guest's `/persist` data | M | Yes | No (Q5 resolved) | Not started |
 | 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH. Phase 0 (inventory plus a throwaway spike, no repo code) may run any time after item 4 | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 **done** 2026-09-26: inventory and disposable spike passed on the NAS (steps 1-7, 8a, 9); steps 8b/8c await a maintenance window. Phases 1-7 not started |
 | 12 | `fix/store-trust` (may split in two) | Safe handling of the two Nix-store trust problems in `store-trust-plan.md` | L | Yes | No (Q6 resolved: fail fast) | Not started |
@@ -744,26 +744,46 @@ from `plans.md`.
 
 ---
 
-## Branch 8 — `refactor/legacy-migration-cleanup` (size S–M)
+## Branch 8 — `refactor/legacy-migration-cleanup` (size S–M; done, not yet merged)
 
-**Finishes `refactor-plan.md`.** The only remaining item is Phase 6 item 1:
-remove the old-base guards in `bootstrap.sh:11–29` and
-`bin/dx-start-container:21–44`, once no guest still uses the old base image.
+**Closed `refactor-plan.md`.** Its only remaining item, Phase 6 item 1
+(remove the old-base guards in `bootstrap.sh`/`bootstrap/system.sh` and
+`bin/dx-start-container`), is done.
 
-1. **Inventory (no code).** List every container, image and volume. Include
-   the default guest, `dx-test`, `dx-tinty`, the container behind the leftover
-   `dx-mount-dx-mount-legacy-plain-…` key, and anything else found. Check each
-   against the old-base guard gate in `docs/refactor/migration-gates.md`, and
-   record dated evidence in `docs/evidence/`. If any guest still uses the old
-   base, you decide whether to migrate or destroy it before continuing.
-2. **Characterise:** confirm a test covers the new-base start path without
-   the guard. It should start green.
-3. **Remove** the guards with their dedicated tests and changeover docs, one
-   guard per commit.
-4. **Close the plan:**
-   - Move the "Measurable targets" table in `refactor-plan.md` to
-     `docs/refactor/` if you want to keep tracking it.
-   - Delete `refactor-plan.md` and its `plans.md` entry.
+1. **Inventory** (`319e62a`): every container, image, and volume, checked
+   against the old-base guard gate in `docs/refactor/migration-gates.md`.
+   The primary (`dx-host`) probed `OLD_BASE_ABSENT`; `dx-test` and any
+   future guest are off the old base by Containerfile construction; no
+   `dx-tinty` guest exists; no container references the cached old-base
+   image or the leftover `dx-mount-dx-mount-legacy-plain-…` key files.
+   Recorded in `docs/evidence/20260926/legacy-guard-removal.md`, with the
+   gate signed off in the same commit.
+2. **Characterised:** `tests/test_bootstrap_publication.sh`'s
+   `run_start_container` cases and `tests/test_section3_bootstrap.sh`'s
+   guard cases already covered the new-base start path and were green; no
+   new test was needed.
+3. **Removed**, one guard per commit, each behind a red "guard absent"
+   assertion that failed while the guard was present: `guard_old_base` in
+   guest `bootstrap/system.sh` and its call in `bootstrap.sh` (`8fe2448`);
+   the `bin/dx-start-container` guard block (`24933e2`). Both commits
+   updated the changeover text in `docs/release-maintenance.md` that named
+   the removed guard(s), keeping its "History" entry per the migration
+   gate.
+4. **Closed the plan:** moved the Measurable targets table to
+   `docs/refactor/baselines.md`; ticked Phase 6 item 1 in
+   `docs/refactor/checklists/phase-6.md`; deleted `refactor-plan.md` and
+   its `plans.md` entry; fixed the resulting cross-references in
+   `README.md`, `plans.md`, and the `docs/refactor/*.md` files that had
+   pointed at it.
+
+G1 (bash-3.2, pinned ShellCheck 0.10.0, Ubuntu container-free contracts),
+G2 (coverage + ratchet re-measure on a clean export), and G3 (`nix flake
+check` -- not needed, no `.nix` file changed) all green; the dual-target
+stand-in (`tests/test_section27_qnap_scripts.sh`, the Phase 0 QNAP
+dry-run) also green. G4 (the full Apple live tier on `dx-test`, plus a
+`dx-stop-container`/`dx-start-container` cycle) is pending -- `dx-test`
+was in use by Branch 14 while this branch's increments landed. Not yet
+merged into `main`.
 
 ---
 

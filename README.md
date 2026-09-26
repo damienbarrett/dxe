@@ -127,7 +127,7 @@ show the configured prefix-key help.
 - [Troubleshooting](docs/troubleshooting.md)
 - [Release, pin, upgrade, and base-image changeover procedures](docs/release-maintenance.md)
 - [Test and validation tiers](docs/refactor/validation-matrix.md)
-- [Current refactor decisions and migration gates](refactor-plan.md)
+- [Current refactor decisions and migration gates](docs/refactor/migration-gates.md)
 
 Profile files and root `.env` are bounded `NAME=value` data, not shell scripts. Run profiles with `./bin/dx-profile NAME COMMAND`; do not source them. The full grammar, precedence, defaults, and migration examples are in [configuration](docs/configuration.md).
 
@@ -135,6 +135,9 @@ Profile files and root `.env` are bounded `NAME=value` data, not shell scripts. 
 
 See [docs/release-maintenance.md](docs/release-maintenance.md) for the
 release-upgrade and base-image changeover procedures, and
-[refactor-plan.md](refactor-plan.md) for the architecture decisions and
-operational migration gates retained by this refactor. [plan.md](plan.md) is
+[docs/refactor/](docs/refactor/migration-gates.md) for the architecture
+decisions and operational migration gates the completed refactor retained
+(its summary plan document, `refactor-plan.md`, is closed and removed; see
+Git history and [`docs/refactor/baselines.md`](docs/refactor/baselines.md)
+for its measurable-targets baseline). [plan.md](plan.md) is
 now an unscheduled backlog item (see [plans.md](plans.md)).

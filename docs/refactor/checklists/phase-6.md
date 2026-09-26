@@ -6,26 +6,28 @@
 
 ## Items
 
-- [ ] **1. Remove the old-base guards** once the default guest, side containers, and
+- [x] **1. Remove the old-base guards** once the default guest, side containers, and
   named profiles have all moved off the old base:
-  - [`bootstrap.sh`](../../../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh#L11-L29);
-  - [`bin/dx-start-container`](../../../bin/dx-start-container#L21-L44).
+  - `bootstrap.sh` / `bootstrap/system.sh` (`guard_old_base`);
+  - `bin/dx-start-container`.
 
-  Remove their dedicated tests and changeover documentation in the same commit.
-  Do not remove them based only on repository age — see the
+  Removed their dedicated tests and changeover documentation in the same
+  commits, not on repository age — see the
   [old-base guard gate](../migration-gates.md#old-base-guards).
 
-  **Scope note:** the primary guest is already done. See
+  **Scope note:** the primary guest changed over first. See
   [Base Image Changeover, "History"](../../release-maintenance.md#base-image-changeover-one-time)
   for the destructive salvage-and-rebuild changeover of the primary
   completing on 2026-07-05 behind an `OLD_BASE_ABSENT` gate with the full
-  suite green. The remaining inventory is side containers and named profiles
-  only.
+  suite green. The remaining inventory — side containers and named
+  profiles — was confirmed off the old base by the 2026-09-26 inventory
+  below.
 
-  **Open by design (2026-08-01).** The guards are still present in both files.
-  This item stays open until the
-  [old-base guard gate](../migration-gates.md#old-base-guards) is signed off; it
-  is deliberately retained, not an oversight.
+  **Done (2026-09-26).** Old-base guard gate signed off with inventory in
+  [`docs/evidence/20260926/legacy-guard-removal.md`](../../evidence/20260926/legacy-guard-removal.md);
+  both guards removed in Branch 8 (`refactor/legacy-migration-cleanup`),
+  commits `8fe2448` (guest-side `guard_old_base`) and `24933e2` (host-side
+  `dx-start-container` guard).
 
 - [x] **2. Reduce the 1,243-line README** to quick start, common workflows, safety,
   and a documentation index. Move detailed lifecycle, forwarding, configuration,

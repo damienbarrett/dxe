@@ -1,6 +1,6 @@
 # Validation matrix
 
-Part of the [refactor plan](../../refactor-plan.md).
+Part of the completed refactor; its summary document, `refactor-plan.md`, is closed and removed (see Git history).
 
 Run the smallest applicable tier on every Red-Green-Refactor cycle and all
 tiers before completion.

@@ -43,5 +43,5 @@ The coverage job therefore reports **two** numbers:
    report, and forbidden to regress. This is not gated at a fixed value; it is
    gated against its own previous value.
 
-The second number is what makes the first one meaningful. It is tracked in the
-plan's [measurable targets](../../../refactor-plan.md#measurable-targets).
+The second number is what makes the first one meaningful. It is tracked in
+[baselines.md's measurable targets](../baselines.md#measurable-targets).

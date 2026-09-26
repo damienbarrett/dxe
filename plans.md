@@ -7,7 +7,12 @@ review and the lock-refresh disposition tracking log; their implementation
 and history remain in Git. `consolidation-plan.md`, the plan that drove this
 documentation consolidation (R1 through R8), has also been removed now that
 all eight refactors are executed; its implementation and history remain in
-Git.
+Git. `refactor-plan.md` has also been removed: its one remaining item,
+Phase 6's old-base guards, closed on 2026-09-26 (Branch 8,
+`refactor/legacy-migration-cleanup`); its Measurable targets table moved to
+[`docs/refactor/baselines.md`](docs/refactor/baselines.md#measurable-targets)
+and its narrative and decision history remain in Git and in
+`docs/refactor/`.
 
 ## Status vocabulary
 
@@ -21,11 +26,6 @@ Every plan document below is listed under exactly one of these.
 
 ## Partially complete
 
-- [`refactor-plan.md`](refactor-plan.md) — Phases 0 through 5 are checked off
-  in `docs/refactor/checklists/`. Phase 6 is nearly complete: README
-  reduction, environment-variable inventory, documentation-test decoupling,
-  theme writer work, and archiving completed upgrade material are done;
-  removing old-base guards remains unchecked.
 - [`checkout-consolidation-plan.md`](checkout-consolidation-plan.md) —
   Sequencing plan for landing the remaining consolidation work as small,
   independently validated branches. Priority 1 (Branches 1-3: CI baseline,
@@ -58,7 +58,10 @@ Every plan document below is listed under exactly one of these.
   OpenCode yet (a separate promotion decision). Branch 7
   (`test/herdr-acceptance`, the two Herdr acceptance cases, both
   characterisation tests) landed on 2026-09-26; see
-  `docs/evidence/20260926/herdr-acceptance.md`. Branches 8 and 10 through
+  `docs/evidence/20260926/herdr-acceptance.md`. Branch 8
+  (`refactor/legacy-migration-cleanup`) closed `refactor-plan.md`'s one
+  remaining item (old-base guard removal); done pending its G4 live-tier
+  check and merge review -- not yet merged into `main`. Branches 10 through
   13 are not started.
 
 ## Open plans
