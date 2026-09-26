@@ -110,6 +110,7 @@ with an actual build-and-run check of `main`.
 | 13 | `refactor/bootstrap-v2`, `refactor/declarative-nix` | The two remaining large proposals. No branch until you accept one | L each | Yes | Q7 (still open) | Not started |
 | 14 | `fix/dx-ai-no-source-builds` | Stop `dx-ai` from silently compiling heavy AI tools from source when a `nixpkgs-unstable` refresh misses the binary cache (found on Branch 6, 2026-09-26) | S–M | Yes (`dx-test`, disposable) | No | **Done**: landed on `main` 2026-09-27 (rebased onto `cf9f35f`, CI green); fresh 12 GB guest's first `dx-ai` from cache, peak ~8.6 GiB; live tier 1298/0/8; see `docs/evidence/20260927/dx-ai-no-source-builds.md` |
 | 15 | `fix/keyring-bootstrap-recreate` | Make `dx-recreate` of an AI-opted-in guest work: resolve the keyring binaries from the AI generation explicitly and warn instead of aborting bootstrap (found on Branch 14's live gate) | S | Yes (`dx-test`) | Policy B chosen 2026-09-27 | **Done**: landed on `main` 2026-09-27 (rebased onto `7f1a81d`, CI green; live: recreate ×2 clean, Section 17 99/0, live tier green); `dx-host` promotion pending |
+| 16 | `refactor/keyring-owned-by-dx-ai` | Move the guest keyring (D-Bus session bus + gnome-keyring, used only by `agy`) out of bootstrap: `dx-ai`/`dx-keyring` own it with a real liveness probe | S | Yes (`dx-test`) | Option 4 chosen 2026-09-27 | **Done**: landed on `main` 2026-09-27 (rebased onto `2acffa9`, CI green; live: restart reproduces the stale state, `dx-keyring start` recovers, Section 17 104/0); `dx-host` gets it at its next promotion |
 
 ```text
 Priority 1:  0 ✓ ─► 1 ✓ ─► 2 ✓ ─► 3 ✓ ─► 4 ✓ ─► 4a ✓ ─► 4b ✓ ─► 4c   (main complete, green, buildable, proven on a guest)
@@ -1145,16 +1146,19 @@ fix, which is exactly the defect below. `kill -0` on a killed-but-unreaped
 process also still succeeds (zombie), so pid liveness was rejected as the
 "real" test too; a live client call is the only reliable signal.
 
-**Status (2026-09-27):** implemented and validated in the worktree
-(`/Users/damien/dxe-recovery/progress/tmp/wt-branch-16`), not yet landed on
-`main`. G1 green (bash-3.2, pinned ShellCheck 0.10.0, container-free
-contracts, `test_refactor_contracts.sh`, all re-run against a disposable
-`git clone` of the worktree per the Branch 15 lesson below). G2 green:
-`tests/run-coverage-linux.sh` reports `covered=100% scope_share=17.91%`
-(ratchet re-measured 1789 -> 1791 bp, its own commit). G3 green: `nix flake
-check --no-build --no-write-lock-file` passes; `flake.lock` unchanged (only
-a `home.file` addition, no input change). G4 (live, `dx-test`) and the
-docs/plan commit are next.
+**Status (2026-09-27): landed on `main`** (rebased onto `2acffa9`, CI green,
+then fast-forwarded). G1 green (bash-3.2, pinned ShellCheck 0.10.0,
+container-free contracts, `test_refactor_contracts.sh`); G2 green
+(`covered=100%`, ratchet re-measured 1789 -> 1791 on the branch's base and
+1949 after the rebase); G3 green (`nix flake check`, `flake.lock` unchanged).
+G4 on `dx-test`: no keyring processes after a plain start (by design),
+`dx-keyring start` brings the bus and Secret Service up, `dx-ai` starts no
+second daemon, a restart reproduces the historical stale state and
+`dx-keyring start` recovers it, `dx-recreate` clean, Section 17 destructive
+104/0/0, live tier green apart from a pre-existing flaky tmux-resurrect probe
+in Section 6 (recorded under Observations). Evidence:
+`docs/evidence/20260927/keyring-owned-by-dx-ai.md`. `dx-host` gets this at
+its next promotion (Appendix D).
 
 ---
 
@@ -1234,6 +1238,16 @@ docs/plan commit are next.
   the probe fails, and `dx_keyring_start` is idempotent (a live bus with the
   Secret Service already registered starts nothing new), fixing the
   second-daemon symptom as well.
+
+- **A live tmux-resurrect restore probe in Section 6 is timing-flaky (seen on
+  Branch 16's live tier, 2026-09-27).** `test_section6_tools.sh`'s restore
+  check failed once in a full live tier and, re-run three times in isolation
+  on the same guest, gave one pass and two different failing sub-checks; the
+  file was untouched by that branch. It probes tmux server start-up timing
+  rather than a settled state. Backlog: make the probe wait for the
+  observable condition (bounded poll) instead of a fixed delay, the way the
+  Herdr acceptance tests do, and prove it stable across three consecutive
+  live runs.
 
 ## Decisions for you
 
