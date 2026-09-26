@@ -16,7 +16,7 @@ if container_is_running "$DX_CONTAINER_NAME"; then
     echo "Container $DX_CONTAINER_NAME is already running; skipping start."
 else
     echo "Starting container $DX_CONTAINER_NAME..."
-    container start "$DX_CONTAINER_NAME"
+    dx_runtime_container_start "$DX_CONTAINER_NAME"
 fi
 
 dx_sync_output="$("$SCRIPT_DIR/dx-sync-bootstrap")"
@@ -28,9 +28,9 @@ printf '%s\n' "$dx_sync_output"
 # happened (see below) -- an unreadable current/lease listing must not be
 # mistaken for either.
 dx_running_generation=""
-dx_published_generation="$(container exec "$DX_CONTAINER_NAME" readlink "$DX_BOOTSTRAP_PATH/current" 2>/dev/null || true)"
+dx_published_generation="$(dx_runtime_exec "$DX_CONTAINER_NAME" readlink "$DX_BOOTSTRAP_PATH/current" 2>/dev/null || true)"
 dx_published_generation="${dx_published_generation#generations/}"
-dx_lease_listing="$(container exec "$DX_CONTAINER_NAME" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$DX_BOOTSTRAP_PATH" 2>/dev/null || true)"
+dx_lease_listing="$(dx_runtime_exec "$DX_CONTAINER_NAME" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$DX_BOOTSTRAP_PATH" 2>/dev/null || true)"
 [ -z "$dx_lease_listing" ] || dx_running_generation="$(dx_bootstrap_lease_generation "$dx_lease_listing" || true)"
 
 if dx_sync_published_generation="$(dx_bootstrap_sync_published_generation "$dx_sync_output")"; then

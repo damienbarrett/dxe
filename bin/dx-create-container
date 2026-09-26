@@ -68,10 +68,10 @@ fi
 
 if [ -f "$DX_SSH_KEY_PUB" ]; then
     DX_PUB_KEY=$(cat "$DX_SSH_KEY_PUB")
-    container create "${CREATE_FLAGS[@]}" -e "DX_PUB_KEY=$DX_PUB_KEY" "$DX_IMAGE" -c "$BOOTSTRAP_LAUNCH_CMD" -- "$DX_BOOTSTRAP_PATH"
+    dx_runtime_container_create "${CREATE_FLAGS[@]}" -e "DX_PUB_KEY=$DX_PUB_KEY" "$DX_IMAGE" -c "$BOOTSTRAP_LAUNCH_CMD" -- "$DX_BOOTSTRAP_PATH"
 else
     echo "Warning: $DX_SSH_KEY_PUB not found. SSH access may not be configured."
-    container create "${CREATE_FLAGS[@]}" "$DX_IMAGE" -c "$BOOTSTRAP_LAUNCH_CMD" -- "$DX_BOOTSTRAP_PATH"
+    dx_runtime_container_create "${CREATE_FLAGS[@]}" "$DX_IMAGE" -c "$BOOTSTRAP_LAUNCH_CMD" -- "$DX_BOOTSTRAP_PATH"
 fi
 claim_pending=false
 trap - EXIT HUP INT TERM
