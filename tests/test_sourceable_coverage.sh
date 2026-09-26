@@ -216,7 +216,13 @@ dx_bootstrap_content_digest "$digest_fixture/bootstrap.sh" >/dev/null 2>&1 || tr
         digest_tool_path="$(command -v "$digest_tool")" || continue
         ln -sf "$digest_tool_path" "$digest_bin/$digest_tool"
     done
-    printf '#!/bin/sh\nprintf "%%s  -\\n" 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n' > "$digest_bin/shasum"
+    # This fake shasum is invoked twice in the fallback pipeline (once per
+    # file via `find -exec`, once more reading `sort`'s output): it must
+    # drain its stdin before printing, or the upstream `sort` can still be
+    # writing when this exits, earning a SIGPIPE that `pipefail` turns into
+    # a failing pipeline status though every stage's own logic succeeded.
+    # `cat` is already symlinked into $digest_bin above.
+    printf '#!/bin/sh\ncat >/dev/null\nprintf "%%s  -\\n" 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n' > "$digest_bin/shasum"
     chmod 0755 "$digest_bin/shasum"
     PATH="$digest_bin" dx_bootstrap_content_digest "$digest_fixture" >/dev/null
 )
