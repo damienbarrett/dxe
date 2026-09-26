@@ -897,5 +897,158 @@ else
     test_skip "Live: Herdr is not installed in guest yet (run dx-ai or dx-herdr)"
 fi
 
+# --- Live: Herdr degrades a corrupt or too-new session-history.json snapshot
+# to a fresh, usable pane rather than failing (Branch 7 acceptance case 1,
+# checkout-consolidation-plan.md "Branch 7 -- test/herdr-acceptance"). ---
+#
+# herdr's non-interactive CLI (discovered live via `herdr --help` and its
+# subcommand help; bin/dx-herdr is never invoked here -- it attaches a TTY):
+# `herdr server` runs the headless server in the foreground (backgrounded
+# below with nohup/disown), `herdr server stop` is the documented cold stop,
+# `herdr workspace create` is the smallest reliable way to get a usable pane
+# non-interactively, and `herdr pane run <id> <cmd>` / `herdr pane read` are
+# the smallest reliable way to inject and read pane input without an
+# interactive attach.
+#
+# session.json (topology: workspaces/tabs/panes) and session-history.json
+# (a wholesale-replaced snapshot of each pane's scrollback) are separate
+# persisted files -- discovered live, not assumed: with session.json ABSENT,
+# herdr never attempts to parse session-history.json at all (no topology to
+# attach restored content to), so a corrupt/too-new history file only matters
+# when a real session.json exists, exactly as it would for a real user who
+# has been using Herdr. So each case first creates one real workspace/pane
+# (which produces a genuine session.json AND a genuine session-history.json,
+# discovering its real `version` field rather than guessing it -- observed
+# live to be 3, herdr 0.9.1), seeds it with a marker, cold-stops, corrupts (or
+# version-bumps via jq) ONLY session-history.json, and restarts: the
+# topology/pane persists (session.json is untouched), but its content must
+# come back fresh (the seed marker gone), not fail, hang, or exit non-zero.
+# Both variants back up any pre-existing session.json/session-history.json
+# and restore them afterward, and always end with the server cold-stopped.
+if run_guest "command -v herdr" >/dev/null 2>&1; then
+    # bash 3.2 (this repo's macOS tier) mis-parses a heredoc nested directly
+    # inside a `$(...)` command substitution when the enclosing context has
+    # its own compound commands (this whole thing sits inside an `if`, and
+    # the heredoc body below has its own nested `if`/`else`/`fi`): the
+    # heredoc's own `$MODE` references got expanded and executed by the OUTER
+    # shell instead of being passed through literally, tripping `set -u`
+    # before any guest connection was even made. Route the heredoc through a
+    # temp file first (a plain redirect, not a substitution) to sidestep it.
+    herdr_b7_snapshot_template_file="$(mktemp "${TMPDIR:-/tmp}/dxe-b7-snapshot-template.XXXXXX")"
+    cat > "$herdr_b7_snapshot_template_file" <<'REMOTE_EOF'
+set -u
+MODE="__MODE__"
+BACKUP_DIR="$(mktemp -d)"
+herdr server stop >/dev/null 2>&1
+sleep 1
+[ -f "$HOME/.config/herdr/session.json" ] && mv "$HOME/.config/herdr/session.json" "$BACKUP_DIR/session.json.bak"
+[ -f "$HOME/.config/herdr/session-history.json" ] && mv "$HOME/.config/herdr/session-history.json" "$BACKUP_DIR/session-history.json.bak"
+LOG="/tmp/dxe-b7-herdr-$MODE-$$.log"
+SERVER_LOG="$HOME/.config/herdr/herdr-server.log"
+
+nohup herdr server >"$LOG" 2>&1 &
+disown
+for i in $(seq 1 20); do
+    herdr status --json 2>/dev/null | grep -q '"running":true' && break
+    sleep 0.5
+done
+
+ws_out="$(herdr workspace create --label "dxe-b7-$MODE" 2>&1)"
+pane_id="$(printf '%s' "$ws_out" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)"
+seed_ok=0
+if [ -n "$pane_id" ]; then
+    herdr pane run "$pane_id" "echo dxe-b7-seed-$MODE" >/dev/null 2>&1
+    for i in $(seq 1 20); do
+        grep -q "dxe-b7-seed-$MODE" "$HOME/.config/herdr/session-history.json" 2>/dev/null && { seed_ok=1; break; }
+        sleep 1
+    done
+fi
+
+herdr server stop >/dev/null 2>&1
+sleep 1
+
+if [ "$MODE" = corrupt ]; then
+    printf 'not valid herdr session history json {{{ garbage' > "$HOME/.config/herdr/session-history.json"
+else
+    jq '.version += 1000000' "$HOME/.config/herdr/session-history.json" > "$HOME/.config/herdr/session-history.json.tmp" \
+        && mv "$HOME/.config/herdr/session-history.json.tmp" "$HOME/.config/herdr/session-history.json"
+fi
+before_sum="$(cksum < "$HOME/.config/herdr/session-history.json" 2>/dev/null)"
+lines_before="$(wc -l < "$SERVER_LOG" 2>/dev/null || echo 0)"
+
+nohup herdr server >"$LOG.2" 2>&1 &
+disown
+started=0
+for i in $(seq 1 20); do
+    herdr status --json 2>/dev/null | grep -q '"running":true' && { started=1; break; }
+    sleep 0.5
+done
+after_sum="$(cksum < "$HOME/.config/herdr/session-history.json" 2>/dev/null)"
+alive=0
+herdr status --json 2>/dev/null | grep -q '"running":true' && alive=1
+
+# Topology (session.json) was never touched, so the same pane should still
+# exist; fall back to creating a fresh one only if it somehow does not, so
+# "a usable pane" is still proven either way.
+target_pane="$pane_id"
+if [ -z "$target_pane" ] || ! herdr pane get "$target_pane" >/dev/null 2>&1; then
+    ws_new="$(herdr workspace create --label "dxe-b7-$MODE-post" 2>&1)"
+    target_pane="$(printf '%s' "$ws_new" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)"
+fi
+fresh_content=unknown
+usable=0
+if [ -n "$target_pane" ]; then
+    read_before="$(herdr pane read --lines 50 "$target_pane" 2>&1)"
+    if printf '%s' "$read_before" | grep -q "dxe-b7-seed-$MODE"; then fresh_content=no; else fresh_content=yes; fi
+    herdr pane run "$target_pane" "echo dxe-b7-usable-$MODE" >/dev/null 2>&1
+    sleep 1
+    read_after="$(herdr pane read --lines 10 "$target_pane" 2>&1)"
+    printf '%s' "$read_after" | grep -q "dxe-b7-usable-$MODE" && usable=1
+fi
+
+warn_line="$(tail -n +"$((lines_before + 1))" "$SERVER_LOG" 2>/dev/null | grep -E 'failed to parse session history|from a newer herdr version' | tail -1)"
+
+herdr server stop >/dev/null 2>&1
+sleep 1
+rm -f "$HOME/.config/herdr/session.json" "$HOME/.config/herdr/session-history.json" "$LOG" "$LOG.2" 2>/dev/null
+[ -f "$BACKUP_DIR/session.json.bak" ] && mv "$BACKUP_DIR/session.json.bak" "$HOME/.config/herdr/session.json"
+[ -f "$BACKUP_DIR/session-history.json.bak" ] && mv "$BACKUP_DIR/session-history.json.bak" "$HOME/.config/herdr/session-history.json"
+rm -rf "$BACKUP_DIR"
+
+same_file=no
+[ "$before_sum" = "$after_sum" ] && same_file=yes
+
+printf 'SEED_OK=%s STARTED=%s ALIVE=%s PANE=%s FRESH_CONTENT=%s USABLE=%s SAME_FILE=%s\n' \
+    "$seed_ok" "$started" "$alive" "$target_pane" "$fresh_content" "$usable" "$same_file"
+printf 'WARN_LINE: %s\n' "$warn_line"
+REMOTE_EOF
+    HERDR_B7_SNAPSHOT_TEMPLATE="$(cat "$herdr_b7_snapshot_template_file")"
+    rm -f "$herdr_b7_snapshot_template_file"
+
+    herdr_b7_run_snapshot_case() {
+        local mode="$1" script
+        script="${HERDR_B7_SNAPSHOT_TEMPLATE//__MODE__/$mode}"
+        run_guest "$script"
+    }
+
+    diag_corrupt="$(herdr_b7_run_snapshot_case corrupt 2>&1)" || true
+    if printf '%s' "$diag_corrupt" | grep -q '^SEED_OK=1 STARTED=1 ALIVE=1 .*FRESH_CONTENT=yes USABLE=1 SAME_FILE=yes' \
+        && printf '%s' "$diag_corrupt" | grep -q 'WARN_LINE:.*failed to parse session history'; then
+        test_pass "Live: herdr degrades a corrupt session-history.json to a fresh, usable pane rather than failing (characterisation)"
+    else
+        test_fail "Live: herdr degrades a corrupt session-history.json to a fresh, usable pane rather than failing (characterisation) ($diag_corrupt)"
+    fi
+
+    diag_toonew="$(herdr_b7_run_snapshot_case toonew 2>&1)" || true
+    if printf '%s' "$diag_toonew" | grep -q '^SEED_OK=1 STARTED=1 ALIVE=1 .*FRESH_CONTENT=yes USABLE=1 SAME_FILE=yes' \
+        && printf '%s' "$diag_toonew" | grep -q 'WARN_LINE:.*from a newer herdr version'; then
+        test_pass "Live: herdr degrades a too-new session-history.json snapshot to a fresh, usable pane rather than failing (characterisation)"
+    else
+        test_fail "Live: herdr degrades a too-new session-history.json snapshot to a fresh, usable pane rather than failing (characterisation) ($diag_toonew)"
+    fi
+else
+    test_skip "Live: Herdr snapshot-recovery tests skipped, Herdr not installed in guest"
+fi
+
 print_summary
 exit_with_code
