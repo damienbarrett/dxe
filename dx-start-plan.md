@@ -16,6 +16,14 @@ Two claims in that earlier record are also incorrect and are corrected below:
 the recommended diagnostic does not work, and the condition is not a race that
 the host can occasionally win.
 
+**2026-09-26 (Branch 9 Step 1):** live characterisation
+(`docs/evidence/20260926/start-generation-red.md`) found the core symptom
+already fixed on `main` by `ba49f39` and `a3ee4e3`, both predating this plan's
+"Open questions"; see `docs/refactor/decisions/D7-start-generation.md` for the
+finding, the remaining gap (Q4's "fail the start" behaviour), and the proposed
+design. Left "Open" pending the coordinating session's decision on whether to
+close this plan.
+
 **Revisit trigger:** any change to bootstrap publication or start/sync
 ordering, or the next recreate that is observed to run the previous
 generation.
