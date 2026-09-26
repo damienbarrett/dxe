@@ -253,6 +253,21 @@ nix() {
     esac
 }
 
+# A tiny jq stand-in for dx_ai_nixpkgs_unstable_rev's one fixed query, so
+# these assertions are exact regardless of whether the *host running the
+# tests* happens to have a real jq -- the coverage/kcov image
+# (tests/coverage/Dockerfile) does not, unlike the real guest, which always
+# does via dxPackages. Follows the file's existing idiom of stubbing an
+# external tool with a shell function rather than depending on the host's
+# real binary (see the malformed-manifest jq fake above).
+jq() {
+    if [ "${1:-}" = -r ] && [ "${2:-}" = '.nodes["nixpkgs-unstable"].locked.rev // empty' ]; then
+        sed -n 's/.*"rev":"\([^"]*\)".*/\1/p' "$3" 2>/dev/null
+        return 0
+    fi
+    command jq "$@"
+}
+
 reset_cache_fixture() {
     rm -f "$cache_call_count"
     printf '%s\n' "$1" > "$cache_script_1"
@@ -413,7 +428,7 @@ else
     test_fail "the override leaves the published AI generation untouched"
 fi
 
-unset -f nix
+unset -f nix jq
 rm -rf "$cache_fixture"
 trap 'chmod -R u+w "$ai_fixture" 2>/dev/null || true; rm -rf "$ai_fixture"' EXIT
 
