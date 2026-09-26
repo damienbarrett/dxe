@@ -62,7 +62,7 @@ case "$covered" in
 esac
 
 scope_lines="$(find "$ROOT/bin/lib" "$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap" "$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib" -type f -name '*.sh' -exec wc -l {} + | awk 'END {print $1}')"
-total_lines="$(find "$ROOT/bin" "$ROOT/tests" "$ROOT/container" -type f \( -name '*.sh' -o -path "$ROOT/bin/dx*" \) -exec wc -l {} + | awk 'END {print $1}')"
+total_lines="$(find "$ROOT/bin" "$ROOT/tests" "$ROOT/container" -type f \( -name '*.sh' -o -path "$ROOT/bin/dx*" \) -not -path "$OUT/*" -exec wc -l {} + | awk 'END {print $1}')"
 share=$((scope_lines * 10000 / total_lines))
 baseline="$(sed -n 's/^scope_share_basis_points=//p' "$SCRIPT_DIR/coverage/ratchet.env")"
 [ "$share" -ge "$baseline" ] || { echo "Error: covered shell scope share regressed from $baseline to $share basis points." >&2; exit 1; }
