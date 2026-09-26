@@ -107,17 +107,3 @@ Every plan document below is listed under exactly one of these.
   for recovery when post-remount verification tools themselves depend on the
   persistent store being verified (defines failure outcomes, testing, and
   recovery constraints).
-
-## Optional follow-up
-
-- **Herdr tool-inventory consolidation and two snapshot/pane-history
-  acceptance cases.** Low-priority items noted in the completed Herdr
-  implementation review (removed; see Git history): the AI-tools inventory is
-  still repeated across the Nix package list, the host install message, and
-  prose, rather than unified into one source; and the corrupt/too-new
-  snapshot recovery path and the deletion half of pane-history cleanup remain
-  unautomated acceptance cases. Neither reopens the review's verdict that
-  remediation and the isolated live gate passed. No owner; pick up
-  opportunistically. The two acceptance cases are tracked as Branch 7,
-  `test/herdr-acceptance`, of `checkout-consolidation-plan.md`; that branch
-  is gated on decision Q3 (pending).

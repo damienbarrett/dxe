@@ -102,7 +102,7 @@ with an actual build-and-run check of `main`.
 | 9 | `fix/bootstrap-start-generation` | Make a restarted guest run the bootstrap code that was just published, not the previous version | M | Yes | No (Q4 resolved: fail the start) | **Done**: landed on `main` 2026-09-26 and `dx-host` promoted to `main` `08700a8` per Appendix D. Step 1 found the core defect already fixed on `main`; Step 2 implemented D7 option 3 and closed `dx-start-plan.md` |
 | 6 | `feat/opencode` | Land OpenCode as one complete delivery: the original support plus safe migration, rollback and ownership repair | M | Yes | No (Q1 resolved: after Branch 9) | **Done**: landed on `main` 2026-09-26 (rebased onto `d5ca161`, CI green, live tier 1247/0/8 on `dx-test`); `dx-host` promotion is a separate open decision (Appendix D) |
 | **Priority 3 — backlog** | | | | | | |
-| 7 | `test/herdr-acceptance` | Two missing Herdr tests: bad-snapshot recovery and pane-history deletion | S | Possibly | No (Q3 resolved: do them) | Not started |
+| 7 | `test/herdr-acceptance` | Two missing Herdr tests: bad-snapshot recovery and pane-history deletion | S | Yes (`dx-test`) | No (Q3 resolved: do them) | **Done, not yet merged**: `14ffd17`, `ee6eadc`, `3b11075`; live Section 23 44/44 ×3; ratchet re-measured to 1821 bp |
 | 8 | `refactor/legacy-migration-cleanup` | Check that every guest has left the old base image, then delete the old-base guards. This finishes `refactor-plan.md` | S–M | Yes (inventory) | No | Not started |
 | 10 | `feat/persist-backup` | "B1": incremental host backup and restore of the guest's `/persist` data | M | Yes | No (Q5 resolved) | Not started |
 | 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH. Phase 0 (inventory plus a throwaway spike, no repo code) may run any time after item 4 | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 optional early |
@@ -720,6 +720,14 @@ pins are gone (Branch 5). What remains, once Branch 6 lands:
 ---
 
 ## Branch 7 — `test/herdr-acceptance` (size S; only if Q3 says yes)
+
+**Status (2026-09-26): done, not yet merged.** Both acceptance cases passed
+immediately against unchanged code (characterisation tests, no production
+fix needed): `14ffd17` (corrupt/too-new snapshot recovery), `ee6eadc`
+(history-cleanup marker deletion, plus one Section 10 docs assertion),
+`3b11075` (scope-share ratchet re-measured to 1821 bp). Live Section 23
+44/44, run three times with no failures; `dx-test` cold-stopped and cleaned
+after every run. See `docs/evidence/20260926/herdr-acceptance.md`.
 
 Two missing acceptance cases from the completed Herdr review. Add one test per
 increment:
