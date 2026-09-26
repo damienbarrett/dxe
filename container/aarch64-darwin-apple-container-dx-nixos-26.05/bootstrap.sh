@@ -7,7 +7,6 @@ bootstrap_main() {
     DX_GUEST_ACTIVATION_ATTEMPTS="${DX_GUEST_ACTIVATION_ATTEMPTS:-2}"
     DX_GUEST_ACTIVATION_RETRY_DELAY="${DX_GUEST_ACTIVATION_RETRY_DELAY:-5}"
 
-    guard_old_base
     configure_single_user_nix
     install_essentials
     link_system_bash

@@ -382,11 +382,8 @@ ln -s "$fixture/auth/store/group" "$fixture/auth/etc/group"
 export DX_AUTH_ROOT="$fixture/auth"
 if materialize_auth_files && [ ! -L "$fixture/auth/etc/group" ] && grep -q '^root:' "$fixture/auth/etc/group"; then test_pass "auth materialization preserves data and replaces symlinks"; else test_fail "auth materialization preserves data and replaces symlinks"; fi
 
-mkdir -p "$fixture/guard/bin"
-export DX_GUARD_ROOT="$fixture/guard"
-if guard_old_base; then test_pass "old-base guard accepts the official base shape"; else test_fail "old-base guard accepts the official base shape"; fi
-ln -s /missing "$fixture/guard/bin/bash"
-if guard_old_base >/dev/null 2>&1; then test_fail "old-base guard rejects a dangling /bin/bash signature"; else test_pass "old-base guard rejects a dangling /bin/bash signature"; fi
+assert_file_not_contains "$BOOTSTRAP_DIR/system.sh" 'guard_old_base' "guest bootstrap no longer defines the old-base guard (removed once every guest moved off the old base -- docs/refactor/migration-gates.md#old-base-guards)"
+assert_file_not_contains "$BOOTSTRAP" 'guard_old_base' "bootstrap orchestrator no longer calls the old-base guard"
 
 assert_file_contains_literal "$BOOTSTRAP" 'if [ "${BASH_SOURCE[0]}" = "$0" ]' "bootstrap main runs only when executed"
 assert_file_not_contains "$BOOTSTRAP" 'DX_BOOTSTRAP_TEST_MODE' "bootstrap has no production test-mode branch"

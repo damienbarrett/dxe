@@ -46,8 +46,8 @@ install_essentials() {
 # probe bootstrap the guest environment via `bash -l`. The old base
 # satisfied that with a global /bin/bash; the official base ships none.
 # Link the essentials bash at /usr/bin/bash -- on the default PATH --
-# and deliberately NOT at /bin/bash, whose presence is the old-base
-# guard signature (guard_old_base above).
+# and deliberately NOT at /bin/bash, whose presence was the retired
+# old-base guard's signature (docs/refactor/migration-gates.md#old-base-guards).
 link_system_bash() {
     local root="${DX_LINK_ROOT:-}"
     local bash_path

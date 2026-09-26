@@ -1,20 +1,6 @@
 #!/usr/bin/env bash
 # Source-only bootstrap system phase. Safe to source.
 
-# Temporary old-base guard retained until the operational gate in
-# docs/refactor/migration-gates.md is signed off for every side container and
-# named profile. The official base never provides /bin/bash at this path.
-guard_old_base() {
-    local bash_path="${DX_GUARD_ROOT:-}/bin/bash"
-
-    if [ -e "$bash_path" ] || [ -L "$bash_path" ]; then
-        echo "Error: $bash_path is present, matching the known flakes-base signature (nixpkgs/nix-flakes)." >&2
-        echo "This container was built from the old flakes base and must be rebuilt under the official base." >&2
-        echo "Follow the Base Image Changeover procedure in docs/release-maintenance.md before retrying." >&2
-        return 1
-    fi
-}
-
 # Root's freshly installed essentials land in whichever profile this Nix
 # picks: the official base creates /nix/var/nix/profiles/per-user/root/profile
 # (not on the image PATH), while other layouts use the XDG state dir or the
