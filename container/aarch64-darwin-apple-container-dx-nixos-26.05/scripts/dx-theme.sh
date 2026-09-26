@@ -27,7 +27,14 @@ data_dir() {
 }
 
 have_scheme() {
-  tinty list 2>/dev/null | grep -qx "$1"
+  # Read-all idiom (redirect to /dev/null instead of `grep -qx`): `tinty
+  # list` can print hundreds of scheme ids, and `grep -q` exits at its first
+  # match and closes the pipe, so a still-writing `tinty list` can get
+  # SIGPIPE/EPIPE, which under `set -o pipefail` (this file's own `set -eo
+  # pipefail`, line 2) turns a real match into a failed pipeline -- read here
+  # as "unknown scheme". Same shape Branch 4a fixed in bin/lib/dx-container.sh
+  # (see tests/test_helpers.sh's stdin_matches comment).
+  tinty list 2>/dev/null | grep -x -- "$1" >/dev/null
 }
 
 # Read the alias registry; tolerate missing/broken JSON without aborting.

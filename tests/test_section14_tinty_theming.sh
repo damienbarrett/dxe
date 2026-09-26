@@ -96,6 +96,63 @@ assert_file_contains "$SCRIPT_DX_THEME" "tinty current" "dx-theme current reads 
 assert_file_contains "$SCRIPT_DX_THEME" ".config/dx/theme-current" "dx-theme writes optional DX theme mirror"
 assert_file_contains "$SCRIPT_DX_THEME" "tinty install || tinty sync" "dx-theme explicitly manages runtime Tinty repos"
 
+# Regression: have_scheme (dx-theme.sh) must not report a real Tinty scheme
+# as absent under pipefail. It pipes `tinty list` into grep; `grep -qx` would
+# exit at its first match and close the pipe, and `tinty list` can print
+# hundreds of scheme ids, so a still-writing `tinty list` could then get
+# SIGPIPE/EPIPE, which under this script's own `set -eo pipefail` (line 2)
+# turns a real match into a failed pipeline, read as "unknown scheme". Same
+# shape Branch 4a fixed in bin/lib/dx-container.sh (see
+# tests/test_helpers.sh's stdin_matches comment). Reproduce deterministically
+# with a stubbed `tinty` on PATH whose "list" output puts the target scheme
+# FIRST, then tens of thousands of filler lines.
+#
+# dx-theme.sh runs its command dispatch unconditionally when sourced (it has
+# no `[ "${BASH_SOURCE[0]}" = "$0" ]` guard), so each probe below clears
+# positional parameters to 0 before sourcing (the resulting "help" branch
+# just prints usage, harmlessly redirected away) inside its own subshell,
+# keeping this script's `set -eo pipefail` from leaking into the rest of
+# this test file.
+HAVE_SCHEME_TMPDIR="$(mktemp -d)"
+HAVE_SCHEME_STUB="$HAVE_SCHEME_TMPDIR/bin"
+mkdir -p "$HAVE_SCHEME_STUB"
+HAVE_SCHEME_TARGET="base16-biglist-target-$$"
+HAVE_SCHEME_ABSENT="base16-biglist-absent-$$"
+HAVE_SCHEME_FILLER_LINES=20000
+cat > "$HAVE_SCHEME_STUB/tinty" <<STUBEOF
+#!/bin/bash
+case "\$1" in
+  list)
+    printf '%s\n' "$HAVE_SCHEME_TARGET"
+    i=1
+    while [ "\$i" -le $HAVE_SCHEME_FILLER_LINES ]; do
+      printf 'base16-filler-%d\n' "\$i"
+      i=\$((i + 1))
+    done
+    ;;
+esac
+exit 0
+STUBEOF
+chmod +x "$HAVE_SCHEME_STUB/tinty"
+have_scheme_biglist() (
+    scheme="$1"
+    set --
+    PATH="$HAVE_SCHEME_STUB:$PATH"
+    source "$SCRIPT_DX_THEME" >/dev/null 2>&1
+    have_scheme "$scheme"
+)
+if have_scheme_biglist "$HAVE_SCHEME_TARGET"; then
+    test_pass "have_scheme finds a real match past a large Tinty scheme list under pipefail"
+else
+    test_fail "have_scheme finds a real match past a large Tinty scheme list under pipefail"
+fi
+if have_scheme_biglist "$HAVE_SCHEME_ABSENT"; then
+    test_fail "have_scheme correctly reports an absent scheme as not found"
+else
+    test_pass "have_scheme correctly reports an absent scheme as not found"
+fi
+rm -rf "$HAVE_SCHEME_TMPDIR"
+
 assert_file_not_contains "$SCRIPT_DX_THEME" ".local/share/tinted-theming/tinty/tinted-shell/scripts/base16-" "no guessed generated tinted-shell script path"
 assert_file_not_contains "$HOME_SHELL_NIX" "programs.zsh" "zsh is not added for Tinty"
 assert_file_contains "$HOME_SHELL_NIX" "Nushell Tinted-shell startup support is intentionally not enabled" "Nushell support is documented as unproven"
