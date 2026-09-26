@@ -99,6 +99,8 @@ DXE_DOCKER_INFO=ServerVersion=27.1.2 OSType=linux Architecture=x86_64 NCPU=8 Mem
 DXE_DOCKER_COMPOSE_VERSION=v5.1.1-fake
 DXE_ROOT_DIR_FREE=500000000
 DXE_ROOT_DIR_TOTAL=900000000
+DXE_ROOT_DIR_PATH=/opt/fake/.qpkg/container-station/data/docker
+DXE_ROOT_DIR_POOL=/dev/fake-mapper/pool0
 DXE_DIAL_STDIO_EXIT=0
 DXE_CPU_COUNT=8
 DXE_MEMINFO=MemTotal: 16384000 kB; MemAvailable: 8000000 kB;
@@ -264,6 +266,206 @@ exit 0
 write_stub ssh_unreachable '
 printf "ssh %s\n" "$*" >> "'"$MARKER"'"
 exit 255
+'
+
+# --- Defect 1: step 5's remote docker run survives the ssh hop's own -----
+# --- argument-concatenation (regression test for the first real run's    ---
+# --- "sh: -c: line 0: syntax error near unexpected token '"'"'then'"'"'"). ---
+#
+# A real (non-stubbed) ssh, given a destination followed by several
+# trailing command-line arguments, concatenates them with a single space
+# and hands the result to the remote login shell to parse -- it does not
+# preserve whatever quoting the local shell already stripped while
+# building that argv. This stub reproduces exactly that behavior (locate
+# this run's destination host among its own arguments, then re-run
+# everything after it through "sh -c \"\$*\"", the same join-then-reparse
+# ssh itself performs) instead of just recording/approving whatever argv
+# it was given, so a step whose docker invocation depends on multi-argument
+# ssh forwarding to keep an embedded shell script's quoting intact will
+# actually fail here the same way it failed for real.
+#
+# The discovered "Docker CLI" is a real local executable (not the usual
+# fake /opt/fake/... path) so that reparsed, argument-preserving
+# invocations (every step whose docker arguments are plain tokens) still
+# actually run end to end; only an invocation whose quoting does not
+# survive the reparse breaks.
+FAKE_LOCAL_DOCKER="$STUB_DIR/dxe-fake-docker-exec"
+cat >"$FAKE_LOCAL_DOCKER" <<'DOCKEREOF'
+#!/bin/bash
+sub="$1"
+last_arg=""
+for dxe_a in "$@"; do last_arg="$dxe_a"; done
+case "$sub" in
+    version) echo "Docker version 27.1.2-fake, build local" ;;
+    pull) echo "digest: sha256:deadbeef" ;;
+    inspect) echo "sha256:deadbeef" ;;
+    build) cat >/dev/null 2>&1 || true; echo "Successfully built" ;;
+    volume)
+        case "$2" in
+            create) echo "$last_arg" ;;
+            ls) : ;;
+            rm) : ;;
+        esac
+        ;;
+    run) : ;;
+    exec) : ;;
+    ps) : ;;
+    rm) : ;;
+    image) case "$2" in ls) : ;; esac ;;
+    rmi) : ;;
+    restart) : ;;
+esac
+exit 0
+DOCKEREOF
+chmod +x "$FAKE_LOCAL_DOCKER"
+
+write_stub ssh_reparse_command '
+printf "ssh %s\n" "$*" >> "'"$MARKER"'"
+last=""
+for a in "$@"; do last="$a"; done
+case "$last" in
+    true) exit 0 ;;
+esac
+case "$last" in
+    *DXE_DOCKER_BIN*) echo "'"$FAKE_LOCAL_DOCKER"'"; exit 0 ;;
+esac
+case "$*" in
+    *"ss -ltn"*) printf "LISTEN 0 128 127.0.0.1:2222 0.0.0.0:*\n"; exit 0 ;;
+    *"-W 127.0.0.1:2222"*) exit 0 ;;
+esac
+args=("$@")
+host_idx=-1
+i=0
+for a in "${args[@]}"; do
+    [ "$a" = "section27-host" ] && host_idx=$i
+    i=$((i + 1))
+done
+if [ "$host_idx" -ge 0 ]; then
+    cmd_args=("${args[@]:$((host_idx + 1))}")
+    cat >/dev/null 2>&1 || true
+    sh -c "${cmd_args[*]}"
+    exit $?
+fi
+exit 0
+'
+
+# --- Defect 2: step 9'"'"'s diff guard must not flag the base image step 2 ---
+# --- itself pulled as an "unexpected" non-spike change (regression test  ---
+# --- for the first real run'"'"'s "Error: unexpected change to a non-spike  ---
+# --- resource: > nixos/nix:2.34.7", which then left cleanup'"'"'s own       ---
+# --- success obscured by a false FAIL). Stateful: docker'"'"'s unfiltered    ---
+# --- image listing (what dxe_spike_snapshot uses) reports the base image ---
+# --- only after step 2'"'"'s pull has actually happened, exactly like a real ---
+# --- docker daemon would.                                                ---
+BASEIMG_PULLED_FLAG="$STUB_DIR/baseimage-pulled.flag"
+rm -f "$BASEIMG_PULLED_FLAG"
+BASE_REF_FOR_TEST="$(sed -n "s/^FROM //p" "$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05/Containerfile" | head -n1)"
+BASE_TAG_FOR_TEST="$(printf "%s" "$BASE_REF_FOR_TEST" | sed "s/@sha256:[0-9a-f]*\$//")"
+write_stub ssh_baseimage_diff '
+printf "ssh %s\n" "$*" >> "'"$MARKER"'"
+last=""
+for a in "$@"; do last="$a"; done
+case "$last" in
+    true) exit 0 ;;
+esac
+case "$*" in *"ss -ltn"*) echo "LISTEN 0 128 127.0.0.1:2222 0.0.0.0:*"; exit 0 ;; *"-W 127.0.0.1:2222"*) exit 0 ;; esac
+case "$last" in
+    *DXE_DOCKER_BIN*) echo "'"$FAKE_DOCKER_BIN"'"; exit 0 ;;
+esac
+args=("$@")
+docker_idx=-1
+i=0
+for a in "${args[@]}"; do
+    [ "$a" = "'"$FAKE_DOCKER_BIN"'" ] && docker_idx=$i
+    i=$((i + 1))
+done
+[ "$docker_idx" -ge 0 ] || exit 0
+sub="${args[$((docker_idx + 1))]:-}"
+sub2="${args[$((docker_idx + 2))]:-}"
+last_arg="${args[$((${#args[@]} - 1))]:-}"
+has_label_filter=0
+for a in "${args[@]}"; do
+    [ "$a" = "label=dxe.role=spike" ] && has_label_filter=1
+done
+case "$sub" in
+    pull) : >"'"$BASEIMG_PULLED_FLAG"'"; exit 0 ;;
+    inspect) echo "sha256:deadbeef"; exit 0 ;;
+    build) cat >/dev/null; echo "Successfully built"; exit 0 ;;
+    version) echo "Docker version 27.1.2-fake, build local"; exit 0 ;;
+    volume)
+        case "$sub2" in
+            create) echo "$last_arg"; exit 0 ;;
+            ls)
+                if [ "$has_label_filter" -eq 1 ]; then echo "dxe-spike-nix"; else echo "dxe-spike-nix"; fi
+                exit 0
+                ;;
+            rm) exit 0 ;;
+        esac
+        ;;
+    run|exec) exit 0 ;;
+    ps)
+        echo "dxe-spike-container"
+        exit 0
+        ;;
+    rm) exit 0 ;;
+    image)
+        case "$sub2" in
+            ls)
+                if [ "$has_label_filter" -eq 1 ]; then
+                    echo "dxe-spike-image:phase0"
+                elif [ -e "'"$BASEIMG_PULLED_FLAG"'" ]; then
+                    printf "dxe-spike-image:phase0\n'"$BASE_TAG_FOR_TEST"'\n"
+                fi
+                exit 0
+                ;;
+        esac
+        ;;
+    rmi) exit 0 ;;
+    restart) exit 0 ;;
+esac
+exit 0
+'
+
+# --- Defect 3: the cleanup loop must remove EVERY labelled resource, not ---
+# --- just the first, in one --cleanup run (regression test for the first ---
+# --- real run: "removed dxe-spike-nix and stopped; a second labelled     ---
+# --- volume remained"). A real ssh session for even a short, stdin-      ---
+# --- ignoring remote command commonly still drains whatever the local    ---
+# --- side has already buffered on stdin before the remote side closes --  ---
+# --- reproduced here (each removal call itself does "cat >/dev/null")    ---
+# --- so this stub actually exercises the "while read <<<\"\$list\"; do    ---
+# --- ... | ssh ...; done" stdin-theft bug instead of silently passing    ---
+# --- because a stub that never touches stdin can'"'"'t reveal it.          ---
+write_stub ssh_two_volumes '
+printf "ssh %s\n" "$*" >> "'"$MARKER"'"
+last=""
+for a in "$@"; do last="$a"; done
+case "$last" in
+    true) exit 0 ;;
+    *DXE_DOCKER_BIN*) echo "'"$FAKE_DOCKER_BIN"'"; exit 0 ;;
+esac
+args=("$@")
+docker_idx=-1
+i=0
+for a in "${args[@]}"; do
+    [ "$a" = "'"$FAKE_DOCKER_BIN"'" ] && docker_idx=$i
+    i=$((i + 1))
+done
+[ "$docker_idx" -ge 0 ] || exit 0
+sub="${args[$((docker_idx + 1))]:-}"
+sub2="${args[$((docker_idx + 2))]:-}"
+case "$sub" in
+    ps) exit 0 ;;
+    volume)
+        case "$sub2" in
+            ls) printf "dxe-spike-vol-a\ndxe-spike-vol-b\n"; exit 0 ;;
+            rm) cat >/dev/null 2>&1 || true; exit 0 ;;
+        esac
+        ;;
+    image) case "$sub2" in ls) exit 0 ;; esac ;;
+    rm|rmi) cat >/dev/null 2>&1 || true; exit 0 ;;
+esac
+exit 0
 '
 
 # The LOCAL Docker CLI, used only by phase0-inventory.sh's explicit Mac-side
@@ -657,6 +859,78 @@ if printf '%s' "$step2fail_out" | stdin_matches -F -- "Step 5: PASS" && printf '
     test_pass "steps after a failing step still run (no set -e abort mid-run)"
 else
     test_fail "steps after a failing step still run (no set -e abort mid-run)"
+fi
+
+# --- Defect 1: step 5's docker run must survive ssh's own argument --------
+# --- concatenation (regression test for "sh: -c: line 0: syntax error    ---
+# --- near unexpected token 'then'" on the first real run).                ---
+reset_marker
+set +e
+d1_out="$(run_with_stubs "ssh_reparse_command docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" 2>&1)"
+set -e
+step5_block="$(printf '%s\n' "$d1_out" | sed -n '/--- Step 5:/,/--- Step 6:/p')"
+if printf '%s' "$step5_block" | stdin_matches -F -- 'Step 5: PASS'; then
+    test_pass "step 5's docker run survives the ssh hop's own argument concatenation"
+else
+    test_fail "step 5's docker run survives the ssh hop's own argument concatenation"
+fi
+if printf '%s' "$step5_block" | stdin_matches -F -- 'unexpected token'; then
+    test_fail "step 5 never reproduces the remote shell's \"unexpected token\" syntax error"
+else
+    test_pass "step 5 never reproduces the remote shell's \"unexpected token\" syntax error"
+fi
+
+# --- Defect 2: step 9's diff guard must not flag step 2's own base-image --
+# --- pull as an "unexpected" non-spike change, and cleanup must still     -
+# --- fully complete regardless of the guard's verdict (regression test    -
+# --- for "Error: unexpected change to a non-spike resource: >             -
+# --- nixos/nix:2.34.7" on the first real run).                            -
+reset_marker
+set +e
+run_with_stubs "ssh_baseimage_diff docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" >"$STUB_DIR/baseimage_out.log" 2>&1
+set -e
+baseimage_out="$(cat "$STUB_DIR/baseimage_out.log")"
+if printf '%s' "$baseimage_out" | stdin_matches -F -- "unexpected change to a non-spike resource: > $BASE_TAG_FOR_TEST"; then
+    test_fail "step 9's diff guard does not flag step 2's own base-image pull as unexpected"
+else
+    test_pass "step 9's diff guard does not flag step 2's own base-image pull as unexpected"
+fi
+if grep -qF -- 'volume rm dxe-spike-nix' "$MARKER"; then
+    test_pass "cleanup still removes labelled resources even when the diff guard is exercised"
+else
+    test_fail "cleanup still removes labelled resources even when the diff guard is exercised"
+fi
+
+# --- Defect 3: --cleanup must remove EVERY labelled volume in one run, ----
+# --- not just the first (regression test for "removed dxe-spike-nix and  -
+# --- stopped; a second labelled volume remained" on the first real run). -
+reset_marker
+set +e
+run_with_stubs "ssh_two_volumes docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --cleanup --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" >"$STUB_DIR/cleanup_twovol_out.log" 2>&1
+set -e
+if grep -qF -- 'volume rm dxe-spike-vol-a' "$MARKER"; then
+    test_pass "--cleanup removes the first of two labelled volumes"
+else
+    test_fail "--cleanup removes the first of two labelled volumes"
+fi
+if grep -qF -- 'volume rm dxe-spike-vol-b' "$MARKER"; then
+    test_pass "--cleanup removes the second of two labelled volumes in the same run (not just the first)"
+else
+    test_fail "--cleanup removes the second of two labelled volumes in the same run (not just the first)"
+fi
+
+# --- Inventory: the Docker Root Dir's pool is recorded separately from ----
+# --- the qpkg path, in the private full report only, never the summary. --
+if grep -qF -- '/opt/fake/.qpkg/container-station/data/docker' "$INV_REPORT" \
+    && grep -qF -- '/dev/fake-mapper/pool0' "$INV_REPORT"; then
+    test_pass "the full inventory report records both the Docker Root Dir path and its (separate) pool"
+else
+    test_fail "the full inventory report records both the Docker Root Dir path and its (separate) pool"
+fi
+if grep -qF -- '/dev/fake-mapper/pool0' "$INV_SUMMARY" || grep -qF -- '/opt/fake/.qpkg/container-station/data/docker' "$INV_SUMMARY" || grep -qF -- 'Docker Root Dir' "$INV_SUMMARY"; then
+    test_fail "the inventory summary never mentions the Docker Root Dir path/pool"
+else
+    test_pass "the inventory summary never mentions the Docker Root Dir path/pool"
 fi
 
 print_summary
