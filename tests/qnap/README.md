@@ -136,8 +136,9 @@ written.
 ```sh
 tests/qnap/phase0-spike.sh                          # steps 1-9; writes both reports under $HOME/dxe-recovery/qnap/ (private)
 tests/qnap/phase0-spike.sh --dry-run                 # preview only; connects nowhere
-tests/qnap/phase0-spike.sh --with-service-restart     # also attempt container + Container Station restart
-tests/qnap/phase0-spike.sh --with-nas-reboot          # also attempt a NAS reboot (needs a maintenance window)
+tests/qnap/phase0-spike.sh --with-container-restart   # also attempt step 8a: restart the dxe-spike-container only
+tests/qnap/phase0-spike.sh --with-service-restart     # also attempt step 8b: restart Container Station
+tests/qnap/phase0-spike.sh --with-nas-reboot          # also attempt step 8c: a NAS reboot (needs a maintenance window)
 tests/qnap/phase0-spike.sh --cleanup                  # remove only leftover dxe-spike-* resources from an earlier run
 ```
 
@@ -150,15 +151,21 @@ unlabelled and nothing pre-existing is ever touched. It captures a full
 after each run (and around `--cleanup` alone) and prints a diff proof that
 only `dxe-spike-*` entries changed.
 
-Restarts are guarded and, without their flag, reported as skipped:
+Step 8's three restarts are each guarded by their own flag and, without it,
+reported as skipped:
 
-- Container restart and the Container Station restart attempt need
+- Step 8a, restarting the `dxe-spike-container` (by the same name **and**
+  `dxe.role=spike` label it was created with in step 5) needs
+  `--with-container-restart`.
+- Step 8b, the Container Station restart attempt, needs
   `--with-service-restart`.
-- The NAS reboot needs `--with-nas-reboot`, and per the plan should only be
-  run during an agreed maintenance window.
+- Step 8c, the NAS reboot, needs `--with-nas-reboot`, and per the plan
+  should only be run during an agreed maintenance window.
 
-Without either flag, step 8 prints `SKIP (... needs maintenance window ...)`
-for each guarded action and never issues the corresponding command.
+Without a flag, step 8 prints `SKIP (... needs maintenance window ...)` for
+that guarded action and never issues the corresponding command; the other
+two flags are independent of it, so e.g. `--with-container-restart` alone
+restarts only the container and still reports 8b/8c skipped.
 
 `--cleanup` alone is idempotent: if there is nothing labelled `dxe.role=spike`
 left, it reports "No labelled ... to remove" for each resource kind and exits

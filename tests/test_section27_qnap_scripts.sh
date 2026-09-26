@@ -480,18 +480,80 @@ else
     test_pass "no reboot command is ever issued without --with-nas-reboot"
 fi
 if grep -q 'restart dxe-spike-container' "$MARKER" || grep -q 'container-station.sh restart' "$MARKER"; then
-    test_fail "no restart command is ever issued without --with-service-restart"
+    test_fail "no restart command is ever issued without --with-container-restart/--with-service-restart"
 else
-    test_pass "no restart command is ever issued without --with-service-restart"
+    test_pass "no restart command is ever issued without --with-container-restart/--with-service-restart"
 fi
 
 reset_marker
 set +e
-run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --with-service-restart --with-nas-reboot --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" >"$STUB_DIR/withrestart_out.log" 2>&1
+run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --with-container-restart --with-service-restart --with-nas-reboot --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" >"$STUB_DIR/withrestart_out.log" 2>&1
 set -e
-if grep -q 'restart dxe-spike-container' "$MARKER"; then test_pass "--with-service-restart issues the container restart"; else test_fail "--with-service-restart issues the container restart"; fi
+if grep -q 'restart dxe-spike-container' "$MARKER"; then test_pass "--with-container-restart issues the container restart"; else test_fail "--with-container-restart issues the container restart"; fi
 if grep -q 'container-station.sh restart' "$MARKER"; then test_pass "--with-service-restart issues the Container Station restart"; else test_fail "--with-service-restart issues the Container Station restart"; fi
 if grep -qE ' reboot$' "$MARKER"; then test_pass "--with-nas-reboot issues the NAS reboot"; else test_fail "--with-nas-reboot issues the NAS reboot"; fi
+
+# --- (e2) 8a/8b/8c are independently gated: each flag triggers only its ---
+# --- own restart and leaves the other two reported as skipped            ---
+# --- (regression test for splitting the previously-shared               ---
+# --- --with-service-restart flag into --with-container-restart (8a)     ---
+# --- and --with-service-restart (8b)).                                  ---
+
+reset_marker
+set +e
+container_only_dry_out="$(run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --dry-run --with-container-restart 2>&1)"
+set -e
+if printf '%s' "$container_only_dry_out" | stdin_matches -F -- "restart dxe-spike-container"; then
+    test_pass "--with-container-restart alone shows the container restart command in dry-run"
+else
+    test_fail "--with-container-restart alone shows the container restart command in dry-run"
+fi
+if printf '%s' "$container_only_dry_out" | stdin_matches -F -- "Step 8a: SKIP"; then
+    test_fail "--with-container-restart alone does not leave 8a itself skipped"
+else
+    test_pass "--with-container-restart alone does not leave 8a itself skipped"
+fi
+if printf '%s' "$container_only_dry_out" | stdin_matches -F -- "Step 8b: SKIP" \
+    && printf '%s' "$container_only_dry_out" | stdin_matches -F -- "Step 8c: SKIP"; then
+    test_pass "--with-container-restart alone leaves 8b (Container Station) and 8c (reboot) skipped"
+else
+    test_fail "--with-container-restart alone leaves 8b (Container Station) and 8c (reboot) skipped"
+fi
+if printf '%s' "$container_only_dry_out" | stdin_matches -F -- "container-station.sh"; then
+    test_fail "--with-container-restart alone never previews the Container Station restart command"
+else
+    test_pass "--with-container-restart alone never previews the Container Station restart command"
+fi
+
+reset_marker
+set +e
+service_only_dry_out="$(run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --dry-run --with-service-restart 2>&1)"
+set -e
+# Note: dxe_maybe_run's dry-run preview reconstructs argv with printf %q,
+# which backslash-escapes the space inside this single-argument remote
+# command string ("container-station.sh\ restart") -- so this checks the
+# command name alone rather than the exact (correctly working) real text.
+if printf '%s' "$service_only_dry_out" | stdin_matches -F -- "container-station.sh"; then
+    test_pass "--with-service-restart alone shows the Container Station restart command in dry-run"
+else
+    test_fail "--with-service-restart alone shows the Container Station restart command in dry-run"
+fi
+if printf '%s' "$service_only_dry_out" | stdin_matches -F -- "Step 8b: SKIP"; then
+    test_fail "--with-service-restart alone does not leave 8b itself skipped"
+else
+    test_pass "--with-service-restart alone does not leave 8b itself skipped"
+fi
+if printf '%s' "$service_only_dry_out" | stdin_matches -F -- "Step 8a: SKIP" \
+    && printf '%s' "$service_only_dry_out" | stdin_matches -F -- "Step 8c: SKIP"; then
+    test_pass "--with-service-restart alone leaves 8a (container) and 8c (reboot) skipped"
+else
+    test_fail "--with-service-restart alone leaves 8a (container) and 8c (reboot) skipped"
+fi
+if printf '%s' "$service_only_dry_out" | stdin_matches -F -- "restart dxe-spike-container"; then
+    test_fail "--with-service-restart alone never previews the container restart command"
+else
+    test_pass "--with-service-restart alone never previews the container restart command"
+fi
 
 # --- (f) redaction: a planted token-like string never survives into either ---
 # --- inventory report; the summary additionally never carries a path/name ---

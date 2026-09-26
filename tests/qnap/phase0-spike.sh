@@ -9,7 +9,7 @@
 # published beyond 127.0.0.1, never a TCP-exposed daemon.
 #
 # Usage:
-#   tests/qnap/phase0-spike.sh [--dry-run] [--with-service-restart] [--with-nas-reboot]
+#   tests/qnap/phase0-spike.sh [--dry-run] [--with-container-restart] [--with-service-restart] [--with-nas-reboot]
 #   tests/qnap/phase0-spike.sh --cleanup [--dry-run]
 #
 # Environment:
@@ -21,12 +21,14 @@
 # non-zero, before any mutation) unless DXE_QNAP_HOST is reachable over a
 # non-interactive SSH connection.
 #
-# --with-service-restart / --with-nas-reboot gate step 8's restarts; without
-# them, that step is reported skipped ("needs maintenance window") and no
-# restart/reboot command is ever issued. --cleanup alone removes only
-# dxe.role=spike-labelled leftovers from an earlier run (containers, then
-# volumes, then the built image), proven by a before/after diff of the full
-# (unfiltered) container/volume/image listing.
+# Step 8's three restarts are independently guarded: --with-container-restart
+# gates 8a (restart the dxe-spike-container only), --with-service-restart
+# gates 8b (the Container Station qpkg restart), and --with-nas-reboot gates
+# 8c (a full NAS reboot). Without a flag, its step is reported skipped
+# ("needs maintenance window") and no restart/reboot command is ever issued.
+# --cleanup alone removes only dxe.role=spike-labelled leftovers from an
+# earlier run (containers, then volumes, then the built image), proven by a
+# before/after diff of the full (unfiltered) container/volume/image listing.
 #
 # The NAS is a production system: --report writes the FULL step-by-step log
 # (may include the discovered Docker CLI absolute path -- fine, since this
@@ -49,13 +51,14 @@ source "$SCRIPT_DIR/lib/phase0-common.sh"
 
 DXE_DRY_RUN=0
 DXE_CLEANUP=0
+DXE_WITH_CONTAINER_RESTART=0
 DXE_WITH_SERVICE_RESTART=0
 DXE_WITH_NAS_REBOOT=0
 REPORT_PATH=""
 SUMMARY_PATH=""
 
 usage() {
-    echo "Usage: $(basename "$0") [--dry-run] [--with-service-restart] [--with-nas-reboot] [--report FILE] [--summary FILE]" >&2
+    echo "Usage: $(basename "$0") [--dry-run] [--with-container-restart] [--with-service-restart] [--with-nas-reboot] [--report FILE] [--summary FILE]" >&2
     echo "       $(basename "$0") --cleanup [--dry-run] [--report FILE] [--summary FILE]" >&2
 }
 
@@ -63,6 +66,7 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --dry-run) DXE_DRY_RUN=1; shift ;;
         --cleanup) DXE_CLEANUP=1; shift ;;
+        --with-container-restart) DXE_WITH_CONTAINER_RESTART=1; shift ;;
         --with-service-restart) DXE_WITH_SERVICE_RESTART=1; shift ;;
         --with-nas-reboot) DXE_WITH_NAS_REBOOT=1; shift ;;
         --report) [ "$#" -ge 2 ] || { echo "Error: --report requires FILE." >&2; exit 2; }; REPORT_PATH="$2"; shift 2 ;;
@@ -389,13 +393,20 @@ dxe_spike_run_steps() {
     fi
 
     step_header 8 "Guarded restarts (container, Container Station, NAS)"
-    if [ "$DXE_WITH_SERVICE_RESTART" = 1 ]; then
+    # 8a is gated independently of 8b/8c: the container it restarts is
+    # "$(dxe_spike_name container)" -- the same name AND dxe.role=spike
+    # label step 5 gave it at creation, so restarting it by that exact
+    # name inherently restarts only the one resource that carries both.
+    if [ "$DXE_WITH_CONTAINER_RESTART" = 1 ]; then
         status=0; dxe_qnap_docker_run restart "$(dxe_spike_name container)" || status=$?
         step_verdict 8a "$status" "container restart"
+    else
+        step_skip 8a "container restart skipped (needs maintenance window; rerun with --with-container-restart)"
+    fi
+    if [ "$DXE_WITH_SERVICE_RESTART" = 1 ]; then
         status=0; dxe_qnap_ssh_exec "$(dxe_spike_container_station_restart_cmd)" || status=$?
         step_verdict 8b "$status" "Container Station restart: $(dxe_spike_container_station_restart_cmd)"
     else
-        step_skip 8a "container restart skipped (needs maintenance window; rerun with --with-service-restart)"
         step_skip 8b "Container Station restart skipped (needs maintenance window; rerun with --with-service-restart)"
     fi
     if [ "$DXE_WITH_NAS_REBOOT" = 1 ]; then
