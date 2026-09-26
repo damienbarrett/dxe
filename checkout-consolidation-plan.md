@@ -108,12 +108,14 @@ with an actual build-and-run check of `main`.
 | 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH. Phase 0 (inventory plus a throwaway spike, no repo code) may run any time after item 4 | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 **done** 2026-09-26: inventory and disposable spike passed on the NAS (steps 1-7, 8a, 9); steps 8b/8c await a maintenance window. Phases 1-7 not started |
 | 12 | `fix/store-trust` (may split in two) | Safe handling of the two Nix-store trust problems in `store-trust-plan.md` | L | Yes | No (Q6 resolved: fail fast) | Not started |
 | 13 | `refactor/bootstrap-v2`, `refactor/declarative-nix` | The two remaining large proposals. No branch until you accept one | L each | Yes | Q7 (still open) | Not started |
+| 14 | `fix/dx-ai-no-source-builds` | Stop `dx-ai` from silently compiling heavy AI tools from source when a `nixpkgs-unstable` refresh misses the binary cache (found on Branch 6, 2026-09-26) | S–M | Yes (`dx-test`, disposable) | No | In progress |
 
 ```text
 Priority 1:  0 ✓ ─► 1 ✓ ─► 2 ✓ ─► 3 ✓ ─► 4 ✓ ─► 4a ✓ ─► 4b ✓ ─► 4c   (main complete, green, buildable, proven on a guest)
 Priority 2:  5 ✓ ─► 9 ✓ ─► 6   (duplicate clone already retired; see "Where things stand")
 Priority 3:  7 ─► 8 ─► 10 ─► 11 ─► 12 ─► 13 (only accepted proposals)
              QNAP Phase 0 (no code) can run any time after item 4
+             14 is an independent bugfix found on Branch 6; it can run any time
 ```
 
 Why this order:
@@ -898,6 +900,61 @@ as a whole phase stack.
 
 ---
 
+## Branch 14 — `fix/dx-ai-no-source-builds` (size S–M; found on Branch 6, 2026-09-26)
+
+`dx-ai` refreshes `nixpkgs-unstable` before installing the optional AI tools
+bundle, and previously pinned that input to nixpkgs **master**, which is
+ahead of Hydra's binary cache. A refresh could land on a revision whose AI
+tools were not yet cached for the guest's architecture, and Nix silently
+built the miss from source inside the guest -- observed for `codex-cli`,
+which OOM-killed the guest building `codex-core`/`codex-tui` at the
+profile's default 12 GB (see "Observations" below, now resolved). The user
+does not want bigger guests (especially not on the QNAP); the fix is to stop
+`dx-ai` from ever building anything heavy without being asked, not to raise
+the default.
+
+1. **Track the cached channel, not master.** `nixpkgs-unstable` now points at
+   the `nixpkgs-unstable` branch of `NixOS/nixpkgs` (the channel branch that
+   only advances once Hydra has built it, so it is cached on
+   cache.nixos.org for both `aarch64-linux` and `x86_64-linux`), re-locked in
+   a real Nix. `flake.lock` changed in that one node only (`original.ref`:
+   `master` -> `nixpkgs-unstable`; `locked.{rev,narHash,lastModified}`
+   moved); every other node is byte-identical.
+2. **Refuse silent source builds.** `dx_ai_check_cached` runs `nix build
+   --dry-run` after the refresh and parses the derivations Nix says it will
+   build, against a small allow-list of always-local, trivial ones (the
+   `dx-ai-tools` buildEnv itself and its `builder.pl` companion, and
+   `agy`/`claude-code`'s own tiny fetch+unpack -- both unfree-licensed
+   upstream, so Hydra never builds or caches either one, on any revision).
+3. **Fall back, then fail closed.** `dx_ai_ensure_cached` retries a miss
+   against the previously published AI generation's own (already-working)
+   lock; if that is clean, it continues on that revision with a notice. If
+   it isn't (or there is no previous generation), it refuses before `nix
+   profile add`, prints the packages that would be built from source and
+   the remedy, and leaves the published generation untouched.
+   `DX_AI_ALLOW_SOURCE_BUILDS=1` skips only that final refusal.
+
+**A finding surfaced during implementation, not a decision this branch made
+unilaterally:** nixpkgs' `claude-code` package is licensed `unfree`, so
+-- exactly like `agy` -- Hydra never builds or caches it, on any revision,
+for any architecture. Its own two derivations therefore show up in `nix
+build --dry-run`'s "will be built" list on every single `dx-ai` run, forever,
+regardless of how well the `nixpkgs-unstable` channel is cached otherwise.
+Treating that the same as a genuine risk would make `dx-ai` refuse on a
+fresh guest's very first run (no previous generation to fall back to)
+unless `DX_AI_ALLOW_SOURCE_BUILDS=1` is set every time -- a regression
+unrelated to the actual `codex` OOM incident this branch fixes. Branch 14
+allow-lists `claude-code`'s trivial fetch+unpack the same way as `agy`'s
+(both are small, `dontBuild=1`, seconds-long, evidenced against nixpkgs
+revision `d54020a6ac3211e9f4201631bdf67678818c0cdf`). If you would rather
+keep the allow-list to exactly the two items originally named (the
+`dx-ai-tools` buildEnv and `agy`), tell the coordinating session and the
+allow-list in `dx-ai.sh` narrows accordingly -- the practical effect is that
+`dx-ai` then needs `DX_AI_ALLOW_SOURCE_BUILDS=1` on every `claude-code`
+version bump, including a guest's first-ever run.
+
+---
+
 ## Observations from Branches 1–2 (for the item 5 review)
 
 - **The coverage ratchet metric is fragile.** It was re-measured four times in
@@ -916,28 +973,26 @@ as a whole phase stack.
   `~/dxe-recovery/progress/SUBAGENT-BRIEF.md`, and each task prompt references
   it. Mandatory progress files are why Branch 1's stall and Branch 2's
   session-limit stop cost nothing.
-- **`dx-ai`'s "build from source" fallback is memory-fragile (found on
-  Branch 6, 2026-09-26).** A fresh guest's first `dx-ai` run refreshes
-  `nixpkgs-unstable` before installing the optional AI tools bundle, so it
-  depends on the binary cache actually having every AI tool built for
-  `aarch64-linux` at whatever revision that refresh lands on. When the
-  cache misses (observed for `codex-cli` at `codex-0.157.0`), Nix falls
-  back to building a large Rust workspace from source locally, which needs
-  far more memory than the profile's 12 GB default -- it OOM-killed
+- **`dx-ai`'s "build from source" fallback was memory-fragile (found on
+  Branch 6, 2026-09-26; resolved by Branch 14).** A fresh guest's first
+  `dx-ai` run refreshes `nixpkgs-unstable` before installing the optional AI
+  tools bundle, so it depended on the binary cache actually having every AI
+  tool built for `aarch64-linux` at whatever revision that refresh lands on.
+  When the cache missed (observed for `codex-cli` at `codex-0.157.0`), Nix
+  fell back to building a large Rust workspace from source locally, which
+  needs far more memory than the profile's 12 GB default -- it OOM-killed
   (`rustc ... terminated by a deadly signal`) building `codex-core`/
   `codex-tui` under the default 12 GB / 4 CPU `dx-test`/`dx-host`
   allocation, and only succeeded after a disposable-guest-only recreate at
-  24 GB. This is not an OpenCode-specific defect (`codex` is one of the
-  five original optional tools) and nothing here changes it -- it is
-  recorded as a backlog candidate, not implemented: **"dx-ai
-  cache-dependency / memory-aware build, or a pinned AI lock"** -- options
-  include pinning `nixpkgs-unstable` to a revision confirmed to have a
-  cache hit for every `aiPackages` member on `aarch64-linux` (trading
-  freshness for reliability), raising the profile's default container
-  memory, detecting an imminent from-source build and warning before it
-  OOMs, or accepting the occasional slow/large local build as a known
-  cost of tracking unstable. Needs a user decision on which trade-off to
-  take; out of scope for Branch 6 to resolve unilaterally.
+  24 GB. This was not an OpenCode-specific defect (`codex` is one of the
+  five original optional tools). Branch 14 resolved it without raising the
+  profile's default memory: `nixpkgs-unstable` now tracks the
+  `nixpkgs-unstable` channel branch (cached on cache.nixos.org, not
+  master), and `dx-ai` checks `nix build --dry-run` after every refresh and
+  refuses to build anything heavy from source, falling back to the
+  previously published generation's own lock first and failing closed
+  (with the remedy) rather than OOMing if that also misses.
+  `DX_AI_ALLOW_SOURCE_BUILDS=1` opts back into building from source.
 
 ## Decisions for you
 

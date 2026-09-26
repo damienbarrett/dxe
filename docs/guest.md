@@ -92,6 +92,21 @@ commands in the guest user's Nix profile. It never modifies the published
 bootstrap. The `dx-ai` helper is installed into `~/.local/bin` by Home
 Manager, the same way `dx-theme` is installed.
 
+`nixpkgs-unstable` tracks the `nixpkgs-unstable` channel branch, which only
+advances once Hydra has finished building a revision, so its packages are
+cached on cache.nixos.org for the guest's architecture. That is not a
+guarantee, though: after the refresh, `dx-ai` runs `nix build --dry-run` and
+refuses to install if any package other than the trivial, always-local ones
+(the `dx-ai-tools` bundle itself, and `agy`/`claude-code`'s own tiny
+fetch-and-unpack, both unfree-licensed and never cached by Hydra) would have
+to be built from source. On a miss, it first retries against the previously
+published generation's own lock -- which was already cached and working --
+and continues on that revision with a notice if that is clean. If it isn't
+(or there is no previous generation), `dx-ai` fails before touching the Nix
+profile, prints the packages that would be built from source and the
+remedy, and leaves the currently published generation untouched. Set
+`DX_AI_ALLOW_SOURCE_BUILDS=1` to build from source anyway.
+
 OpenCode's configuration and authentication state under `~/.config/opencode`,
 and its mutable application data under `~/.local/share/opencode`, are linked to
 the corresponding directories under `/persist/home/dx` so they survive guest
