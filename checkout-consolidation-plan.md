@@ -108,7 +108,7 @@ with an actual build-and-run check of `main`.
 | 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH. Phase 0 (inventory plus a throwaway spike, no repo code) may run any time after item 4 | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 **done** 2026-09-26: inventory and disposable spike passed on the NAS (steps 1-7, 8a, 9); steps 8b/8c await a maintenance window. Phases 1-7 not started |
 | 12 | `fix/store-trust` (may split in two) | Safe handling of the two Nix-store trust problems in `store-trust-plan.md` | L | Yes | No (Q6 resolved: fail fast) | Not started |
 | 13 | `refactor/bootstrap-v2`, `refactor/declarative-nix` | The two remaining large proposals. No branch until you accept one | L each | Yes | Q7 (still open) | Not started |
-| 14 | `fix/dx-ai-no-source-builds` | Stop `dx-ai` from silently compiling heavy AI tools from source when a `nixpkgs-unstable` refresh misses the binary cache (found on Branch 6, 2026-09-26) | S–M | Yes (`dx-test`, disposable) | No | In progress |
+| 14 | `fix/dx-ai-no-source-builds` | Stop `dx-ai` from silently compiling heavy AI tools from source when a `nixpkgs-unstable` refresh misses the binary cache (found on Branch 6, 2026-09-26) | S–M | Yes (`dx-test`, disposable) | No | **Done**: landed on `main` 2026-09-27 (rebased onto `cf9f35f`, CI green); fresh 12 GB guest's first `dx-ai` from cache, peak ~8.6 GiB; live tier 1298/0/8; see `docs/evidence/20260927/dx-ai-no-source-builds.md` |
 
 ```text
 Priority 1:  0 ✓ ─► 1 ✓ ─► 2 ✓ ─► 3 ✓ ─► 4 ✓ ─► 4a ✓ ─► 4b ✓ ─► 4c   (main complete, green, buildable, proven on a guest)
@@ -767,7 +767,7 @@ remove the old-base guards in `bootstrap.sh:11–29` and
 
 ---
 
-## Branch 9 — `fix/bootstrap-start-generation` (size M; Q4 resolved; done, not yet merged)
+## Branch 9 — `fix/bootstrap-start-generation` (size M; Q4 resolved; landed on `main` 2026-09-26)
 
 **Q4 -- resolved 2026-09-26: A, fail the start** if publishing the new
 bootstrap version fails or times out, with a manual start or reboot that has
@@ -900,7 +900,15 @@ as a whole phase stack.
 
 ---
 
-## Branch 14 — `fix/dx-ai-no-source-builds` (size S–M; found on Branch 6, 2026-09-26)
+## Branch 14 — `fix/dx-ai-no-source-builds` (size S–M; found on Branch 6, 2026-09-26; landed on `main` 2026-09-27)
+
+**Status (2026-09-27): landed on `main`.** All increments and gates green;
+live on a freshly created `dx-test` at the profile default 12 GB: the first
+`dx-ai` came from the cache (only the allow-listed trivial derivations built
+locally), peak ~8.6 GiB, Section 17 destructive 99/0, live tier 1298/0/8.
+Evidence: `docs/evidence/20260927/dx-ai-no-source-builds.md`. Its live gate
+also exposed the recreate/keyring defect recorded below and tracked as
+Branch 15.
 
 `dx-ai` refreshes `nixpkgs-unstable` before installing the optional AI tools
 bundle, and previously pinned that input to nixpkgs **master**, which is
@@ -993,6 +1001,21 @@ version bump, including a guest's first-ever run.
   previously published generation's own lock first and failing closed
   (with the remedy) rather than OOMing if that also misses.
   `DX_AI_ALLOW_SOURCE_BUILDS=1` opts back into building from source.
+
+- **Recreating an AI-opted-in guest fails in bootstrap (found on Branch 14's
+  live gate, 2026-09-27; tracked as Branch 15).** `dx-recreate` of a guest
+  whose `/persist` holds a published AI generation aborts right after Home
+  Manager activation: `setup_keyring_service` (guest `bootstrap/persistence.sh`)
+  resolves `dbus-daemon` through `run_as_dx`'s login PATH, but `dbus` and
+  `gnome-keyring` are declared only in `aiPackages`, i.e. they exist only in
+  dx-ai's isolated generation profile, never in the Home Manager profile.
+  A plain start resolves them (the 2026-09-26 `dx-host` promotion worked);
+  a recreate (fresh `/home/dx`) does not, and bootstrap's `set -e` stops the
+  container before sshd. Reproduced twice on `dx-test` at 12 GB; the files
+  are byte-identical to `main`, so it is not Branch 14's. `dx-host` has the
+  same shape (checked read-only). Fix: resolve the keyring binaries from the
+  published AI generation explicitly; the failure policy (keep fatal, or
+  warn and keep the guest reachable) is a user decision for Branch 15.
 
 ## Decisions for you
 
@@ -1307,9 +1330,16 @@ confirmation, verification (running == published generation, Home Manager
 activation completed, data intact). `dx-host` does **not** yet have
 OpenCode: Branch 6 (`feat/opencode`) landed on `main` on 2026-09-26 (see
 its section above). Promoting it to `dx-host` is a separate user decision,
-following this appendix in full; note the Branch 6 finding that a fresh
-`dx-ai` run can build `codex` from source and OOM at the profile's 12 GB
-default, so the promotion plan must decide the guest's memory first.
+following this appendix in full. Branch 14 (landed 2026-09-27) removed the
+reason to enlarge the guest: `dx-ai` now tracks the cached channel and
+refuses silent source builds, so `dx-host` stays at the profile default.
+**Caution (2026-09-27):** until Branch 15 lands, do not `dx-recreate`
+`dx-host` (or otherwise re-run its bootstrap on a fresh `/home/dx`): with an
+AI generation present, `setup_keyring_service` fails to find `dbus-daemon`
+and bootstrap aborts before sshd, leaving the guest stopped (volumes
+intact). A plain `dx-stop-container`/`dx-start-container` is unaffected, as
+the 2026-09-26 promotion showed. Promote `dx-host` to a `main` that contains
+Branch 15 before any recreate.
 
 **Before promoting:**
 
