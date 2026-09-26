@@ -178,5 +178,151 @@ else
 fi
 if [ ! -e "$shared_base/current" ]; then test_pass "two containers sharing one DX_BACKUP_DIR base never share a mirror"; else test_fail "two containers sharing one DX_BACKUP_DIR base never share a mirror"; fi
 
+# --- Branch 17 (fix/dx-backup-transfer-stall): the fetch transfer is two
+# UNIDIRECTIONAL execs, not one exec whose stdin (a large NUL-separated name
+# list) and stdout (the archive) are both live at once -- the shape that
+# deadlocked in production on a large selection (see this branch's task
+# file). A `container` fake that logs every exec call's flags and full
+# argument list proves the SHAPE, not just the outcome. ---
+export DX_CONTAINER_NAME=test-container
+EXEC_LOG="$FIXTURE/exec.log"
+: > "$EXEC_LOG"
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$FIXTURE"'/persist"
+LOG="'"$EXEC_LOG"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container container-a container-b; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    has_i=0
+    if [ "${1:-}" = -i ]; then has_i=1; shift; fi
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    {
+        echo "---EXEC---"
+        echo "has_i=$has_i"
+        for a in "$@"; do printf "ARG:%s\n" "$a"; done
+    } >> "$LOG"
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+
+printf 'two-phase-check\n' > "$FIXTURE/persist/home/dx/two-phase-check.txt"
+"$BASE_DIR/bin/dx-backup" >/dev/null
+
+if grep -Fxq 'has_i=1' "$EXEC_LOG" && grep -Fq 'ARG:cat > "$1"' "$EXEC_LOG"; then
+    test_pass "the fetch ships the name list into the guest via a stdin-redirected, -i exec (sh -c 'cat > ...')"
+else
+    test_fail "the fetch ships the name list into the guest via a stdin-redirected, -i exec (sh -c 'cat > ...') (log: $(cat "$EXEC_LOG"))"
+fi
+
+# The guest temp file path: the argument right after the ship exec's lone
+# standalone "--" (an exact-line match -- a substring match would also catch
+# "--exclude"/"--null").
+guest_list_path="$(grep -A1 -Fx 'ARG:--' "$EXEC_LOG" | grep -F 'ARG:/tmp/' | head -n1 | sed 's/^ARG://' || true)"
+if [ -n "$guest_list_path" ]; then
+    test_pass "the guest temp file path is captured from the ship exec"
+else
+    test_fail "the guest temp file path is captured from the ship exec (log: $(cat "$EXEC_LOG"))"
+fi
+
+# The archive exec: no -i, and it reads the list from the guest temp FILE
+# (-T <path>), never from stdin (-T -). ("ARG:tar" is the archive exec's
+# first argument -- unique in this log, so the 2 lines before it are that
+# same call's own "---EXEC---"/"has_i=" pair.)
+archive_prefix="$(grep -B2 -Fx 'ARG:tar' "$EXEC_LOG" || true)"
+after_dash_t="$(grep -A1 -Fx 'ARG:-T' "$EXEC_LOG" | tail -n1 || true)"
+if printf '%s\n' "$archive_prefix" | grep -Fxq 'has_i=0' \
+    && grep -Fxq 'ARG:--null' "$EXEC_LOG" \
+    && [ "$after_dash_t" = "ARG:$guest_list_path" ]; then
+    test_pass "the archive exec has no -i and reads the list from the guest temp file, not stdin"
+else
+    test_fail "the archive exec has no -i and reads the list from the guest temp file, not stdin (prefix: $archive_prefix; after -T: $after_dash_t)"
+fi
+
+# The guest temp file is really removed (not just "an rm exec ran"): its
+# path, real on this test host because the fake execs for real (see this
+# file's header), no longer exists once dx-backup has finished.
+if [ -n "$guest_list_path" ] && [ ! -e "$guest_list_path" ]; then
+    test_pass "the guest temp file is removed after a successful fetch"
+else
+    test_fail "the guest temp file is removed after a successful fetch"
+fi
+
+# --- Same shape, but the archive exec fails: the guest temp file is still
+# removed (cleanup on failure, not just on success). ---
+: > "$EXEC_LOG"
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$FIXTURE"'/persist"
+LOG="'"$EXEC_LOG"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container container-a container-b; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    has_i=0
+    if [ "${1:-}" = -i ]; then has_i=1; shift; fi
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    {
+        echo "---EXEC---"
+        echo "has_i=$has_i"
+        for a in "$@"; do printf "ARG:%s\n" "$a"; done
+    } >> "$LOG"
+    case "$*" in
+        *--null*) exit 42 ;;
+    esac
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+printf 'two-phase-fail-check\n' > "$FIXTURE/persist/home/dx/two-phase-fail-check.txt"
+set +e
+fail_out="$("$BASE_DIR/bin/dx-backup" 2>&1)"
+fail_rc=$?
+set -e
+[ "$fail_rc" -ne 0 ] && test_pass "a failed archive exec still reports a nonzero exit status" || test_fail "a failed archive exec still reports a nonzero exit status (got: $fail_out)"
+
+fail_guest_list_path="$(grep -A1 -Fx 'ARG:--' "$EXEC_LOG" | grep -F 'ARG:/tmp/' | head -n1 | sed 's/^ARG://' || true)"
+if [ -n "$fail_guest_list_path" ] && [ ! -e "$fail_guest_list_path" ]; then
+    test_pass "the guest temp file is removed even when the archive exec fails"
+else
+    test_fail "the guest temp file is removed even when the archive exec fails (path: $fail_guest_list_path; log: $(cat "$EXEC_LOG"))"
+fi
+
+# Restore the well-behaved fake container (matches the rest of this file's
+# convention of leaving it well-behaved after a forced-failure block).
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$FIXTURE"'/persist"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container container-a container-b; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+
 print_summary
 exit_with_code

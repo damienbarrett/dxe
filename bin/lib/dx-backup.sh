@@ -95,16 +95,89 @@ dx_backup_sum_sizes() {
     awk -F'\t' '{sum += $2} END {print sum + 0}' "$1"
 }
 
+# ---------------------------------------------------------------------------
+# Branch 17 (fix/dx-backup-transfer-stall): shipping a name list into the
+# guest, unidirectionally
+#
+# `dx_backup_fetch_paths` originally pushed a large NUL-separated name list
+# through one `container exec -i`'s stdin while streaming the archive back
+# through that SAME exec's stdout -- live-verified on `dx-host` to deadlock
+# on a large selection (51,262 files / 3.2 GB): the guest `tar` sat with no
+# output, the host extractor had received 0 bytes, the same code having
+# already passed Branch 10's live gate with a 240-file fixture. Whether that
+# is Apple `container exec`'s bidirectional-pipe plumbing deadlocking, or
+# stdin EOF never being delivered when the list is large, is not
+# characterised further here (out of scope) -- every exec below is made
+# unidirectional BY CONSTRUCTION instead: stdin-only (a regular file, never
+# a pipe, so EOF is exactly "the file ended") or stdout-only (stdin
+# explicitly /dev/null), never both live on the same exec.
+#
+# These two helpers implement that shape once, shared by
+# dx_backup_fetch_paths (below) and dx_backup_restore_status's large-batch
+# path: ship a host list file into a guest temp file via a single
+# stdin-redirected `-i` exec (exactly bin/dx-put's file-push shape:
+# `container exec -i ... sh -c 'cat > "$1"' -- DEST < SOURCE`), then have
+# the caller point a stdin-closed, non-`-i` exec at that same guest path.
+# ---------------------------------------------------------------------------
+
+# Copy host file $2 into a fresh guest temp file under /tmp and print that
+# guest path on success. The guest path's random suffix comes from the
+# HOST's own `mktemp -u` (no extra guest round trip to generate one, and
+# `-u` never touches the host filesystem either -- it only prints a name).
+dx_backup_ship_list_to_guest() {
+    local container_name="$1" host_list="$2" guest_list
+    guest_list="/tmp/dxe-backup-list.$(basename "$(mktemp -u "${TMPDIR:-/tmp}/XXXXXXXXXX")")"
+    dx_runtime_exec -i -u dx "$container_name" sh -c 'cat > "$1"' -- "$guest_list" < "$host_list" || return 1
+    printf '%s\n' "$guest_list"
+}
+
+# Best-effort removal of a guest temp file created by
+# dx_backup_ship_list_to_guest. Never fails the caller: this is cleanup, not
+# core logic, and running it after a prior step already failed must not
+# mask that failure's exit status.
+dx_backup_remove_guest_list() {
+    local container_name="$1" guest_list="$2"
+    dx_runtime_exec -u dx "$container_name" rm -f "$guest_list" >/dev/null 2>&1 || true
+}
+
 # One incremental tar transfer: everything named (one TSV line per file) in
 # $3, read from $DX_BACKUP_GUEST_ROOT in the guest, landing in $2/current/.
+#
+# Two unidirectional execs (Branch 17; see this file's module comment
+# above), never one bidirectional one:
+#   1. Ship the NUL-separated name list into a guest temp file (stdin-only).
+#   2. Archive it with `-T <guest temp file>` and stdin explicitly /dev/null
+#      (stdout-only) -- the same shape dx-get already uses for a plain
+#      guest-to-host tar stream, just with the file list coming from a
+#      guest FILE instead of positional `tar` arguments.
+# The guest temp file is removed afterward whether phase 2 succeeds or
+# fails: both branches of the outer `if` set `rc` without letting `set -e`
+# (active in every caller: bin/dx-backup, bin/dx-restore) abort the
+# function before cleanup runs.
 dx_backup_fetch_paths() {
     local container_name="$1" backup_dir="$2" fetch_lines="$3" count
     count="$(wc -l < "$fetch_lines" | tr -d '[:space:]')"
     [ "${count:-0}" -gt 0 ] || return 0
     mkdir -p "$backup_dir/current"
-    cut -f1 "$fetch_lines" | tr '\n' '\0' \
-        | dx_runtime_exec -i -u dx "$container_name" tar -C "$DX_BACKUP_GUEST_ROOT" --exclude '._*' --null -T - -cf - \
-        | tar -xf - -C "$backup_dir/current"
+
+    local host_list guest_list rc=0
+    host_list="$(mktemp "${TMPDIR:-/tmp}/dxe-backup-fetch-list.XXXXXX")" || return 1
+    cut -f1 "$fetch_lines" | tr '\n' '\0' > "$host_list"
+
+    if guest_list="$(dx_backup_ship_list_to_guest "$container_name" "$host_list")"; then
+        if dx_runtime_exec -u dx "$container_name" tar -C "$DX_BACKUP_GUEST_ROOT" --exclude '._*' --null -T "$guest_list" -cf - </dev/null \
+            | tar -xf - -C "$backup_dir/current"; then
+            rc=0
+        else
+            rc=$?
+        fi
+        dx_backup_remove_guest_list "$container_name" "$guest_list"
+    else
+        rc=1
+    fi
+
+    rm -f "$host_list"
+    return "$rc"
 }
 
 # Delete every path in $2 (one per line, relative to current/) from the
