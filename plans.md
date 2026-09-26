@@ -55,8 +55,11 @@ Every plan document below is listed under exactly one of these.
   (G1-G3, then CI on the rebased branch), and live `dx-test` validation
   (fresh opt-in, full live tier, retained-state migration) passed; see
   `docs/evidence/20260926/opencode-relanding.md`. `dx-host` does not have
-  OpenCode yet (a separate promotion decision). Branches 7, 8, and 10
-  through 13 are otherwise not started.
+  OpenCode yet (a separate promotion decision). Branch 7
+  (`test/herdr-acceptance`, the two Herdr acceptance cases, both
+  characterisation tests) landed on 2026-09-26; see
+  `docs/evidence/20260926/herdr-acceptance.md`. Branches 8 and 10 through
+  13 are not started.
 
 ## Open plans
 

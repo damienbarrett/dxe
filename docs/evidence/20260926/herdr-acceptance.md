@@ -5,9 +5,11 @@ the two missing acceptance cases from the completed Herdr review (removed;
 see Git history), tracked as Q3 (resolved 2026-09-26: do both). No home
 directory paths, keys, fingerprints, or NAS identifiers appear below.
 
-Branch `test/herdr-acceptance`, from `main` `9711f9e`. Commits, in order:
-`14ffd17` (corrupt/too-new snapshot recovery), `ee6eadc` (history-cleanup
-marker deletion, plus one Section 10 docs assertion), `3b11075` (ratchet
+Branch `test/herdr-acceptance`, from `main` `9711f9e`, rebased onto `main`
+`483aca4` before landing (commit ids below are the rebased ones). Commits,
+in order:
+`d07cce1` (corrupt/too-new snapshot recovery), `fccf536` (history-cleanup
+marker deletion, plus one Section 10 docs assertion), `67a9578` (ratchet
 rebaseline 1843 → 1821 bp). Both acceptance tests are characterisation
 tests: they passed immediately against unchanged production code, so
 neither commit changes any file under `bin/`, `bin/lib/`, or `container/`.
@@ -138,7 +140,7 @@ says; this is a characterisation test.
 | G1 bash32 | `/bin/bash tests/run-bash32-tests.sh` on macOS bash 3.2.57: 99 passed, 0 failed (this file's own Section 23 is a live/container test and is not part of this curated bash-3.2 subset; a bash-3.2 parser bug this branch's own new code first tripped over — see below — was fixed and re-verified against the real extracted block under `/bin/bash` 3.2.57) |
 | G1 container-free contracts (runner-matched) | Throwaway `dxe-scratch-b7-lint-81609` (`dxe-kcov:ubuntu-24.04`), apt-installed `shellcheck 0.9.0`/`jq 1.7.1` (confirmed matching the GitHub runner), `bash tests/run_all_tests.sh --skip-integration`: **All tests PASSED!** (re-run clean after removing a stray, gitignored `tests/coverage/out/` artifact left over from earlier, unrelated work in the same shared checkout — never present in an actual CI checkout) |
 | G1 pinned ShellCheck 0.10.0 | Throwaway `dxe-scratch-b7-nix-81609` (`nixos/nix:2.34.8`, `-m 6g`), CI's exact command (`find bin tests container -type f \( -name '*.sh' -o -path 'bin/dx*' \) -print0 \| xargs -0 nix shell nixpkgs/nixos-25.05#shellcheck --command shellcheck --severity=warning`): clean, no warnings on any file this branch touched |
-| G2 coverage | `tests/run-coverage-linux.sh` via Apple `container` (existing `dxe-kcov:ubuntu-24.04` image): `covered=100% scope_share=18.21%`. Ratchet re-measured: 1843 → 1821 bp (`3b11075`; both new tests are outside the declared kcov scope, the documented test-dilution edge) |
+| G2 coverage | `tests/run-coverage-linux.sh` via Apple `container` (existing `dxe-kcov:ubuntu-24.04` image): `covered=100% scope_share=18.21%`. Ratchet re-measured: 1843 → 1821 bp (`67a9578`; both new tests are outside the declared kcov scope, the documented test-dilution edge) |
 | G3 Nix | Skipped: no file under `container/` changed by this branch; confirmed via `git diff --stat 9711f9e..HEAD -- container/` (no output) |
 | G4 Live | `dx-test`, see below |
 | Dual-target gate stand-in | `bash tests/test_section27_qnap_scripts.sh`: 99 passed, 0 failed. `DXE_QNAP_HOST=qnap-dxe bash tests/qnap/phase0-spike.sh --dry-run --with-container-restart` was **blocked** by this session's own auto-mode permission classifier ("Modify Shared Resources") for naming the real QNAP host alias even under `--dry-run`; not run, not worked around. Nothing in this branch's diff touches `tests/qnap/`, `bin/`, `bin/lib/`, or `container/`, so the risk of a regression there is low, but this half of the stand-in is unconfirmed and needs the coordinating session to either run it or grant the permission |
@@ -186,3 +188,17 @@ substitution, then reading the file's contents into the variable
 separately — verified clean under `/bin/bash` 3.2.57 with the real block.
 Not a production-code change; recorded here since it is exactly the kind
 of bash-3.2 pitfall future edits to this test file should avoid.
+
+## Landing (2026-09-26)
+
+Rebased onto `main` `483aca4` (which had gained only `qnap-dxe-plan.md`
+changes); the branch content is identical before and after the rebase
+(`git diff --quiet <pre-rebase tip> HEAD -- tests docs plans.md
+checkout-consolidation-plan.md` is empty), so the gates above stand for the
+rebased commits. Ratchet re-measured on a clean export of the rebased tip:
+4,158 / 22,822 = 1821 bp, unchanged. The coordinating session ran the
+dual-target stand-in the subagent could not (`tests/qnap/phase0-spike.sh
+--dry-run --with-container-restart` and the inventory dry-run, which connect
+nowhere) on the rebased tip, alongside the bash-3.2 suite and Sections 1,
+10 and 27. G5: GitHub Actions on the pushed rebased branch, green before
+`main` was fast-forwarded.
