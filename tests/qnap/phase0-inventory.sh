@@ -81,9 +81,19 @@ if [ -n "\$DXE_DOCKER_BIN" ]; then
     if [ -n "\$DXE_ROOT_DIR" ]; then
         echo "DXE_ROOT_DIR_FREE=\$(df -Pk "\$DXE_ROOT_DIR" 2>/dev/null | awk 'NR==2{print \$4}')"
         echo "DXE_ROOT_DIR_TOTAL=\$(df -Pk "\$DXE_ROOT_DIR" 2>/dev/null | awk 'NR==2{print \$2}')"
+        # The qpkg-relative path itself, and (separately) the underlying
+        # filesystem/pool device df reports it as actually living on --
+        # confirmed on the real NAS that these two can differ (Docker's
+        # data directory can be bind-mounted from a different storage pool
+        # than the one its own qpkg path names). Both are private-report
+        # only (see below); never summarized.
+        echo "DXE_ROOT_DIR_PATH=\$DXE_ROOT_DIR"
+        echo "DXE_ROOT_DIR_POOL=\$(df -P "\$DXE_ROOT_DIR" 2>/dev/null | awk 'NR==2{print \$1}')"
     else
         echo "DXE_ROOT_DIR_FREE=UNKNOWN"
         echo "DXE_ROOT_DIR_TOTAL=UNKNOWN"
+        echo "DXE_ROOT_DIR_PATH=UNKNOWN"
+        echo "DXE_ROOT_DIR_POOL=UNKNOWN"
     fi
     echo "DXE_DIAL_STDIO_EXIT=\$( (command -v timeout >/dev/null 2>&1 && timeout 3 "\$DXE_DOCKER_BIN" system dial-stdio </dev/null >/dev/null 2>&1; echo \$?) || echo UNKNOWN)"
 else
@@ -94,6 +104,8 @@ else
     echo "DXE_DOCKER_COMPOSE_VERSION=NOTFOUND"
     echo "DXE_ROOT_DIR_FREE=UNKNOWN"
     echo "DXE_ROOT_DIR_TOTAL=UNKNOWN"
+    echo "DXE_ROOT_DIR_PATH=UNKNOWN"
+    echo "DXE_ROOT_DIR_POOL=UNKNOWN"
     echo "DXE_DIAL_STDIO_EXIT=UNKNOWN"
 fi
 echo "DXE_CPU_COUNT=\$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo UNKNOWN)"
@@ -194,6 +206,8 @@ mkdir -p "$(dirname "$REPORT_PATH")" "$(dirname "$SUMMARY_PATH")"
     printf -- '- `docker info` (selected fields only -- never the full output): %s\n' "$(field "$raw" DXE_DOCKER_INFO)"
     printf -- '- `docker compose version`: %s\n' "$(field "$raw" DXE_DOCKER_COMPOSE_VERSION)"
     printf -- '- Container Station pool free/total (KB, Docker root dir): %s / %s\n' "$(field "$raw" DXE_ROOT_DIR_FREE)" "$(field "$raw" DXE_ROOT_DIR_TOTAL)"
+    printf -- '- Docker Root Dir path (qpkg-relative; private report only, never the summary): %s\n' "$(field "$raw" DXE_ROOT_DIR_PATH)"
+    printf -- '- Docker Root Dir underlying pool/filesystem source (private report only; confirmed to sometimes differ from the path above): %s\n' "$(field "$raw" DXE_ROOT_DIR_POOL)"
     printf -- '- `docker system dial-stdio` exit status (0 = the subcommand ran without a transport/protocol error): %s\n' "$(field "$raw" DXE_DIAL_STDIO_EXIT)"
     echo
     echo "## Host resources"
@@ -235,10 +249,12 @@ mkdir -p "$(dirname "$REPORT_PATH")" "$(dirname "$SUMMARY_PATH")"
     echo "## Not recorded"
     echo
     echo "Per plan policy: no auth keys, tokens, tailnet secrets, full docker"
-    echo "environment, private registry tokens, account names, hostnames,"
-    echo "addresses, storage-pool/dataset names, or \`/etc/tailscale\` contents"
-    echo "were read or printed. Any token/secret-shaped substring captured"
-    echo "above has been redacted. This file is private -- see the header of"
+    echo "environment, private registry tokens, account names, hostnames, or"
+    echo "addresses, or \`/etc/tailscale\` contents were read or printed. The"
+    echo "one exception is the Docker Root Dir path/pool in the Docker CLI"
+    echo "section above -- private-report only, per plan policy, and never in"
+    echo "the summary. Any token/secret-shaped substring captured above has"
+    echo "been redacted. This file is private -- see the header of"
     echo "tests/qnap/README.md; never commit it."
 } >"$REPORT_PATH.tmp.$$" || { rm -f "$REPORT_PATH.tmp.$$"; exit 1; }
 mv "$REPORT_PATH.tmp.$$" "$REPORT_PATH"
