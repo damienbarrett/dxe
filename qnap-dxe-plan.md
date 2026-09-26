@@ -36,8 +36,9 @@ same:
 
 The controller reaches the QNAP by its Tailscale MagicDNS name. Container
 lifecycle operations use the standard Docker Engine interface over SSH. The
-interactive DX session uses the QNAP as an SSH jump host to a guest SSH port
-bound only to QNAP loopback.
+interactive DX session connects directly to the guest's SSH port, which is
+published on the NAS's Tailscale address only (DQ5), so it is reachable from
+tailnet members and from nowhere else.
 
 ```text
 macOS controller
@@ -53,7 +54,7 @@ dx-host container
   +-- /nix             persistent Docker volume
   +-- /persist         persistent Docker volume
   +-- /guest-bootstrap persistent Docker volume
-  +-- sshd :2222       published on QNAP 127.0.0.1 only
+  +-- sshd :2222       published on NAS's Tailscale address only
 ```
 
 The Apple Container implementation remains the default and must not regress.
@@ -276,7 +277,7 @@ Classify each command before the first release:
 | Command or capability | QNAP release disposition |
 | --- | --- |
 | `dx`, image/volume/container lifecycle, start/stop, status, SSH, wait, put/get, GC | Required. |
-| `dx-forward` and `dx-reverse` | Required through the jump-aware guest SSH transport. |
+| `dx-forward` and `dx-reverse` | Required through the shared guest SSH transport addressed to the NAS's Tailscale address (DQ5). |
 | `dx-enter` | Required through remote `docker exec`. |
 | `dx-export` | Required; stream the archive to the controller and test interruption cleanup. |
 | `dx-ai`, Herdr, themes, tmux, NixVim | Required guest-level parity, subject to native package availability. |
@@ -298,8 +299,10 @@ addition:
 - Apple Container remains the zero-configuration default.
 - QNAP management occurs only over the named SSH/Tailscale route.
 - QNAP host identity is verified before any Docker mutation.
-- No QNAP port is published beyond loopback unless a separate, explicit feature
-  defines the exposure and its access control.
+- The only QNAP port DXE publishes is the guest SSH port, bound to the NAS's
+  Tailscale address (DQ5); nothing is published on the LAN or public addresses,
+  and any further exposure needs a separate, explicit feature with its own
+  access control.
 - A runtime mismatch never makes an Apple command act on QNAP or a QNAP command
   act locally.
 - Remote destructive actions require exact runtime, host, profile, name, and
@@ -363,17 +366,19 @@ Using names prefixed `dxe-spike-`:
 5. Run a disposable container with the Nix volume mounted directly at `/nix`
    and without privileged mode or `CAP_SYS_ADMIN`.
 6. Stream a small tar payload through `docker exec -i` and verify its digest.
-7. Bind guest port 2222 to QNAP loopback and reach it through `ProxyJump`.
+7. Bind guest port 2222 to the NAS's Tailscale address only and reach it
+   directly from the controller over the tailnet (that is what
+   `tests/qnap/phase0-spike.sh` step 7 now does).
 8. Restart the container, Container Station, and—during an agreed maintenance
-   window—the NAS; verify volumes and loopback-only publication persist.
+   window—the NAS; verify volumes and tailnet-only publication persists.
 9. Delete only the labelled spike resources and prove unrelated resources were
    untouched.
 
 ### Exit gate
 
 - Native architecture is supported or the plan stops with a recorded reason.
-- Docker over SSH, stdin streaming, loopback publishing, named volumes, and
-  reboot persistence work on the actual QNAP.
+- Docker over SSH, stdin streaming, Tailscale-address port publishing (DQ5),
+  named volumes, and reboot persistence work on the actual QNAP.
 - Resource limits are chosen from observed hardware rather than inheriting the
   current 12 GB/four-CPU defaults blindly.
 - No spike resource or port remains.
@@ -522,14 +527,15 @@ Develop with fake `docker` and `ssh` boundaries first.
 
 ## Phase 5 — Make SSH and user workflows remote-aware
 
-1. Extend the shared SSH option builder with an optional validated jump host;
-   do not duplicate it in individual commands.
-2. Adapt wait/status probes to test the guest through the jump host rather than
+1. Extend the shared SSH option builder with a validated remote guest address
+   (host + port) instead of assuming controller loopback; do not duplicate it in
+   individual commands.
+2. Adapt wait/status probes to test the guest at that address rather than
    controller loopback.
 3. Route interactive SSH, command SSH, put/get, Herdr, and guest probes through
    the shared transport.
-4. Verify `dx-forward` and `dx-reverse` semantics through `ProxyJump`, including
-   their existing lock/socket cleanup behavior.
+4. Verify `dx-forward` and `dx-reverse` through the direct guest SSH connection,
+   including their lock/socket cleanup behavior.
 5. Route `dx-enter` through remote runtime exec.
 6. Stream `dx-export` to an atomic controller-side temporary path, rename only
    after success, and clean partial output after interruption.
@@ -555,8 +561,8 @@ Develop with fake `docker` and `ssh` boundaries first.
 
 - Every command in the DQ8 required set works from an external network over
   Tailscale.
-- Guest port 2222 is unreachable through the QNAP's LAN and public addresses
-  but reachable through the verified management jump.
+- Guest port 2222 is unreachable on the LAN and public addresses, reachable only
+  on the NAS's Tailscale address from tailnet members.
 - Forward and reverse tunnels still bind controller loopback by default.
 - An unsupported command fails before creating, modifying, or deleting remote
   state.
@@ -664,8 +670,8 @@ locks, and local state cannot equal production defaults.
 | Destructive | Explicit opt-in; non-default resources only; prove unrelated resources remain byte-for-byte/identity unchanged. |
 
 The real QNAP boundary must be tested at least once for every privileged or
-trust-sensitive fake: Docker socket access, labelled deletion, loopback-only
-port binding, direct `/nix` persistence, restart policy, and backup restore.
+trust-sensitive fake: Docker socket access, labelled deletion, Tailscale-address
+port binding (DQ5), direct `/nix` persistence, restart policy, and backup restore.
 
 ## Rollout and backout
 
@@ -689,8 +695,8 @@ port binding, direct `/nix` persistence, restart policy, and backup restore.
   output.
 - The existing Apple workflow and all current tests remain green.
 - The required DQ8 command set works through one explicit QNAP profile.
-- No Docker daemon or guest service is exposed publicly; guest SSH is
-  loopback-only behind the verified jump host.
+- No Docker daemon or guest service is exposed publicly; guest SSH is published
+  on the NAS's Tailscale address only.
 - Image/container recreation preserves `/nix`, `/persist`, bootstrap state, and
   SSH identity.
 - NAS and Container Station restarts recover without state loss.
