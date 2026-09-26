@@ -62,6 +62,17 @@ expect_ok "migration export prefix and project-root path placeholder are accepte
 dx_parse_config_file "$config_root/absent.env"
 [ "${DXE_PARSED_DX_SSH_KEY+x}" != x ] && test_pass "an absent data file clears prior parser output" || test_fail "an absent data file clears prior parser output"
 
+# D7 option 3's host-side confirmation bound (bin/dx-start-container) follows
+# the config registry pattern exactly, like every other bounded wait: a
+# registered field, a documented default, and rejected the same way as its
+# sibling timeouts.
+expect_ok "DX_BOOTSTRAP_CONFIRM_TIMEOUT is a registered config field" dx_config_is_field DX_BOOTSTRAP_CONFIRM_TIMEOUT
+[ "$(dx_config_default DX_BOOTSTRAP_CONFIRM_TIMEOUT)" = 5 ] && test_pass "DX_BOOTSTRAP_CONFIRM_TIMEOUT defaults to 5 seconds" || test_fail "DX_BOOTSTRAP_CONFIRM_TIMEOUT defaults to 5 seconds"
+expect_ok "DX_BOOTSTRAP_CONFIRM_TIMEOUT accepts a positive integer" dx_config_validate_value DX_BOOTSTRAP_CONFIRM_TIMEOUT 5
+expect_reject "DX_BOOTSTRAP_CONFIRM_TIMEOUT rejects zero, like every other bounded wait" dx_config_validate_value DX_BOOTSTRAP_CONFIRM_TIMEOUT 0
+expect_reject "DX_BOOTSTRAP_CONFIRM_TIMEOUT rejects a non-numeric value" dx_config_validate_value DX_BOOTSTRAP_CONFIRM_TIMEOUT abc
+expect_reject "DX_BOOTSTRAP_CONFIRM_TIMEOUT rejects an empty value" dx_config_validate_value DX_BOOTSTRAP_CONFIRM_TIMEOUT ''
+
 # Process identity and lock reclamation use PID plus process start, never PID alone.
 lock="$fixture/live.lock"
 dx_lock_acquire "$lock" 1

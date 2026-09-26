@@ -17,6 +17,7 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_BOOTSTRAP_VOLUME` | `dx-bootstrap` | Named volume mounted at `/guest-bootstrap` by default. It stores the pushed bootstrap payload outside the image layer. |
 | `DX_BOOTSTRAP_PATH` | `/guest-bootstrap` | Guest path where the bootstrap payload is mounted and executed. |
 | `DX_BOOTSTRAP_WAIT_TIMEOUT` | `30` | Seconds `dx-sync-bootstrap` waits for the guest entrypoint to report bootstrap readiness before failing with a log hint. |
+| `DX_BOOTSTRAP_CONFIRM_TIMEOUT` | `5` | Seconds `dx-start-container` waits, after a real bootstrap publish (not the unchanged-content skip), for the guest's execution lease to name the just-published generation before failing the start. Live-measured publish-to-lease latency on `dx-test` was 0.2-0.4s; the default gives over 10x headroom. Distinct from the guest-side `DX_BOOTSTRAP_PUBLISH_GRACE` (30s default, not a registry field): that bounds a guest with no publisher at all, this bounds the host's confirmation that a publisher's guest actually picked it up. |
 | `DX_GUEST_ACTIVATION_TIMEOUT` | `1800` | Seconds allowed for one guest Home Manager activation attempt before the bootstrap kills it and retries. A clean Nix store can require much of this window. |
 | `DX_GUEST_ACTIVATION_ATTEMPTS` | `2` | Total guest Home Manager activation attempts before bootstrap fails and the container exits with logs. |
 | `DX_GUEST_ACTIVATION_RETRY_DELAY` | `5` | Seconds to wait between guest Home Manager activation attempts. |
