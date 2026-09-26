@@ -14,8 +14,18 @@ repository yet: this is still a plan.
 
 ### Where things stand
 
-Updated 2026-09-26, after Branch 1 landed.
+Updated 2026-09-26, after Branches 1-3 and 4a landed, Step 4 passed, and
+Branch 5 landed.
 
+- **`main` is now `9064bb9`.** Branches 1, 2, 3, 4a and 5 are all landed
+  fast-forwards; CI is green on each. Step 4's baseline check passed on a
+  freshly recreated `dx-test`. Branch 4b (`test/live-tier-hygiene`) is in
+  progress.
+- **This plan now lives in the repository** as `checkout-consolidation-plan.md`
+  at the root (Branch 5 item 5, commit `9064bb9`). The coordinating session's
+  external copy (`~/Development/dxe-consolidation-plan.md`) is retired: it now
+  only points here. Edit the plan through a docs branch and CI like any other
+  change.
 - **`main` is green again and contains only complete work.** Branch 1
   (`fix/ci-baseline`, 10 commits) landed as `086d9ce`, the first fully green
   CI since 2026-08-01. Branch 2 (`revert/opencode-partial`, 3 commits) landed
@@ -69,10 +79,11 @@ with an actual build-and-run check of `main`.
 | 2 | `revert/opencode-partial` | Remove the half-finished OpenCode support from `main`; it returns complete in Branch 6 | S | No (CI only) | No | **Done**: `main` = `0cf61bd`, CI green |
 | 3 | `fix/test-image-fixture` | Remove the unused `test-image.png` download so guest builds stop depending on a GitHub avatar | XS | Yes (Nix eval) | No | **Done**: `main` = `bd2418f`, CI green |
 | 4 | *(no branch)* | Baseline check: build every guest output from `main`, run it on a freshly recreated `dx-test`, and record evidence that `main` works | ~half day | Yes | No (`dx-test` is disposable) | **Passed**: fresh guest, live tier 1081/0/10; Section 12 in-guest run finishing |
-| 4a | `fix/container-running-sigpipe` | Fix the false "container stopped" abort in `dx-wait-ssh` (Step 4 finding 1) | S | No | No | In progress (subagent, linked worktree) |
-| 4b | `test/live-tier-hygiene` | Make Section 12 run inside the guest as part of the live tier; make Section 4's SSH probe skip (not fail) without a guest; make Section 18's history probe immune to SSH's known-hosts warning | S | Yes (`dx-test`) | No | Next after 4a |
+| 4a | `fix/container-running-sigpipe` | Fix the false "container stopped" abort in `dx-wait-ssh` (Step 4 finding 1) | S | No | No | **Done**: `main` = `596ac28`, CI green |
+| 4b | `test/live-tier-hygiene` | Make Section 12 run inside the guest as part of the live tier; make Section 4's SSH probe skip (not fail) without a guest; make Section 14's history probe immune to SSH's known-hosts warning | S | Yes (`dx-test`) | No | In progress |
+| 4c | `fix/guest-sigpipe-pipelines` | Fix the same `\| grep -q` / `\| head -n1` under `pipefail` SIGPIPE shape as Branch 4a, in the guest scripts `scripts/dx-theme.sh:30` and `scripts/dx-theme-write-tool-themes.sh:374` | S | No | No | Not started |
 | **Priority 2 — finish in-flight work and retire the duplicate clone** | | | | | | |
-| 5 | `docs/plan-cleanup` | Remove stale plan text, delete the OpenCode handoff note, import August evidence, move this plan into the repo | S | No | No | Not started |
+| 5 | `docs/plan-cleanup` | Remove stale plan text, delete the OpenCode handoff note, import August evidence, move this plan into the repo | S | No | No | **Done**: `main` = `9064bb9`, CI green |
 | 6 | `feat/opencode` | Land OpenCode as one complete delivery: the original support plus safe migration, rollback and ownership repair. Then retire `dxe-agent/` | M | Yes | Q1 | Code exists (archive and `dxe-agent`) |
 | **Priority 3 — backlog** | | | | | | |
 | 7 | `test/herdr-acceptance` | Two missing Herdr tests: bad-snapshot recovery and pane-history deletion | S | Possibly | Q3 | Not started |
@@ -84,8 +95,8 @@ with an actual build-and-run check of `main`.
 | 13 | `refactor/bootstrap-v2`, `refactor/declarative-nix` | The two remaining large proposals. No branch until you accept one | L each | Yes | Q7 | Not started |
 
 ```text
-Priority 1:  0 ✓ ─► 1 ✓ ─► 2 ✓ ─► 3 ✓ ─► 4 ✓ ─► 4a ─► 4b   (main complete, green, buildable, proven on a guest)
-Priority 2:  5 ─► 6 ─► retire dxe-agent
+Priority 1:  0 ✓ ─► 1 ✓ ─► 2 ✓ ─► 3 ✓ ─► 4 ✓ ─► 4a ✓ ─► 4b ─► 4c   (main complete, green, buildable, proven on a guest)
+Priority 2:  5 ✓ ─► 6 ─► retire dxe-agent
 Priority 3:  7 ─► 8 ─► 9 ─► 10 ─► 11 ─► 12 ─► 13 (only accepted proposals)
              QNAP Phase 0 (no code) can run any time after item 4
 ```
@@ -379,7 +390,7 @@ Step 4 is not a branch).
    from before the bootstrap was split into modules), not a defect in `main`.
    → Branch 4b makes the live tier run it inside the guest and replaces or
    removes that heuristic.
-4. **Section 18's `write_history` probe reports "inconclusive"** when SSH's
+4. **Section 14's `write_history` probe reports "inconclusive"** when SSH's
    "Permanently added … to the list of known hosts" warning lands in the probe
    output. A skip that should be a pass/fail. → Branch 4b.
 
@@ -395,23 +406,30 @@ remaining gap is a named, recorded blocker with an owner.
 
 ---
 
-## Branch 4a — `fix/container-running-sigpipe` (size S; in progress)
+## Branch 4a — `fix/container-running-sigpipe` (size S; done 2026-09-26)
 
-Fixes Step 4 finding 1. `container_is_running` and `container_exists` in
-`bin/lib/dx-container.sh` pipe the container list into `grep -q`; an early
-match closes the pipe, the writer gets a broken pipe, and under the caller's
-`pipefail` a matched name reads as "not running". `dx-wait-ssh` then aborts a
-healthy bring-up. Red: a stub `container` that lists the target first followed
-by tens of thousands of lines makes both helpers return false under `pipefail`.
-Green: the read-everything idiom the test helpers already use
-(`grep … >/dev/null`), plus a note. Same validation as every branch; `bin/lib`
-is in the kcov scope, so re-measure the ratchet. Developed in a linked worktree
-because Step 4 occupied the main checkout.
+**Landed.** `main` fast-forwarded `bd2418f` → `596ac28`.
 
-## Branch 4b — `test/live-tier-hygiene` (size S; after 4a)
+| Commit | What it did |
+| --- | --- |
+| `ccc9fac` | Fixed `container_is_running`/`container_exists` in `bin/lib/dx-container.sh`: they piped the container list into `grep -F -x -q`, and `grep -q` exits at its first match, closing the pipe while a still-writing `printf` could get SIGPIPE/EPIPE, which under the caller's `pipefail` (e.g. `dx-wait-ssh`) turned a real match into "not running". Red: a stub `container` listing the target first, then 20,000 filler lines, made both helpers return false under `pipefail` (`tests/test_section20_skip_integration.sh`, 12 passed/2 failed). Green: dropped `-q`, redirected to `/dev/null` instead (the `stdin_matches` idiom `tests/test_helpers.sh` already documents), with a comment pointing at it; 14 passed/0 failed. Proved the test bites by stashing only the production fix and re-running red. Searched `bin/lib/*.sh` and `bin/dx-*` for the same shape: no other in-scope instance; noted the guest-side `scripts/dx-theme.sh:30` and `scripts/dx-theme-write-tool-themes.sh:374` look like the same shape but are out of scope (→ Branch 4c) |
+| `596ac28` | Scope-share ratchet re-measured: 2143 → 2134 bp (scope rose by 4 lines in `bin/lib/dx-container.sh`; the +91-line regression test outweighed it) |
 
-Three small Red → Green increments, one per Step 4 observation:
+Fixes Step 4 finding 1. Developed in a linked worktree because Step 4 occupied
+the main checkout.
 
+## Branch 4b — `test/live-tier-hygiene` (size S; after 4a; in progress)
+
+Four small Red → Green increments, one per Step 4 observation (plus a
+`requires_container` pipefail fix in the same family as Branch 4a):
+
+0. **`requires_container` (`tests/test_helpers.sh`) has the same SIGPIPE-under-
+   `pipefail` shape Branch 4a fixed in production**: it pipes
+   `container list --quiet` into `grep -F -x -q`, while this same file
+   documents the pitfall and provides `stdin_matches` to avoid it. Red: the
+   same big-stub-list technique as Branch 4a's Section 20 regression block
+   makes `requires_container` report a running container as not running under
+   `pipefail`. Green: use `stdin_matches -F -x -- "$DX_CONTAINER_NAME"` instead.
 1. **Section 12 inside the guest.** Make the live tier run
    `test_section12_validate_linux.sh` in the guest (copy the test and its
    helpers over SSH the way other live sections use `run_guest`, or a small
@@ -424,12 +442,43 @@ Three small Red → Green increments, one per Step 4 observation:
    pointing there rather than inventing a new source-text match.
 2. **Section 4's key-only SSH probe** skips like the other live checks when the
    guest is not running, instead of failing.
-3. **Section 18's `write_history` probe** ignores SSH's known-hosts warning
+3. **Section 14's `write_history` probe** ignores SSH's known-hosts warning
    (use the same SSH options the other probes use, or filter stderr), so the
    check returns pass or fail rather than "inconclusive".
 
 Validation: G1, coverage ratchet, both CI jobs, and the live tier on `dx-test`
 for increments 1 and 3.
+
+---
+
+## Branch 4c — `fix/guest-sigpipe-pipelines` (size S; after 4b)
+
+Branch 4a's SIGPIPE-under-`pipefail` audit (`ccc9fac`) found the same
+`| grep -q` / `| head` shape in two guest scripts, under their own
+`set -eo pipefail`, and left them untouched as out of that task's scope:
+`scripts/dx-theme.sh:30` and `scripts/dx-theme-write-tool-themes.sh:374`.
+Two increments, each with a stub-based red test in the style of Branch 4a's
+Section 20 regression block:
+
+1. **`scripts/dx-theme.sh:30`** pipes into `grep -qx`, which exits at its
+   first match the same way `grep -q` does. Red: a stub that emits the target
+   line first, then tens of thousands of filler lines, makes the check read a
+   real match as absent under `pipefail`. Green: replace the early-exit
+   `grep -qx` with the read-all idiom (`grep -x -- … >/dev/null`, matching
+   `tests/test_helpers.sh`'s `stdin_matches` and Branch 4a's fix).
+2. **`scripts/dx-theme-write-tool-themes.sh:374`** pipes into
+   `grep -oE … | head -n1`: `head -n1` exits after its first line the same
+   way, closing the pipe on `grep -oE`'s writer. Red: the same big-stub
+   technique, now with `head -n1` as the SIGPIPE trigger, reproduces a dropped
+   match under `pipefail`. Green: replace `grep -oE … | head -n1` with
+   `grep -m1 -oE …` so `grep` itself stops after one match instead of relying
+   on a downstream `head` to do it.
+
+Validation: G1, coverage ratchet (both files are guest `container/.../scripts/`,
+outside kcov's declared `scripts/lib` scope but counted in the ratchet's
+`total_lines`; changed lines need the Appendix C changed-code report the same
+way `dx-ai.sh` does), both CI jobs, `nix flake check`, and the live tier on
+`dx-test` (Section 14's theme-switching checks exercise both scripts).
 
 ---
 
