@@ -70,7 +70,13 @@ dx_config_validate_value() {
             # reported by every caller of this predicate; any other value
             # is simply invalid.
             case "$value" in
-                apple) ;;
+                # `:` (not a bare `;;`) so this no-op branch is itself a
+                # traceable command -- an empty case arm registers no
+                # coverage hit even when selected (see bin/lib/dx-backup.sh's
+                # dx_backup_restore_push for the same fix, and run-coverage-
+                # linux.sh's KCOV_SUBSHELL_TERMINATOR for the same class of
+                # kcov limitation).
+                apple) : ;;
                 docker) echo "Error: DX_RUNTIME=docker is not implemented until Phase 2." >&2; return 1 ;;
                 *) return 1 ;;
             esac
