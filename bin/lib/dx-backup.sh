@@ -249,8 +249,14 @@ dx_backup_restore_push() {
         container exec -u root "$container_name" sh -c 'root="$1"; shift; for d in "$@"; do mkdir -p "$root/$d" && chown dx:dx "$root/$d"; done' -- "$DX_BACKUP_GUEST_ROOT" "${dir_list[@]}"
     fi
 
+    # COPYFILE_DISABLE=1: live-verified on dx-test (2026-09-27) that without
+    # it, macOS tar embeds a com.apple.provenance xattr as a PAX extended
+    # header GNU tar in the guest doesn't recognise ("Ignoring unknown
+    # extended header keyword") -- harmless (extraction still succeeds) but
+    # noisy. Same guard bin/dx-put already uses for the identical
+    # host-to-guest tar-creation direction.
     printf '%s\n' "${target_list[@]}" | tr '\n' '\0' \
-        | tar -C "$backup_dir/current" --exclude '._*' --null -T - -cf - \
+        | COPYFILE_DISABLE=1 tar -C "$backup_dir/current" --exclude '._*' --null -T - -cf - \
         | container exec -i -u dx "$container_name" tar -xf - -C "$DX_BACKUP_GUEST_ROOT"
 
     for path in "${target_list[@]}"; do

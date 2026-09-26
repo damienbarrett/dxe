@@ -140,10 +140,17 @@ dx_pbs_repo_clean_set() {
 # ---------------------------------------------------------------------------
 
 dx_pbs_sha256_stdin() {
+    # `cut`, not awk: live-verified on dx-test (2026-09-27) that `awk` is
+    # absent from the dx user's guest profile (coreutils/findutils are
+    # declared packages; gawk is not -- see bootstrap/activation.sh's own
+    # "Live defect: awk was absent..." comment for a related, earlier case).
+    # `cut -d' ' -f1` extracts the same leading hash field from either tool's
+    # "HASH<sep>name" output using only coreutils, already a hard guest
+    # dependency of this file.
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum | awk '{print $1}'
+        sha256sum | cut -d' ' -f1
     else
-        shasum -a 256 | awk '{print $1}'
+        shasum -a 256 | cut -d' ' -f1
     fi
 }
 
@@ -198,14 +205,14 @@ dx_pbs_walk_repo_files() {
                 -name result -o -name 'result-*' -o -name __pycache__ -o \
                 -name .cache -o -name dist -o -name build -o -name .venv -o \
                 -name .tox -o -name .pytest_cache -o -name .mypy_cache \
-            \) -prune -o \( -type f -o -type l \) -print0
+            \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
       else
           find . \( -name .git -o \( \
                 -name node_modules -o -name target -o -name .direnv -o \
                 -name result -o -name 'result-*' -o -name __pycache__ -o \
                 -name .cache -o -name dist -o -name build -o -name .venv -o \
                 -name .tox -o -name .pytest_cache -o -name .mypy_cache \
-            \) \) -prune -o \( -type f -o -type l \) -print0
+            \) \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
       fi | while IFS= read -r -d '' entry; do printf '%s\0' "${entry#./}"; done
     )
 }
@@ -311,14 +318,14 @@ dx_pbs_list_outside_repos() {
                 -name result -o -name 'result-*' -o -name __pycache__ -o \
                 -name .cache -o -name dist -o -name build -o -name .venv -o \
                 -name .tox -o -name .pytest_cache -o -name .mypy_cache \
-            \) -prune -o \( -type f -o -type l \) -print0
+            \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
     else
         find "$root" \( \
                 -name node_modules -o -name target -o -name .direnv -o \
                 -name result -o -name 'result-*' -o -name __pycache__ -o \
                 -name .cache -o -name dist -o -name build -o -name .venv -o \
                 -name .tox -o -name .pytest_cache -o -name .mypy_cache \
-            \) -prune -o \( -type f -o -type l \) -print0
+            \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
     fi | while IFS= read -r -d '' found; do
         relpath="${found#"$root"/}"
         dx_pbs_path_denied "$relpath" && continue

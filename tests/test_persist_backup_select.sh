@@ -232,5 +232,19 @@ fallback_result="$(
 )"
 [ "$fallback_result" = fallbackhash ] && test_pass "dx_pbs_sha256_stdin falls back to shasum when sha256sum is absent" || test_fail "dx_pbs_sha256_stdin falls back to shasum when sha256sum is absent (got '$fallback_result')"
 
+# --- A permission-denied subtree (live-verified on dx-test: root-owned
+# directories under /persist such as /etc and /lost+found) is skipped
+# silently, not reported as noisy `find` stderr. Readable siblings are
+# still listed. ---
+denied_root="$FIXTURE/denied-root"
+mkdir -p "$denied_root/no-access" "$denied_root/readable"
+printf 'reachable\n' > "$denied_root/readable/file.txt"
+chmod 0000 "$denied_root/no-access"
+denied_stderr="$FIXTURE/denied-stderr.log"
+denied_listing="$(dx_pbs_list "$denied_root" 2> "$denied_stderr")"
+chmod 0755 "$denied_root/no-access"
+if grep -qi 'permission denied' "$denied_stderr"; then test_fail "a permission-denied subtree produces no noisy find stderr"; else test_pass "a permission-denied subtree produces no noisy find stderr"; fi
+if printf '%s\n' "$denied_listing" | stdin_matches -F "$(printf 'readable/file.txt\t')"; then test_pass "a permission-denied subtree does not stop readable siblings from being listed"; else test_fail "a permission-denied subtree does not stop readable siblings from being listed"; fi
+
 print_summary
 exit_with_code
