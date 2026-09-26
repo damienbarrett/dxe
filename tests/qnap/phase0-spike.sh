@@ -273,8 +273,32 @@ dxe_spike_run_steps() {
     fi
 
     step_header 3 "Build the current minimal Containerfile remotely"
-    status=0; dxe_qnap_docker_run build --label "$DXE_SPIKE_LABEL" -t "$(dxe_spike_name image):phase0" "$CONTAINER_DIR" || status=$?
-    step_verdict 3 "$status" "built $(dxe_spike_name image):phase0 from $CONTAINER_DIR"
+    # The remote Docker daemon runs on the QNAP and cannot resolve a path
+    # that only exists on this Mac (confirmed by a real --dry-run against
+    # the actual host alias: the previous version passed $CONTAINER_DIR
+    # itself as the build context argument to a `docker build` executed
+    # over ssh). Docker accepts a tar build context on stdin instead, so
+    # the context is streamed there -- same tar idiom as bin/dx-put's
+    # directory copy (COPYFILE_DISABLE=1 + --exclude '._*' keeps macOS
+    # AppleDouble sidecar files out of the guest; this directory is small,
+    # ~356 KB, with no .dockerignore, so nothing else needs excluding).
+    # With a stdin tar context there is no on-disk directory for -f to be
+    # relative to, so -f names the file's path inside the tar instead
+    # (Containerfile sits at the root of this context directory).
+    if [ "$DXE_DRY_RUN" = 1 ]; then
+        dxe_maybe_run tar -C "$CONTAINER_DIR" --exclude '._*' -cf - .
+        dxe_qnap_docker_run build --label "$DXE_SPIKE_LABEL" -t "$(dxe_spike_name image):phase0" -f Containerfile -
+    else
+        local ssh_opts=() ssh_opt
+        while IFS= read -r ssh_opt; do ssh_opts+=("$ssh_opt"); done <<<"$(dxe_qnap_ssh_opts)"
+        printf '+ tar -C %s --exclude ._* -cf - . | ssh %s %s build --label %s -t %s -f Containerfile -\n' \
+            "$CONTAINER_DIR" "$(dxe_qnap_host)" "$(dxe_qnap_docker_bin)" "$DXE_SPIKE_LABEL" "$(dxe_spike_name image):phase0" >&2
+        status=0
+        COPYFILE_DISABLE=1 tar -C "$CONTAINER_DIR" --exclude '._*' -cf - . \
+            | ssh "${ssh_opts[@]}" "$(dxe_qnap_host)" "$(dxe_qnap_docker_bin)" build --label "$DXE_SPIKE_LABEL" -t "$(dxe_spike_name image):phase0" -f Containerfile - \
+            || status=$?
+        step_verdict 3 "$status" "built $(dxe_spike_name image):phase0 from a streamed tar context ($CONTAINER_DIR)"
+    fi
 
     step_header 4 "Create three disposable labelled volumes"
     local role

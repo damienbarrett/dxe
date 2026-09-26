@@ -142,7 +142,13 @@ if [ "$docker_idx" -ge 0 ]; then
         version) echo "Docker version 27.1.2-fake, build local"; exit 0 ;;
         pull) echo "digest: sha256:deadbeef"; exit 0 ;;
         inspect) echo "sha256:deadbeef"; exit 0 ;;
-        build) echo "Successfully built"; exit 0 ;;
+        # Real (non-dry-run) step 3 pipes a tar build context into this
+        # stub stdin. Drain it before responding -- under pipefail, an
+        # unread stdin closes the pipe under tar and kills it with
+        # SIGPIPE, which pipefail then promotes to the whole pipeline
+        # exit status: a spurious FAIL for a build the stub reports as
+        # success. See test_helpers.sh (stdin_matches) for the same bug.
+        build) cat >/dev/null; echo "Successfully built"; exit 0 ;;
         volume)
             case "$sub2" in
                 create) echo "$last_arg"; exit 0 ;;
@@ -245,7 +251,10 @@ case "$sub" in
     pull) exit 1 ;;
     volume) case "$sub2" in create) echo "$last_arg"; exit 0 ;; ls|rm) exit 0 ;; esac ;;
     image) case "$sub2" in ls) exit 0 ;; esac ;;
-    version|inspect|build|run|exec|ps|rm|rmi|restart) exit 0 ;;
+    # Drain the piped tar build context first -- see the same comment on
+    # the plain ssh stub above.
+    build) cat >/dev/null; exit 0 ;;
+    version|inspect|run|exec|ps|rm|rmi|restart) exit 0 ;;
 esac
 exit 0
 '
@@ -317,6 +326,50 @@ if printf '%s' "$spike_dry_out" | stdin_matches -F -- "DRY-RUN: ssh -o BatchMode
     test_pass "spike --dry-run prints the exact planned remote command list"
 else
     test_fail "spike --dry-run prints the exact planned remote command list"
+fi
+
+# --- (a2) step 3's remote docker build never names a local Mac path; the ---
+# --- build context is streamed over stdin instead (a real dry-run against ---
+# --- the actual host alias exposed this: the remote Docker daemon on the ---
+# --- QNAP cannot resolve a path that only exists on this Mac).           ---
+
+SPIKE_CONTEXT_DIR="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
+step3_block="$(printf '%s\n' "$spike_dry_out" | sed -n '/--- Step 3:/,/--- Step 4:/p')"
+step3_remote_line="$(printf '%s\n' "$step3_block" | grep -E -- 'build --label' | head -n1)"
+step3_tar_line="$(printf '%s\n' "$step3_block" | grep -E -- '^DRY-RUN: tar ' | head -n1)"
+
+if [ -n "$step3_remote_line" ]; then
+    test_pass "step 3's dry-run output includes the remote docker build command"
+else
+    test_fail "step 3's dry-run output includes the remote docker build command"
+fi
+
+if printf '%s' "$step3_remote_line" | stdin_matches -F -- '/Users/' \
+    || printf '%s' "$step3_remote_line" | stdin_matches -F -- "$HOME" \
+    || printf '%s' "$step3_remote_line" | stdin_matches -F -- "$BASE_DIR"; then
+    test_fail "step 3's remote docker build command contains no local absolute Mac path"
+else
+    test_pass "step 3's remote docker build command contains no local absolute Mac path"
+fi
+
+if printf '%s' "$step3_remote_line" | grep -qE -- '-f Containerfile -$'; then
+    test_pass "step 3's remote docker build reads a stdin tar context (-f Containerfile, ends in a bare -)"
+else
+    test_fail "step 3's remote docker build reads a stdin tar context (-f Containerfile, ends in a bare -)"
+fi
+
+if [ -n "$step3_tar_line" ]; then
+    test_pass "step 3's dry-run output includes the local tar-context-streaming command"
+else
+    test_fail "step 3's dry-run output includes the local tar-context-streaming command"
+fi
+
+if printf '%s' "$step3_tar_line" | stdin_matches -F -- "-C $SPIKE_CONTEXT_DIR" \
+    && printf '%s' "$step3_tar_line" | stdin_matches -F -- '-cf -' \
+    && printf '%s' "$step3_tar_line" | grep -qE -- ' \.$'; then
+    test_pass "step 3 streams the build context from the guest container directory via tar -C <dir> ... -cf - ."
+else
+    test_fail "step 3 streams the build context from the guest container directory via tar -C <dir> ... -cf - ."
 fi
 
 # --- (b) refuses to run without DXE_QNAP_HOST reachable, before mutation ---
