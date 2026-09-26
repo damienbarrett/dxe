@@ -26,6 +26,16 @@ Every plan document below is listed under exactly one of these.
   reduction, environment-variable inventory, documentation-test decoupling,
   theme writer work, and archiving completed upgrade material are done;
   removing old-base guards remains unchecked.
+- [`checkout-consolidation-plan.md`](checkout-consolidation-plan.md) —
+  Sequencing plan for landing the remaining consolidation work as small,
+  independently validated branches. Priority 1 (Branches 1-3: CI baseline,
+  the OpenCode revert, the test-image fixture removal) is done, and Step 4's
+  baseline check of `main` passed. Branch 4a (the `container_is_running`/
+  `container_exists` SIGPIPE fix) has landed; Branch 4b (live-tier hygiene)
+  is next. Branch 5 (this document's own move into the repository, plus the
+  rest of `docs/plan-cleanup`) is in progress. Branches 6 through 13 are not
+  started, most gated on a named decision (Q1, Q3-Q7) recorded in the plan
+  itself.
 
 ## Open plans
 
