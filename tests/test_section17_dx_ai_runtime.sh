@@ -349,7 +349,7 @@ else
 fi
 if printf '%s\n' "$ensure_out" | stdin_matches "newrev0000000000000000000000000000000000" \
     && printf '%s\n' "$ensure_out" | stdin_matches "0ldrev00000000000000000000000000000000" \
-    && [ "$(jq -r '.nodes["nixpkgs-unstable"].locked.rev' "$ensure_fixture/stage/flake.lock")" = 0ldrev00000000000000000000000000000000 ]; then
+    && grep -F '"rev":"0ldrev00000000000000000000000000000000"' "$ensure_fixture/stage/flake.lock" >/dev/null; then
     test_pass "a clean fallback prints the old and new revisions and adopts the old lock"
 else
     test_fail "a clean fallback prints the old and new revisions and adopts the old lock"
