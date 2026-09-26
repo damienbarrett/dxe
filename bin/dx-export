@@ -13,4 +13,4 @@ if ! container_exists "$DX_CONTAINER_NAME"; then
     exit 1
 fi
 
-container export "$DX_CONTAINER_NAME" > "$EXPORT_FILE"
+dx_runtime_export "$DX_CONTAINER_NAME" > "$EXPORT_FILE"

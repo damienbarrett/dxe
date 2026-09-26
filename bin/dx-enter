@@ -7,7 +7,7 @@ dx_require_container_cli
 
 echo "Entering DX container: $DX_CONTAINER_NAME"
 if [ $# -eq 0 ]; then
-    container exec -it "$DX_CONTAINER_NAME" bash -l
+    dx_runtime_exec -it "$DX_CONTAINER_NAME" bash -l
 else
-    container exec -it "$DX_CONTAINER_NAME" bash -lc "$(printf "%q " "$@")"
+    dx_runtime_exec -it "$DX_CONTAINER_NAME" bash -lc "$(printf "%q " "$@")"
 fi
