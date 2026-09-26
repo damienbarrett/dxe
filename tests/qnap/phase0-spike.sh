@@ -400,7 +400,7 @@ dxe_spike_run_steps() {
         dxe_qnap_docker_run exec -i "$(dxe_spike_name container)" tar -xf - -C /tmp
         dxe_qnap_docker_run exec "$(dxe_spike_name container)" sh -c 'sha256sum /tmp/payload.txt'
     else
-        local payload_dir local_sha remote_sha stream_status=0
+        local payload_dir local_sha remote_sha stream_status=0 remote_cmd
         local ssh_opts=() ssh_opt
         while IFS= read -r ssh_opt; do ssh_opts+=("$ssh_opt"); done <<<"$(dxe_qnap_ssh_opts)"
         payload_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-spike-payload.XXXXXX")"
@@ -412,7 +412,20 @@ dxe_spike_run_steps() {
         tar -C "$payload_dir" -cf - payload.txt \
             | ssh "${ssh_opts[@]}" "$(dxe_qnap_host)" "$(dxe_qnap_docker_bin)" exec -i "$(dxe_spike_name container)" tar -xf - -C /tmp \
             || stream_status=$?
-        remote_sha="$(ssh "${ssh_opts[@]}" "$(dxe_qnap_host)" "$(dxe_qnap_docker_bin)" exec "$(dxe_spike_name container)" sh -c 'sha256sum /tmp/payload.txt 2>/dev/null || shasum -a 256 /tmp/payload.txt' 2>/dev/null | awk '{print $1}')"
+        # Same class of bug as step 5, just silent instead of a hard
+        # syntax error: this "-c" argument is one of several trailing ssh
+        # arguments (docker_bin, exec, container name, sh, -c, script), so
+        # ssh's own concatenate-then-reparse loses its quoting -- the
+        # remote sh -c ends up running bare "sha256sum" (no file operand,
+        # reading stdin instead of /tmp/payload.txt) with "/tmp/payload.txt"
+        # and the rest silently dropped or reordered, corrupting this
+        # step's own verdict instead of announcing itself. Same fix as
+        # step 5: build the whole remote invocation as ONE already-quoted
+        # string with dxe_argv_desc and hand ssh that single string as its
+        # only trailing argument.
+        remote_cmd="$(dxe_argv_desc "$(dxe_qnap_docker_bin)" exec "$(dxe_spike_name container)" sh -c 'sha256sum /tmp/payload.txt 2>/dev/null || shasum -a 256 /tmp/payload.txt')"
+        printf '+ ssh %s %s\n' "$(dxe_qnap_host)" "$remote_cmd" >&2
+        remote_sha="$(ssh "${ssh_opts[@]}" "$(dxe_qnap_host)" "$remote_cmd" 2>/dev/null | awk '{print $1}')"
         rm -rf "$payload_dir"
         if [ "$stream_status" -eq 0 ] && [ -n "$remote_sha" ] && [ "$remote_sha" = "$local_sha" ]; then
             step_verdict 6 0 "sha256 matched ($local_sha)"
