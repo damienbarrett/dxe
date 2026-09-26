@@ -529,6 +529,47 @@ else
 fi
 rm -rf "$creds_fixture"
 
+# dx_ai_load_opencode_persistence's second and third candidates (the
+# Home-Manager-installed copy at ~/.local/lib/dx/, and the bootstrap-volume
+# fallback) are never reached by the tests above: $AI_SCRIPT's own colocated
+# lib/ sibling (candidate 1) always resolves first when dx-ai.sh is sourced
+# straight from the guest source tree, as every test in this file does. Each
+# case below runs dx-ai.sh from a standalone copy with no lib/ sibling, in
+# its own fresh bash process (a function's "already loaded" fast path would
+# otherwise carry over from this process's own earlier sourcing), so
+# candidate 1 always misses and the intended candidate is the first that can.
+loader_fixture="$ai_fixture/loader"
+mkdir -p "$loader_fixture/bin"
+cp "$AI_SCRIPT" "$loader_fixture/bin/dx-ai.sh"
+
+home_candidate="$loader_fixture/home-candidate"
+mkdir -p "$home_candidate/.local/lib/dx"
+cp "$CONTAINER_DIR/scripts/lib/dx-opencode-persistence.sh" "$home_candidate/.local/lib/dx/dx-opencode-persistence.sh"
+if HOME="$home_candidate" DX_AI_BOOTSTRAP_ROOT="$loader_fixture/no-such-bootstrap" \
+    bash -c "source '$loader_fixture/bin/dx-ai.sh'; dx_ai_load_opencode_persistence && declare -F dx_ai_opencode_persistence >/dev/null"; then
+    test_pass "dx_ai_load_opencode_persistence resolves the Home-Manager-installed copy (candidate 2)"
+else
+    test_fail "dx_ai_load_opencode_persistence resolves the Home-Manager-installed copy (candidate 2)"
+fi
+
+bootstrap_candidate="$loader_fixture/bootstrap-candidate"
+mkdir -p "$bootstrap_candidate/scripts/lib"
+cp "$CONTAINER_DIR/scripts/lib/dx-opencode-persistence.sh" "$bootstrap_candidate/scripts/lib/dx-opencode-persistence.sh"
+if HOME="$loader_fixture/no-such-home" DX_AI_BOOTSTRAP_ROOT="$bootstrap_candidate" \
+    bash -c "source '$loader_fixture/bin/dx-ai.sh'; dx_ai_load_opencode_persistence && declare -F dx_ai_opencode_persistence >/dev/null"; then
+    test_pass "dx_ai_load_opencode_persistence resolves the bootstrap-volume fallback (candidate 3)"
+else
+    test_fail "dx_ai_load_opencode_persistence resolves the bootstrap-volume fallback (candidate 3)"
+fi
+
+if HOME="$loader_fixture/no-such-home" DX_AI_BOOTSTRAP_ROOT="$loader_fixture/no-such-bootstrap" \
+    bash -c "source '$loader_fixture/bin/dx-ai.sh'; dx_ai_load_opencode_persistence" >/dev/null 2>&1; then
+    test_fail "dx_ai_load_opencode_persistence fails closed when no candidate resolves"
+else
+    test_pass "dx_ai_load_opencode_persistence fails closed when no candidate resolves"
+fi
+rm -rf "$loader_fixture"
+
 # Repeated setup (a second guest activation, or a second dx-ai run) must be
 # side-effect-free once every link is already correct.
 idempotent_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-creds-idempotent.XXXXXX")"
