@@ -753,17 +753,97 @@ rm -rf "$fixture/herdr-activate"; mkdir -p "$fixture/herdr-activate/persist/home
     dx_activate_herdr "$fixture/herdr-fail/persist/home/dx" "$fixture/herdr-fail/home/dx" "$GUEST/bootstrap/herdr-config.toml" >/dev/null 2>&1 || true
 )
 
-rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx /home/dx "$fixture/dbus/bin" "$fixture/dbus/share/dbus-1"
-: > "$fixture/dbus/bin/dbus-daemon"; : > "$fixture/dbus/share/dbus-1/session.conf"
+# setup_keyring_service resolves dbus-daemon/gnome-keyring-daemon directly
+# from fixed locations (dx_resolve_keyring_bin: the published AI generation's
+# profile first, dx's Home Manager profile as a fallback) instead of asking
+# dx's login shell to find them on PATH. Exercise every branch: a
+# generation-profile hit for both binaries (including the reuse-a-live-session
+# path), the HM-profile fallback when no generation profile exists, dbus-daemon
+# unresolvable anywhere (policy B: a Warning, not a failure), a resolved
+# dbus-daemon with no session.conf next to it, an invalid bus address from
+# dbus-daemon, and gnome-keyring-daemon unresolvable while dbus-daemon still
+# starts.
+rm -rf /persist/home/dx /home/dx
+mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin \
+    /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1 /home/dx
+: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
+: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon
+chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon \
+    /persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon
+: > /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1/session.conf
 (
     chown() { :; }
-    run_as_dx() { case "$1" in *'command -v dbus-daemon'*) printf '%s\n' "$fixture/dbus/bin/dbus-daemon" ;; esac; }
+    run_as_dx() { :; }
     setpriv() { case "$*" in *--print-address*) printf '%s\n' unix:path=/tmp/dxe-coverage-bus ;; esac; }
     setup_keyring_service
     dx_keyring_address_is_live() { return 0; }
     setup_keyring_service
 )
 rm -f /persist/home/dx/.local/state/dx/keyring-address
+
+# HM-profile fallback: no generation profile at all, only dx's own Home
+# Manager profile has the binaries.
+rm -rf /persist/home/dx/.local/state/dx-ai
+mkdir -p /home/dx/.nix-profile/bin /home/dx/.nix-profile/share/dbus-1
+: > /home/dx/.nix-profile/bin/dbus-daemon; : > /home/dx/.nix-profile/bin/gnome-keyring-daemon
+chmod +x /home/dx/.nix-profile/bin/dbus-daemon /home/dx/.nix-profile/bin/gnome-keyring-daemon
+: > /home/dx/.nix-profile/share/dbus-1/session.conf
+(
+    chown() { :; }; run_as_dx() { :; }
+    setpriv() { case "$*" in *--print-address*) printf '%s\n' unix:path=/tmp/dxe-coverage-bus-fallback ;; esac; }
+    setup_keyring_service
+)
+rm -f /persist/home/dx/.local/state/dx/keyring-address
+rm -rf /home/dx/.nix-profile
+
+# Unresolvable anywhere: policy B warns and returns success rather than
+# failing bootstrap.
+(
+    chown() { :; }; run_as_dx() { :; }; setpriv() { :; }
+    setup_keyring_service
+)
+rm -f /persist/home/dx/.local/state/dx/keyring-address
+
+# dbus-daemon resolves but its session.conf is missing next to it: also a
+# warning, not fatal.
+mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin
+: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
+chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
+(
+    chown() { :; }; run_as_dx() { :; }; setpriv() { :; }
+    setup_keyring_service
+)
+rm -f /persist/home/dx/.local/state/dx/keyring-address
+rm -rf /persist/home/dx/.local/state/dx-ai
+
+# dbus-daemon resolves and has a session.conf, but returns an invalid bus
+# address: also a warning, not fatal.
+mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin \
+    /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1
+: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
+chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
+: > /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1/session.conf
+(
+    chown() { :; }; run_as_dx() { :; }
+    setpriv() { case "$*" in *--print-address*) printf 'not-a-valid-address\n' ;; esac; }
+    setup_keyring_service
+)
+rm -f /persist/home/dx/.local/state/dx/keyring-address
+
+# gnome-keyring-daemon unresolvable while dbus-daemon still starts: a
+# warning for the missing secrets component, but the bus address is still
+# persisted.
+: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
+chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
+rm -f /persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon
+(
+    chown() { :; }; run_as_dx() { :; }
+    setpriv() { case "$*" in *--print-address*) printf '%s\n' unix:path=/tmp/dxe-coverage-bus-nokeyring ;; esac; }
+    setup_keyring_service
+)
+rm -rf /persist/home/dx/.local/state/dx-ai
+rm -f /persist/home/dx/.local/state/dx/keyring-address
+
 printf '%s\n' "export DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dxe-coverage-bus'" > /home/dx/.dx-keyring-env
 (
     chown() { :; }; run_as_dx() { :; }; setpriv() { :; }; dx_keyring_address_is_live() { return 0; }
