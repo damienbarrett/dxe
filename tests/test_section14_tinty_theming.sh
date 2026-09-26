@@ -138,6 +138,7 @@ have_scheme_biglist() (
     scheme="$1"
     set --
     PATH="$HAVE_SCHEME_STUB:$PATH"
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/dx-theme.sh
     source "$SCRIPT_DX_THEME" >/dev/null 2>&1
     have_scheme "$scheme"
 )
