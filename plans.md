@@ -51,7 +51,10 @@ Every plan document below is listed under exactly one of these.
   [D7](docs/refactor/decisions/D7-start-generation.md) and `docs/lifecycle.md`/
   `docs/troubleshooting.md`. QNAP's Phase 0 (inventory and disposable spike,
   `feat/qnap-phase0-scripts`) has also landed, ahead of its Phases 1-7. Branch
-  6 (`feat/opencode`) is next; Branches 7, 8, and 10 through 13 are otherwise
+  6 (`feat/opencode`) is in progress on its own branch (original support,
+  the persistence helper, activation/dx-ai wiring, and per-generation
+  manifests are done; the full gate validation and live `dx-test` checks
+  remain before it merges); Branches 7, 8, and 10 through 13 are otherwise
   not started.
 
 ## Open plans

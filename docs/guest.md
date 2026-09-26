@@ -97,6 +97,22 @@ and its mutable application data under `~/.local/share/opencode`, are linked to
 the corresponding directories under `/persist/home/dx` so they survive guest
 recreation.
 
+On first opt-in, and again during activation after a recreate, DXE safely
+migrates any pre-existing files from either OpenCode home path into those
+persistent targets before restoring the links. It refuses to touch a
+symlinked or non-directory persistent ancestor rather than traversing it,
+and if a file name already exists in the persistent target, the home-side
+file is kept alongside it as a `.dxe-conflict-…` file rather than discarded,
+so nothing is silently lost.
+
+Each optional AI generation records its own tool inventory in
+`.tools-manifest`. `dx-ai --recover` validates a generation against its own
+manifest, so it can recover to a retained generation created before OpenCode
+support existed (which has no manifest and is treated as the legacy
+five-tool inventory: Codex, Gemini, Claude, `agy`, and `herdr`). A newly
+published generation must still contain the complete current optional
+bundle, including OpenCode.
+
 Connect to Herdr from the host using:
 
 ```bash

@@ -584,12 +584,23 @@ pass.
 
 ---
 
-## Branch 6 — `feat/opencode` (size M, code exists)
+## Branch 6 — `feat/opencode` (size M, code exists; in progress 2026-09-26)
 
 **Depends on:** Branches 1–3 merged, Step 4 passed, and Branch 9 landed.
 **Decision:** Q1 -- **resolved 2026-09-26: fix the start-generation bug
 first.** Branch 9 now runs before this one (see the summary table and "Why
 this order").
+
+**Progress (2026-09-26, on the branch, not yet merged to `main`):**
+increments 4.1–4.4 below are done: original support re-landed, the
+persistence helper (`scripts/lib/dx-opencode-persistence.sh`) added at
+100% line coverage intent (kcov confirmation pending the G2 pass),
+activation and `dx-ai` wired to it with the `ln -sfnT` hardening restored,
+and per-generation tool manifests plus recovery. Remaining: 4.5's
+two-loader-paths reduction/justification review (justified in the
+increment 3 commit message, not reduced), 4.6 (Section 12, done as part
+of increment 1), the full G1–G5 validation pass, and the live `dx-test`
+tests below.
 
 After Branch 2's revert, this branch re-lands OpenCode as **one complete
 delivery**:
