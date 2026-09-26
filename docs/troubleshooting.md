@@ -60,47 +60,51 @@ which holds the home directory and persisted state; a store rebuild does not.
 
 ### Guest stops right after Home Manager activation with "dbus-daemon not found"
 
-A guest whose `/persist` already holds a published AI generation (`dx-ai` has
-been run at least once) fails to come up after `dx-recreate`, or any other
-bootstrap that starts from a fresh `/home/dx`:
+**Superseded by `refactor/keyring-owned-by-dx-ai` (Branch 16):** bootstrap no
+longer starts, resolves, or knows anything about the keyring at all, so this
+failure mode cannot happen on a bootstrap containing Branch 16 -- `dx-recreate`
+and every other bootstrap path reach sshd regardless of whether an AI
+generation exists or what state it is in. History, for a guest still running
+a pre-Branch-16 bootstrap: a guest whose `/persist` already held a published
+AI generation failed to come up after `dx-recreate`, or any other bootstrap
+starting from a fresh `/home/dx`, with `Error: dbus-daemon not found on dx's
+PATH...`, because the old `setup_keyring_service` (guest
+`bootstrap/persistence.sh`) resolved `dbus-daemon` by asking dx's login
+shell to find it on `PATH`, which depended on ordering that a fresh
+`/home/dx` did not guarantee. `fix/keyring-bootstrap-recreate` (Branch 15)
+first fixed the resolution and made the failure non-fatal (a `Warning:`
+instead); Branch 16 then removed bootstrap's keyring involvement entirely,
+which is why this whole class of bootstrap-side keyring failure cannot
+recur. **Recovering a guest still on an old bootstrap:** publish a bootstrap
+containing at least Branch 15 (or, better, Branch 16) with
+`./bin/dx-sync-bootstrap` and `./bin/dx-start-container`; `dx-recreate` is
+not required unless the guest needs a fresh `/home/dx` for some other reason.
 
-```
-Setting up D-Bus keyring service for credential persistence...
-Error: dbus-daemon not found on dx's PATH; cannot start the keyring service. Home Manager activation must install it before setup_keyring_service runs.
-```
+### `agy` cannot persist an OAuth token after a container restart (keyring is stale)
 
-Bootstrap's `set -e` aborted before sshd started, so the container stopped
-and became unreachable (`/persist` and `/nix` volumes intact). Cause:
-`dbus`/`gnome-keyring` are declared only in `flake.nix`'s `aiPackages`, so
-they exist only in the AI generation's isolated profile
-(`/persist/home/dx/.local/state/dx-ai/current/profile/bin`), never in Home
-Manager's own profile. `setup_keyring_service` used to resolve
-`dbus-daemon` by asking dx's login shell to find it on `PATH`
-(`run_as_dx 'command -v dbus-daemon'`), which depended on dx's `~/.profile`
-already reflecting the generation-profile `PATH` prepend at the moment
-bootstrap ran it -- not guaranteed on a fresh `/home/dx`.
+`dx-keyring status` reports `stale` (or `agy`'s Secret Service calls fail)
+right after `dx-stop-container` / `dx-start-container`, even though the
+guest was working before the restart. Cause (fixed by
+`refactor/keyring-owned-by-dx-ai`, Branch 16, for a guest running a
+bootstrap containing it -- see below for an older guest): the previous
+boot's `/tmp/dbus-*` socket *file* survives in the container's writable
+layer across a restart, but the process that owned it does not; a socket
+file's type never changes just because its listener died, so a liveness
+check that only asked `[ -S socket ]` (every bootstrap and `dx-ai` version
+before this branch) treated the dead file as a live bus, skipped starting a
+fresh one, and started `gnome-keyring-daemon` against a dead address.
 
-**Fixed in:** `fix/keyring-bootstrap-recreate` (Branch 15). Two changes:
-
-1. `setup_keyring_service` (guest `bootstrap/persistence.sh`) now resolves
-   `dbus-daemon` and `gnome-keyring-daemon` from fixed, known locations --
-   the published AI generation's profile first, dx's Home Manager profile as
-   a fallback -- instead of asking dx's login shell to find them on `PATH`.
-2. If neither binary can still be resolved (no AI generation has ever been
-   published, or the generation profile is incomplete), this is no longer
-   fatal: bootstrap logs an explicit `Warning:` naming what was missing and
-   continues, so sshd still starts and the guest stays reachable. `dx-ai`
-   starts the keyring itself on its next run (it already retries this the
-   same way).
-
-**Recovering a guest created before the fix:** the keyring code lives in the
-bootstrap payload, not in `/persist`, so a plain start on the fixed
-bootstrap repairs it without recreating anything: `./bin/dx-sync-bootstrap`
-(or an ordinary `./bin/dx` start once the fix is published) publishes the
-corrected bootstrap, and `./bin/dx-start-container` on a guest that is
-already stopped in this state picks it up on its next boot. Only reach for
-`dx-recreate` if the guest needs a fresh `/home/dx` for some other reason --
-the fix does not require it.
+**Fix:** `scripts/lib/dx-keyring.sh`'s `dx_keyring_probe` now requires a
+real D-Bus client call to succeed against the recorded address, not just a
+socket-typed file at that path; `dx_keyring_start` (used by both `dx-ai` and
+the explicit `dx-keyring start` command) clears a stale address/socket
+before starting fresh, and is idempotent otherwise. **Recovery, on a guest
+already running a bootstrap containing this fix:** run `dx-keyring start`
+(or any `dx-ai`) after a container restart, before an `agy` login -- see
+`docs/guest.md`'s "Keyring" section. **On a guest whose keyring is stuck
+this way and only has an older `dx-ai`:** `dx-recreate` publishes a fresh
+`/home/dx` and re-runs the (now-fixed) bootstrap and `dx-ai`, which is a
+heavier fix than necessary but always resolves it.
 
 ### A start fails with "published bootstrap generation X, but ... is running Y"
 

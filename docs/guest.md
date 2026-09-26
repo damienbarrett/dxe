@@ -228,6 +228,67 @@ To update the checked-in fallback pin:
    ./bin/dx-ssh dx-ai
    ```
 
+### Keyring (D-Bus session bus + gnome-keyring Secret Service)
+
+`agy` is the only consumer of the guest's keyring: a per-user D-Bus session
+bus plus `gnome-keyring-daemon`'s Secret Service, which `agy` uses to persist
+an OAuth token across guest restarts. `dbus`/`gnome-keyring` are declared
+only in the optional AI tools bundle (`flake.nix`'s `aiPackages`), so the
+keyring only exists once you have opted in with `dx-ai`.
+
+Bootstrap keeps no keyring knowledge at all -- it is owned entirely by
+`dx-ai` and an explicit `dx-keyring` command, both thin wrappers over the
+shared `scripts/lib/dx-keyring.sh` library. Every ordinary `dx-ai` run
+starts or reuses the keyring at its end, so most of the time nothing extra
+is needed. After a container restart (`dx-stop-container` /
+`dx-start-container`), the previous boot's bus is gone but its Home
+Manager-managed shell integration still points at the recorded address, so
+run one of:
+
+```bash
+dx-keyring start   # explicit
+dx-ai              # any AI-tools update also starts it
+```
+
+before an `agy` login. `dx-keyring status` reports `live`, `stale`, or
+`absent` for the recorded bus (plus pids when live) if you want to check
+first.
+
+**Why no automatic start-on-`agy` wrapper.** Explicit is preferred over
+magic here: wrapping `agy` to silently start a keyring session on first use
+would hide *when* and *why* a background service started, and would need to
+special-case every other tool that might eventually want the same Secret
+Service. An explicit `dx-keyring start` (or the same effect from a plain
+`dx-ai`) is one predictable seam.
+
+**Why not systemd socket activation.** The usual desktop-Linux pattern
+(a systemd user session lazily starting `dbus-daemon`/`gnome-keyring-daemon`
+on first socket connection) needs a running systemd `--user` instance, which
+this guest's minimal NixOS profile does not run; `dx` has no user systemd
+session to activate against.
+
+**Considered and deferred: `dbus-run-session` per invocation.** Wrapping
+each `agy` invocation in its own `dbus-run-session` (a fresh, private bus
+for that one process) was considered and rejected: `gnome-keyring-daemon`'s
+Secret Service unlocks once per bus, so a fresh bus per run means a freshly
+locked keyring every single run -- exactly the OAuth-persistence problem
+this exists to solve, not a shortcut around it. A single long-lived,
+explicitly managed bus (this design) is required for the unlock to actually
+persist across invocations.
+
+**The stale-socket defect this design fixes.** The previous (bootstrap-owned)
+liveness check only asked whether the recorded socket path was still a
+socket-typed file (`[ -S ... ]`). After a container restart, the previous
+boot's `/tmp/dbus-*` socket *file* survives in the container's writable
+layer even though the process that owned it is gone, and a dead socket's
+file type does not change -- so the old check treated it as live, skipped
+starting a fresh bus, and started `gnome-keyring-daemon` against a dead
+address. `scripts/lib/dx-keyring.sh`'s `dx_keyring_probe` fixes this with a
+real liveness test: the socket must exist *and* a live D-Bus client call
+(`dbus-send ... org.freedesktop.DBus.ListNames`, bounded by a timeout) must
+actually succeed against it. `dx_keyring_start` is idempotent: a live bus
+with the Secret Service already registered starts nothing new.
+
 ## NixVim Configuration
 
 The editor configuration is managed via NixVim in `container/.../flake.nix`. This is the canonical path for all editor settings, plugins, and keymaps. Standalone `lazy.nvim` configurations are not supported.

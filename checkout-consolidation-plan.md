@@ -1075,6 +1075,87 @@ and its existing host-script test fixture (a fake `container exec ... bash`
 responder) answers every exec identically regardless of command, so adding
 a distinguishable keyring probe there needs that fixture extended too.
 
+**Superseded by Branch 16:** `setup_keyring_service` and
+`dx_resolve_keyring_bin`, the fix this section describes, are removed from
+bootstrap entirely in Branch 16 -- ownership moved to `dx-ai` and a new
+`dx-keyring` command, both wrapping a shared `scripts/lib/dx-keyring.sh`
+library. This section's fix and its live diagnosis remain accurate history
+for how `dx-recreate` was made safe again; the code itself no longer exists
+in bootstrap as of Branch 16.
+
+---
+
+## Branch 16 — `refactor/keyring-owned-by-dx-ai` (size S; found during the
+2026-09-27 `dx-host` promotion, approved by the user 2026-09-27: option 4,
+explicit start, no `agy` wrapper)
+
+Fixes the keyring liveness defect recorded in the Observations below by
+moving guest keyring ownership out of bootstrap entirely, into the layer
+that actually needs it: `agy`, installed by `dx-ai`. Bootstrap now keeps no
+keyring knowledge at all.
+
+1. **One shared library, real liveness.** `scripts/lib/dx-keyring.sh` (in
+   the kcov scope, shipped via the bootstrap volume like
+   `dx-opencode-persistence.sh`, installed by Home Manager under
+   `~/.local/lib/dx/` like the OpenCode helper) keeps its existing address
+   parsing/validation/session-config primitives and adds `dx_keyring_probe`
+   (a real liveness test -- the recorded socket must exist as a real
+   socket-typed file *and* a live `dbus-send ... ListNames` call must
+   succeed against it, bounded by a timeout), `dx_keyring_secrets_registered`
+   (whether the Secret Service already answers), `dx_keyring_clear_stale`
+   (removes the address file and the socket it names, only when the probe
+   fails), `dx_keyring_pids_matching` (a `/proc`-reading pid lookup, no
+   `ps`/`pgrep` dependency), `dx_keyring_start` (idempotent: a live bus with
+   the Secret Service already registered starts nothing new; fails closed
+   only when `dbus-daemon` itself cannot be resolved anywhere), and
+   `dx_keyring_status` (live/stale/absent plus pids).
+2. **`dx-ai` delegates.** `dx_ai_ensure_keyring` now just loads the library
+   (the same three-candidate shape as `dx_ai_load_opencode_persistence`) and
+   calls `dx_keyring_start`. This also fixes a real, pre-existing gap found
+   while implementing this branch: `dx_ai_ensure_keyring` hardcoded a single
+   load path (`$HOME/.local/lib/dx/dx-keyring.sh`) that Home Manager never
+   actually installed, so on a real guest it always hit "packaged keyring
+   library is missing" and failed at `dx-ai`'s very last step -- masked
+   only because every test stubbed `dx_ai_ensure_keyring` itself.
+3. **New explicit `dx-keyring` command.** `scripts/dx-keyring.sh`, installed
+   by Home Manager into `~/.local/bin/dx-keyring` (like `dx-ai`), with
+   `start`/`status`/`--help`. No automatic start-on-`agy` wrapper by design
+   (explicit over magic); a `dbus-run-session`-per-invocation alternative
+   was considered and deferred (a fresh bus per run means a locked keyring
+   per run) -- both recorded in `docs/guest.md`.
+4. **Bootstrap removal.** `dx_resolve_keyring_bin`, `setup_keyring_service`,
+   the `ai_tools_enabled` flag, the call site, and the unconditional
+   `source scripts/lib/dx-keyring.sh` are all removed from
+   `bootstrap.sh`/`bootstrap/persistence.sh`/`bootstrap/activation.sh`.
+   `tests/test_refactor_contracts.sh` asserts bootstrap contains no
+   `keyring`/`dbus` text at all (a plain substring grep, since the retired
+   identifiers embed those words inside a single underscore-joined token
+   that word-boundary matching would not catch).
+
+**Real probe mechanism discovered live** (a throwaway `nixos/nix:2.34.8`
+container pinned to this guest's exact nixpkgs revision,
+`d57af924f160a5084293c71c2043f058bd1cdb60`, dbus 1.16.2 / gnome-keyring
+50.0): `dbus-send --session --dest=org.freedesktop.DBus --print-reply
+--reply-timeout=2000 ... ListNames`. No `busctl` in this build.
+`dbus-daemon --session` together with `--config-file` is invalid ("already
+requested"), confirming the existing `--config-file`-only invocation must
+be kept. A killed daemon's socket file keeps `[ -S ... ]` true and refuses
+a connection immediately (no hang) -- confirms `[ -S ]` alone cannot be the
+fix, which is exactly the defect below. `kill -0` on a killed-but-unreaped
+process also still succeeds (zombie), so pid liveness was rejected as the
+"real" test too; a live client call is the only reliable signal.
+
+**Status (2026-09-27):** implemented and validated in the worktree
+(`/Users/damien/dxe-recovery/progress/tmp/wt-branch-16`), not yet landed on
+`main`. G1 green (bash-3.2, pinned ShellCheck 0.10.0, container-free
+contracts, `test_refactor_contracts.sh`, all re-run against a disposable
+`git clone` of the worktree per the Branch 15 lesson below). G2 green:
+`tests/run-coverage-linux.sh` reports `covered=100% scope_share=17.91%`
+(ratchet re-measured 1789 -> 1791 bp, its own commit). G3 green: `nix flake
+check --no-build --no-write-lock-file` passes; `flake.lock` unchanged (only
+a `home.file` addition, no input change). G4 (live, `dx-test`) and the
+docs/plan commit are next.
+
 ---
 
 ## Observations from Branches 1–2 (for the item 5 review)
@@ -1134,7 +1215,7 @@ a distinguishable keyring probe there needs that fixture extended too.
   still cannot start after correct resolution.
 
 - **The keyring's D-Bus liveness check accepts a stale socket file (found
-  during the 2026-09-27 `dx-host` promotion; proposed as Branch 16).** After
+  during the 2026-09-27 `dx-host` promotion; resolved by Branch 16).** After
   `dx-stop-container`/`dx-start-container`, the previous boot's
   `/tmp/dbus-*` socket file still exists in the container's writable layer,
   `dx_keyring_address_is_live` treats it as a live bus, `setup_keyring_service`
@@ -1144,10 +1225,15 @@ a distinguishable keyring probe there needs that fixture extended too.
   Observed on `dx-host` read-only, and consistent with an earlier probe
   before the promotion, so it is long-standing, not Branch 15's. Impact:
   `agy` cannot persist OAuth tokens via Secret Service after a restart until
-  the bus is restarted; nothing else. Proposed fix (Branch 16, S): probe the
-  bus for real (connect to the socket, or check the recorded owner pid is
-  alive), remove a stale address file and socket on boot, and never start a
-  second keyring daemon; test with a fixture socket file and no listener.
+  the bus is restarted; nothing else. **Resolved:** Branch 16's
+  `dx_keyring_probe` requires a real `dbus-send` reply against the recorded
+  address, not just a socket-typed file at that path (a killed daemon's
+  socket file keeps its type; a recorded-pid liveness check was tried and
+  rejected too -- a killed-but-unreaped process still answers `kill -0`).
+  `dx_keyring_clear_stale` removes the address file and its socket only when
+  the probe fails, and `dx_keyring_start` is idempotent (a live bus with the
+  Secret Service already registered starts nothing new), fixing the
+  second-daemon symptom as well.
 
 ## Decisions for you
 
@@ -1468,12 +1554,15 @@ generation from the cache in under a minute -- `dx-host` now has OpenCode
 same steps. The 2026-09-27 recreate caution is lifted: `dx-host` runs a
 bootstrap containing Branch 15, so `dx-recreate` is safe again.
 
-**Open finding from this promotion (needs a decision; see "Observations"):**
-after a container restart the keyring's D-Bus session is not actually
-running -- the previous boot's socket file survives in the container's
-writable layer and the liveness check accepts it. Not caused by Branch 15
-and not a regression of this promotion; it affects only `agy`'s
-Secret-Service token persistence until the bus is restarted.
+**Open finding from this promotion (resolved by Branch 16; see
+"Observations"):** after a container restart the keyring's D-Bus session is
+not actually running -- the previous boot's socket file survives in the
+container's writable layer and the liveness check accepts it. Not caused by
+Branch 15 and not a regression of this promotion; it affects only `agy`'s
+Secret-Service token persistence until the bus is restarted. Branch 16
+fixes the liveness check itself and moves keyring ownership out of
+bootstrap entirely; `dx-host`'s next promotion (once Branch 16 lands and is
+promoted per this appendix) picks up the fix.
 
 **Before promoting:**
 
