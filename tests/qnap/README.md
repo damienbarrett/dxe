@@ -170,6 +170,29 @@ real image on the QNAP should follow the same pull+tag (or pull-only, if no
 local build is ever needed) shape for the same reason, reading the pin from
 the Containerfile rather than its own copy.
 
+Step 7 binds the guest SSH port to the NAS's own Tailscale address only --
+never loopback, never the LAN, never `0.0.0.0` -- discovered at run time
+over ssh (the Tailscale qpkg CLI's `ip -4`, falling back to reading the
+`tailscale0` interface directly) and never hard-coded or written to
+`--summary`. This is DQ5 as amended 2026-09-26: the first real spike run
+confirmed loopback binding, but then found `ssh -W`/`ProxyJump` through the
+NAS "administratively prohibited" -- the NAS's sshd carries QTS's default
+`AllowTcpForwarding no`, and QTS regenerates its sshd config on its own
+schedule, so a persistent local override would be fragile. A BusyBox `nc`
+exec-channel relay was proven possible and considered, but rejected in
+favour of publishing directly to the discovered address and having the
+controller connect there over the tailnet with no jump host and no port
+forwarding -- exposure is governed entirely by Tailscale ACLs. Step 7 then
+verifies with `ss -ltn` that `2222` is bound to that address alone (no
+`0.0.0.0:2222`, no `[::]:2222`, no other address), then proves reachability
+with a direct TCP connect from the controller (`nc -z`, falling back to
+bash's `/dev/tcp`) and a fetch of the listener's response (`curl`, falling
+back to a `/dev/tcp` read), checking for the literal `PONG` the container's
+listener serves. If the address cannot be discovered, step 5 falls back to
+publishing `127.0.0.1` only (so the rest of the spike still runs) and step 7
+reports `FAIL` with a clear reason -- there is nothing tailnet-reachable to
+verify.
+
 Step 8's three restarts are each guarded by their own flag and, without it,
 reported as skipped:
 
@@ -241,9 +264,9 @@ Before moving into Phase 1, the plan requires:
 
 - Native architecture is supported, or the plan stops with a recorded
   reason (the inventory records `uname -m`).
-- Docker over SSH, stdin streaming, loopback publishing, named volumes, and
-  reboot persistence work on the actual QNAP (the spike's steps 1, 2/3, 4,
-  5/6, 7, and the guarded step 8 reboot).
+- Docker over SSH, stdin streaming, tailnet-address-only publishing, named
+  volumes, and reboot persistence work on the actual QNAP (the spike's steps
+  1, 2/3, 4, 5/6, 7, and the guarded step 8 reboot).
 - Resource limits are chosen from observed hardware (the inventory's CPU,
   memory, and load-average fields) rather than inheriting the Apple
   runtime's 12 GB/four-CPU defaults blindly.

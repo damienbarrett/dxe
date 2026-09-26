@@ -178,28 +178,50 @@ Use Docker named volumes for the first release. A later, separately reviewed
 change may add a QNAP shared-folder bind for `/persist` after path validation,
 ownership, snapshot, backup, and restore behavior are proven on the actual NAS.
 
-### DQ5 — Keep guest SSH private to the QNAP host
+### DQ5 — Publish guest SSH on the NAS's Tailscale address only (amended 2026-09-26)
+
+Originally decided as "keep guest SSH private to the QNAP host": publish
+loopback-only and reach it by jumping through the management host
+(`ssh -J qnap-dxe -p 2222 dx@127.0.0.1`). The Phase 0 spike's second real run
+confirmed the loopback binding (steps 5/7) but then found that jump
+"administratively prohibited": the NAS's sshd carries QTS's default
+`AllowTcpForwarding no`, so `ssh -W`/`ProxyJump` through the NAS cannot work
+as designed, and QTS regenerates its own sshd config on a schedule this plan
+does not control, so a persistent local override to re-enable forwarding
+would be fragile and could silently revert. A BusyBox `nc` exec-channel
+relay (piping a raw TCP stream through `docker exec -i` instead of ssh port
+forwarding) was prototyped and confirmed possible, but rejected: it adds a
+whole ad hoc relay protocol and a long-lived exec session where a native
+network path already exists.
 
 Publish guest SSH as:
 
 ```text
-127.0.0.1:<DX_SSH_PORT>:2222
+<NAS's Tailscale address>:<DX_SSH_PORT>:2222
 ```
 
-Connect through the management host:
+discovered at run time -- never loopback, never the LAN, never `0.0.0.0`, and
+never hard-coded or written to a tracked file. Connect directly, with no
+jump host:
 
 ```sh
-ssh -J qnap-dxe -p 2222 dx@127.0.0.1
+ssh -p 2222 dx@<NAS's Tailscale address>
 ```
 
-The same jump-aware option builder is used by interactive SSH, command SSH,
-`dx-put`, `dx-get`, `dx-forward`, `dx-reverse`, `dx-wait-ssh`, and Herdr. No
-helper gets a one-off transport implementation.
+Exposure is governed entirely by Tailscale ACLs, not by a jump host or port
+forwarding. The same shared SSH option builder is still used by interactive
+SSH, command SSH, `dx-put`, `dx-get`, `dx-forward`, `dx-reverse`,
+`dx-wait-ssh`, and Herdr; it now connects directly by default, with
+jump-host support retained as an option for a future topology that needs
+one. No helper gets a one-off transport implementation.
 
-The QNAP management host key must use normal OpenSSH verification. Before
-production cutover, persist the guest's SSH host identity and stop using
-`StrictHostKeyChecking=no` for the QNAP profile. Key rotation needs an explicit
-operator-visible procedure.
+The QNAP management host key, and the guest's own SSH host identity, still
+use normal OpenSSH verification. Before production cutover, persist the
+guest's SSH host identity and stop using `StrictHostKeyChecking=no` for the
+QNAP profile. Key rotation needs an explicit operator-visible procedure.
+This does not change the Non-goals list: guest SSH still never publishes to
+the LAN or the internet, only to the tailnet, whose membership and access
+Tailscale ACLs govern.
 
 ### DQ6 — Make resource ownership visible in Docker
 
@@ -542,6 +564,13 @@ Develop with fake `docker` and `ssh` boundaries first.
    typed confirmation behavior.
 8. Document emergency access when Tailscale is down without opening permanent
    public ingress.
+9. Design and test a restart-ordering dependency: since guest SSH publishes
+   to the NAS's Tailscale address (DQ5), the guest container must start only
+   after the NAS's `tailscale0` interface already has an address -- on boot,
+   after a Container Station restart, and after a Tailscale service restart
+   alike. Define how the container's restart policy (item 3 above) waits for
+   or retries against a not-yet-addressed interface, rather than publishing
+   a port that silently binds nothing reachable.
 
 ### Exit gate
 
