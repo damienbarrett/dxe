@@ -197,14 +197,17 @@ fi
 requires_container_reports_running() (
     set -o pipefail
     PATH="$BIGLIST_STUB_DIR:$PATH"
-    DX_CONTAINER_NAME="$BIGLIST_TARGET"
-    requires_container >/dev/null 2>&1
+    # requires_container is defined in the separately-sourced test_helpers.sh,
+    # so ShellCheck can't see it read this global; the inline VAR=val prefix
+    # (matching this file's own sanity_out/sanity_out_a calls above) keeps
+    # the assignment and its one consumer on the same statement instead of a
+    # separate one SC2034 would flag as unused.
+    DX_CONTAINER_NAME="$BIGLIST_TARGET" requires_container >/dev/null 2>&1
 )
 requires_container_reports_absent() (
     set -o pipefail
     PATH="$BIGLIST_STUB_DIR:$PATH"
-    DX_CONTAINER_NAME="$BIGLIST_ABSENT"
-    requires_container >/dev/null 2>&1
+    DX_CONTAINER_NAME="$BIGLIST_ABSENT" requires_container >/dev/null 2>&1
 )
 
 if requires_container_reports_running; then
