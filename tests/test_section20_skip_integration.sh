@@ -182,6 +182,43 @@ else
     test_pass "container_exists correctly reports an absent name as not existing"
 fi
 
+# Regression: tests/test_helpers.sh's own requires_container has the same
+# grep -q-under-pipefail shape Branch 4a fixed in bin/lib/dx-container.sh's
+# container_is_running/container_exists above. requires_container pipes
+# `container list --quiet` into `grep -F -x -q`, even though this same file
+# defines set -uo pipefail at its own top and already documents the pitfall
+# via the stdin_matches comment. A caller under pipefail (or requires_container
+# itself, sourced into a pipefail script) can read a real match as "not
+# running" and skip live checks that should have run.
+#
+# Reuse the big-list stub from above: DX_CONTAINER_NAME set to the target
+# that is really first in a 20,000-line `container list --quiet` output must
+# be reported as present (no skip), and an absent name must still skip.
+requires_container_reports_running() (
+    set -o pipefail
+    PATH="$BIGLIST_STUB_DIR:$PATH"
+    DX_CONTAINER_NAME="$BIGLIST_TARGET"
+    requires_container >/dev/null 2>&1
+)
+requires_container_reports_absent() (
+    set -o pipefail
+    PATH="$BIGLIST_STUB_DIR:$PATH"
+    DX_CONTAINER_NAME="$BIGLIST_ABSENT"
+    requires_container >/dev/null 2>&1
+)
+
+if requires_container_reports_running; then
+    test_pass "requires_container finds a real match past a large stub list under pipefail"
+else
+    test_fail "requires_container finds a real match past a large stub list under pipefail"
+fi
+
+if requires_container_reports_absent; then
+    test_fail "requires_container correctly skips for an absent container name"
+else
+    test_pass "requires_container correctly skips for an absent container name"
+fi
+
 # Run one real section script under SKIP_INTEGRATION=true with the stub PATH
 # and fake (always "running") container name, then assert it did no guest
 # work and exited cleanly.

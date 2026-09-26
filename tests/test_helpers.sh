@@ -168,8 +168,14 @@ test_section() {
 }
 
 # Requires running container
+#
+# Uses stdin_matches (this file's own read-all idiom, see its comment above)
+# rather than `grep -F -x -q` directly: this file sets `set -uo pipefail` at
+# its own top, and a `grep -q` pipeline can read a real match as absent under
+# pipefail the same way bin/lib/dx-container.sh's container_is_running/
+# container_exists did before their fix (tests/test_section20_skip_integration.sh).
 requires_container() {
-    if ! command -v container >/dev/null 2>&1 || ! container list --quiet 2>/dev/null | grep -F -x -q -- "$DX_CONTAINER_NAME"; then
+    if ! command -v container >/dev/null 2>&1 || ! container list --quiet 2>/dev/null | stdin_matches -F -x -- "$DX_CONTAINER_NAME"; then
         test_skip "Container '$DX_CONTAINER_NAME' is not running"
         return 1
     fi
