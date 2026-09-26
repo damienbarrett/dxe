@@ -983,6 +983,52 @@ version bump, including a guest's first-ever run.
 
 ---
 
+## Branch 15 — `fix/keyring-bootstrap-recreate` (size S; found on Branch 14's live gate, 2026-09-27)
+
+Fixes the recreate/keyring defect recorded above: `dx-recreate` of a guest
+whose `/persist` already holds a published AI generation aborted bootstrap
+right after Home Manager activation, leaving the guest stopped (volumes
+intact).
+
+`dbus`/`gnome-keyring` are declared only in `flake.nix`'s `aiPackages`, so
+they exist only in the AI generation's isolated profile
+(`/persist/home/dx/.local/state/dx-ai/current/profile/bin`); Home Manager's
+own profile (`homeConfigurations.dx`, `dxPackages`) never installs either
+one, on either `dx-test` or `dx-host`. `setup_keyring_service` (guest
+`bootstrap/persistence.sh`) resolved `dbus-daemon` by asking dx's login
+shell to find it on `PATH` (`run_as_dx 'command -v dbus-daemon'`), which
+depended on dx's `~/.profile` already reflecting the generation-profile
+`PATH` prepend (`home/shell.nix`) at the moment bootstrap ran it -- not
+guaranteed on a fresh `/home/dx`.
+
+1. **Resolve explicitly, not via PATH.** A new `dx_resolve_keyring_bin`
+   helper checks two fixed locations directly -- the published AI
+   generation's profile first, dx's Home Manager profile as a fallback --
+   for both `dbus-daemon` and `gnome-keyring-daemon`, instead of asking dx's
+   login shell to resolve either on `PATH`. This is the same shape
+   `scripts/dx-ai.sh`'s own `dx_ai_ensure_keyring` already uses for `dx-ai`'s
+   own runs (prepend the generation profile to `PATH`, then a plain
+   `command -v`), adapted to run from root without dx's shell environment.
+2. **Failure policy B (user decision, 2026-09-27): degrade loudly, not
+   fatally.** If neither binary can still be resolved (no AI generation has
+   ever been published, or it is incomplete), `setup_keyring_service` logs
+   an explicit `Warning:` naming what was missing and that `dx-ai` will
+   start the keyring on its next run, and returns success so bootstrap
+   continues to sshd. A guest with no keyring service is still reachable; a
+   guest that never starts sshd is not. Option A (keep it fatal) was
+   rejected.
+3. Stale comments at both the `setup_keyring_service` call site and its
+   definition (which said Home Manager installs `dbus-daemon` into dx's
+   profile -- no longer true) are corrected.
+
+**Validation:** G1 (bash-3.2, ShellCheck 0.10.0 pinned, syntax, Container-free
+contracts, `test_refactor_contracts.sh`) and G2 (100% sourceable coverage,
+scope-share ratchet) green in throwaway containers. G3 not applicable (no
+`.nix` file changed). G4 live proof on `dx-test`: pending as of this
+writing -- see `docs/evidence/20260927/keyring-recreate.md`.
+
+---
+
 ## Observations from Branches 1–2 (for the item 5 review)
 
 - **The coverage ratchet metric is fragile.** It was re-measured four times in
@@ -1023,19 +1069,21 @@ version bump, including a guest's first-ever run.
   `DX_AI_ALLOW_SOURCE_BUILDS=1` opts back into building from source.
 
 - **Recreating an AI-opted-in guest fails in bootstrap (found on Branch 14's
-  live gate, 2026-09-27; tracked as Branch 15).** `dx-recreate` of a guest
-  whose `/persist` holds a published AI generation aborts right after Home
+  live gate, 2026-09-27; fixed by Branch 15).** `dx-recreate` of a guest
+  whose `/persist` holds a published AI generation aborted right after Home
   Manager activation: `setup_keyring_service` (guest `bootstrap/persistence.sh`)
-  resolves `dbus-daemon` through `run_as_dx`'s login PATH, but `dbus` and
+  resolved `dbus-daemon` through `run_as_dx`'s login PATH, but `dbus` and
   `gnome-keyring` are declared only in `aiPackages`, i.e. they exist only in
   dx-ai's isolated generation profile, never in the Home Manager profile.
-  A plain start resolves them (the 2026-09-26 `dx-host` promotion worked);
-  a recreate (fresh `/home/dx`) does not, and bootstrap's `set -e` stops the
+  A plain start resolved them (the 2026-09-26 `dx-host` promotion worked);
+  a recreate (fresh `/home/dx`) did not, and bootstrap's `set -e` stopped the
   container before sshd. Reproduced twice on `dx-test` at 12 GB; the files
-  are byte-identical to `main`, so it is not Branch 14's. `dx-host` has the
-  same shape (checked read-only). Fix: resolve the keyring binaries from the
-  published AI generation explicitly; the failure policy (keep fatal, or
-  warn and keep the guest reachable) is a user decision for Branch 15.
+  were byte-identical to `main`, so it was not Branch 14's. `dx-host` had
+  the same shape (checked read-only). Branch 15 resolves the keyring
+  binaries from the published AI generation explicitly (Home Manager's
+  profile as a fallback), and the user chose failure policy B: warn loudly
+  and keep the guest reachable rather than fail bootstrap, if the keyring
+  still cannot start after correct resolution.
 
 ## Decisions for you
 
@@ -1353,13 +1401,18 @@ its section above). Promoting it to `dx-host` is a separate user decision,
 following this appendix in full. Branch 14 (landed 2026-09-27) removed the
 reason to enlarge the guest: `dx-ai` now tracks the cached channel and
 refuses silent source builds, so `dx-host` stays at the profile default.
-**Caution (2026-09-27):** until Branch 15 lands, do not `dx-recreate`
-`dx-host` (or otherwise re-run its bootstrap on a fresh `/home/dx`): with an
-AI generation present, `setup_keyring_service` fails to find `dbus-daemon`
-and bootstrap aborts before sshd, leaving the guest stopped (volumes
-intact). A plain `dx-stop-container`/`dx-start-container` is unaffected, as
-the 2026-09-26 promotion showed. Promote `dx-host` to a `main` that contains
-Branch 15 before any recreate.
+**Caution (2026-09-27, still in effect):** do not `dx-recreate` `dx-host`
+(or otherwise re-run its bootstrap on a fresh `/home/dx`) until `dx-host` is
+running a bootstrap that contains Branch 15's fix: with an AI generation
+present, unfixed `setup_keyring_service` fails to find `dbus-daemon` and
+bootstrap aborts before sshd, leaving the guest stopped (volumes intact). A
+plain `dx-stop-container`/`dx-start-container` is unaffected, as the
+2026-09-26 promotion showed. Branch 15 (`fix/keyring-bootstrap-recreate`)
+implements the fix and is validated at the code level (G1/G2); it is not
+yet merged to `main` or promoted to `dx-host` as this is written -- see its
+section above and `docs/evidence/20260927/keyring-recreate.md` for status.
+Promote `dx-host` to a `main` that contains Branch 15, following this
+appendix in full with the user's explicit approval, before any recreate.
 
 **Before promoting:**
 
