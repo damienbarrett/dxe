@@ -22,7 +22,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl populate_prepared_nix_volume setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership setup_gh_persistence setup_tmux_persistence setup_herdr_persistence setup_keyring_service dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl populate_prepared_nix_volume setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence setup_keyring_service dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -311,6 +311,48 @@ else
     test_fail "Nix ownership markers publish atomically, upgrade legacy layouts cheaply, and retry after publication failure"
 fi
 
+# Characterisation: ensure_nix_ownership_impl's marker-content check (the
+# same grep -q shape fixed in ai_tools_opted_in above, for consistency with
+# the read-all idiom, applied here too) reads a real two-line marker file and
+# takes the "already set" skip path without a recursive chown. The writer
+# here (marker_contents) is at most two short lines -- well under any pipe
+# buffer -- so a standalone probe confirmed this call site was never
+# reproducibly racy; this characterises correct existing behaviour rather
+# than proving a defect.
+marker_content_fixture="$fixture/marker-content-check"
+mkdir -p "$marker_content_fixture/store" "$marker_content_fixture/var/nix"
+marker_content_output="$({
+    owner_uid="$(command id -u)"
+    owner_gid="$(command id -g)"
+    id() { [ "${1:-}" = -u ] && printf '%s\n' "$owner_uid" || printf '%s\n' "$owner_gid"; }
+    if [ "$(command uname -s)" = Darwin ]; then
+        stat() {
+            if [ "${1:-}" = -c ]; then
+                shift 2
+                command stat -f '%u:%g' "$1"
+            else
+                command stat "$@"
+            fi
+        }
+    fi
+    chown() {
+        local args=() arg
+        for arg in "$@"; do
+            if [ "$arg" = dx:dx ]; then args+=("$owner_uid:$owner_gid"); else args+=("$arg"); fi
+        done
+        command chown "${args[@]}"
+    }
+    run_as_dx() { return 0; }
+    essentials_store_valid() { return 0; }
+    DX_NIX_OWNERSHIP_ROOT="$marker_content_fixture" publish_nix_ownership_marker
+    DX_NIX_OWNERSHIP_ROOT="$marker_content_fixture" ensure_nix_ownership
+} 2>&1)"
+if printf '%s\n' "$marker_content_output" | stdin_matches -F 'Nix ownership already set. Skipping recursive ownership repair.'; then
+    test_pass "ownership marker content check (characterisation) reads a real two-line marker and skips recursive repair"
+else
+    test_fail "ownership marker content check (characterisation) reads a real two-line marker and skips recursive repair ($marker_content_output)"
+fi
+
 if (
     dx_ensure_tree_owner() { return 1; }
     setup_gh_persistence "$fixture/fail-persist" "$fixture/fail-home"
@@ -389,6 +431,71 @@ if (
     test_pass "final tool verification timing preserves failure status"
 else
     test_fail "final tool verification timing preserves failure status"
+fi
+
+# Regression: ai_tools_opted_in (activation.sh) must not report a real
+# `nix profile list` match as absent under pipefail. It pipes
+# `run_as_dx "nix profile list"` into grep; `grep -q` would exit at its first
+# match and close the pipe, and a still-writing `nix profile list` could then
+# get SIGPIPE/EPIPE, which under `set -o pipefail` (true for bootstrap.sh,
+# which sources this file) turns a real match -- the AI tools genuinely
+# installed -- into a failed pipeline read as "not installed". Same shape
+# Branch 4a fixed in bin/lib/dx-container.sh. Reproduce deterministically
+# with a stubbed run_as_dx whose "nix profile list" output puts the matching
+# Flake-attribute line FIRST, then tens of thousands of filler lines.
+#
+# The codex-marker fast path (`[ -x .../current/profile/bin/codex ]`) must be
+# false for these probes to exercise the piped fallback at all; that absolute
+# guest path never exists on the host or CI runner this test itself runs on,
+# so no fixture setup is needed to guarantee it, but each probe still checks
+# and skips rather than assuming.
+AI_TOOLS_FILLER_LINES=20000
+ai_tools_opted_in_biglist_present() (
+    set -o pipefail
+    run_as_dx() {
+        case "$1" in
+            'nix profile list')
+                printf 'Flake attribute: packages.aarch64-linux.ai-tools\n'
+                i=1
+                while [ "$i" -le $AI_TOOLS_FILLER_LINES ]; do
+                    printf 'Flake attribute: packages.aarch64-linux.filler-%d\n' "$i"
+                    i=$((i + 1))
+                done
+                ;;
+            *) return 0 ;;
+        esac
+    }
+    ai_tools_opted_in
+)
+ai_tools_opted_in_biglist_absent() (
+    set -o pipefail
+    run_as_dx() {
+        case "$1" in
+            'nix profile list')
+                i=1
+                while [ "$i" -le $AI_TOOLS_FILLER_LINES ]; do
+                    printf 'Flake attribute: packages.aarch64-linux.filler-%d\n' "$i"
+                    i=$((i + 1))
+                done
+                ;;
+            *) return 0 ;;
+        esac
+    }
+    ai_tools_opted_in
+)
+if [ -e /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex ]; then
+    test_skip "ai_tools_opted_in biglist probes (host has a real guest AI-tools marker path)"
+else
+    if ai_tools_opted_in_biglist_present; then
+        test_pass "ai_tools_opted_in finds a real nix-profile-list match past a large filler list under pipefail"
+    else
+        test_fail "ai_tools_opted_in finds a real nix-profile-list match past a large filler list under pipefail"
+    fi
+    if ai_tools_opted_in_biglist_absent; then
+        test_fail "ai_tools_opted_in correctly reports the AI tools as not installed when absent from a large filler list"
+    else
+        test_pass "ai_tools_opted_in correctly reports the AI tools as not installed when absent from a large filler list"
+    fi
 fi
 
 # /etc/os-release must be world-readable: unprivileged guest tooling reads it,

@@ -132,9 +132,17 @@ ensure_nix_ownership_impl() {
     marker_owner="$(stat -c '%u:%g' "$marker" 2>/dev/null || true)"
     marker_contents="$(cat "$marker" 2>/dev/null || true)"
 
+    # Read-all idiom (redirect to /dev/null instead of `grep -q`): `grep -q`
+    # exits at its first match and closes the pipe, so a still-writing
+    # upstream can get SIGPIPE/EPIPE, which under `set -o pipefail` (true for
+    # bootstrap.sh, which sources this file) turns a real match into a
+    # failed pipeline -- see tests/test_helpers.sh's stdin_matches comment
+    # and Branch 4a's bin/lib/dx-container.sh fix. marker_contents is at most
+    # two short lines here, so this is a consistency fix, not a proven
+    # defect for this call site specifically.
     if [ "$marker_owner" = "$dx_owner" ] \
-        && printf '%s\n' "$marker_contents" | grep -q '^ownership-layout=1$' \
-        && printf '%s\n' "$marker_contents" | grep -q "^owner=$dx_owner$" \
+        && printf '%s\n' "$marker_contents" | grep '^ownership-layout=1$' >/dev/null \
+        && printf '%s\n' "$marker_contents" | grep "^owner=$dx_owner$" >/dev/null \
         && run_as_dx "test -w '$root/store' && test -w '$root/var/nix'"; then
         echo "Nix ownership already set. Skipping recursive ownership repair."
         [ -f "$sentinel" ] || publish_nix_ownership_marker "$content_validated"
@@ -180,6 +188,23 @@ ensure_nix_ownership() {
     return "$status"
 }
 
+# Only restore AI-tool persistence links if the user has opted into the AI
+# tools: either the codex binary is already present in the persisted AI
+# profile, or dx's Nix profile lists the ai-tools flake output.
+#
+# `run_as_dx "nix profile list"` can print a long list of installed packages,
+# so this uses the read-all idiom (`grep -E ... >/dev/null`, not `grep -qE`):
+# `grep -q` exits at its first match and closes the pipe, and a still-writing
+# `nix profile list` can then get SIGPIPE/EPIPE, which under `set -o
+# pipefail` (true for bootstrap.sh, which sources this file) turns a real
+# match -- the AI tools genuinely installed -- into a failed pipeline, read
+# here as "not installed". See tests/test_helpers.sh's stdin_matches comment
+# and Branch 4a's bin/lib/dx-container.sh fix for the same shape.
+ai_tools_opted_in() {
+    [ -x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex ] \
+        || run_as_dx "nix profile list" | grep -E "Flake attribute:[[:space:]]+packages\.[^.]+\.ai-tools$" >/dev/null
+}
+
 configure_guest() {
     local content_validated="${1:-false}"
     echo "Configuring guest environment with Home Manager..."
@@ -214,8 +239,7 @@ configure_guest() {
 
     # Persist AI CLI tool credentials/configuration across container rebuilds
     # Only restore these links if the user has opted into the AI tools
-    if [ -x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex ] \
-        || run_as_dx "nix profile list" | grep -qE "Flake attribute:[[:space:]]+packages\.[^.]+\.ai-tools$"; then
+    if ai_tools_opted_in; then
         phase_started=$SECONDS
         dx_ensure_tree_owner /persist/home/dx /persist/home/dx/.dxe-owner-v1 "persisted guest home" || return 1
         dx_prepare_owned_directory /persist/home/dx/.gemini/antigravity-cli 0700 || return 1
