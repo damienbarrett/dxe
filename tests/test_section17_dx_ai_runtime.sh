@@ -82,6 +82,112 @@ else
     test_fail "AI recovery atomically selects the retained predecessor"
 fi
 
+# --- Per-generation tool manifests: dx-ai records the tool set of each
+# generation and validates a generation against its own manifest, so
+# recovering a retained pre-OpenCode five-tool generation works, and
+# dx_ai_verify reports on that generation's own executables rather than
+# assuming the current, larger DX_AI_TOOLS.
+expect_failure() {
+    local message="$1"; shift
+    if "$@" >/dev/null 2>&1; then test_fail "$message"; else test_pass "$message"; fi
+}
+
+# "previous" (just recovered above, via cp -a rather than dx_ai_stage_generation)
+# has no .tools-manifest: it stands in for a generation published before
+# OpenCode support existed.
+if [ ! -e "$state/generations/previous/.tools-manifest" ]; then
+    test_pass "a legacy generation predates the tools manifest"
+else
+    test_fail "a legacy generation predates the tools manifest"
+fi
+legacy_expected="$(printf '%s\n' codex gemini claude agy herdr)"
+if legacy_tools="$(dx_ai_generation_tools "$state/generations/previous")" && [ "$legacy_tools" = "$legacy_expected" ]; then
+    test_pass "AI recovery accepts a legacy predecessor using its own five-tool inventory"
+else
+    test_fail "AI recovery accepts a legacy predecessor using its own five-tool inventory"
+fi
+legacy_verify_expected="$(for legacy_tool in codex gemini claude agy herdr; do printf '  %s -> %s/generations/previous/profile/bin/%s\n' "$legacy_tool" "$state" "$legacy_tool"; done)"
+if legacy_verify="$(dx_ai_verify "$state/generations/previous" 2>&1)" \
+    && [ "$(printf '%s\n' "$legacy_verify" | grep '^  .* -> ')" = "$legacy_verify_expected" ]; then
+    test_pass "AI verification uses the legacy generation-local inventory"
+else
+    test_fail "AI verification uses the legacy generation-local inventory"
+fi
+
+# A present manifest is authoritative and must be regular, nonempty, and valid.
+manifest_fixture="$ai_fixture/manifest-cases"
+cp -a "$state/generations/previous" "$manifest_fixture"
+for manifest_case in empty invalid-tail duplicate dot dotdot symlink directory; do
+    rm -rf "$manifest_fixture/.tools-manifest"
+    case "$manifest_case" in
+        empty) : > "$manifest_fixture/.tools-manifest" ;;
+        invalid-tail) printf '%s\n' codex 'not a tool' > "$manifest_fixture/.tools-manifest" ;;
+        duplicate) printf '%s\n' codex codex > "$manifest_fixture/.tools-manifest" ;;
+        dot) printf '%s\n' . > "$manifest_fixture/.tools-manifest" ;;
+        dotdot) printf '%s\n' .. > "$manifest_fixture/.tools-manifest" ;;
+        symlink) ln -s /dev/null "$manifest_fixture/.tools-manifest" ;;
+        directory) mkdir "$manifest_fixture/.tools-manifest" ;;
+    esac
+    expect_failure "AI validation rejects a $manifest_case tool manifest" dx_ai_validate_generation "$manifest_fixture"
+done
+rm -rf "$manifest_fixture/.tools-manifest"
+if dx_ai_validate_generation "$manifest_fixture" >/dev/null; then
+    test_pass "AI validation uses the legacy inventory only when the manifest is absent"
+else
+    test_fail "AI validation uses the legacy inventory only when the manifest is absent"
+fi
+
+# Publication requires the candidate's own manifest (dx_ai_stage_generation
+# always writes one) to declare the COMPLETE current bundle and to actually
+# deliver an executable for every declared tool.
+manifest_missing_stage="$(dx_ai_stage_generation "$published" "$state" manifest-missing-opencode)"
+seed_ai_profile "$manifest_missing_stage"
+rm -f "$manifest_missing_stage/profile/bin/opencode"
+expect_failure "AI publication rejects a candidate missing its declared opencode executable" \
+    dx_ai_publish_generation "$state" manifest-missing-opencode "$manifest_missing_stage"
+if [ "$(readlink "$state/current")" = generations/previous ]; then
+    test_pass "incomplete AI candidate leaves current generation unchanged"
+else
+    test_fail "incomplete AI candidate leaves current generation unchanged"
+fi
+printf '#!/bin/sh\n' > "$manifest_missing_stage/profile/bin/opencode"; chmod 0755 "$manifest_missing_stage/profile/bin/opencode"
+if [ "$(tr '\n' ' ' < "$manifest_missing_stage/.tools-manifest" | sed 's/ $//')" = "codex gemini claude agy herdr opencode" ]; then
+    test_pass "AI staging records the complete generation-local tool manifest"
+else
+    test_fail "AI staging records the complete generation-local tool manifest"
+fi
+if dx_ai_publish_generation "$state" manifest-missing-opencode "$manifest_missing_stage" >/dev/null 2>&1; then
+    test_pass "AI publication accepts the same candidate after its opencode executable is added"
+else
+    test_fail "AI publication accepts the same candidate after its opencode executable is added"
+fi
+
+# dx_ai_verify must validate the generation's own inventory before trusting
+# anything on PATH -- a stale/foreign binary earlier in PATH must not stand
+# in for a missing generation executable.
+verify_fixture="$ai_fixture/verify"
+cp -a "$state/generations/manifest-missing-opencode" "$verify_fixture"
+# Published generations are made read-only (dx_ai_publish_generation); undo
+# that on this copy so the fixture below can still mutate it.
+chmod -R u+w "$verify_fixture"
+rm -f "$verify_fixture/profile/bin/herdr"
+verify_fallback_bin="$ai_fixture/path-fallback"
+mkdir -p "$verify_fallback_bin"
+printf '#!/bin/sh\n' > "$verify_fallback_bin/herdr"; chmod 0755 "$verify_fallback_bin/herdr"
+if PATH="$verify_fallback_bin:$PATH" dx_ai_verify "$verify_fixture" >/dev/null 2>&1; then
+    test_fail "AI verification rejects a missing generation executable despite a PATH fallback"
+else
+    test_pass "AI verification rejects a missing generation executable despite a PATH fallback"
+fi
+printf '%s\n' codex 'not a tool' > "$verify_fixture/.tools-manifest"
+if verify_output="$(dx_ai_verify "$verify_fixture" 2>&1)"; then
+    test_fail "AI verification rejects a malformed generation inventory"
+elif printf '%s\n' "$verify_output" | stdin_matches '^  codex -> '; then
+    test_fail "AI verification validates its complete inventory before reporting any tool"
+else
+    test_pass "AI verification validates its complete inventory before reporting any tool"
+fi
+
 pin_before="$(shasum -a 256 "$published/pins/agy.json")"
 if (
     curl() { printf '%s\n' '{}'; }

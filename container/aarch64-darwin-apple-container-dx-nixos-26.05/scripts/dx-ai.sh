@@ -6,6 +6,12 @@ NIX_FLAGS=(--extra-experimental-features "nix-command flakes" --accept-flake-con
 # declaration (flake.nix's aiPackages), bin/dx-herdr, and docs/guest.md in sync
 # with this list by hand; they are outside this module's ownership.
 DX_AI_TOOLS="codex gemini claude agy herdr opencode"
+# A generation published before OpenCode support has no .tools-manifest (see
+# dx_ai_generation_tools); its real, complete inventory was this five-tool
+# set, and validating or recovering it must use that instead of the current
+# DX_AI_TOOLS, which would demand an opencode executable that generation was
+# never asked to build.
+DX_AI_LEGACY_TOOLS="codex gemini claude agy herdr"
 # The intersection of the agents dx-ai publishes and the integrations Herdr
 # ships. Herdr has no target for gemini or agy, so they are absent by design.
 DX_AI_HERDR_INTEGRATIONS=(claude codex opencode)
@@ -149,6 +155,11 @@ dx_ai_stage_generation() {
     if [ -L "$state/current" ]; then predecessor="$(readlink "$state/current")"; predecessor=${predecessor##*/}; fi
     case "$predecessor" in '' ) ;; [.-]*|*[!A-Za-z0-9_.-]*) chmod -R u+w "$stage"; rm -rf "$stage"; return 1 ;; esac
     printf '%s\n' "$predecessor" > "$stage/.predecessor" || { chmod -R u+w "$stage"; rm -rf "$stage"; return 1; }
+    # Record this generation's own tool inventory. A generation published
+    # before OpenCode existed has no manifest at all (dx_ai_generation_tools
+    # falls back to DX_AI_LEGACY_TOOLS for those); every generation staged
+    # from here on declares the complete current bundle.
+    printf '%s\n' $DX_AI_TOOLS > "$stage/.tools-manifest" || { chmod -R u+w "$stage"; rm -rf "$stage"; return 1; }
     printf '%s\n' "$stage"
 }
 
@@ -174,11 +185,51 @@ dx_ai_tool_known() {
     return 1
 }
 
+# A retained generation's own tool inventory: its .tools-manifest if it has
+# one, one tool name per line, or DX_AI_LEGACY_TOOLS if the manifest is
+# entirely absent (a generation published before OpenCode support). A
+# manifest that exists must be a regular, non-symlink, non-empty file with
+# no blank/dot/duplicate/otherwise-malformed lines -- anything else is
+# treated as corrupt, not silently ignored.
+dx_ai_generation_tools() {
+    local generation="$1" manifest="$1/.tools-manifest" tool inventory="" seen=" "
+    if [ ! -e "$manifest" ] && [ ! -L "$manifest" ]; then printf '%s\n' $DX_AI_LEGACY_TOOLS; return; fi
+    [ -f "$manifest" ] && [ ! -L "$manifest" ] || return 1
+    while IFS= read -r tool || [ -n "$tool" ]; do
+        case "$tool" in ''|.|..|*[!A-Za-z0-9_.-]*) return 1 ;; esac
+        case "$seen" in *" $tool "*) return 1 ;; esac
+        seen="$seen$tool "
+        inventory="$inventory${inventory:+
+}$tool"
+    done < "$manifest"
+    [ -n "$inventory" ] || return 1
+    printf '%s\n' "$inventory"
+}
+
 dx_ai_validate_generation() {
-    local generation="$1" required tool
+    local generation="$1" required tool tools
     [ -d "$generation" ] && [ ! -L "$generation" ] || return 1
     for required in flake.nix flake.lock pins/agy.json .predecessor; do [ -f "$generation/$required" ] && [ ! -L "$generation/$required" ] || return 1; done
-    for tool in $DX_AI_TOOLS; do [ -x "$generation/profile/bin/$tool" ] || return 1; done
+    tools="$(dx_ai_generation_tools "$generation")" || return 1
+    while IFS= read -r tool; do
+        [ -f "$generation/profile/bin/$tool" ] && [ -x "$generation/profile/bin/$tool" ] || return 1
+    done <<EOF
+$tools
+EOF
+}
+
+# A candidate generation about to be published must additionally carry its
+# OWN manifest (not merely validate against the legacy fallback because one
+# happens to be missing) and that manifest must declare the complete current
+# bundle -- a generation staged today that is missing an executable
+# DX_AI_TOOLS just added is a build defect, not a legacy generation.
+dx_ai_validate_publish_generation() {
+    local generation="$1" expected actual
+    dx_ai_validate_generation "$generation" || return 1
+    [ -f "$generation/.tools-manifest" ] && [ ! -L "$generation/.tools-manifest" ] || return 1
+    expected="$(printf '%s\n' $DX_AI_TOOLS)"
+    actual="$(dx_ai_generation_tools "$generation")" || return 1
+    [ "$actual" = "$expected" ] || return 1
 }
 
 dx_ai_publish_pointer() {
@@ -207,7 +258,7 @@ dx_ai_publish_generation() {
     generation="$state/generations/$id"
     case "$id" in ''|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
     [ ! -e "$generation" ] && [ ! -L "$generation" ] || return 1
-    dx_ai_validate_generation "$stage" || return 1
+    dx_ai_validate_publish_generation "$stage" || return 1
     mv "$stage" "$generation" || return 1
     if ! chmod -R a-w "$generation"; then chmod -R u+w "$generation" 2>/dev/null || true; rm -rf "$generation"; return 1; fi
     if ! dx_ai_publish_pointer "$state" "$id"; then
@@ -313,7 +364,25 @@ dx_ai_install_herdr_integrations() {
     done
 }
 
-dx_ai_verify() { local tool; echo "AI tools installed:"; for tool in $DX_AI_TOOLS; do printf '  %s -> ' "$tool"; command -v "$tool"; done; }
+dx_ai_verify() {
+    local tool generation="${1:-}" tools executable
+    echo "AI tools installed:"
+    if [ -n "$generation" ]; then
+        tools="$(dx_ai_generation_tools "$generation")" || return 1
+        while IFS= read -r tool; do
+            executable="$generation/profile/bin/$tool"
+            [ -f "$executable" ] && [ -x "$executable" ] \
+                || { echo "Error: generation executable is missing: $executable" >&2; return 1; }
+        done <<EOF
+$tools
+EOF
+        while IFS= read -r tool; do printf '  %s -> %s\n' "$tool" "$generation/profile/bin/$tool"; done <<EOF
+$tools
+EOF
+    else
+        for tool in $DX_AI_TOOLS; do printf '  %s -> ' "$tool"; command -v "$tool" || return 1; done
+    fi
+}
 
 dx_ai_main() {
     local action=update published state id stage="" lock result=0
@@ -339,7 +408,7 @@ dx_ai_main() {
         dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM
         [ "$result" -eq 0 ] || return "$result"
         export PATH="$state/current/profile/bin:$PATH"
-        dx_ai_verify
+        dx_ai_verify "$state/current"
         return
     fi
     published="$(dx_ai_published_root)"; [ -f "$published/flake.nix" ] || { echo "Error: published bootstrap flake is missing." >&2; dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return 1; }
@@ -356,7 +425,7 @@ dx_ai_main() {
     # Herdr is optional, so a missing or unhappy integration is reported but
     # never fails an otherwise successful AI update.
     dx_ai_install_herdr_integrations
-    dx_ai_verify
+    dx_ai_verify "$state/current"
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then set -euo pipefail; dx_ai_main "$@"; fi
