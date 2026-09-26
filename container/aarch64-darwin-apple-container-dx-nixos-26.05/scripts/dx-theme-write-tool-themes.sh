@@ -371,7 +371,17 @@ apply_tmux_pills() {
   # status refresh; we overwrite status-right below, so carry the token across
   # or interval auto-save silently stops after the first theme apply.
   local continuum_interp
-  continuum_interp="$(tmux show-option -gqv status-right 2>/dev/null | grep -oE '#\([^)]*continuum_save\.sh\)' | head -n1 || true)"
+  # `grep -m1 -oE` (not `grep -oE ... | head -n1`): `head -n1` exits after
+  # its first line and closes the pipe the same way `grep -q` does, which
+  # can SIGPIPE a still-writing `grep -oE` under `set -o pipefail` (this
+  # file's own `set -eo pipefail` at the top). The trailing `|| true`
+  # already absorbed that (empirically confirmed it never lost the correct
+  # value here -- see the branch's progress notes for the standalone probe),
+  # so this is a hygiene/consistency fix: `grep -m1` stops after one match
+  # itself, needing neither the downstream `head` nor `|| true` to mask a
+  # SIGPIPE it no longer raises. `|| true` is kept anyway: no match must
+  # still yield an empty string, not a failed pipeline.
+  continuum_interp="$(tmux show-option -gqv status-right 2>/dev/null | grep -m1 -oE '#\([^)]*continuum_save\.sh\)' || true)"
 
   local window_label=' #I:#W#{?window_flags,#{window_flags},} '
   local inactive_window active_window

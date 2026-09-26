@@ -424,6 +424,49 @@ assert_file_contains_literal "$DX_PILL_PROBE_OUT" \
 # across the rewrite. Runtime behaviour is asserted in the live block below.
 assert_file_contains "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" "continuum_save" "pill generator preserves continuum auto-save token in status-right"
 
+# Regression/characterisation: continuum_interp (apply_tmux_pills) must
+# correctly derive tmux-continuum's save token even from an adversarially
+# large tmux status-right value. The old code (`grep -oE ... | head -n1`)
+# let a still-writing `grep -oE` get SIGPIPE'd by `head -n1`'s early exit
+# under this file's own `set -eo pipefail`; a standalone probe (20 runs each
+# on bash 5/Linux and bash 3.2/macOS) confirmed the trailing `|| true`
+# already absorbed that (rc 141 every time) without ever losing the correct
+# captured value, so this characterises correct existing behaviour (true
+# both before and after the `grep -m1` fix) rather than proving a
+# dropped-match defect -- see the branch's progress notes for the probe.
+CONTINUUM_PROBE_HOME="$TOOL_THEME_TEST_HOME/continuum-probe"
+CONTINUUM_PROBE_STUB="$TOOL_THEME_TEST_HOME/continuum-probe-stub"
+mkdir -p "$CONTINUUM_PROBE_HOME" "$CONTINUUM_PROBE_STUB"
+CONTINUUM_FILLER_LINES=20000
+cat > "$CONTINUUM_PROBE_STUB/tmux" <<STUB_EOF
+#!/usr/bin/env bash
+if [ "\$1" = "show-option" ]; then
+  printf '#(target continuum_save.sh)'
+  i=1
+  while [ "\$i" -le $CONTINUUM_FILLER_LINES ]; do
+    printf ' other-%d #(filler continuum_save.sh)' "\$i"
+    i=\$((i + 1))
+  done
+  printf '\n'
+  exit 0
+fi
+[ "\$1" = "set-option" ] && [ "\$3" = "status" ] && [ "\$4" = "on" ] && exit 0
+[ "\$1" = "source-file" ] && cp "\$2" "\$DX_CONTINUUM_PROBE_OUT" && exit 0
+exit 0
+STUB_EOF
+chmod +x "$CONTINUUM_PROBE_STUB/tmux"
+DX_CONTINUUM_PROBE_OUT="$CONTINUUM_PROBE_HOME/captured.tmux.conf"
+export DX_CONTINUUM_PROBE_OUT
+if PATH="$CONTINUUM_PROBE_STUB:$PATH" \
+    run_tool_theme_writer "$CONTINUUM_PROBE_HOME" "${GRUVBOX_DARK_HARD_PALETTE[@]}"; then
+    test_pass "writer survives an adversarially large tmux status-right value"
+else
+    test_fail "writer survives an adversarially large tmux status-right value"
+fi
+assert_file_contains_literal "$DX_CONTINUUM_PROBE_OUT" \
+    'status-right "#(target continuum_save.sh)' \
+    "continuum token is preserved correctly (first match, not corrupted) even from an adversarially large status-right value"
+
 # End-cap glyphs: U+E0B6 (left, ) and U+E0B4 (right, ). These come
 # from the pill() helper; if a refactor drops them, all pills go
 # square-edged. Bytes asserted via grep for portability.
