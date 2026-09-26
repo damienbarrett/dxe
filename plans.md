@@ -27,42 +27,23 @@ Every plan document below is listed under exactly one of these.
 ## Partially complete
 
 - [`checkout-consolidation-plan.md`](checkout-consolidation-plan.md) —
-  Sequencing plan for landing the remaining consolidation work as small,
-  independently validated branches. Priority 1 (Branches 1-3: CI baseline,
-  the OpenCode revert, the test-image fixture removal) is done, and Step 4's
-  baseline check of `main` passed. Branches 4a (the `container_is_running`/
-  `container_exists` SIGPIPE fix) and 4b (live-tier hygiene, seven commits,
-  live tier 1105/0/8) have landed; Branch 4c (the same SIGPIPE shape in guest
-  bootstrap and theme scripts) is in progress. Branch 5 (this document's own
-  move into the repository, plus the rest of `docs/plan-cleanup`) has landed.
-  The duplicate clone (`dxe-agent/`) and the August evidence clone
-  (`dxe-evidence-20260831/`) were retired on 2026-09-26, ahead of Branch 6:
-  the preserved OpenCode work now lives in this repository as local branch
-  `preserve/dxe-agent-opencode`. Of the seven decisions (Q1, Q3-Q7; Q2 was
-  already resolved), Q1, Q3, Q4, Q5 and Q6 are now resolved, and the QNAP part
-  of Q7 was already accepted; only the rest of Q7 (the two large refactor
-  proposals) remains open and is not urgent. Because Q1 resolved to "fix the
-  bug first," Branch 9 (`fix/bootstrap-start-generation`) ran before Branch 6
-  (`feat/opencode`) and is now done: Step 1 characterised the defect live and
-  found its core symptom already fixed on `main` by two pre-existing commits,
-  landing only an observability increment and the D7 design proposal; Step 2
-  implemented D7's accepted option 3 (a bounded host-side confirmation that
-  closes Q4's "fail the start" gap) and closed `dx-start-plan.md` into
-  [D7](docs/refactor/decisions/D7-start-generation.md) and `docs/lifecycle.md`/
-  `docs/troubleshooting.md`. QNAP's Phase 0 (inventory and disposable spike,
-  `feat/qnap-phase0-scripts`) has also landed, ahead of its Phases 1-7. Branch
-  6 (`feat/opencode`) landed on `main` on 2026-09-26: all increments, gates
-  (G1-G3, then CI on the rebased branch), and live `dx-test` validation
-  (fresh opt-in, full live tier, retained-state migration) passed; see
-  `docs/evidence/20260926/opencode-relanding.md`. `dx-host` was promoted to
-  `main` `122258c` on 2026-09-27 and now has OpenCode. Branch 7
-  (`test/herdr-acceptance`, the two Herdr acceptance cases, both
-  characterisation tests) landed on 2026-09-26; see
-  `docs/evidence/20260926/herdr-acceptance.md`. Branch 8
-  (`refactor/legacy-migration-cleanup`) closed `refactor-plan.md`'s one
-  remaining item (old-base guard removal); done pending its G4 live-tier
-  check and merge review -- not yet merged into `main`. Branches 10 through
-  13 are not started.
+  Sequencing plan for the remaining consolidation work. Priority 1 (a
+  complete, green, buildable `main`, proven on a guest) and almost all of
+  Priorities 2-3 are done: Branches 1-10 and 14-17 have landed, CI green,
+  live-verified on `dx-test`; QNAP's Phase 0 (inventory/spike) and Phase 1
+  (runtime-boundary extraction) have also landed. `dx-host` (the primary
+  guest) is promoted through `main` `122258c` (Branches 1-15, including
+  OpenCode and persist-backup); Branches 16 and 17 land at its next
+  promotion. Of the seven decisions, Q1-Q6 and the QNAP part of Q7 are
+  resolved; only the rest of Q7 (the two large refactor proposals) remains
+  open and is not urgent. Trimmed to remaining work only on 2026-09-27, per
+  the plan's own retirement step (history: `git log` and `docs/evidence/`).
+  Remaining: Branch 11 Phases 2-7 (the QNAP Docker adapter and x86_64 guest),
+  Branch 12 (`fix/store-trust`), and Branch 13 (the two large proposals, Q7).
+  Four small follow-ups are not yet branches: a flaky Section 6
+  tmux-resurrect probe, a missing `dx-status` keyring line, `dx-restore
+  --dry-run`'s scale at very large target sets, and undecided `dx-backup`
+  deny-list additions.
 
 ## Open plans
 
