@@ -22,7 +22,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl populate_prepared_nix_volume setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence setup_keyring_service dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl populate_prepared_nix_volume setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_resolve_keyring_bin setup_keyring_service dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -534,14 +534,15 @@ else
     test_fail "release identity is readable even under a restrictive umask (mode $(dx_path_mode "$fixture/os-release-umask"))"
 fi
 
-# Bootstrap ordering defect: setup_keyring_service must report an explicit
-# diagnostic if dbus-daemon is still not found on dx's PATH, rather than
-# dying silently. Historically `dbus_bin="$(run_as_dx 'command -v
-# dbus-daemon')"` was a bare assignment: under `set -euo pipefail` a failed
+# Failure policy B (user decision, 2026-09-27, Branch 15): setup_keyring_service
+# must degrade loudly rather than die when dbus-daemon cannot be resolved
+# anywhere -- a guest with no keyring service is still reachable over SSH; one
+# that never reaches sshd is not. Historically `dbus_bin="$(run_as_dx 'command
+# -v dbus-daemon')"` was a bare assignment: under `set -euo pipefail` a failed
 # command substitution there killed the whole (sourced-into-bootstrap.sh)
-# script with zero output -- the defect's signature was total silence, so
-# this assertion is about outcome (a message mentioning dbus-daemon reaches
-# the caller), not about matching text that used to not exist at all.
+# script with zero output. This asserts the fixed outcome: an explicit Warning
+# naming dbus-daemon reaches the caller AND setup_keyring_service returns 0 so
+# bootstrap proceeds to start sshd.
 #
 # This must run as a genuinely separate bash process, not a nested command
 # substitution within this already-running script: bash's `errexit` does not
@@ -551,9 +552,20 @@ fi
 # continues past the failure instead of aborting). The real bootstrap runs
 # `configure_guest`/`setup_keyring_service` as the top-level script of its own
 # bash process, so a fresh `bash` subprocess is what actually reproduces the
-# silent-death signature this test is asserting has been fixed.
-dbus_probe_script="$(mktemp "${TMPDIR:-/tmp}/dxe-keyring-diagnostic.XXXXXX")"
-cat > "$dbus_probe_script" <<'INNER'
+# historic silent-death signature this test guards against.
+#
+# Skipped when the host running this suite already has a real published AI
+# generation at the hardcoded path (the "live" tier runs this file directly
+# against `dx-test`/`dx-host`): the resolver would then legitimately find the
+# real binaries there, which is a different, already-covered scenario below,
+# not a defect -- and fabricating/removing files under a real guest's
+# persisted state here would corrupt it, same reasoning as the
+# ai_tools_opted_in biglist skip above.
+if [ -e /persist/home/dx/.local/state/dx-ai ]; then
+    test_skip "setup_keyring_service warns and continues when dbus-daemon is unresolvable (host has a real dx-ai generation at the hardcoded path)"
+else
+    dbus_probe_script="$(mktemp "${TMPDIR:-/tmp}/dxe-keyring-diagnostic.XXXXXX")"
+    cat > "$dbus_probe_script" <<'INNER'
 set -euo pipefail
 source "$DXE_TEST_CONTAINER_DIR/scripts/lib/dx-keyring.sh"
 source "$DXE_TEST_BOOTSTRAP_DIR/common.sh"
@@ -566,13 +578,92 @@ chown() { :; }
 run_as_dx() { case "$1" in (*'command -v dbus-daemon'*) return 1 ;; (*) return 0 ;; esac; }
 setup_keyring_service
 INNER
-rc=0
-output="$(DXE_TEST_CONTAINER_DIR="$CONTAINER_DIR" DXE_TEST_BOOTSTRAP_DIR="$BOOTSTRAP_DIR" bash "$dbus_probe_script" 2>&1)" || rc=$?
-rm -f "$dbus_probe_script"
-if [ "$rc" -ne 0 ] && printf '%s\n' "$output" | stdin_matches -i 'dbus-daemon'; then
-    test_pass "setup_keyring_service reports an explicit diagnostic when dbus-daemon is missing, instead of dying silently"
+    rc=0
+    output="$(DXE_TEST_CONTAINER_DIR="$CONTAINER_DIR" DXE_TEST_BOOTSTRAP_DIR="$BOOTSTRAP_DIR" bash "$dbus_probe_script" 2>&1)" || rc=$?
+    rm -f "$dbus_probe_script"
+    if [ "$rc" -eq 0 ] && printf '%s\n' "$output" | stdin_matches -i 'warning' \
+        && printf '%s\n' "$output" | stdin_matches -i 'dbus-daemon'; then
+        test_pass "setup_keyring_service warns loudly and lets bootstrap continue when dbus-daemon is unresolvable, instead of dying"
+    else
+        test_fail "setup_keyring_service warns loudly and lets bootstrap continue when dbus-daemon is unresolvable, instead of dying (rc=$rc, output=[$output])"
+    fi
+fi
+
+# Recreate-time resolution: dbus-daemon and gnome-keyring-daemon are declared
+# only in flake.nix's aiPackages, so they exist only in the published AI
+# generation's isolated profile (/persist/home/dx/.local/state/dx-ai/current/
+# profile/bin) -- Home Manager's own profile never installs either one. The
+# historic `run_as_dx 'command -v dbus-daemon'` resolution depended on dx's
+# login-shell PATH already reflecting that profile, which a fresh
+# `dx-recreate`'s ephemeral /home/dx does not guarantee (this is the shape
+# Branch 14's live gate hit, 2026-09-27; see
+# docs/evidence/20260927/keyring-recreate.md for the live diagnosis).
+# setup_keyring_service must resolve both binaries directly from the
+# generation profile instead of relying on that PATH. This fixture
+# deliberately makes the login-shell/HM-profile resolution fail (run_as_dx
+# below never succeeds, and no fallback file exists at the HM profile path
+# either) while the real binaries exist only at the generation-profile path,
+# so a pass here can only come from the direct path resolution.
+if [ -e /persist/home/dx/.local/state/dx-ai ]; then
+    test_skip "setup_keyring_service resolves the recreate-time generation profile directly (host has a real dx-ai generation at the hardcoded path)"
 else
-    test_fail "setup_keyring_service reports an explicit diagnostic when dbus-daemon is missing, instead of dying silently (rc=$rc, output=[$output])"
+    mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin \
+        /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1
+    : > /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
+    : > /persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon
+    chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon \
+        /persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon
+    : > /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1/session.conf
+
+    recreate_probe_script="$(mktemp "${TMPDIR:-/tmp}/dxe-keyring-recreate.XXXXXX")"
+    setpriv_log="$(mktemp "${TMPDIR:-/tmp}/dxe-keyring-recreate-setpriv.XXXXXX")"
+    cat > "$recreate_probe_script" <<'INNER'
+set -euo pipefail
+source "$DXE_TEST_CONTAINER_DIR/scripts/lib/dx-keyring.sh"
+source "$DXE_TEST_BOOTSTRAP_DIR/common.sh"
+source "$DXE_TEST_BOOTSTRAP_DIR/base-and-storage.sh"
+source "$DXE_TEST_BOOTSTRAP_DIR/system.sh"
+source "$DXE_TEST_BOOTSTRAP_DIR/persistence.sh"
+source "$DXE_TEST_BOOTSTRAP_DIR/activation.sh"
+# mkdir is deliberately left real (unlike the probe above): this scenario
+# exercises setup_keyring_service's successful path, which reaches
+# dx_keyring_write_address (scripts/lib/dx-keyring.sh) and its own
+# unconditional `[ -d "$dir" ] || return 1` check -- that check is not
+# gated on an `id -u dx` guard the way dx_prepare_owned_directory's is, so a
+# stubbed no-op mkdir here would make the real write fail instead of
+# skipping harmlessly, for a reason unrelated to what this test asserts.
+# There is no dx user in this harness, so dx_prepare_owned_directory and
+# dx_keyring_write_address both fall through to a plain `mkdir -p`, which is
+# safe to let run for real against the disposable fixture created above.
+chown() { :; }
+# The fresh-recreate shape: dx's login shell/HM profile has neither binary,
+# regardless of what exists under /persist -- a pass here can only come from
+# resolving the generation profile directly, never from this fallback.
+run_as_dx() { case "$1" in (*'command -v dbus-daemon'*|*'command -v gnome-keyring-daemon'*) return 1 ;; (*) return 0 ;; esac; }
+setpriv() {
+    printf '%s\n' "$*" >> "$DXE_TEST_SETPRIV_LOG"
+    case "$*" in
+        (*--print-address*) printf '%s\n' unix:path=/tmp/dxe-recreate-bus ;;
+        (*) return 0 ;;
+    esac
+}
+setup_keyring_service
+INNER
+    rc=0
+    output="$(DXE_TEST_CONTAINER_DIR="$CONTAINER_DIR" DXE_TEST_BOOTSTRAP_DIR="$BOOTSTRAP_DIR" DXE_TEST_SETPRIV_LOG="$setpriv_log" bash "$recreate_probe_script" 2>&1)" || rc=$?
+    setpriv_calls="$(cat "$setpriv_log" 2>/dev/null || true)"
+    rm -f "$recreate_probe_script" "$setpriv_log"
+    # Real mkdir was left enabled above, so this also cleans up the real
+    # keyrings/state/dx directories setup_keyring_service creates on success,
+    # not just the dx-ai fixture this test seeded.
+    rm -rf /persist/home/dx
+    if [ "$rc" -eq 0 ] \
+        && printf '%s\n' "$setpriv_calls" | stdin_matches -F '/persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon' \
+        && printf '%s\n' "$setpriv_calls" | stdin_matches -F '/persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon'; then
+        test_pass "setup_keyring_service resolves dbus-daemon and gnome-keyring-daemon from the published AI generation's profile on a fresh recreate, not dx's login-shell PATH"
+    else
+        test_fail "setup_keyring_service resolves dbus-daemon and gnome-keyring-daemon from the published AI generation's profile on a fresh recreate, not dx's login-shell PATH (rc=$rc, setpriv_calls=[$setpriv_calls], output=[$output])"
+    fi
 fi
 
 # SSH host identity must survive a rebuild. /etc/ssh is on the ephemeral

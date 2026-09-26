@@ -174,10 +174,46 @@ setup_tmux_persistence() {
     install -d -o dx -g dx -m 0755 /persist/home/dx/.local/share/tmux/resurrect
 }
 
+# dbus-daemon and gnome-keyring-daemon are declared only in flake.nix's
+# aiPackages, so they exist only in the published AI generation's isolated
+# profile (/persist/home/dx/.local/state/dx-ai/current/profile/bin) -- Home
+# Manager's own profile (homeConfigurations.dx, dxPackages) never installs
+# either one. Resolve both from known, fixed locations instead of asking
+# dx's login shell to find them on PATH: a fresh `dx-recreate` starts with an
+# ephemeral /home/dx, and whether that PATH already reflects the persisted
+# AI profile at the moment setup_keyring_service runs is not guaranteed (see
+# docs/evidence/20260927/keyring-recreate.md for the live diagnosis). The
+# generation profile is checked first since that is where these packages are
+# actually declared; dx's own Home Manager profile is a fallback for a future
+# layout change, not a path either package currently reaches.
+dx_resolve_keyring_bin() {
+    local name="$1"
+    local candidate
+    for candidate in \
+        "/persist/home/dx/.local/state/dx-ai/current/profile/bin/$name" \
+        "/home/dx/.nix-profile/bin/$name"; do
+        if [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # agy stores its known CLI state under ~/.gemini/antigravity-cli, which is
 # persisted with ~/.gemini. Also provide D-Bus + gnome-keyring Secret Service
 # compatibility for auth flows that request it; keyring data is linked to
 # /persist so any Secret Service-backed tokens survive container rebuilds.
+#
+# Failure policy (user decision, 2026-09-27, Branch 15): degrade loudly, not
+# fatally. dx's credentials still work without the keyring (agy simply
+# cannot persist an OAuth token via Secret Service until it starts), whereas
+# a guest that never reaches sshd is unreachable outright. If either binary
+# cannot be resolved, or the resolved dbus-daemon cannot produce a valid bus
+# address, this logs an explicit Warning naming what was missing and returns
+# 0 so bootstrap continues; dx-ai's own dx_ai_ensure_keyring (scripts/dx-ai.sh)
+# already retries this on its next run, exactly like it does when a plain
+# `dx-ai` invocation finds no keyring binaries on its PATH.
 setup_keyring_service() {
     echo "Setting up D-Bus keyring service for credential persistence..."
 
@@ -193,6 +229,7 @@ setup_keyring_service() {
     # 2. Reuse a live D-Bus session when available, otherwise start a fresh one.
     local dbus_config
     local dbus_bin
+    local keyring_bin
     local bus_addr
     bus_addr="$(dx_keyring_read_address "$address_file" 2>/dev/null || true)"
     if [ -z "$bus_addr" ] && [ -e "$legacy_file" ]; then
@@ -206,18 +243,30 @@ setup_keyring_service() {
     fi
 
     if ! dx_keyring_address_is_live "$bus_addr"; then
-        dbus_bin="$(run_as_dx 'command -v dbus-daemon')" || {
-            echo "Error: dbus-daemon not found on dx's PATH; cannot start the keyring service. Home Manager activation must install it before setup_keyring_service runs." >&2
-            return 1
-        }
-        dbus_config="$(dx_keyring_session_config "$dbus_bin")"
+        if ! dbus_bin="$(dx_resolve_keyring_bin dbus-daemon)"; then
+            echo "Warning: dbus-daemon was not found in the published AI generation's profile or dx's Home Manager profile; the keyring service is not running (dx-ai will start it on its next run)." >&2
+            return 0
+        fi
+        if ! dbus_config="$(dx_keyring_session_config "$dbus_bin")"; then
+            echo "Warning: could not locate dbus-daemon's session.conf next to $dbus_bin; the keyring service is not running (dx-ai will start it on its next run)." >&2
+            return 0
+        fi
         bus_addr="$(setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx "$dbus_bin" --config-file="$dbus_config" --fork --print-address)"
-        dx_keyring_address_valid "$bus_addr" || { echo "Error: dbus-daemon returned an invalid bus address." >&2; return 1; }
+        if ! dx_keyring_address_valid "$bus_addr"; then
+            echo "Warning: dbus-daemon returned an invalid bus address; the keyring service is not running (dx-ai will start it on its next run)." >&2
+            return 0
+        fi
     fi
 
     # 3. Start gnome-keyring-daemon (secret-service component) with an empty
     #    unlock password so it is immediately usable in this headless guest.
-    printf '' | setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx DBUS_SESSION_BUS_ADDRESS="$bus_addr" gnome-keyring-daemon --unlock --start --components=secrets >/dev/null 2>&1 || true
+    #    Missing here is a warning, not a return: dbus is already up, so the
+    #    address below is still worth persisting even without secrets.
+    if keyring_bin="$(dx_resolve_keyring_bin gnome-keyring-daemon)"; then
+        printf '' | setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx DBUS_SESSION_BUS_ADDRESS="$bus_addr" "$keyring_bin" --unlock --start --components=secrets >/dev/null 2>&1 || true
+    else
+        echo "Warning: gnome-keyring-daemon was not found in the published AI generation's profile or dx's Home Manager profile; secrets will not be unlocked (dx-ai will start it on its next run)." >&2
+    fi
 
     # 4. Persist only validated data, never executable shell text.
     dx_keyring_write_address "$address_file" "$bus_addr"

@@ -275,10 +275,13 @@ configure_guest() {
         run_as_dx "ln -sfn /persist/home/dx/.codex ~/.codex"
 
         # D-Bus + gnome-keyring (so agy can persist OAuth tokens) start below,
-        # once Home Manager activation has installed dbus-daemon into dx's
-        # profile: setup_keyring_service looks it up on dx's PATH, and on a
-        # fresh recreate /home/dx is ephemeral, so calling it here -- before
-        # Home Manager has run -- would find no dbus-daemon at all.
+        # after run_home_manager_activation. dbus-daemon and gnome-keyring-daemon
+        # are declared only in flake.nix's aiPackages, so Home Manager's own
+        # profile never installs either one; setup_keyring_service resolves
+        # both explicitly from the published AI generation's isolated profile
+        # (falling back to dx's Home Manager profile), so it no longer depends
+        # on this ordering for correctness -- kept after activation anyway so a
+        # failed/slow Home Manager run cannot leave the keyring half-started.
         ai_tools_enabled=true
     fi
 
@@ -306,10 +309,12 @@ configure_guest() {
     # a wedged Nix substitute cannot leave the container alive but pre-SSH.
     run_home_manager_activation
 
-    # Start D-Bus + gnome-keyring so agy can persist OAuth tokens. Must run
-    # after run_home_manager_activation (above): dbus-daemon is only installed
-    # into dx's profile by Home Manager, so calling this any earlier finds
-    # nothing on dx's PATH to start.
+    # Start D-Bus + gnome-keyring so agy can persist OAuth tokens.
+    # setup_keyring_service resolves both binaries explicitly (the published
+    # AI generation's profile, falling back to dx's Home Manager profile) and
+    # degrades to a loud warning rather than failing bootstrap if neither is
+    # found (Branch 15, user decision 2026-09-27): a guest with no keyring is
+    # still reachable, one that never starts sshd is not.
     if [ "$ai_tools_enabled" = true ]; then
         phase_started=$SECONDS
         setup_keyring_service
