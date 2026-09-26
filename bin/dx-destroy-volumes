@@ -21,7 +21,7 @@ VOLUMES=("$DX_NIX_VOLUME" "$DX_PERSIST_VOLUME" "$DX_BOOTSTRAP_VOLUME")
 # Filter to volumes that actually exist so we don't prompt about nothing.
 existing=()
 for vol in "${VOLUMES[@]}"; do
-    if container volume inspect "$vol" >/dev/null 2>&1; then
+    if dx_runtime_volume_exists "$vol"; then
         existing+=("$vol")
     fi
 done
@@ -58,7 +58,7 @@ fi
 
 for vol in "${existing[@]}"; do
     echo "Removing volume $vol..."
-    if ! container volume rm "$vol"; then
+    if ! dx_runtime_volume_delete "$vol"; then
         echo "Error: Failed to remove volume $vol. A container may still reference it; destroy the container first." >&2
         exit 1
     fi

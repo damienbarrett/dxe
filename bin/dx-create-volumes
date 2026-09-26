@@ -12,8 +12,8 @@ container_ensure_volume "$DX_NIX_VOLUME"
 
 legacy_volume="${DX_LEGACY_WORKSPACE_VOLUME:-dx-workspace}"
 if [ "$legacy_volume" != "$DX_PERSIST_VOLUME" ] \
-    && container volume inspect "$legacy_volume" >/dev/null 2>&1 \
-    && ! container volume inspect "$DX_PERSIST_VOLUME" >/dev/null 2>&1; then
+    && dx_runtime_volume_exists "$legacy_volume" \
+    && ! dx_runtime_volume_exists "$DX_PERSIST_VOLUME"; then
     cat >&2 <<EOF
 Error: legacy persistence volume $legacy_volume exists, but $DX_PERSIST_VOLUME does not.
 Run bin/dx-migrate-persist before creating the new /persist volume.
