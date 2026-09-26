@@ -468,6 +468,55 @@ esac
 exit 0
 '
 
+# --- pull+tag (user decision, same branch): cleanup must untag the spike --
+# --- image BY NAME, since docker tag never attaches the spike label -- a  --
+# --- label-filtered-only image query returns nothing for it.             --
+write_stub ssh_tag_only_image '
+printf "ssh %s\n" "$*" >> "'"$MARKER"'"
+last=""
+for a in "$@"; do last="$a"; done
+case "$last" in
+    true) exit 0 ;;
+    *DXE_DOCKER_BIN*) echo "'"$FAKE_DOCKER_BIN"'"; exit 0 ;;
+esac
+args=("$@")
+docker_idx=-1
+i=0
+for a in "${args[@]}"; do
+    [ "$a" = "'"$FAKE_DOCKER_BIN"'" ] && docker_idx=$i
+    i=$((i + 1))
+done
+[ "$docker_idx" -ge 0 ] || exit 0
+sub="${args[$((docker_idx + 1))]:-}"
+sub2="${args[$((docker_idx + 2))]:-}"
+has_label_filter=0
+for a in "${args[@]}"; do
+    [ "$a" = "label=dxe.role=spike" ] && has_label_filter=1
+done
+case "$sub" in
+    ps) exit 0 ;;
+    volume) case "$sub2" in ls) exit 0 ;; rm) exit 0 ;; esac ;;
+    image)
+        case "$sub2" in
+            ls)
+                # A label-filtered query returns nothing (docker tag never
+                # attaches a label); any other query (unfiltered, or
+                # filtered by reference) reports the tag, exactly like a
+                # real Docker daemon after "docker tag <base> <spike-tag>".
+                if [ "$has_label_filter" -eq 1 ]; then
+                    :
+                else
+                    echo "dxe-spike-image:phase0"
+                fi
+                exit 0
+                ;;
+        esac
+        ;;
+    rm|rmi) exit 0 ;;
+esac
+exit 0
+'
+
 # The LOCAL Docker CLI, used only by phase0-inventory.sh's explicit Mac-side
 # "docker -H ssh://<alias> ..." naive-mechanism check. Fails by default,
 # matching what was confirmed on the real NAS (the remote non-interactive
@@ -530,48 +579,54 @@ else
     test_fail "spike --dry-run prints the exact planned remote command list"
 fi
 
-# --- (a2) step 3's remote docker build never names a local Mac path; the ---
-# --- build context is streamed over stdin instead (a real dry-run against ---
-# --- the actual host alias exposed this: the remote Docker daemon on the ---
-# --- QNAP cannot resolve a path that only exists on this Mac).           ---
+# --- (a2) step 3 tags the pulled base image instead of building remotely ---
+# --- (user decision: QNAP's Docker wrapper refuses the per-user build     ---
+# --- directory under Container Station's data area for a non-default     ---
+# --- administrator -- "mkdir .../container-station/homes/<user>:         ---
+# --- permission denied" -- and the Containerfile is a single FROM line,   ---
+# --- so a remote build added nothing but a name).                        ---
 
-SPIKE_CONTEXT_DIR="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
 step3_block="$(printf '%s\n' "$spike_dry_out" | sed -n '/--- Step 3:/,/--- Step 4:/p')"
-step3_remote_line="$(printf '%s\n' "$step3_block" | grep -E -- 'build --label' | head -n1)"
-step3_tar_line="$(printf '%s\n' "$step3_block" | grep -E -- '^DRY-RUN: tar ' | head -n1)"
+step3_tag_line="$(printf '%s\n' "$step3_block" | grep -E -- ' tag ' | head -n1)"
 
-if [ -n "$step3_remote_line" ]; then
-    test_pass "step 3's dry-run output includes the remote docker build command"
+if printf '%s' "$step3_block" | stdin_matches -F -- ' build '; then
+    test_fail "step 3 never issues a remote docker build (replaced by pull+tag)"
 else
-    test_fail "step 3's dry-run output includes the remote docker build command"
+    test_pass "step 3 never issues a remote docker build (replaced by pull+tag)"
 fi
 
-if printf '%s' "$step3_remote_line" | stdin_matches -F -- '/Users/' \
-    || printf '%s' "$step3_remote_line" | stdin_matches -F -- "$HOME" \
-    || printf '%s' "$step3_remote_line" | stdin_matches -F -- "$BASE_DIR"; then
-    test_fail "step 3's remote docker build command contains no local absolute Mac path"
+if [ -n "$step3_tag_line" ]; then
+    test_pass "step 3's dry-run output includes a docker tag command"
 else
-    test_pass "step 3's remote docker build command contains no local absolute Mac path"
+    test_fail "step 3's dry-run output includes a docker tag command"
 fi
 
-if printf '%s' "$step3_remote_line" | grep -qE -- '-f Containerfile -$'; then
-    test_pass "step 3's remote docker build reads a stdin tar context (-f Containerfile, ends in a bare -)"
+if printf '%s' "$step3_tag_line" | stdin_matches -F -- "$BASE_REF_FOR_TEST" \
+    && printf '%s' "$step3_tag_line" | stdin_matches -F -- 'dxe-spike-image:phase0'; then
+    test_pass "step 3 tags the FROM-line-parsed base reference as dxe-spike-image:phase0"
 else
-    test_fail "step 3's remote docker build reads a stdin tar context (-f Containerfile, ends in a bare -)"
+    test_fail "step 3 tags the FROM-line-parsed base reference as dxe-spike-image:phase0"
 fi
 
-if [ -n "$step3_tar_line" ]; then
-    test_pass "step 3's dry-run output includes the local tar-context-streaming command"
+if printf '%s' "$step3_block" | stdin_matches -F -- '/Users/' \
+    || printf '%s' "$step3_block" | stdin_matches -F -- "$HOME" \
+    || printf '%s' "$step3_block" | stdin_matches -F -- "$BASE_DIR"; then
+    test_fail "step 3 never names a local Mac path (no build context needed any more)"
 else
-    test_fail "step 3's dry-run output includes the local tar-context-streaming command"
+    test_pass "step 3 never names a local Mac path (no build context needed any more)"
 fi
 
-if printf '%s' "$step3_tar_line" | stdin_matches -F -- "-C $SPIKE_CONTEXT_DIR" \
-    && printf '%s' "$step3_tar_line" | stdin_matches -F -- '-cf -' \
-    && printf '%s' "$step3_tar_line" | grep -qE -- ' \.$'; then
-    test_pass "step 3 streams the build context from the guest container directory via tar -C <dir> ... -cf - ."
+# --- (a3) cleanup untags the spike image by name, since docker tag never --
+# --- attaches a label (regression test for the same-day pull+tag change; ---
+# --- a label-filtered-only cleanup would silently leave this tag behind). -
+reset_marker
+set +e
+run_with_stubs "ssh_tag_only_image docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --cleanup --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" >"$STUB_DIR/cleanup_tagonly_out.log" 2>&1
+set -e
+if grep -qF -- 'rmi dxe-spike-image:phase0' "$MARKER"; then
+    test_pass "cleanup untags the spike image by name even when no image carries the spike label"
 else
-    test_fail "step 3 streams the build context from the guest container directory via tar -C <dir> ... -cf - ."
+    test_fail "cleanup untags the spike image by name even when no image carries the spike label"
 fi
 
 # --- (b) refuses to run without DXE_QNAP_HOST reachable, before mutation ---
