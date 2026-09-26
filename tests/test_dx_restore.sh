@@ -145,5 +145,79 @@ else
 fi
 rm -rf "$FIXTURE/persist/other" "$mirror_root/current/other" "$mirror_root/current/repo"
 
+# --- Branch 17: a restore batch over DX_BACKUP_HASH_PATHS_ARG_THRESHOLD
+# (bin/lib/dx-backup.sh; chosen: 1000) ships the path list into the guest as
+# a file (--hash-paths-file) instead of one `container exec` positional
+# argument per path -- the same ARG_MAX concern, and the same fix shape, as
+# dx-backup's own fetch transfer (test_dx_backup.sh). 1001 paths here
+# exercises that path; the 2-path suffix-collision case above already
+# exercises the small-batch positional-args fast path. ---
+bulk_dir="$FIXTURE/persist/home/dx/bulk"
+mkdir -p "$bulk_dir"
+i=1
+while [ "$i" -le 1001 ]; do
+    printf 'bulk-%d\n' "$i" > "$bulk_dir/f$i.txt"
+    i=$((i + 1))
+done
+"$BASE_DIR/bin/dx-backup" >/dev/null
+rm -rf "$bulk_dir"
+
+BULK_EXEC_LOG="$FIXTURE/bulk-exec.log"
+: > "$BULK_EXEC_LOG"
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$FIXTURE"'/persist"
+LOG="'"$BULK_EXEC_LOG"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    has_i=0
+    if [ "${1:-}" = -i ]; then has_i=1; shift; fi
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    {
+        echo "---EXEC---"
+        echo "has_i=$has_i"
+        for a in "$@"; do printf "ARG:%s\n" "$a"; done
+    } >> "$LOG"
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+
+bulk_dry_out="$("$BASE_DIR/bin/dx-restore" --dry-run home/dx/bulk 2>&1)"
+bulk_create_count="$(printf '%s\n' "$bulk_dry_out" | { grep -c '^would create: home/dx/bulk/' || true; })"
+if [ "$bulk_create_count" -eq 1001 ]; then
+    test_pass "a restore batch over the ARG_MAX threshold (1001) is still classified correctly"
+else
+    test_fail "a restore batch over the ARG_MAX threshold (1001) is still classified correctly (got $bulk_create_count)"
+fi
+
+if grep -Fxq 'ARG:--hash-paths-file' "$BULK_EXEC_LOG"; then
+    test_pass "a restore batch over the threshold uses --hash-paths-file, not one positional argument per path"
+else
+    test_fail "a restore batch over the threshold uses --hash-paths-file, not one positional argument per path (log: $(cat "$BULK_EXEC_LOG"))"
+fi
+if grep -Fxq 'ARG:--hash-paths' "$BULK_EXEC_LOG"; then
+    test_fail "a restore batch over the threshold does not also use the plain positional --hash-paths mode"
+else
+    test_pass "a restore batch over the threshold does not also use the plain positional --hash-paths mode"
+fi
+
+"$BASE_DIR/bin/dx-restore" --force home/dx/bulk >/dev/null
+bulk_restored_count="$(find "$bulk_dir" -type f 2>/dev/null | wc -l | tr -d '[:space:]')"
+if [ "$bulk_restored_count" -eq 1001 ]; then
+    test_pass "a restore batch over the threshold pushes every file back correctly"
+else
+    test_fail "a restore batch over the threshold pushes every file back correctly (got $bulk_restored_count)"
+fi
+rm -rf "$bulk_dir" "$mirror_root/current/home/dx/bulk"
+
 print_summary
 exit_with_code

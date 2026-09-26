@@ -250,10 +250,27 @@ dx_backup_restore_targets() {
     done
 }
 
+# Above this many targets in one dx-restore batch, `dx_backup_restore_status`
+# ships the path list into the guest as a file (dx_backup_ship_list_to_guest
+# + the selector's --hash-paths-file mode) instead of one `container exec`
+# positional argument per path, the same reason and the same shape as
+# dx_backup_fetch_paths's list (Branch 17; see this file's module comment).
+# Threshold rationale: this codebase's /persist-relative paths are typically
+# well under 100 bytes; even 1000 of them joined one-per-argv-slot sit far
+# below any real host ARG_MAX (POSIX guarantees only 4096 bytes via
+# _POSIX_ARG_MAX, but every real host here -- macOS and Linux -- reports at
+# least several hundred KB, usually multiple MB), so the fast path (no extra
+# guest round trip) is safe well past ordinary restore batches. Above it,
+# the fast path risks failing outright on close to a full-tree restore --
+# Branch 17's own defect surfaced at 51,262 paths on the FETCH side of this
+# same size class.
+DX_BACKUP_HASH_PATHS_ARG_THRESHOLD=1000
+
 # For each relative path in $3 (one per line), compare the LOCAL mirror copy
 # ($2/current/<path>) against the guest's current content, batched in one
-# `--hash-paths` call. Prints one line per target: path<TAB>STATUS, where
-# STATUS is one of:
+# `--hash-paths` (or, above DX_BACKUP_HASH_PATHS_ARG_THRESHOLD,
+# `--hash-paths-file`) call. Prints one line per target: path<TAB>STATUS,
+# where STATUS is one of:
 #   create    -- absent in the guest; restoring it is a plain create.
 #   identical -- present in the guest with the SAME content already.
 #   conflict  -- present in the guest with DIFFERENT content: dx-restore
@@ -268,7 +285,18 @@ dx_backup_restore_status() {
     [ "${#target_list[@]}" -gt 0 ] || return 0
 
     hashes="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-hash.XXXXXX")"
-    dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" --hash-paths "$DX_BACKUP_GUEST_ROOT" "${target_list[@]}" > "$hashes"
+    if [ "${#target_list[@]}" -gt "$DX_BACKUP_HASH_PATHS_ARG_THRESHOLD" ]; then
+        local guest_list
+        if guest_list="$(dx_backup_ship_list_to_guest "$container_name" "$targets")"; then
+            dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" --hash-paths-file "$DX_BACKUP_GUEST_ROOT" "$guest_list" </dev/null > "$hashes"
+            dx_backup_remove_guest_list "$container_name" "$guest_list"
+        else
+            rm -f "$hashes"
+            return 1
+        fi
+    else
+        dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" --hash-paths "$DX_BACKUP_GUEST_ROOT" "${target_list[@]}" > "$hashes"
+    fi
 
     for path in "${target_list[@]}"; do
         # Exact match on field 1, not a substring search: a target path that
