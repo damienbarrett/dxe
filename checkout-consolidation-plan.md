@@ -1157,6 +1157,16 @@ Loose blobs and trees are covered by the archive.
 profile, command, environment, exit code, totals and skips in
 `docs/evidence/<date>/`, not only in `/tmp`.
 
+**Dual-target gate (user rule, 2026-09-26):** any change to shared
+lifecycle code (`bin/`, `bin/lib/`, `container/…`) must pass the live tier
+on **both** targets: Apple `container` (`dx-test`) and the QNAP runtime
+(Branch 11), once a QNAP guest exists (Phase 3 onward of Branch 11). Until
+a QNAP guest exists, QNAP non-regression means `tests/qnap/` and Section
+27 stay green and the Phase 0 spike still passes; that stands in for the
+QNAP live tier and is not itself the dual-target gate. Do not treat a
+green Apple-only G4 as sufficient for shared lifecycle code once a QNAP
+guest exists.
+
 **Changed-code coverage:**
 
 - kcov measures only `bin/lib`, guest `bootstrap/` and guest `scripts/lib`.
@@ -1188,6 +1198,13 @@ profile, command, environment, exit code, totals and skips in
 ## Appendix D — Promoting to your primary guest, and backing out
 
 Use this for runtime-affecting branches (2, 6, 8, 9, 10, 11, 12).
+
+**Explicit approval required (user rule, 2026-09-26):** every promotion to
+`dx-host` needs the user's explicit approval for that specific promotion,
+and a tested backup of `/persist` (step 2 below) must exist *before* it
+runs. No subagent promotes to `dx-host` on its own; the coordinating
+session runs this appendix with the user, after they have seen the
+rehearsed dry run on `dx-test`.
 
 **Before promoting:**
 
