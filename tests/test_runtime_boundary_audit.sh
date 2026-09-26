@@ -46,13 +46,18 @@ audit_bin_tree() {
             # and every other bin/ file's actual `container` invocations
             # during Branch 11 / Phase 1's migration (2026-09-27).
             case "$line" in
-                *'`container exec`'*|*'`container run'*|*'`container logs`'*) continue ;;      # narrative comments naming an operation, not calling it
-                *'Apple container system is not running'*) continue ;;                          # "container system" here is English prose ("Apple container system"), not the `container system` verb
-                *'sending container kill'*|*'container kill; terminating'*) continue ;;         # diagnostic message text
-                *'Legacy cleanup command: container volume rm'*) continue ;;                    # a suggested command printed for the OPERATOR to type by hand, not executed
-                *"confirm with 'container exec"*) continue ;;                                   # troubleshooting text telling the operator what to type themselves
-                *'(container logs unavailable)'*) continue ;;                                   # diagnostic message text
-                *'we asked the container to do, and every `container run` below'* | *"Apple Container's \`container run --rm\`"*) continue ;; # historical/explanatory comment prose
+                # Narrative comments naming an operation, not calling it.
+                *'`container exec`'*|*'`container run'*|*'`container logs`'*) continue ;;
+                *'we asked the container to do, and every `container run` below'*) continue ;;
+                *"Apple Container's \`container run --rm\`"*) continue ;;
+                # "container system" here is English prose ("Apple container
+                # system is not running"), not the `container system` verb.
+                *'Apple container system is not running'*) continue ;;
+                # Diagnostic/operator-facing message text, not an executed call.
+                *'sending container kill'*|*'container kill; terminating'*) continue ;;
+                *'Legacy cleanup command: container volume rm'*) continue ;;
+                *"confirm with 'container exec"*) continue ;;
+                *'(container logs unavailable)'*) continue ;;
             esac
             matches="$matches$file:$line"$'\n'
         done < <(grep -nE "$VERB_PATTERN" "$file" 2>/dev/null)
