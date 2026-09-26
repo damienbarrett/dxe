@@ -229,12 +229,13 @@ dx_pbs_emit_found_list() {
         relpath="$relroot/$found"
         dx_pbs_path_denied "$relpath" && continue
         hashed="$(dx_pbs_hash_entry "$repo/$found")" || continue
-        if [ -n "$reason" ]; then
-            printf '%s\t%s\t%s\n' "$relpath" "$hashed" "$reason"
-        else
-            printf '%s\t%s\n' "$relpath" "$hashed"
-        fi
-    done < "$list_file"
+        # Single line (this file's own convention, see
+        # dx_pbs_walk_repo_files's comment): a bare `fi`/`done` keyword
+        # starts no traceable command of its own, so kcov never registers a
+        # hit on a `fi` (or `done < FILE`) line by itself -- the whole
+        # if/else/fi, AND `done < FILE`, must share a line with a real
+        # command (either printf here) to be measured as covered.
+        if [ -n "$reason" ]; then printf '%s\t%s\t%s\n' "$relpath" "$hashed" "$reason"; else printf '%s\t%s\n' "$relpath" "$hashed"; fi; done < "$list_file"
 }
 
 # Emit TSV listing lines (path relative to $DX_PBS_ROOT is $2 + "/" + found,
@@ -445,8 +446,9 @@ dx_pbs_hash_paths_file() {
     root="${root%/}"
     while IFS= read -r relpath || [ -n "$relpath" ]; do
         [ -n "$relpath" ] || continue
-        dx_pbs_hash_one "$root" "$relpath"
-    done < "$listfile"
+        # See dx_pbs_emit_found_list's comment: `done < FILE` shares the
+        # loop's last real command's line so kcov can register a hit on it.
+        dx_pbs_hash_one "$root" "$relpath"; done < "$listfile"
 }
 
 # ---------------------------------------------------------------------------

@@ -217,6 +217,49 @@ if [ "$bulk_restored_count" -eq 1001 ]; then
 else
     test_fail "a restore batch over the threshold pushes every file back correctly (got $bulk_restored_count)"
 fi
+
+# --- The SHIP exec itself fails for a large batch: dx-restore reports
+# failure cleanly rather than falling through to the plain --hash-paths
+# call (which would risk the very ARG_MAX this threshold exists to avoid). ---
+: > "$BULK_EXEC_LOG"
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$FIXTURE"'/persist"
+LOG="'"$BULK_EXEC_LOG"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    has_i=0
+    if [ "${1:-}" = -i ]; then has_i=1; shift; fi
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    {
+        echo "---EXEC---"
+        echo "has_i=$has_i"
+        for a in "$@"; do printf "ARG:%s\n" "$a"; done
+    } >> "$LOG"
+    if [ "${1:-}" = sh ]; then exit 42; fi
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+set +e
+bulk_ship_fail_out="$("$BASE_DIR/bin/dx-restore" --dry-run home/dx/bulk 2>&1)"
+bulk_ship_fail_rc=$?
+set -e
+[ "$bulk_ship_fail_rc" -ne 0 ] && test_pass "a restore batch over the threshold reports failure when the ship exec fails" || test_fail "a restore batch over the threshold reports failure when the ship exec fails (got: $bulk_ship_fail_out)"
+if grep -Fxq 'ARG:--hash-paths' "$BULK_EXEC_LOG"; then
+    test_fail "a failed ship exec does not fall back to the plain positional --hash-paths mode"
+else
+    test_pass "a failed ship exec does not fall back to the plain positional --hash-paths mode"
+fi
+
 rm -rf "$bulk_dir" "$mirror_root/current/home/dx/bulk"
 
 print_summary

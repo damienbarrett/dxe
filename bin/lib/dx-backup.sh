@@ -93,21 +93,18 @@ dx_backup_summarize() {
     total_bytes="$(awk -F'\t' '{sum += $2} END {print sum + 0}' "$listing")"
     echo "Total at-risk under $DX_BACKUP_GUEST_ROOT: ${total_count:-0} files, ${total_bytes:-0} bytes."
 
+    # Single line: this codebase's convention for a multi-statement quoted
+    # awk/sh body (see bin/dx-put and dx_backup_restore_push above) -- a
+    # multi-line quoted argument only registers a kcov coverage hit on its
+    # first line, not each interior line.
     echo "By top-level directory:"
-    awk -F'\t' '
-        { n = split($1, parts, "/"); top = (n > 1) ? parts[1] : $1
-          count[top]++; bytes[top] += $2 }
-        END { for (t in count) printf "%s\t%d\t%d\n", t, count[t], bytes[t] }
-    ' "$listing" | LC_ALL=C sort | while IFS="$(printf '\t')" read -r top top_count top_bytes; do
+    awk -F'\t' '{ n = split($1, parts, "/"); top = (n > 1) ? parts[1] : $1; count[top]++; bytes[top] += $2 } END { for (t in count) printf "%s\t%d\t%d\n", t, count[t], bytes[t] }' "$listing" | LC_ALL=C sort | while IFS="$(printf '\t')" read -r top top_count top_bytes; do
         [ -n "$top" ] || continue
         printf '  %-30s %8s files  %14s bytes\n' "$top" "$top_count" "$top_bytes"
     done
 
     echo "By reason:"
-    awk -F'\t' '
-        { count[$5]++; bytes[$5] += $2 }
-        END { for (r in count) printf "%s\t%d\t%d\n", r, count[r], bytes[r] }
-    ' "$listing" | LC_ALL=C sort | while IFS="$(printf '\t')" read -r reason reason_count reason_bytes; do
+    awk -F'\t' '{ count[$5]++; bytes[$5] += $2 } END { for (r in count) printf "%s\t%d\t%d\n", r, count[r], bytes[r] }' "$listing" | LC_ALL=C sort | while IFS="$(printf '\t')" read -r reason reason_count reason_bytes; do
         [ -n "$reason" ] || continue
         printf '  %-20s %8s files  %14s bytes\n' "$reason" "$reason_count" "$reason_bytes"
     done

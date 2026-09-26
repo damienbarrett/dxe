@@ -302,6 +302,48 @@ else
     test_fail "the guest temp file is removed even when the archive exec fails (path: $fail_guest_list_path; log: $(cat "$EXEC_LOG"))"
 fi
 
+# --- The SHIP exec itself fails (phase 1, before any guest temp file
+# exists): the archive exec (phase 2) must never even be attempted. ---
+: > "$EXEC_LOG"
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$FIXTURE"'/persist"
+LOG="'"$EXEC_LOG"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container container-a container-b; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    has_i=0
+    if [ "${1:-}" = -i ]; then has_i=1; shift; fi
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    {
+        echo "---EXEC---"
+        echo "has_i=$has_i"
+        for a in "$@"; do printf "ARG:%s\n" "$a"; done
+    } >> "$LOG"
+    if [ "${1:-}" = sh ]; then exit 42; fi
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+printf 'two-phase-ship-fail-check\n' > "$FIXTURE/persist/home/dx/two-phase-ship-fail-check.txt"
+set +e
+ship_fail_out="$("$BASE_DIR/bin/dx-backup" 2>&1)"
+ship_fail_rc=$?
+set -e
+[ "$ship_fail_rc" -ne 0 ] && test_pass "a failed ship exec still reports a nonzero exit status" || test_fail "a failed ship exec still reports a nonzero exit status (got: $ship_fail_out)"
+if grep -Fxq 'ARG:tar' "$EXEC_LOG"; then
+    test_fail "the archive exec is never attempted when the ship exec fails"
+else
+    test_pass "the archive exec is never attempted when the ship exec fails"
+fi
+
 # Restore the well-behaved fake container (matches the rest of this file's
 # convention of leaving it well-behaved after a forced-failure block).
 fake_tool_write "$FAKE_DIR" container '
