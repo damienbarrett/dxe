@@ -1206,6 +1206,16 @@ runs. No subagent promotes to `dx-host` on its own; the coordinating
 session runs this appendix with the user, after they have seen the
 rehearsed dry run on `dx-test`.
 
+**Status (2026-09-26):** `dx-host` (the primary guest) was promoted to
+`main` `08700a8` on 2026-09-26 following this appendix: manual `/persist`
+backup (kept privately), stop, `dx-start-container` with the new
+confirmation, verification (running == published generation, Home Manager
+activation completed, data intact). `dx-host` does **not** yet have
+OpenCode: Branch 6 (`feat/opencode`) is still in progress on its own
+branch (see its section above) and has not merged to `main`. Promoting it
+to `dx-host` is a separate user decision to make after it lands, following
+this appendix in full.
+
 **Before promoting:**
 
 1. Record the current source SHA, lock, image digest, running bootstrap
