@@ -16,6 +16,17 @@ DX_HERDR_NAV_SCRIPT="$CONTAINER_DIR/scripts/dx-herdr-navigate.sh"
 # Test: flake.nix exists
 assert_file_exists "$FLAKE_NIX" "flake.nix exists"
 
+# Test: the guest flake must not fetch unpinned mutable URLs -- the
+# testImage fixture pulled a GitHub avatar (a URL whose bytes change behind
+# the same address) and broke Home Manager evaluation the moment upstream
+# re-rendered it. Guard against reintroducing that shape rather than banning
+# `fetchurl` outright: agy's derivation above also calls `pkgs.fetchurl`, but
+# against a versioned release tarball URL pinned via pins/agy.json, which is
+# not a mutable resource. Evaluation (home.file has no test-image.png) and
+# the fresh-guest build are the actual behaviour checks; this is a
+# source-shape regression guard only.
+assert_file_not_contains "$FLAKE_NIX" "avatars.githubusercontent.com" "guest flake does not fetch the mutable GitHub avatar URL"
+
 DX_PACKAGES_BLOCK="$(awk '
     /dxPackages =/ { in_block = 1 }
     in_block { print }

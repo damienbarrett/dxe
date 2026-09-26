@@ -1,4 +1,4 @@
-{ config, lib, pkgs, testImage, ... }:
+{ config, lib, pkgs, ... }:
 
 {
   imports = [ ./home/shell.nix ./home/tools.nix ./home/theme.nix ];
@@ -19,7 +19,4 @@
   xdg.cacheFile."nvim/.keep".text = "";
 
   home.file.".local/lib/dx/dx-keyring.sh".source = ./scripts/lib/dx-keyring.sh;
-
-  # Declaratively place the test image in the home directory
-  home.file."test-image.png".source = testImage;
 }

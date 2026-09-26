@@ -144,12 +144,6 @@
 
       # Imported NixVim configuration
       nvim = import ./nixvim.nix { inherit pkgs nixvim system; };
-
-      # Test image from NixOS GitHub
-      testImage = pkgs.fetchurl {
-        url = "https://avatars.githubusercontent.com/u/487568?s=200&v=4";
-        hash = "sha256-4lDgsPtttAiM8b8d9vWZj4PbbhLPxANen+KwmYuLC3k=";
-      };
     in
     {
       devShells.${system}.default = pkgs.mkShell {
@@ -175,7 +169,6 @@
 
       homeConfigurations.dx = home-manager.lib.homeManagerConfiguration {
         inherit pkgs;
-        extraSpecialArgs = { inherit testImage; };
         modules = [ 
           ./home.nix
           {
