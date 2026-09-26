@@ -72,15 +72,14 @@ live-tier commands and results once run._
 | G4 live | `dx-test`, pending (dx-test was occupied when this work started) |
 | G5 CI | pending push |
 
-**Note on validation method:** this worktree's `.git` points at
-`/Users/damien/Development/dxe/.git/worktrees/wt-branch-15`, an absolute
-host path outside the worktree directory itself, so bind-mounting only the
-worktree into a throwaway container breaks any test that shells out to
-`git` (e.g. `test_section6_tools.sh`'s "guest dx-ai script is tracked for
-flake source inclusion", which failed the first time for exactly this
-reason -- an environment artifact of the validation method, not a defect).
-Re-validated against a disposable `git clone` of the worktree instead,
-which is fully self-contained.
+**Note on validation method:** a git worktree's `.git` is a file pointing at
+the main repository's `.git/worktrees/<name>` outside the worktree itself,
+so bind-mounting only the worktree into a throwaway container breaks any
+test that shells out to `git` (e.g. `test_section6_tools.sh`'s "guest dx-ai
+script is tracked for flake source inclusion", which failed the first time
+for exactly this reason -- an environment artifact of the validation
+method, not a defect). Re-validated against a disposable `git clone` of the
+worktree instead, which is fully self-contained.
 
 ## Red/green (code-level, Increment 1's second paragraph / Increment 2)
 

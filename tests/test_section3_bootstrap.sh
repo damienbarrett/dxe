@@ -606,9 +606,18 @@ fi
 # so a pass here can only come from the direct path resolution.
 if [ -e /persist/home/dx/.local/state/dx-ai ]; then
     test_skip "setup_keyring_service resolves the recreate-time generation profile directly (host has a real dx-ai generation at the hardcoded path)"
+elif ! mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin \
+        /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1 2>/dev/null; then
+    # setup_keyring_service hardcodes this absolute path (unlike
+    # setup_gh_persistence/setup_herdr_persistence, it takes no persist_home
+    # argument), so this probe has no fixture-relative fallback. A bare macOS
+    # host (the "live" tier runs Section 3 directly on the coordinating
+    # session's Mac, not inside a container) cannot create a new top-level
+    # directory under its read-only root filesystem, unlike the throwaway
+    # Linux containers G1/G2 use, where this succeeds. Skip rather than let
+    # a failed mkdir -- and this whole file, under set -e -- die uninformatively.
+    test_skip "setup_keyring_service resolves the recreate-time generation profile directly (this host cannot create /persist directly; exercised in the throwaway Linux coverage/CI containers instead)"
 else
-    mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin \
-        /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1
     : > /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
     : > /persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon
     chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon \
