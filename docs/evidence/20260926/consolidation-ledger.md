@@ -49,3 +49,40 @@ that same private archive.
 | S35 | Branch 4a fix/container-running-sigpipe | landed | branch CI 36212372284 green; main bd2418f -> 596ac28; main CI 36212653165 pending; worktree removed | GitHub Actions | 2026-09-26 |
 | S36 | main CI after Branch 4a | closed | main 596ac28 CI run 36212653165 green (both jobs) | GitHub Actions | 2026-09-26 |
 
+## Historical refs (Appendix B dispositions)
+
+Per Appendix B of `checkout-consolidation-plan.md`: 15 unreachable commits
+plus `refs/guest/herdr-tmux-navigation` (`3f2a910`, `e58fefc`) needed a
+disposition. All 17 are dispositioned below; each was checked with
+`git show --stat`, `git diff <sha>^ <sha> | git patch-id --stable` against
+the named candidate(s), `git merge-base --is-ancestor` against `HEAD`, and
+`git log -S`/`grep` of the current tree for the unique content. A missing
+exact patch-id match does not by itself mean the functionality is missing —
+several items below were reimplemented against a later refactor (module
+split, base-image move) rather than cherry-picked, so the disposition rests
+on behavioural/textual evidence, not only patch-id equality.
+
+| SHA | Subject | Disposition | Evidence |
+| --- | --- | --- | --- |
+| `3f2a910` | add tmux-style Herdr pane navigation | Already present | Patch-id identical (`30488c1…`) to `9bc04a4`, an ancestor of `HEAD`; `herdr-navigator.lua` and `dx-herdr-navigate.sh` are in the current tree via that lineage. |
+| `e58fefc` | persist Herdr config and sessions across rebuilds | Superseded | By `753c554` ("Seed Herdr config through a merger that understands key bindings"), which explicitly reconciles two independently-grown persistence implementations, keeping the piece each needed. Current tree has both `bootstrap/persistence.sh` and `bootstrap/herdr-config.sh`. |
+| `7fe6caf` | "On herdr-guest-integration: tunnel-self-heal-wip" | Superseded | By `dc75be3` ("Keep tunnel state where macOS will not delete it") and `8ba2a69` ("Recover a tunnel whose metadata /tmp reaped out from under it"), both ancestors of `HEAD`. Current `bin/lib/dx-tunnel.sh` already has the `dx_tunnel_recover_peer`/`dx_tunnel_recover_key` self-heal logic this WIP was exploring. |
+| `71e00fe` | disk-size wiring (WIP on `fix/dx-wait-ssh-probe-budget`) | Superseded | By `98e11a7` ("Wire DX_NIX_DISK_SIZE through to the guest, canonical default 64G (P10)"), confirmed ancestor of `HEAD`; matches current `bin/lib/dx-config.sh`/`docs/configuration.md`. |
+| `7fd234b` | early OpenCode tests (WIP on `fix/dx-wait-ssh-probe-budget`) | Superseded | By `0f71be4` ("Add OpenCode to the optional AI toolchain"), whose `test_section6_tools.sh`/`test_section17_dx_ai_runtime.sh` additions are a fuller version of the same assertions. `0f71be4` was itself reverted off `main` by Branch 2 (`d5d74d7`); flagged for Branch 6 to consult if it re-lands OpenCode tests, but nothing here is unique work. |
+| `8d7f85c` | "WIP on main: … Stop the audit suite depending on an unreachable commit" (migration retries in `bin/dx-migrate-persist`) | Superseded | By `5966c35` ("Retry the Apple Container runtime-client race in dx-migrate-persist") and `1222c08` ("Narrow the migrate retry to the signature it claims, and fix the alignment command"), both ancestors of `HEAD` — the later, narrower error check was kept, as intended. |
+| `2003457` | WIP adding `dx-forward`/`dx-reverse` docs and tests | Already present | `bin/dx-forward` and `bin/dx-reverse` are fully implemented and documented on `main` today (16 README references). |
+| `02cbe55` | "Link the essentials bash at /usr/bin/bash for SSH sessions" (WIP, targets the retired `dx-nixos-25.11` directory) | Superseded | By `dd06e2f` ("Resolve the essentials PATH before the reinstall skip-gate"); its exact comment text ("would never see a previous boot's…") is verbatim in current `bootstrap/base-and-storage.sh:install_essentials`. The `/usr/bin/bash` linking goal is met by `link_system_bash` in the same file. |
+| `4cfeefa` | Same change as `02cbe55` (identical patch-id `84c07f6e…`; a duplicate WIP snapshot) | Superseded | Same as `02cbe55`. |
+| `0c74f90` | WIP tweak to `test_section23_herdr.sh` (fixture SSH key instead of the default path) | Already present | The `DX_SSH_KEY="$fake_dir/ssh-key"` fixture pattern this WIP introduced is throughout the current file, with the same explanatory comment. |
+| `d8070c1` | WIP adding `nvim/plugins/project-nvim.nix` | Already present | The file is byte-identical to the one in the current tree (empty `diff`). |
+| `55e0efa` | "Persist the guest SSH host identity across rebuilds" (carries a `host-key-persistence-plan.md` explaining it is a re-implementation because its source branch targeted the retired `dx-nixos-25.11` bootstrap monolith) | Superseded | By `7c4128d` (identical subject), confirmed ancestor of `HEAD`; `dx_persist_host_keys` exists in current `bootstrap/system.sh`. |
+| `e8246ff` | "Make guest bootstrap ownership and store import bounded and recoverable" | Superseded | By `3adeecd` (identical subject), confirmed ancestor of `HEAD`. |
+| `e869eac` | "Harden fresh-bootstrap waits and publish guest release identity" | Superseded | By `278eb17` (identical subject), confirmed ancestor of `HEAD`; further refactored since into `bin/lib/dx-host-util.sh`. |
+| `773c120` | "Move the base image to the official nixos/nix image" | Superseded | By `e8e0dd0` (identical subject), confirmed ancestor of `HEAD`; current `Containerfile` is `FROM nixos/nix:2.34.7@sha256:…`. |
+| `3244307` | "WIP: Claude Code rate-limit checkpoint" | Rejected | Touches only `.claude/RESUME.md` (a session continuation note); no production or test content. |
+| `1e29069` | "WIP: Claude Code rate-limit checkpoint" | Rejected | Same as `3244307`. |
+
+**Summary:** 3 already present, 12 superseded, 2 rejected, 0 unique work,
+0 pending. Nothing was implemented as part of this disposition pass — per
+Branch 5's instructions, dispositioning is a classification exercise, not an
+implementation one.
