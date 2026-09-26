@@ -231,6 +231,41 @@ as a whole phase stack.
   `container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib/dx-persist-backup-select.sh`.
   No decision yet.
 
+
+## Standing rules (from the user, 2026-09-26/27; still in force)
+
+- **The repository is public.** Nothing identifying the NAS (hostnames,
+  tailnet names, IPs, usernames, pool or `/share/...` paths, key material,
+  fingerprints) and no absolute home-directory paths in tracked files; the
+  ssh alias `qnap-dxe` and runtime discovery stand in for them. A private
+  identifier scan runs before every push; Section 1 enforces the generic
+  patterns in CI. Full inventory/spike reports live outside the repository.
+- **The QNAP is a production system.** Read-only by default; anything that
+  creates, changes or deletes a resource there, restarts a service, or
+  reboots it needs the user's explicit approval each time; reboots only in an
+  agreed maintenance window. Subagents never touch it.
+- **`dx-host` is the user's primary guest.** Promotions follow Appendix D
+  with explicit approval and a tested backup; no subagent starts, stops,
+  recreates or execs into it. `dx-test` is disposable.
+- **No oversized guests.** Guests stay at the profile default (12 GB / 4 CPU
+  on the Mac; the QNAP is more constrained still). Build-memory problems are
+  fixed in the tooling (Branch 14), not by enlarging guests.
+- **Ask before significant changes and before decisions of the kind "where
+  does this live / which host / which name".** Routine, reversible
+  increments of an agreed branch do not need a question; subagents never
+  make such decisions -- they stop and report.
+- **Coding runs in lower-power subagents** (Sonnet for judgement, Haiku for
+  small fully specified edits) that keep an external crash-recovery progress
+  file, follow the standing brief, and never push; the coordinating session
+  reviews, rebases, scans, pushes and lands. Live gates on `dx-test` are run
+  by the coordinating session when a subagent's permission classifier refuses
+  a lifecycle command.
+- **Keep existing patterns; share across arm64/x86_64 and runtimes wherever
+  pragmatic** (one lifecycle model with runtime adapters; flake outputs
+  parameterised over systems; per-architecture pins in one place).
+- **Dual-target gate** (Appendix C): shared lifecycle changes pass the live
+  tier on both targets once a QNAP guest exists.
+
 ## Decisions for you
 
 Q1–Q6 and the QNAP part of Q7 are resolved (collapsed below to one line each;
@@ -353,7 +388,8 @@ guest exists.
 
 ## Appendix D — Promoting to your primary guest, and backing out
 
-Use this for runtime-affecting branches (2, 6, 8, 9, 10, 11, 12).
+Use this for every runtime-affecting branch (anything under `bin/`, `bin/lib/`
+or `container/…`).
 
 **Explicit approval required (user rule, 2026-09-26):** every promotion to
 `dx-host` needs the user's explicit approval for that specific promotion,
