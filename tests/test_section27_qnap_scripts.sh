@@ -39,10 +39,13 @@ for script in "$QNAP_INV" "$QNAP_SPIKE" "$BASE_DIR/tests/qnap/lib/phase0-common.
     if bash -n "$script"; then test_pass "$(basename "$script") passes bash syntax"; else test_fail "$(basename "$script") passes bash syntax"; fi
 done
 
-# Never a TCP-exposed daemon, never published beyond loopback
-# (qnap-dxe-plan.md non-goals/Phase 0 safety rule).
+# Never a TCP-exposed daemon, never published to the LAN/internet
+# (qnap-dxe-plan.md non-goals/Phase 0 safety rule). DQ5 (amended
+# 2026-09-26): guest SSH now publishes to the NAS's discovered Tailscale
+# address (a variable, so no longer a fixed literal to grep for) rather than
+# loopback; the one thing that must never appear literally is 0.0.0.0.
 assert_file_not_contains "$QNAP_SPIKE" 'DOCKER_HOST=tcp' "spike never exposes the daemon over TCP"
-assert_file_contains_literal "$QNAP_SPIKE" '127.0.0.1:2222:2222' "spike publishes guest port 2222 to loopback only"
+assert_file_not_contains "$QNAP_SPIKE" '0.0.0.0:2222:2222' "spike never publishes guest port 2222 to all interfaces"
 
 STUB_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dxe-qnap-stub.XXXXXX")"
 MARKER="$(mktemp "${TMPDIR:-/tmp}/dxe-qnap-marker.XXXXXX")"
@@ -62,6 +65,13 @@ reset_marker() { : >"$MARKER"; }
 
 FAKE_DOCKER_BIN="/opt/fake/.qpkg/container-station/bin/docker"
 FAKE_TAILSCALE_BIN="/opt/fake/.qpkg/Tailscale/tailscale"
+# DQ5 (tailnet-only guest SSH publication, amended 2026-09-26): an RFC 5737
+# TEST-NET-3 address, deliberately outside the carrier-grade-NAT /10 block
+# Tailscale assigns tailnet addresses from, so this constant can never trip
+# test_section1_secrets.sh's TAILNET_IP_PATTERN scan of this (git-tracked)
+# file (that pattern matches a 100-dot-sixtyfour-through-127 shape; spelled
+# out as digits here, this comment would match it too).
+FAKE_TAILNET_ADDR="203.0.113.7"
 
 # A connectable ssh that answers "true"/"reboot"/ss/container-station probes,
 # the standalone Docker-path discovery call phase0-spike.sh makes, the
@@ -78,9 +88,27 @@ case "$last" in
     reboot) exit 0 ;;
 esac
 case "$*" in
-    *"ss -ltn"*) printf "LISTEN 0 128 127.0.0.1:2222 0.0.0.0:*\n"; exit 0 ;;
+    *"ss -ltn"*)
+        if [ -n "${DXE_TEST_FAKE_TAILNET_ADDR:-}" ]; then
+            printf "LISTEN 0 128 %s:2222 0.0.0.0:*\n" "$DXE_TEST_FAKE_TAILNET_ADDR"
+        else
+            printf "LISTEN 0 128 127.0.0.1:2222 0.0.0.0:*\n"
+        fi
+        exit 0
+        ;;
     *"container-station.sh restart"*) exit 0 ;;
-    *"-W 127.0.0.1:2222"*) exit 0 ;;
+esac
+# The standalone Tailscale-address discovery script
+# (phase0-spike.sh dxe_qnap_ensure_tailnet_addr): answers with
+# DXE_TEST_FAKE_TAILNET_ADDR when a test opts in by setting that env var
+# (unset by default, so every real-run test below that does not opt in
+# keeps exercising the "address not discovered" fallback path and never
+# triggers a real nc/curl network call).
+case "$last" in
+    *DXE_TAILNET_ADDR*)
+        [ -n "${DXE_TEST_FAKE_TAILNET_ADDR:-}" ] && echo "$DXE_TEST_FAKE_TAILNET_ADDR"
+        exit 0
+        ;;
 esac
 # The combined inventory heredoc (many DXE_-tagged fields in one script,
 # including its own embedded docker/tailscale discovery snippets -- so this
@@ -542,6 +570,33 @@ write_stub docker '
 exit 1
 '
 
+# Fake "nc -z -w 5 <addr> <port>", used only by the tailnet-reachability
+# tests below (step 7, DQ5). Succeeds only for the address a test opts into
+# via DXE_TEST_FAKE_TAILNET_ADDR -- never for a real host, so a run using
+# this stub can never make a real network connection.
+write_stub nc_ok '
+addr="${DXE_TEST_FAKE_TAILNET_ADDR:-}"
+[ -n "$addr" ] || exit 1
+for a in "$@"; do
+    case "$a" in
+        "$addr") exit 0 ;;
+    esac
+done
+exit 1
+'
+
+# Fake "curl -s --http0.9 --max-time 5 http://<addr>:2222/": emits the
+# literal PONG the spike containers listener serves, only for the same
+# opted-in fake address.
+write_stub curl_ok '
+addr="${DXE_TEST_FAKE_TAILNET_ADDR:-}"
+[ -n "$addr" ] || exit 1
+case "$*" in
+    *"$addr:2222"*) printf PONG; exit 0 ;;
+esac
+exit 1
+'
+
 run_with_stubs() {
     # $1: space-separated stub names to symlink as ssh/docker for this call;
     # remaining args: the command to run.
@@ -590,10 +645,51 @@ spike_dry_out="$(run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$
 if [ ! -s "$MARKER" ]; then test_pass "spike --dry-run never invokes ssh/docker"; else test_fail "spike --dry-run never invokes ssh/docker"; fi
 if printf '%s' "$spike_dry_out" | stdin_matches -F -- "DRY-RUN: ssh -o BatchMode=yes -o ConnectTimeout=10 -o LogLevel=ERROR section27-host \\<discovered-docker-path\\> pull" \
     && printf '%s' "$spike_dry_out" | stdin_matches -F -- "volume create --label dxe.role=spike dxe-spike-nix" \
-    && printf '%s' "$spike_dry_out" | stdin_matches -F -- "-W 127.0.0.1:2222"; then
+    && printf '%s' "$spike_dry_out" | stdin_matches -F -- "nc -z -w 5"; then
     test_pass "spike --dry-run prints the exact planned remote command list"
 else
     test_fail "spike --dry-run prints the exact planned remote command list"
+fi
+
+# --- (a1b) DQ5 (amended 2026-09-26): the NAS's Tailscale address is        ---
+# --- discovered over ssh (never hard-coded) via a single script that tries ---
+# --- the Tailscale qpkg CLI's "ip -4" first, falling back to reading the   ---
+# --- tailscale0 interface directly -- both mechanisms travel in the SAME   ---
+# --- one ssh round trip, so whichever actually works on a given NAS is     ---
+# --- tried without a second hop. Checked via the dry-run preview text      ---
+# --- (the same style as "inventory never uses bare getconf" above) rather  ---
+# --- than reading the .sh source directly.                                ---
+discovery_block="$(printf '%s\n' "$spike_dry_out" | grep -E -- 'DXE_TAILSCALE_BIN|DXE_TAILNET_ADDR|tailscale0' || true)"
+if [ -n "$discovery_block" ] && printf '%s' "$discovery_block" | grep -qE -- 'ip.?-4'; then
+    test_pass "spike's tailnet-address discovery tries the Tailscale CLI's ip -4"
+else
+    test_fail "spike's tailnet-address discovery tries the Tailscale CLI's ip -4"
+fi
+if [ -n "$discovery_block" ] && printf '%s' "$discovery_block" | stdin_matches -F -- "tailscale0"; then
+    test_pass "spike's tailnet-address discovery falls back to the tailscale0 interface"
+else
+    test_fail "spike's tailnet-address discovery falls back to the tailscale0 interface"
+fi
+
+# --- (a1c) step 7's dry-run shows the direct connect/fetch, never ssh -W --
+# --- (DQ5: ssh -W/ProxyJump through the NAS is "administratively           -
+# --- prohibited" by the NAS's sshd -- AllowTcpForwarding no is the QTS      -
+# --- default).                                                             -
+step7_block="$(printf '%s\n' "$spike_dry_out" | sed -n '/--- Step 7:/,/--- Step 8:/p')"
+if printf '%s' "$step7_block" | stdin_matches -F -- "nc -z -w 5" && printf '%s' "$step7_block" | stdin_matches -F -- "tailnet-ip"; then
+    test_pass "step 7's dry-run previews a direct TCP connect to the discovered tailnet address"
+else
+    test_fail "step 7's dry-run previews a direct TCP connect to the discovered tailnet address"
+fi
+if printf '%s' "$step7_block" | stdin_matches -F -- "curl" && printf '%s' "$step7_block" | stdin_matches -F -- "2222"; then
+    test_pass "step 7's dry-run previews fetching the listener response to check for PONG"
+else
+    test_fail "step 7's dry-run previews fetching the listener response to check for PONG"
+fi
+if printf '%s' "$step7_block" | stdin_matches -F -- "-W "; then
+    test_fail "step 7's dry-run no longer previews an ssh -W tunnel through the NAS"
+else
+    test_pass "step 7's dry-run no longer previews an ssh -W tunnel through the NAS"
 fi
 
 # --- (a2) step 3 tags the pulled base image instead of building remotely ---
@@ -1017,6 +1113,83 @@ if grep -qF -- '/dev/fake-mapper/pool0' "$INV_SUMMARY" || grep -qF -- '/opt/fake
     test_fail "the inventory summary never mentions the Docker Root Dir path/pool"
 else
     test_pass "the inventory summary never mentions the Docker Root Dir path/pool"
+fi
+
+# --- DQ5 (amended 2026-09-26): guest SSH publishes to the NAS's own        ---
+# --- discovered Tailscale address only, never loopback/LAN/0.0.0.0, and    ---
+# --- the controller connects to it directly (no ssh -W/ProxyJump, which    ---
+# --- the real NAS's sshd refuses by default). Two real (non-dry-run)       ---
+# --- scenarios: the default stubs never answer the address-discovery call -
+# --- (fallback path, exercised by every other real-run test above without -
+# --- any change in behavior), and a dedicated opt-in scenario where the    -
+# --- address IS discovered, proving step 5/7 use it correctly -- with      -
+# --- nc/curl themselves stubbed (nc_ok/curl_ok, gated on the same env var) -
+# --- so this stays fully hermetic: no real network I/O even in the happy   -
+# --- path.                                                                 -
+
+# (g1) fallback: address not discovered -> step 5 publishes 127.0.0.1 only,
+# step 7 reports FAIL with a clear reason, never touching nc/curl.
+reset_marker
+set +e
+fallback_out="$(run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" 2>&1)"
+set -e
+if printf '%s' "$fallback_out" | stdin_matches -F -- "Step 5: PASS" \
+    && printf '%s' "$fallback_out" | stdin_matches -F -- "fell back to loopback-only publication"; then
+    test_pass "step 5 falls back to loopback-only publication when the tailnet address is not discovered"
+else
+    test_fail "step 5 falls back to loopback-only publication when the tailnet address is not discovered"
+fi
+if grep -qF -- '-p 127.0.0.1:2222:2222' "$MARKER"; then
+    test_pass "the fallback container run publishes -p 127.0.0.1:2222:2222 (not 0.0.0.0, not a stale tailnet value)"
+else
+    test_fail "the fallback container run publishes -p 127.0.0.1:2222:2222 (not 0.0.0.0, not a stale tailnet value)"
+fi
+if printf '%s' "$fallback_out" | stdin_matches -F -- "Step 7: FAIL" \
+    && printf '%s' "$fallback_out" | stdin_matches -F -- "could not be discovered"; then
+    test_pass "step 7 reports FAIL with a clear reason when the tailnet address was not discovered"
+else
+    test_fail "step 7 reports FAIL with a clear reason when the tailnet address was not discovered"
+fi
+
+# (g2) happy path: address discovered -> step 5 publishes it (never
+# 0.0.0.0), step 7 confirms tailnet-only binding and direct reachability.
+reset_marker
+set +e
+tailnet_ok_out="$(run_with_stubs "ssh docker nc_ok curl_ok" env DXE_QNAP_HOST=section27-host DXE_TEST_FAKE_TAILNET_ADDR="$FAKE_TAILNET_ADDR" "$QNAP_SPIKE" --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" 2>&1)"
+set -e
+if printf '%s' "$tailnet_ok_out" | stdin_matches -F -- "Step 5: PASS"; then
+    test_pass "step 5 succeeds when the tailnet address is discovered"
+else
+    test_fail "step 5 succeeds when the tailnet address is discovered"
+fi
+if grep -qF -- "-p $FAKE_TAILNET_ADDR:2222:2222" "$MARKER"; then
+    test_pass "step 5 publishes to the discovered tailnet address, not loopback"
+else
+    test_fail "step 5 publishes to the discovered tailnet address, not loopback"
+fi
+if grep -qF -- '0.0.0.0:2222:2222' "$MARKER"; then
+    test_fail "step 5 never publishes to 0.0.0.0 even when the tailnet address is known"
+else
+    test_pass "step 5 never publishes to 0.0.0.0 even when the tailnet address is known"
+fi
+if printf '%s' "$tailnet_ok_out" | stdin_matches -F -- "Step 7: PASS" \
+    && printf '%s' "$tailnet_ok_out" | stdin_matches -F -- "PONG confirmed"; then
+    test_pass "step 7 confirms tailnet-only binding and direct PONG reachability when the address is discovered"
+else
+    test_fail "step 7 confirms tailnet-only binding and direct PONG reachability when the address is discovered"
+fi
+
+# (g3) the private report may record the discovered address (same rule as
+# the discovered Docker CLI path); the summary must never contain it.
+if grep -qF -- "$FAKE_TAILNET_ADDR" "$SPIKE_REPORT"; then
+    test_pass "the private full report may record the discovered tailnet address"
+else
+    test_fail "the private full report may record the discovered tailnet address"
+fi
+if grep -qF -- "$FAKE_TAILNET_ADDR" "$SPIKE_SUMMARY"; then
+    test_fail "the spike summary never contains the discovered tailnet address"
+else
+    test_pass "the spike summary never contains the discovered tailnet address"
 fi
 
 print_summary
