@@ -35,23 +35,11 @@ printf '%s\n' fixture > "$published/flake.lock"
 seed_ai_profile() {
     local generation="$1" tool
     mkdir -p "$generation/profile/bin"
-    for tool in codex gemini claude agy herdr opencode; do printf '#!/bin/sh\n' > "$generation/profile/bin/$tool"; chmod 0755 "$generation/profile/bin/$tool"; done
+    for tool in codex gemini claude agy herdr; do printf '#!/bin/sh\n' > "$generation/profile/bin/$tool"; chmod 0755 "$generation/profile/bin/$tool"; done
 }
 cp -a "$published/." "$state/generations/previous/"
 printf '%s\n' '' > "$state/generations/previous/.predecessor"
 seed_ai_profile "$state/generations/previous"
-# dx_ai_setup_credentials (used far below) calls GNU ln's -sfnT; translate
-# that single option for macOS's ln. Defined here, above this file's own
-# plain `ln -s` on the next line, so ShellCheck doesn't read that literal
-# call as invoking a function that isn't defined yet (SC2218) -- every
-# other invocation, including this one, passes through unchanged.
-ln() {
-    if [ "${1:-}" = -sfnT ]; then
-        command ln -sfn "$2" "$3"
-    else
-        command ln "$@"
-    fi
-}
 ln -s generations/previous "$state/current"
 real_mv="$(command -v mv)"
 mv() {
@@ -176,7 +164,7 @@ dx_ai_update_flake() { :; }
 dx_ai_install_profile() {
     local stage="$1" tool
     mkdir -p "$stage/profile/bin"
-    for tool in codex gemini claude agy herdr opencode; do printf '#!/bin/sh\n' > "$stage/profile/bin/$tool"; chmod 0755 "$stage/profile/bin/$tool"; done
+    for tool in codex gemini claude agy herdr; do printf '#!/bin/sh\n' > "$stage/profile/bin/$tool"; chmod 0755 "$stage/profile/bin/$tool"; done
 }
 dx_ai_setup_credentials() { :; }
 dx_ai_ensure_keyring() { :; }
@@ -217,10 +205,11 @@ else
     test_fail "--supports <tool> for a known tool exits 0 with no stdout"
 fi
 
-if out="$(dx_ai_main --supports opencode)" && [ -z "$out" ]; then
-    test_pass "--supports opencode exits 0 with no stdout"
+out="$(dx_ai_main --supports opencode)"; rc=$?
+if [ "$rc" -eq 1 ] && [ -z "$out" ]; then
+    test_pass "--supports opencode exits 1 with no stdout (feature reverted; re-lands complete in feat/opencode)"
 else
-    test_fail "--supports opencode exits 0 with no stdout"
+    test_fail "--supports opencode exits 1 with no stdout (feature reverted; re-lands complete in feat/opencode)"
 fi
 
 out="$(dx_ai_main --supports nonexistent-tool)"; rc=$?
@@ -290,17 +279,14 @@ herdr_installed_targets() {
 # reinstalled every healthy integration on every run in the field.
 all_missing="claude: not installed (/home/dx/.claude/hooks/herdr-agent-state.sh)
 codex: not installed (/home/dx/.codex/herdr-agent-state.sh)
-cursor: not installed (/home/dx/.cursor/herdr-agent-state.sh)
-opencode: not installed (/home/dx/.config/opencode/plugins/herdr-agent-state.js)"
+cursor: not installed (/home/dx/.cursor/herdr-agent-state.sh)"
 all_current="claude: current (v7) (/home/dx/.claude/hooks/herdr-agent-state.sh)
-codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)
-opencode: current (v7) (/home/dx/.config/opencode/plugins/herdr-agent-state.js)"
+codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)"
 all_outdated="claude: outdated (v6) (/home/dx/.claude/hooks/herdr-agent-state.sh)
-codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)
-opencode: current (v7) (/home/dx/.config/opencode/plugins/herdr-agent-state.js)"
+codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)"
 
 if run_herdr_integrations "$all_missing" "" >/dev/null 2>&1 \
-    && [ "$(herdr_installed_targets)" = "claude codex opencode " ]; then
+    && [ "$(herdr_installed_targets)" = "claude codex " ]; then
     test_pass "dx-ai installs the missing Herdr integrations for the agents it manages"
 else
     test_fail "dx-ai installs the missing Herdr integrations for the agents it manages"
@@ -335,21 +321,9 @@ else
     test_fail "dx-ai refreshes an integration the status listing marks outdated"
 fi
 
-# opencode-specific: when opencode is outdated, dx-ai triggers its reinstall
-all_opencode_outdated="claude: current (v7) (/home/dx/.claude/hooks/herdr-agent-state.sh)
-codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)
-opencode: outdated (v6) (/home/dx/.config/opencode/plugins/herdr-agent-state.js)"
-if run_herdr_integrations "$all_opencode_outdated" "" >/dev/null 2>&1 \
-    && [ "$(herdr_installed_targets)" = "opencode " ]; then
-    test_pass "dx-ai refreshes the opencode Herdr integration when it is outdated"
-else
-    test_fail "dx-ai refreshes the opencode Herdr integration when it is outdated"
-fi
-
 # An unrecognised state must not put dx-ai into a reinstall loop.
 if run_herdr_integrations "claude: bewildered (v9) (/home/dx/.claude/hooks/x.sh)
-codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)
-opencode: current (v7) (/home/dx/.config/opencode/plugins/herdr-agent-state.js)" "" >/dev/null 2>&1 \
+codex: current (v7) (/home/dx/.codex/herdr-agent-state.sh)" "" >/dev/null 2>&1 \
     && [ -z "$(herdr_installed_targets)" ]; then
     test_pass "an unrecognised Herdr integration state is left alone, not reinstalled"
 else
@@ -380,36 +354,6 @@ fi
 
 assert_grep_in_file "$AI_SCRIPT" '^ +dx_ai_install_herdr_integrations$' "dx-ai runs the Herdr integration step from its main flow"
 assert_file_not_contains "$AI_SCRIPT" 'dx_ai_install_herdr_integrations || return' "dx-ai never lets an optional Herdr integration fail the update"
-
-# --- dx_ai_setup_credentials: opencode persistence paths are symlinked ---
-# dx-ai must create /persist/home/dx/.config/opencode and
-# /persist/home/dx/.local/share/opencode and symlink them into $HOME so
-# authentication, config, and session data survive container rebuilds.
-creds_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-creds-test.XXXXXX")"
-trap 'rm -rf "$creds_fixture"' EXIT
-creds_persist="$creds_fixture/persist/home/dx"
-creds_home="$creds_fixture/home/dx"
-mkdir -p "$creds_persist" "$creds_home"
-# ln is already shimmed for GNU's -sfnT near the top of this file.
-if ! dx_ai_setup_credentials "$creds_persist" "$creds_home"; then
-    test_fail "dx_ai_setup_credentials prepares the credential fixture"
-fi
-unset -f ln
-if [ -L "$creds_home/.config/opencode" ] \
-    && [ "$(readlink "$creds_home/.config/opencode")" = "$creds_persist/.config/opencode" ]; then
-    test_pass "dx_ai_setup_credentials symlinks ~/.config/opencode to persist"
-else
-    test_fail "dx_ai_setup_credentials symlinks ~/.config/opencode to persist"
-fi
-if [ -L "$creds_home/.local/share/opencode" ] \
-    && [ "$(readlink "$creds_home/.local/share/opencode")" = "$creds_persist/.local/share/opencode" ]; then
-    test_pass "dx_ai_setup_credentials symlinks ~/.local/share/opencode to persist"
-else
-    test_fail "dx_ai_setup_credentials symlinks ~/.local/share/opencode to persist"
-fi
-rm -rf "$creds_fixture"
-# Reinstall main EXIT trap (fixture above overwrote it)
-trap 'chmod -R u+w "$ai_fixture" 2>/dev/null || true; rm -rf "$ai_fixture"' EXIT
 
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
     test_skip "dx-ai guest runtime checks (--skip-integration)"
@@ -452,7 +396,7 @@ else
     test_fail "dx-ai ensures D-Bus keyring service"
 fi
 
-for tool in codex gemini claude agy herdr opencode; do
+for tool in codex gemini claude agy herdr; do
     if run_guest "command -v $tool" >/dev/null 2>&1; then
         test_pass "$tool is available after dx-ai"
     else
@@ -476,18 +420,6 @@ if run_guest 'marker=".dxe-agy-persistence-test-$$"; echo persisted > "$HOME/.ge
     test_pass "agy persisted state path is writable through ~/.gemini"
 else
     test_fail "agy persisted state path is writable through ~/.gemini"
-fi
-
-if run_guest 'test -L ~/.config/opencode && test "$(readlink ~/.config/opencode)" = /persist/home/dx/.config/opencode' >/dev/null 2>&1; then
-    test_pass "opencode config directory is symlinked to persist"
-else
-    test_fail "opencode config directory is symlinked to persist"
-fi
-
-if run_guest 'test -L ~/.local/share/opencode && test "$(readlink ~/.local/share/opencode)" = /persist/home/dx/.local/share/opencode' >/dev/null 2>&1; then
-    test_pass "opencode data directory is symlinked to persist"
-else
-    test_fail "opencode data directory is symlinked to persist"
 fi
 
 if run_guest 'address_file=/persist/home/dx/.local/state/dx/keyring-address; test -s "$address_file" && IFS= read -r address < "$address_file" && case "$address" in unix:path=/*) exit 0 ;; *) exit 1 ;; esac' >/dev/null 2>&1; then

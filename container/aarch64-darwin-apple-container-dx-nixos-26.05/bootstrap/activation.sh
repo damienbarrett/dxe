@@ -221,8 +221,6 @@ configure_guest() {
         dx_prepare_owned_directory /persist/home/dx/.gemini/antigravity-cli 0700 || return 1
         dx_prepare_owned_directory /persist/home/dx/.claude 0700 || return 1
         dx_prepare_owned_directory /persist/home/dx/.codex 0700 || return 1
-        dx_prepare_owned_directory /persist/home/dx/.config/opencode 0700 || return 1
-        dx_prepare_owned_directory /persist/home/dx/.local/share/opencode 0700 || return 1
         if [ ! -s /persist/home/dx/.claude.json ]; then
             printf '%s\n' '{}' > /persist/home/dx/.claude.json
             chown dx:dx /persist/home/dx/.claude.json
@@ -233,9 +231,6 @@ configure_guest() {
         run_as_dx "ln -sfn /persist/home/dx/.claude ~/.claude"
         run_as_dx "ln -sfn /persist/home/dx/.claude.json ~/.claude.json"
         run_as_dx "ln -sfn /persist/home/dx/.codex ~/.codex"
-        run_as_dx "mkdir -p ~/.config ~/.local/share"
-        run_as_dx "ln -sfnT /persist/home/dx/.config/opencode ~/.config/opencode"
-        run_as_dx "ln -sfnT /persist/home/dx/.local/share/opencode ~/.local/share/opencode"
 
         # D-Bus + gnome-keyring (so agy can persist OAuth tokens) start below,
         # once Home Manager activation has installed dbus-daemon into dx's

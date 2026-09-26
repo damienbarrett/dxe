@@ -5,17 +5,17 @@ NIX_FLAGS=(--extra-experimental-features "nix-command flakes" --accept-flake-con
 # Single source of truth for the optional AI tools bundle. Keep the Nix
 # declaration (flake.nix's aiPackages), bin/dx-herdr, and docs/guest.md in sync
 # with this list by hand; they are outside this module's ownership.
-DX_AI_TOOLS="codex gemini claude agy herdr opencode"
+DX_AI_TOOLS="codex gemini claude agy herdr"
 # The intersection of the agents dx-ai publishes and the integrations Herdr
 # ships. Herdr has no target for gemini or agy, so they are absent by design.
-DX_AI_HERDR_INTEGRATIONS=(claude codex opencode)
+DX_AI_HERDR_INTEGRATIONS=(claude codex)
 
 dx_ai_usage() {
     cat <<'EOF'
 Usage: dx-ai [--recover] [--supports <tool>]
 
-Install or update Codex, Gemini, Claude, Antigravity, Herdr, and OpenCode from an
-immutable working generation under /persist. The published bootstrap is never modified.
+Install or update Codex, Gemini, Claude, Antigravity, and Herdr from an immutable
+working generation under /persist. The published bootstrap is never modified.
 Use --recover to repoint current to its retained predecessor generation.
 Use --supports <tool> to check if a tool is known to this dx-ai generation.
 EOF
@@ -210,16 +210,12 @@ dx_ai_recover_generation() {
 }
 
 dx_ai_setup_credentials() {
-    local persist_home="${1:-/persist/home/dx}" home="${2:-$HOME}" settings tmp
-    mkdir -p "$persist_home/.gemini/antigravity-cli" "$persist_home/.claude" "$persist_home/.codex" \
-        "$persist_home/.config/opencode" "$persist_home/.local/share/opencode" \
-        "$persist_home/.local/share/keyrings" "$home/.config" "$home/.local/share"
+    local persist_home=/persist/home/dx settings tmp
+    mkdir -p "$persist_home/.gemini/antigravity-cli" "$persist_home/.claude" "$persist_home/.codex" "$persist_home/.local/share/keyrings"
     [ -s "$persist_home/.claude.json" ] || printf '%s\n' '{}' > "$persist_home/.claude.json"
-    ln -sfnT "$persist_home/.gemini" "$home/.gemini"; ln -sfnT "$persist_home/.claude" "$home/.claude"
-    ln -sfnT "$persist_home/.claude.json" "$home/.claude.json"; ln -sfnT "$persist_home/.codex" "$home/.codex"
-    ln -sfnT "$persist_home/.config/opencode" "$home/.config/opencode"
-    ln -sfnT "$persist_home/.local/share/opencode" "$home/.local/share/opencode"
-    ln -sfnT "$persist_home/.local/share/keyrings" "$home/.local/share/keyrings"
+    ln -sfn "$persist_home/.gemini" ~/.gemini; ln -sfn "$persist_home/.claude" ~/.claude
+    ln -sfn "$persist_home/.claude.json" ~/.claude.json; ln -sfn "$persist_home/.codex" ~/.codex
+    mkdir -p ~/.local/share; ln -sfnT "$persist_home/.local/share/keyrings" ~/.local/share/keyrings
     settings="$persist_home/.claude/settings.json"; [ -s "$settings" ] || printf '%s\n' '{}' > "$settings"
     if ! jq -e '.statusLine' "$settings" >/dev/null 2>&1; then tmp="$settings.tmp.$$"; jq '. + {statusLine: {type: "command", command: "dx-claude-statusline"}}' "$settings" > "$tmp"; mv "$tmp" "$settings"; fi
 }
@@ -330,7 +326,7 @@ dx_ai_main() {
     stage=""
     export PATH="$state/current/profile/bin:$PATH"
     dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM
-    dx_ai_setup_credentials /persist/home/dx "$HOME" || return
+    dx_ai_setup_credentials || return
     dx_ai_ensure_keyring || return
     # Herdr is optional, so a missing or unhappy integration is reported but
     # never fails an otherwise successful AI update.
