@@ -97,3 +97,19 @@ and were merged by hand. This branch's own files are byte-identical before
 and after the rebase, so the results above stand for the rebased commits.
 Re-checked by the coordinating session on the rebased tip: bash-3.2 suite,
 Sections 1, 10 and 27, the Phase 0 dry-runs, the private identifier scan.
+
+## Follow-up
+
+The first real `dx-backup` of `dx-host` (2026-09-27, after this branch
+landed) selected 51,262 files / 3.2 GB of a 6.3 GB `/persist` — much larger
+than the 240-file fixture this branch's own live gate used — and the real
+fetch stalled for 20 minutes: a large NUL-separated name list pushed
+through one `container exec -i`'s stdin while the archive streamed back
+through that same exec's stdout, live-verified to deadlock at this size
+even though it passed here. Fixed by Branch 17
+(`fix/dx-backup-transfer-stall`): every exec made unidirectional by
+construction (ship the name list into a guest temp file first, stdin-only;
+then archive with `-T <file>` and stdin closed), plus a `--dry-run
+--summary` breakdown so a selection this size can be reviewed by aggregate
+rather than file by file. See
+`docs/evidence/20260927/dx-backup-transfer-stall.md`.

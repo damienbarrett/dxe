@@ -148,6 +148,7 @@ plain files it doesn't.
 ```bash
 ./bin/dx-backup              # capture; prints "N files, N bytes transferred"
 ./bin/dx-backup --dry-run    # show the at-risk selection and would-be transfer only
+./bin/dx-backup --dry-run --summary  # show the selection's size only, by top-level directory and by reason
 
 ./bin/dx-restore              # push the whole mirror back into a running guest
 ./bin/dx-restore PATH...      # push only the named subpath(s) (relative to /persist)
@@ -205,12 +206,28 @@ never mirrored.
 
 **Incremental transfer.** The guest selector emits a listing
 (`path size mtime sha256`) for the current at-risk set; the host diffs it
-against `manifest.tsv` and fetches only new or changed paths in one tar
-stream over the existing `container exec` transport (the same idiom as
-`dx-get`/`dx-put` — no new guest dependency, no `rsync`). A path that is no
-longer at-risk (for example, a repository that got pushed) is removed from
-the mirror. A second run with nothing changed in the guest transfers "0
-files, 0 bytes" — only the listing pass still runs.
+against `manifest.tsv` and fetches only new or changed paths over the same
+`container exec` transport `dx-get`/`dx-put` use (no new guest dependency,
+no `rsync`). A path that is no longer at-risk (for example, a repository
+that got pushed) is removed from the mirror. A second run with nothing
+changed in the guest transfers "0 files, 0 bytes" — only the listing pass
+still runs.
+
+The fetch itself is two separate execs, not one: the name list is shipped
+into a guest temp file first (stdin-only, no pipe), then the archive is
+read back from that file with the exec's own stdin closed. An earlier
+version pushed the name list through one exec's stdin while reading the
+archive back from that same exec's stdout, which deadlocked in production
+on a large selection (tens of thousands of files) even though it worked
+fine on a small one — every exec here is unidirectional by construction
+instead, so that size-dependent failure mode cannot recur.
+
+**Reviewing a large selection.** `dx-backup --dry-run --summary` prints the
+at-risk set's total files and bytes, aggregated by `/persist`'s top-level
+directory and by why each file is included (`modified-untracked`,
+`whole-repo`, `outside-repo`, `ignored-kept`), instead of listing every
+file — useful when the selection is too large to review file by file, to
+decide whether `DX_BACKUP_EXCLUDE_FILE` needs another pattern.
 
 **Restoring.** `dx-restore` needs a running guest: it pushes `current/` (or
 the exact paths you name) back into `/persist`, preserving file modes and

@@ -1172,6 +1172,77 @@ its next promotion (Appendix D).
 
 ---
 
+## Branch 17 — `fix/dx-backup-transfer-stall` (size S–M; found on the first real `dx-backup` of `dx-host`, 2026-09-27)
+
+Fixes the defect recorded above: the first real `dx-backup --dry-run` on
+`dx-host` selected 51,262 files / 3.2 GB; the real run then stalled for 20
+minutes in `dx_backup_fetch_paths`. The guest `tar` sat with no output, the
+host extractor had received 0 bytes, even though the same code had already
+passed Branch 10's live gate with a 240-file fixture. The trigger is size: a
+large NUL-separated name list (~3 MB) pushed through one `container exec
+-i`'s stdin while the archive streamed back through that SAME exec's
+stdout -- either Apple `container exec`'s bidirectional-pipe plumbing
+deadlocks under concurrent traffic, or stdin EOF is never delivered when
+the list is large. Not characterised further; the shape is removed instead.
+
+1. **Every exec made unidirectional by construction.** `dx_backup_fetch_paths`
+   is now two execs: ship the NUL-separated name list into a fresh guest
+   temp file first, stdin-only (`sh -c 'cat > "$1"' -- DEST < SOURCE`,
+   exactly `bin/dx-put`'s file-push shape); then archive with `-T <guest
+   temp file>` instead of `-T -`, stdin explicitly `/dev/null`, no `-i` at
+   all. The guest temp file is removed afterward on both success and
+   failure. New shared helpers `dx_backup_ship_list_to_guest` /
+   `dx_backup_remove_guest_list` implement this once.
+   `dx_backup_restore_push` was reviewed per the same question (does it mix
+   directions too): it does not -- its archive-push exec is already
+   stdin-only (`-i`, and the guest's `tar -xf -` writes to disk, never to
+   stdout) -- so it needed no change.
+2. **`--hash-paths`'s own ARG_MAX risk.** `dx_backup_restore_status` passes
+   every restore target as a positional `container exec` argument; above
+   `DX_BACKUP_HASH_PATHS_ARG_THRESHOLD` (1000, chosen with headroom well
+   below any real host ARG_MAX -- see the constant's own comment), it now
+   ships the same target list into the guest as a file and calls the
+   selector's new `--hash-paths-file` mode instead, reusing the same ship/
+   remove helpers.
+3. **Reviewing the at-risk selection size.** `bin/dx-backup --dry-run
+   --summary` (requires `--dry-run`) prints the selection's total files/
+   bytes aggregated by `/persist`'s top-level directory and by selection
+   reason (`modified-untracked`, `whole-repo`, `outside-repo`,
+   `ignored-kept`), via a new selector mode (`--with-reason`) and a
+   host-side aggregator (`dx_backup_summarize`), instead of a full per-file
+   listing -- reviewable without characterising the selection any further,
+   so the user can decide deny-list additions.
+
+**Status (2026-09-27): code complete, rebased onto `main` `863c376`
+(Branch 11 Phase 1's runtime-boundary extraction; every `container exec`
+call this branch adds now goes through `dx_runtime_exec`), G1/G2/G3 green,
+live phase not yet run.** G1: `tests/run-bash32-tests.sh` full run green
+(462/0/0 across 7 files), plus `test_runtime_boundary_audit.sh` (5/5) and
+`test_runtime_boundary_characterisation.sh` (26/26) explicitly; pinned
+ShellCheck 0.10.0 clean; `tests/run_all_tests.sh --skip-integration`
+green ("All tests PASSED!") on a self-contained local clone of the branch
+tip (a worktree's `.git` file cannot be resolved inside a container that
+mounts only the worktree -- this affected a couple of assertions that
+happen to shell out to `git`, not this branch's own code; a plain `git
+clone --local` sidesteps it and is what CI's own checkout produces anyway).
+G2: `covered=100%`, ratchet re-measured 1955 → 1997 bp (raised, not
+lowered: this branch adds real scope-line production code). G3: not
+applicable, no `.nix` file changed, `flake.lock` unchanged. Full detail:
+`docs/evidence/20260927/dx-backup-transfer-stall.md`.
+
+**Live phase blocked.** The coordinating session confirmed `dx-test` free
+(stopped, default 12 GB, AI generation present) and authorised starting it
+for this branch's live gate; the subagent's own permission classifier
+refused the container-start command ("Interfere With Workloads") before
+any container state changed. Per this task's own rule ("if your permission
+classifier refuses a command, stop and report which one"), the live
+red/green fixture test (60k files, old-code stall under `timeout 300`,
+fixed code completing, `dx-restore --dry-run` identical, `--dry-run
+--summary` captured, full live tier, cold stop) has not run. G4 and the
+dual-target live gate are outstanding.
+
+---
+
 ## Observations from Branches 1–2 (for the item 5 review)
 
 - **The coverage ratchet metric is fragile.** It was re-measured four times in
