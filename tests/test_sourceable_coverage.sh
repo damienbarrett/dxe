@@ -33,6 +33,7 @@ trap cleanup EXIT
 
 source "$ROOT/bin/lib/dx-config.sh"
 source "$ROOT/bin/lib/dx-host-util.sh"
+source "$ROOT/bin/lib/dx-runtime.sh"
 source "$ROOT/bin/lib/dx-container.sh"
 source "$ROOT/bin/lib/dx-ssh-common.sh"
 source "$ROOT/bin/lib/dx-mount-plan.sh"
@@ -199,6 +200,153 @@ dx_get_host_timezone >/dev/null
     run_with_timeout() { return 1; }; container_kill_runtime_process() { return 1; }
     DX_STOP_COMMAND_TIMEOUT=1 DX_STOP_GRACE_SECONDS=1 DX_STOP_WAIT_TIMEOUT=1
     container_stop_bounded stuck >/dev/null 2>&1 || true
+)
+
+# Runtime contract and Apple adapter (Branch 11 / Phase 1, qnap-dxe-plan.md
+# DQ2): dispatch success/rejection for every DX_RUNTIME value, every
+# dx_runtime_apple_* function and its primary/fallback branches, and the two
+# explicit preservation proofs the coordinating session required 2026-09-27:
+# dx_runtime_exec's stdin passthrough (piped and file-redirected, with no
+# intermediate subshell or `cat`, exit status unchanged under `set -o
+# pipefail`) and verbatim argv passthrough, via a fake `container` shell
+# function recording both. Behavior for the operations these dispatch to
+# lives in bin/lib/dx-container.sh's own probes above (unchanged) and in
+# tests/test_section16_persist_storage.sh (dx-migrate-persist's runtime-
+# client-race retry, end to end through dx-runtime-apple.sh's
+# dx_runtime_apple_run_ephemeral); these probes exist so every branch is
+# also executed under this 100%-line-coverage gate, which does not run
+# either of those test files.
+(
+    PATH=/usr/bin:/bin; unset -f container 2>/dev/null || true
+    dx_runtime_apple_available >/dev/null 2>&1 || true
+    dx_runtime_available >/dev/null 2>&1 || true
+)
+(
+    DX_RUNTIME=bogus
+    dx_runtime_dispatch_ok >/dev/null 2>&1 || true
+    DX_RUNTIME=docker
+    dx_runtime_available >/dev/null 2>&1 || true
+)
+(
+    DX_RUNTIME=apple
+    container() {
+        case "$*" in
+            'system status') return 0 ;;
+            'system start') return 0 ;;
+            'list -a --quiet') printf '%s\n' side ;;
+            'list --quiet') printf '%s\n' side ;;
+            'list -a') printf 'NAME STATE\nside stopped\n' ;;
+            'list') printf 'NAME STATE\nside running\n' ;;
+            'image list --quiet') printf '%s\n' img ;;
+            'image list') printf 'NAME\nimg\n' ;;
+            'build img /ctx') return 0 ;;
+            'image rm img') return 0 ;;
+            'volume inspect vol') return 0 ;;
+            'volume create vol') return 0 ;;
+            'volume rm vol') return 0 ;;
+            'create side') return 0 ;;
+            'start side') return 0 ;;
+            'stop side') return 0 ;;
+            'kill side') return 0 ;;
+            'delete side') return 0 ;;
+            'exec side echo hi') printf 'hi\n' ;;
+            'logs side') return 0 ;;
+            'export side') printf 'bytes' ;;
+        esac
+    }
+    dx_runtime_available >/dev/null
+    dx_runtime_system_running >/dev/null
+    dx_runtime_system_start >/dev/null
+    dx_runtime_container_exists side >/dev/null
+    dx_runtime_container_running side >/dev/null
+    dx_runtime_container_list -a >/dev/null
+    dx_runtime_image_exists img >/dev/null
+    dx_runtime_image_list >/dev/null
+    dx_runtime_image_build img /ctx >/dev/null
+    dx_runtime_image_delete img >/dev/null
+    dx_runtime_volume_exists vol >/dev/null
+    dx_runtime_volume_create vol >/dev/null
+    dx_runtime_volume_delete vol >/dev/null
+    dx_runtime_container_create side >/dev/null
+    dx_runtime_container_start side >/dev/null
+    dx_runtime_container_stop side >/dev/null
+    dx_runtime_container_kill side >/dev/null
+    dx_runtime_container_delete side >/dev/null
+    dx_runtime_exec side echo hi >/dev/null
+    dx_runtime_logs side >/dev/null
+    dx_runtime_export side >/dev/null
+    dx_runtime_host_identity >/dev/null
+    dx_runtime_capability direct_named_volume_mounts
+    dx_runtime_capability bind_mounts
+    dx_runtime_capability restart_policy || true
+    dx_runtime_capability host_filesystem_reclamation
+    dx_runtime_capability bogus >/dev/null 2>&1 || true
+)
+(
+    DX_RUNTIME=apple
+    container() {
+        case "$*" in
+            *--quiet*) return 1 ;;
+            'list -a') printf 'NAME STATE\nside stopped\n' ;;
+            'list') printf 'NAME STATE\nside running\n' ;;
+            'image list') printf 'NAME\nimg\n' ;;
+        esac
+    }
+    dx_runtime_container_exists side >/dev/null
+    dx_runtime_container_running side >/dev/null
+    dx_runtime_image_exists img >/dev/null
+)
+(
+    DX_RUNTIME=apple
+    container() { [ "$1" = run ] && { printf 'ok\n'; return 0; }; return 1; }
+    DX_MIGRATE_RUN_MAX_ATTEMPTS=2 DX_MIGRATE_RUN_RETRY_DELAY=0 dx_runtime_run_ephemeral --rm x >/dev/null
+)
+(
+    DX_RUNTIME=apple
+    run_count=0
+    container() {
+        if [ "$1" = run ]; then
+            run_count=$((run_count + 1))
+            if [ "$run_count" -eq 1 ]; then echo "Error: no runtime client exists: container is stopped" >&2; return 1; fi
+            printf 'ok\n'; return 0
+        fi
+        return 1
+    }
+    DX_MIGRATE_RUN_MAX_ATTEMPTS=3 DX_MIGRATE_RUN_RETRY_DELAY=0 dx_runtime_run_ephemeral --rm x >/dev/null
+)
+(
+    DX_RUNTIME=apple
+    container() { [ "$1" = run ] && { echo "Error: no runtime client exists: container is stopped" >&2; return 1; }; return 1; }
+    DX_MIGRATE_RUN_MAX_ATTEMPTS=2 DX_MIGRATE_RUN_RETRY_DELAY=0 dx_runtime_run_ephemeral --rm x >/dev/null 2>&1 || true
+)
+(
+    DX_RUNTIME=apple
+    container() { [ "$1" = run ] && { echo "Error: distinct failure" >&2; return 1; }; return 1; }
+    DX_MIGRATE_RUN_MAX_ATTEMPTS=2 DX_MIGRATE_RUN_RETRY_DELAY=0 dx_runtime_run_ephemeral --rm x >/dev/null 2>&1 || true
+)
+(
+    DX_RUNTIME=apple
+    argv_log="$fixture/runtime-exec-argv.log"
+    stdin_log="$fixture/runtime-exec-stdin.log"
+    container() {
+        printf '%s\n' "$@" > "$argv_log"
+        if [ "${1:-}" = exec ]; then
+            shift
+            [ "${1:-}" = -i ] && { shift; cat > "$stdin_log"; }
+        fi
+        return 7
+    }
+    rc_piped=0
+    printf 'piped payload' | dx_runtime_exec -i side sh -c 'cat' -- "an arg with spaces" || rc_piped=$?
+    [ "$(cat "$stdin_log")" = "piped payload" ] || { echo "Error: dx_runtime_exec lost piped stdin." >&2; exit 1; }
+    [ "$rc_piped" -eq 7 ] || { echo "Error: dx_runtime_exec did not preserve the piped-stdin exit status ($rc_piped)." >&2; exit 1; }
+    grep -F -x -q -- "an arg with spaces" "$argv_log" || { echo "Error: dx_runtime_exec did not pass argv verbatim." >&2; exit 1; }
+
+    printf 'file payload' > "$fixture/runtime-exec-source"
+    rc_file=0
+    dx_runtime_exec -i side cat < "$fixture/runtime-exec-source" || rc_file=$?
+    [ "$(cat "$stdin_log")" = "file payload" ] || { echo "Error: dx_runtime_exec lost redirected stdin." >&2; exit 1; }
+    [ "$rc_file" -eq 7 ] || { echo "Error: dx_runtime_exec did not preserve the redirected-stdin exit status ($rc_file)." >&2; exit 1; }
 )
 
 # Bootstrap generation drift reporting: the launcher-lease hit and miss paths,

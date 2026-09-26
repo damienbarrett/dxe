@@ -3,7 +3,7 @@
 # This file intentionally does not set shell options or initialize configuration.
 
 DXE_CONFIG_SNAPSHOT_VERSION_CURRENT=1
-DXE_CONFIG_FIELDS="DX_CONTAINER_NAME DX_IMAGE DX_SSH_PORT DX_SSH_KEY DX_SSH_KEY_PUB DX_SSH_CONNECT_TIMEOUT DX_CONTEXT_DIR DX_BOOTSTRAP_SOURCE DX_BOOTSTRAP_VOLUME DX_BOOTSTRAP_PATH DX_BOOTSTRAP_WAIT_TIMEOUT DX_BOOTSTRAP_CONFIRM_TIMEOUT DX_GUEST_ACTIVATION_TIMEOUT DX_GUEST_ACTIVATION_ATTEMPTS DX_GUEST_ACTIVATION_RETRY_DELAY DX_NIX_VOLUME DX_NIX_MOUNT DX_NIX_DISK DX_NIX_DISK_SIZE DX_PERSIST_VOLUME DX_GIT_MOUNT_SOURCE DX_GIT_MOUNT_TARGET DX_GUEST_WORKDIR DX_CONTAINER_MEMORY DX_CONTAINER_CPUS DX_CONTAINER_VOLUME_DIR DX_STOP_GRACE_SECONDS DX_STOP_COMMAND_TIMEOUT DX_STOP_WAIT_TIMEOUT DX_DELETE_COMMAND_TIMEOUT DX_MOUNT_IDENTITY_DIR DX_TUNNEL_LOCK_TIMEOUT DX_BACKUP_DIR"
+DXE_CONFIG_FIELDS="DX_RUNTIME DX_CONTAINER_NAME DX_IMAGE DX_SSH_PORT DX_SSH_KEY DX_SSH_KEY_PUB DX_SSH_CONNECT_TIMEOUT DX_CONTEXT_DIR DX_BOOTSTRAP_SOURCE DX_BOOTSTRAP_VOLUME DX_BOOTSTRAP_PATH DX_BOOTSTRAP_WAIT_TIMEOUT DX_BOOTSTRAP_CONFIRM_TIMEOUT DX_GUEST_ACTIVATION_TIMEOUT DX_GUEST_ACTIVATION_ATTEMPTS DX_GUEST_ACTIVATION_RETRY_DELAY DX_NIX_VOLUME DX_NIX_MOUNT DX_NIX_DISK DX_NIX_DISK_SIZE DX_PERSIST_VOLUME DX_GIT_MOUNT_SOURCE DX_GIT_MOUNT_TARGET DX_GUEST_WORKDIR DX_CONTAINER_MEMORY DX_CONTAINER_CPUS DX_CONTAINER_VOLUME_DIR DX_STOP_GRACE_SECONDS DX_STOP_COMMAND_TIMEOUT DX_STOP_WAIT_TIMEOUT DX_DELETE_COMMAND_TIMEOUT DX_MOUNT_IDENTITY_DIR DX_TUNNEL_LOCK_TIMEOUT DX_BACKUP_DIR"
 
 dx_config_is_field() {
     case " $DXE_CONFIG_FIELDS " in
@@ -21,6 +21,7 @@ dx_config_path_field() {
 
 dx_config_default() {
     case "$1" in
+        DX_RUNTIME) printf '%s' apple ;;
         DX_CONTAINER_NAME) printf '%s' dx-host ;;
         DX_IMAGE) printf '%s' dx-nixos-26.05 ;;
         DX_SSH_PORT) printf '%s' 2222 ;;
@@ -61,6 +62,19 @@ dx_config_default() {
 dx_config_validate_value() {
     local name="$1" value="$2" number
     case "$name" in
+        DX_RUNTIME)
+            # Phase 1 (qnap-dxe-plan.md DQ2/DQ3) ships only the Apple
+            # adapter. `docker` is a real, named future value (Phase 2's
+            # runtime), so it earns its own clear rejection message here
+            # rather than falling into the generic "invalid value"
+            # reported by every caller of this predicate; any other value
+            # is simply invalid.
+            case "$value" in
+                apple) ;;
+                docker) echo "Error: DX_RUNTIME=docker is not implemented until Phase 2." >&2; return 1 ;;
+                *) return 1 ;;
+            esac
+            ;;
         DX_CONTAINER_NAME|DX_NIX_VOLUME|DX_PERSIST_VOLUME|DX_BOOTSTRAP_VOLUME)
             case "$value" in ''|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
             ;;

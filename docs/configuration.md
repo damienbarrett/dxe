@@ -6,6 +6,7 @@ tests, parallel experiments, or multiple containers on the same host.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `DX_RUNTIME` | `apple` | Container lifecycle runtime. `apple` is the only implemented value; `docker` is reserved for a future remote-Docker runtime and is rejected with a clear message until then. |
 | `DX_CONTAINER_NAME` | `dx-host` | Apple container name. Change this to create a separate container without touching the default DXE instance. |
 | `DX_IMAGE` | `dx-nixos-26.05` | Image name used by `dx-create-image` and `dx-create-container`. |
 | `DX_SSH_PORT` | `2222` | Host port forwarded to guest SSH port `2222`. Use a different port for a second running container. |

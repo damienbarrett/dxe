@@ -11,6 +11,8 @@ export DX_LIB_DIR DX_PROJECT_ROOT
 source "$DX_LIB_DIR/lib/dx-config.sh"
 # shellcheck source=lib/dx-host-util.sh
 source "$DX_LIB_DIR/lib/dx-host-util.sh"
+# shellcheck source=lib/dx-runtime.sh
+source "$DX_LIB_DIR/lib/dx-runtime.sh"
 # shellcheck source=lib/dx-container.sh
 source "$DX_LIB_DIR/lib/dx-container.sh"
 # shellcheck source=lib/dx-ssh-common.sh

@@ -87,6 +87,24 @@ expect_ok "DX_BACKUP_DIR accepts an absolute path" dx_config_validate_value DX_B
 expect_reject "DX_BACKUP_DIR rejects a relative path" dx_config_validate_value DX_BACKUP_DIR relative/path
 expect_reject "DX_BACKUP_DIR rejects an empty value" dx_config_validate_value DX_BACKUP_DIR ''
 
+# Branch 11 / Phase 1 (qnap-dxe-plan.md DQ2/DQ3): DX_RUNTIME selects the
+# lifecycle adapter bin/lib/dx-runtime.sh dispatches to. Phase 1 ships only
+# the Apple adapter, so `docker` -- a real, named future value, not garbage
+# -- is rejected with its own clear message distinct from every other
+# invalid value's generic rejection.
+expect_ok "DX_RUNTIME is a registered config field" dx_config_is_field DX_RUNTIME
+[ "$(dx_config_default DX_RUNTIME)" = apple ] && test_pass "DX_RUNTIME defaults to apple" || test_fail "DX_RUNTIME defaults to apple"
+expect_ok "DX_RUNTIME accepts apple" dx_config_validate_value DX_RUNTIME apple
+expect_reject "DX_RUNTIME rejects docker until Phase 2" dx_config_validate_value DX_RUNTIME docker
+dx_runtime_docker_message="$(dx_config_validate_value DX_RUNTIME docker 2>&1 >/dev/null || true)"
+if printf '%s\n' "$dx_runtime_docker_message" | stdin_matches "not implemented until Phase 2"; then
+    test_pass "DX_RUNTIME=docker's rejection names Phase 2, not a generic invalid-value message"
+else
+    test_fail "DX_RUNTIME=docker's rejection names Phase 2 (got: $dx_runtime_docker_message)"
+fi
+expect_reject "DX_RUNTIME rejects an unknown value" dx_config_validate_value DX_RUNTIME bogus
+expect_reject "DX_RUNTIME rejects an empty value" dx_config_validate_value DX_RUNTIME ''
+
 # Process identity and lock reclamation use PID plus process start, never PID alone.
 lock="$fixture/live.lock"
 dx_lock_acquire "$lock" 1
