@@ -39,6 +39,7 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_DELETE_COMMAND_TIMEOUT` | `15` | Host-side timeout for a `container delete` CLI command that hangs. |
 | `DX_MOUNT_IDENTITY_DIR` | `$HOME/.dx-cache/mount-identities` | Private directory containing bounded v2 mount manifests and their locks. |
 | `DX_TUNNEL_LOCK_TIMEOUT` | `5` | Maximum seconds to wait for a per-tunnel state-transition lock. |
+| `DX_BACKUP_DIR` | `$HOME/Backups/dxe-persist` | Base host directory for `dx-backup`/`dx-restore`. The actual per-container mirror always lives at `$DX_BACKUP_DIR/$DX_CONTAINER_NAME`, even when overridden, so `dx-host` and `dx-test` never share one. See ["Backing up and restoring /persist"](lifecycle.md#backing-up-and-restoring-persist). |
 
 `DX_NIX_VOLUME` exists because the Nix store is large, persistent, and lives on
 its own writable filesystem. Apple Container creates and mounts the volume at

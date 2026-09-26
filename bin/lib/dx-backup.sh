@@ -28,12 +28,15 @@ source "$DX_BACKUP_SELECTOR_SOURCE"
 # specifically to protect /persist.
 DX_BACKUP_GUEST_ROOT=/persist
 
-dx_backup_default_dir() {
-    printf '%s/Backups/dxe-persist/%s\n' "${HOME:?}" "${DX_CONTAINER_NAME:?}"
-}
-
+# The actual per-container mirror directory: DX_BACKUP_DIR (a registered
+# bin/lib/dx-config.sh field, default $HOME/Backups/dxe-persist, resolved by
+# dx-lib.sh's dx_init_config before this is ever called -- like every other
+# config-registry variable, this trusts that has already run) names only the
+# BASE directory. /$DX_CONTAINER_NAME is always appended here, even when
+# DX_BACKUP_DIR is overridden, so dx-host and dx-test can never share a
+# mirror by accident.
 dx_backup_resolve_dir() {
-    printf '%s\n' "${DX_BACKUP_DIR:-$(dx_backup_default_dir)}"
+    printf '%s/%s\n' "${DX_BACKUP_DIR:?}" "${DX_CONTAINER_NAME:?}"
 }
 
 # The selector script's path as it appears INSIDE the guest (or, in tests,

@@ -147,8 +147,12 @@ plain files it doesn't.
 ./bin/dx-restore --force      # push even where the guest already has different content
 ```
 
-**Destination:** `DX_BACKUP_DIR`, default `~/Backups/dxe-persist/<DX_CONTAINER_NAME>/`
-(so `dx-host` and `dx-test` never share a mirror). Inside it:
+**Destination:** a registered config field (see
+[configuration](configuration.md)), `DX_BACKUP_DIR`, default
+`~/Backups/dxe-persist`, names the BASE directory. `dx-backup`/`dx-restore`
+always append `/<DX_CONTAINER_NAME>` themselves, even when `DX_BACKUP_DIR`
+is overridden, so `dx-host` and `dx-test` can never share a mirror by
+accident. Inside `$DX_BACKUP_DIR/$DX_CONTAINER_NAME`:
 
 | Path | Contents |
 | --- | --- |

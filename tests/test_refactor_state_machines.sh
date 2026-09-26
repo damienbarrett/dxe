@@ -73,6 +73,20 @@ expect_reject "DX_BOOTSTRAP_CONFIRM_TIMEOUT rejects zero, like every other bound
 expect_reject "DX_BOOTSTRAP_CONFIRM_TIMEOUT rejects a non-numeric value" dx_config_validate_value DX_BOOTSTRAP_CONFIRM_TIMEOUT abc
 expect_reject "DX_BOOTSTRAP_CONFIRM_TIMEOUT rejects an empty value" dx_config_validate_value DX_BOOTSTRAP_CONFIRM_TIMEOUT ''
 
+# Branch 10 (feat/persist-backup): DX_BACKUP_DIR follows the same config
+# registry pattern as every other host-side path field (DX_NIX_DISK is the
+# closest precedent: a $HOME-based default, absolute-path validation, and
+# eligible for the ${DX_PROJECT_ROOT} placeholder like every path field).
+# It names the BASE backup directory only; dx-backup/dx-restore append
+# /$DX_CONTAINER_NAME themselves, so dx-host and dx-test never share a
+# mirror even when DX_BACKUP_DIR is overridden.
+expect_ok "DX_BACKUP_DIR is a registered config field" dx_config_is_field DX_BACKUP_DIR
+[ "$(dx_config_default DX_BACKUP_DIR)" = "$HOME/Backups/dxe-persist" ] && test_pass "DX_BACKUP_DIR defaults to \$HOME/Backups/dxe-persist" || test_fail "DX_BACKUP_DIR defaults to \$HOME/Backups/dxe-persist"
+expect_ok "DX_BACKUP_DIR is a path field" dx_config_path_field DX_BACKUP_DIR
+expect_ok "DX_BACKUP_DIR accepts an absolute path" dx_config_validate_value DX_BACKUP_DIR /tmp/somewhere
+expect_reject "DX_BACKUP_DIR rejects a relative path" dx_config_validate_value DX_BACKUP_DIR relative/path
+expect_reject "DX_BACKUP_DIR rejects an empty value" dx_config_validate_value DX_BACKUP_DIR ''
+
 # Process identity and lock reclamation use PID plus process start, never PID alone.
 lock="$fixture/live.lock"
 dx_lock_acquire "$lock" 1
