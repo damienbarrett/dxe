@@ -614,5 +614,144 @@ else
     test_fail "bootstrap content digest rejects a non-directory source"
 fi
 
+# --- dx-status: the booted bootstrap generation must be observable from the
+# host (requirement 4 of dx-start-plan.md), including after the guest has
+# died -- exactly the case `container exec` cannot reach and `container logs`
+# can. Drive the real dx-status with a fake `container` on PATH; this doubles
+# as the fixture for the drift warning dx-start-container already prints, now
+# surfaced without waiting for the next start.
+#
+# The fake answers every subcommand dx-status's existing sections already
+# issue (image list, list -a/--quiet, logs, guest-environment exec) as well as
+# the two new bootstrap-generation ones (exec readlink, exec sh -c ... --
+# leases), so a scenario can drive only the DX_FAKE_* variables it cares about
+# without dx-status's earlier sections aborting the run under `set -e`.
+status_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-status-bootstrap.XXXXXX")"
+fake_tool_write "$status_fixture/bin" container '
+case "$1" in
+    list)
+        shift
+        all=false
+        quiet=false
+        for a in "$@"; do
+            [ "$a" = "-a" ] && all=true
+            [ "$a" = "--quiet" ] && quiet=true
+        done
+        present=false
+        if [ "$all" = true ]; then
+            [ "${DX_FAKE_EXISTS:-1}" = 1 ] && present=true
+        else
+            [ "${DX_FAKE_RUNNING:-1}" = 1 ] && present=true
+        fi
+        if [ "$present" = true ]; then
+            if [ "$quiet" = true ]; then
+                printf "%s\n" "$DX_CONTAINER_NAME"
+            else
+                printf "%s\tfake-image\tlinux\tarm64\tfake-state\n" "$DX_CONTAINER_NAME"
+            fi
+        fi
+        exit 0
+        ;;
+    image)
+        if [ "${2:-}" = list ]; then
+            quiet=false
+            for a in "$@"; do [ "$a" = "--quiet" ] && quiet=true; done
+            if [ "$quiet" = true ]; then
+                printf "%s\n" "$DX_IMAGE"
+            else
+                printf "%s\tlatest\tfakeid\n" "$DX_IMAGE"
+            fi
+        fi
+        exit 0
+        ;;
+    logs)
+        shift
+        lines=""
+        if [ "${1:-}" = "-n" ]; then lines="$2"; shift 2; fi
+        if [ -n "$lines" ]; then
+            tail -n "$lines" "${DX_FAKE_LOG_FILE:-/dev/null}" 2>/dev/null
+        else
+            cat "${DX_FAKE_LOG_FILE:-/dev/null}" 2>/dev/null
+        fi
+        exit 0
+        ;;
+    exec)
+        shift
+        [ "${1:-}" = "-u" ] && shift 2
+        shift
+        case "${1:-}" in
+            readlink)
+                if [ -n "${DX_FAKE_CURRENT:-}" ]; then printf "%s\n" "$DX_FAKE_CURRENT"; exit 0; fi
+                exit 1
+                ;;
+            sh)
+                printf "%s" "${DX_FAKE_LEASES:-}"
+                exit 0
+                ;;
+            bash)
+                printf "Tools: fake\nPersist: fake\n"
+                exit 0
+                ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    *) exit 1 ;;
+esac'
+trap 'rm -rf "$status_fixture"' EXIT
+
+run_status() {
+    (
+        unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION DX_PROJECT_ROOT
+        for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+        export PATH="$status_fixture/bin:/usr/bin:/bin"
+        export HOME="$status_fixture/home"
+        export DX_CONTAINER_NAME=dxe-status-fixture DX_IMAGE=dxe-status-fixture-image
+        "$BASE_DIR/bin/dx-status"
+    )
+}
+
+status_out="$(DX_FAKE_EXISTS=1 DX_FAKE_RUNNING=1 DX_FAKE_CURRENT=generations/gen-b DX_FAKE_LEASES='gen-a.1' run_status 2>&1)"
+if printf '%s\n' "$status_out" | stdin_matches 'gen-a' && printf '%s\n' "$status_out" | stdin_matches 'gen-b' \
+    && printf '%s\n' "$status_out" | stdin_matches 'is running bootstrap generation gen-a, but gen-b is now published'; then
+    test_pass "dx-status reports a running guest's generation drift against the published one"
+else
+    test_fail "dx-status reports a running guest's generation drift against the published one (got: $status_out)"
+fi
+
+status_out="$(DX_FAKE_EXISTS=1 DX_FAKE_RUNNING=1 DX_FAKE_CURRENT=generations/gen-a DX_FAKE_LEASES='gen-a.1' run_status 2>&1)"
+if printf '%s\n' "$status_out" | stdin_matches 'gen-a' && ! printf '%s\n' "$status_out" | stdin_matches 'is now published'; then
+    test_pass "dx-status reports a running guest with no drift silently"
+else
+    test_fail "dx-status reports a running guest with no drift silently (got: $status_out)"
+fi
+
+log_file="$status_fixture/dead-guest.log"
+{
+    printf 'Waiting for bootstrap payload in /guest-bootstrap...\n'
+    printf 'Using bootstrap generation gen-dead\n'
+    i=0
+    while [ "$i" -lt 60 ]; do printf 'noise line %s\n' "$i"; i=$((i + 1)); done
+} > "$log_file"
+status_out="$(DX_FAKE_EXISTS=1 DX_FAKE_RUNNING=0 DX_FAKE_LOG_FILE="$log_file" run_status 2>&1)"
+if printf '%s\n' "$status_out" | stdin_matches 'gen-dead'; then
+    test_pass "dx-status recovers the last booted generation from container logs for a guest that died, past a 40-line tail"
+else
+    test_fail "dx-status recovers the last booted generation from container logs for a guest that died, past a 40-line tail (got: $status_out)"
+fi
+
+status_out="$(DX_FAKE_EXISTS=1 DX_FAKE_RUNNING=0 DX_FAKE_LOG_FILE=/dev/null run_status 2>&1)"
+if printf '%s\n' "$status_out" | stdin_matches 'no recorded boot generation'; then
+    test_pass "dx-status says so, rather than claiming a generation, when a dead guest never recorded one"
+else
+    test_fail "dx-status says so, rather than claiming a generation, when a dead guest never recorded one (got: $status_out)"
+fi
+
+status_out="$(DX_FAKE_EXISTS=0 run_status 2>&1)"
+if printf '%s\n' "$status_out" | sed -n '/--- Bootstrap Generation ---/,+1p' | stdin_matches 'Not found'; then
+    test_pass "dx-status reports no bootstrap generation section for a container that does not exist"
+else
+    test_fail "dx-status reports no bootstrap generation section for a container that does not exist (got: $status_out)"
+fi
+
 print_summary
 exit_with_code
