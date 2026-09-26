@@ -112,6 +112,13 @@
         version = agyPin.version;
 
         src = pkgs.fetchurl {
+          # An explicit name keeps this derivation's store-path name stable
+          # (antigravity-cli-src) across pin refreshes, independent of
+          # whatever filename Google's manifest happens to use -- dx-ai.sh's
+          # dx_ai_check_cached allow-lists this exact name as agy's own
+          # trivial, always-local fetch step (fetchurl otherwise defaults the
+          # name to the URL's basename, which is not under our control).
+          name = "antigravity-cli-src";
           url = agyPin.url;
           hash = agyPin.hash;
         };

@@ -188,6 +188,235 @@ else
     test_pass "AI verification validates its complete inventory before reporting any tool"
 fi
 
+# --- dx_ai_check_cached / dx_ai_ensure_cached: refuse silent source builds ---
+# (found on Branch 6, 2026-09-26: a nixpkgs-unstable refresh landed on a
+# revision whose AI tools were not yet cached for the guest's architecture,
+# and Nix silently built codex-core/codex-tui from source, OOM-killing the
+# guest at the profile's default 12 GB). The fake `nix` below reproduces the
+# *exact* wording nix 2.34.8's `build --dry-run` writes to stderr, verified
+# against a real Nix (nixos/nix:2.34.8) rather than assumed -- see
+# src/libmain/shared.cc's printMissing: singular "this derivation will be
+# built:" / "this path will be fetched (...)" for exactly one, plural "these
+# N derivations will be built:" / "these N paths will be fetched (...)"
+# otherwise. dx-ai's own trivial, always-local derivations (verified against
+# a real `nix build .#ai-tools` and `nix derivation show`): the dx-ai-tools
+# buildEnv itself, its generic builder.pl companion, and agy/claude-code's
+# own fetch+unpack (both unfree-licensed upstream, so Hydra never builds or
+# caches either one, on any revision -- see the progress file for the
+# nixpkgs package.nix evidence).
+cache_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-ai-cache.XXXXXX")"
+trap 'chmod -R u+w "$cache_fixture" 2>/dev/null || true; rm -rf "$cache_fixture"' EXIT
+
+dryrun_all_cached="these 6 derivations will be built:
+  /nix/store/aaaa10000000000000000000000001-claude.zst.drv
+  /nix/store/aaaa10000000000000000000000002-claude-code-2.1.281.drv
+  /nix/store/aaaa10000000000000000000000003-builder.pl.drv
+  /nix/store/aaaa10000000000000000000000004-antigravity-cli-src.drv
+  /nix/store/aaaa10000000000000000000000005-antigravity-cli-1.0.5.drv
+  /nix/store/aaaa10000000000000000000000006-dx-ai-tools.drv
+these 2 paths will be fetched (10.0 MiB download, 20.0 MiB unpacked):
+  /nix/store/bbbb10000000000000000000000001-codex-0.157.0
+  /nix/store/bbbb10000000000000000000000002-herdr-0.9.1"
+
+dryrun_allowlisted_singular="this derivation will be built:
+  /nix/store/aaaa10000000000000000000000006-dx-ai-tools.drv
+this path will be fetched (1.0 MiB download, 2.0 MiB unpacked):
+  /nix/store/bbbb10000000000000000000000001-codex-0.157.0"
+
+dryrun_heavy_miss="these 3 derivations will be built:
+  /nix/store/cccc10000000000000000000000001-codex-core-0.157.0.drv
+  /nix/store/cccc10000000000000000000000002-codex-tui-0.157.0.drv
+  /nix/store/aaaa10000000000000000000000006-dx-ai-tools.drv
+this path will be fetched (5.0 MiB download, 9.0 MiB unpacked):
+  /nix/store/bbbb10000000000000000000000002-herdr-0.9.1"
+
+dryrun_nothing_to_do=""
+
+# dx_ai_check_cached: a fake nix scripted per-call via a counter file, so a
+# single test can drive two successive `nix build --dry-run` calls (the
+# fresh lock, then the post-fallback re-check) with different scripted
+# output -- exactly the shape dx_ai_ensure_cached needs.
+cache_call_count="$cache_fixture/nix-call-count"
+cache_script_1="$cache_fixture/nix-output-1"
+cache_script_2="$cache_fixture/nix-output-2"
+nix() {
+    case "$*" in
+        "build --dry-run --extra-experimental-features "*"nix-command flakes"*"--accept-flake-config "*"#ai-tools")
+            local n=0
+            [ ! -f "$cache_call_count" ] || n="$(cat "$cache_call_count")"
+            n=$((n + 1))
+            printf '%s\n' "$n" > "$cache_call_count"
+            if [ "$n" -eq 1 ]; then cat "$cache_script_1" >&2; else cat "$cache_script_2" >&2; fi
+            return 0
+            ;;
+        *) command nix "$@" ;;
+    esac
+}
+
+reset_cache_fixture() {
+    rm -f "$cache_call_count"
+    printf '%s\n' "$1" > "$cache_script_1"
+    printf '%s\n' "${2:-}" > "$cache_script_2"
+}
+
+# Case: allow-listed-only builds (plural form) -- clean, no miss reported.
+reset_cache_fixture "$dryrun_all_cached"
+if check_out="$(dx_ai_check_cached "$cache_fixture" 2>/dev/null)" && [ -z "$check_out" ]; then
+    test_pass "dx_ai_check_cached is clean when every 'will be built' derivation is allow-listed"
+else
+    test_fail "dx_ai_check_cached is clean when every 'will be built' derivation is allow-listed"
+fi
+
+# Case: allow-listed-only, singular ("this derivation will be built:") wording.
+reset_cache_fixture "$dryrun_allowlisted_singular"
+if check_out="$(dx_ai_check_cached "$cache_fixture" 2>/dev/null)" && [ -z "$check_out" ]; then
+    test_pass "dx_ai_check_cached handles nix's singular 'this derivation will be built:' wording"
+else
+    test_fail "dx_ai_check_cached handles nix's singular 'this derivation will be built:' wording"
+fi
+
+# Case: nothing to build or fetch at all (everything already valid locally).
+reset_cache_fixture "$dryrun_nothing_to_do"
+if check_out="$(dx_ai_check_cached "$cache_fixture" 2>/dev/null)" && [ -z "$check_out" ]; then
+    test_pass "dx_ai_check_cached is clean when nix reports nothing to build or fetch"
+else
+    test_fail "dx_ai_check_cached is clean when nix reports nothing to build or fetch"
+fi
+
+# Case: a heavy, non-allow-listed miss is reported by name and fails.
+reset_cache_fixture "$dryrun_heavy_miss"
+if check_out="$(dx_ai_check_cached "$cache_fixture" 2>/dev/null)"; then
+    test_fail "dx_ai_check_cached reports a heavy cache miss"
+elif printf '%s\n' "$check_out" | stdin_matches '^codex-core-0\.157\.0$' \
+    && printf '%s\n' "$check_out" | stdin_matches '^codex-tui-0\.157\.0$' \
+    && ! printf '%s\n' "$check_out" | stdin_matches '^dx-ai-tools$'; then
+    test_pass "dx_ai_check_cached reports a heavy cache miss"
+else
+    test_fail "dx_ai_check_cached reports a heavy cache miss"
+fi
+
+# --- dx_ai_ensure_cached: fall back to the previous generation's lock, then
+# fail closed; DX_AI_ALLOW_SOURCE_BUILDS=1 skips only the final refusal ---
+ensure_fixture="$cache_fixture/ensure"
+ensure_state="$ensure_fixture/state"
+mkdir -p "$ensure_state/generations/previous"
+printf '%s\n' fixture > "$ensure_state/generations/previous/flake.nix"
+cat > "$ensure_state/generations/previous/flake.lock" <<'EOF'
+{"nodes":{"nixpkgs-unstable":{"locked":{"rev":"0ldrev00000000000000000000000000000000"}}}}
+EOF
+ln -s generations/previous "$ensure_state/current"
+mkdir -p "$ensure_fixture/stage"
+cat > "$ensure_fixture/stage/flake.nix" <<'EOF'
+      system = "aarch64-linux";
+EOF
+cat > "$ensure_fixture/stage/flake.lock" <<'EOF'
+{"nodes":{"nixpkgs-unstable":{"locked":{"rev":"newrev0000000000000000000000000000000000"}}}}
+EOF
+
+# All cached: dx_ai_ensure_cached never touches $state/current and returns 0.
+reset_cache_fixture "$dryrun_all_cached"
+if ensure_out="$(dx_ai_ensure_cached "$ensure_fixture/stage" "$ensure_state" 2>&1)" \
+    && [ "$(cat "$cache_call_count")" = 1 ]; then
+    test_pass "dx_ai_ensure_cached proceeds without a fallback attempt when already clean"
+else
+    test_fail "dx_ai_ensure_cached proceeds without a fallback attempt when already clean"
+fi
+
+# Heavy miss, clean fallback: the previous generation's lock is copied into
+# the stage, the second check is clean, dx-ai continues at the old revision
+# and prints one clear notice; the published generation is untouched.
+reset_cache_fixture "$dryrun_heavy_miss" "$dryrun_all_cached"
+current_before="$(readlink "$ensure_state/current")"
+if ensure_out="$(dx_ai_ensure_cached "$ensure_fixture/stage" "$ensure_state" 2>&1)"; then
+    test_pass "dx_ai_ensure_cached falls back to the previous generation's lock on a clean re-check"
+else
+    test_fail "dx_ai_ensure_cached falls back to the previous generation's lock on a clean re-check"
+fi
+if printf '%s\n' "$ensure_out" | stdin_matches "newrev0000000000000000000000000000000000" \
+    && printf '%s\n' "$ensure_out" | stdin_matches "0ldrev00000000000000000000000000000000" \
+    && [ "$(jq -r '.nodes["nixpkgs-unstable"].locked.rev' "$ensure_fixture/stage/flake.lock")" = 0ldrev00000000000000000000000000000000 ]; then
+    test_pass "a clean fallback prints the old and new revisions and adopts the old lock"
+else
+    test_fail "a clean fallback prints the old and new revisions and adopts the old lock"
+fi
+if [ "$(readlink "$ensure_state/current")" = "$current_before" ]; then
+    test_pass "a clean fallback leaves the published AI generation untouched"
+else
+    test_fail "a clean fallback leaves the published AI generation untouched"
+fi
+
+# Heavy miss, failing fallback: both checks miss, no override -- fail closed,
+# print the remedy, exit non-zero, published generation still untouched.
+cat > "$ensure_fixture/stage/flake.lock" <<'EOF'
+{"nodes":{"nixpkgs-unstable":{"locked":{"rev":"newrev0000000000000000000000000000000000"}}}}
+EOF
+reset_cache_fixture "$dryrun_heavy_miss" "$dryrun_heavy_miss"
+current_before="$(readlink "$ensure_state/current")"
+if ensure_out="$(dx_ai_ensure_cached "$ensure_fixture/stage" "$ensure_state" 2>&1)"; then
+    test_fail "dx_ai_ensure_cached fails closed when the fallback also misses"
+else
+    test_pass "dx_ai_ensure_cached fails closed when the fallback also misses"
+fi
+if printf '%s\n' "$ensure_out" | stdin_matches "codex-core-0.157.0" \
+    && printf '%s\n' "$ensure_out" | stdin_matches -i "remedy" \
+    && printf '%s\n' "$ensure_out" | stdin_matches "DX_AI_ALLOW_SOURCE_BUILDS"; then
+    test_pass "a failing fallback names the packages and the remedy, including the override"
+else
+    test_fail "a failing fallback names the packages and the remedy, including the override"
+fi
+if [ "$(readlink "$ensure_state/current")" = "$current_before" ]; then
+    test_pass "a failing fallback leaves the published AI generation untouched"
+else
+    test_fail "a failing fallback leaves the published AI generation untouched"
+fi
+
+# No previous generation: skip the fallback attempt entirely (no
+# $state/current to copy from) and fail closed the same way.
+cat > "$ensure_fixture/stage/flake.lock" <<'EOF'
+{"nodes":{"nixpkgs-unstable":{"locked":{"rev":"newrev0000000000000000000000000000000000"}}}}
+EOF
+no_gen_state="$ensure_fixture/no-gen-state"
+mkdir -p "$no_gen_state"
+reset_cache_fixture "$dryrun_heavy_miss"
+if ensure_out="$(dx_ai_ensure_cached "$ensure_fixture/stage" "$no_gen_state" 2>&1)"; then
+    test_fail "dx_ai_ensure_cached fails closed when there is no previous generation"
+else
+    test_pass "dx_ai_ensure_cached fails closed when there is no previous generation"
+fi
+if [ "$(cat "$cache_call_count")" = 1 ]; then
+    test_pass "no previous generation means no fallback dry-run is even attempted"
+else
+    test_fail "no previous generation means no fallback dry-run is even attempted"
+fi
+
+# The override: still tries the fallback first (best effort, zero source
+# builds if it works), and only skips the *refusal* when it doesn't.
+cat > "$ensure_fixture/stage/flake.lock" <<'EOF'
+{"nodes":{"nixpkgs-unstable":{"locked":{"rev":"newrev0000000000000000000000000000000000"}}}}
+EOF
+reset_cache_fixture "$dryrun_heavy_miss" "$dryrun_heavy_miss"
+current_before="$(readlink "$ensure_state/current")"
+if ensure_out="$(DX_AI_ALLOW_SOURCE_BUILDS=1 dx_ai_ensure_cached "$ensure_fixture/stage" "$ensure_state" 2>&1)"; then
+    test_pass "DX_AI_ALLOW_SOURCE_BUILDS=1 skips the refusal after a failed fallback"
+else
+    test_fail "DX_AI_ALLOW_SOURCE_BUILDS=1 skips the refusal after a failed fallback"
+fi
+if [ "$(cat "$cache_call_count")" = 2 ] \
+    && printf '%s\n' "$ensure_out" | stdin_matches "codex-core-0.157.0"; then
+    test_pass "the override still attempts the fallback first and still prints the list"
+else
+    test_fail "the override still attempts the fallback first and still prints the list"
+fi
+if [ "$(readlink "$ensure_state/current")" = "$current_before" ]; then
+    test_pass "the override leaves the published AI generation untouched"
+else
+    test_fail "the override leaves the published AI generation untouched"
+fi
+
+unset -f nix
+rm -rf "$cache_fixture"
+trap 'chmod -R u+w "$ai_fixture" 2>/dev/null || true; rm -rf "$ai_fixture"' EXIT
+
 pin_before="$(shasum -a 256 "$published/pins/agy.json")"
 if (
     curl() { printf '%s\n' '{}'; }
@@ -267,6 +496,7 @@ printf '%s\n' fixture > "$f8_published/flake.lock"
 # so this exercises dx_ai_main's own control flow (locking, staging, publication)
 # rather than the network/build/credential side effects those functions own.
 dx_ai_update_flake() { :; }
+dx_ai_ensure_cached() { :; }
 dx_ai_install_profile() {
     local stage="$1" tool
     mkdir -p "$stage/profile/bin"
@@ -302,6 +532,65 @@ if [ "$f8_main_rc" -eq 0 ] && [ ! -d "$f8_state/.lock" ] && [ -z "$f8_trap_after
     test_pass "a successful sourced dx_ai_main releases its lock and clears its EXIT trap"
 else
     test_fail "a successful sourced dx_ai_main releases its lock and clears its EXIT trap"
+fi
+
+# dx_ai_main must call the cache guard AFTER updating the flake and BEFORE
+# installing the profile -- a miss must never reach nix profile add.
+update_line="$(grep -n 'dx_ai_update_flake "\$stage"' "$AI_SCRIPT" | head -1 | cut -d: -f1)"
+ensure_line="$(grep -n 'dx_ai_ensure_cached "\$stage" "\$state"' "$AI_SCRIPT" | head -1 | cut -d: -f1)"
+install_line="$(grep -n 'dx_ai_install_profile "\$stage"' "$AI_SCRIPT" | head -1 | cut -d: -f1)"
+if [ -n "$update_line" ] && [ -n "$ensure_line" ] && [ -n "$install_line" ] \
+    && [ "$update_line" -lt "$ensure_line" ] && [ "$ensure_line" -lt "$install_line" ]; then
+    test_pass "dx_ai_main runs the cache guard after the flake update and before the profile install"
+else
+    test_fail "dx_ai_main runs the cache guard after the flake update and before the profile install"
+fi
+
+# --- F16: a real (unstubbed) dx_ai_ensure_cached refusal, exercised through
+# dx_ai_main end to end, must leave the published AI generation untouched
+# and never reach dx_ai_install_profile/nix profile add. ---
+f16_published="$ai_fixture/f16-published"; f16_state="$ai_fixture/f16-state"
+mkdir -p "$f16_published/pins"
+printf '%s\n' '{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"}' > "$f16_published/pins/agy.json"
+printf '%s\n' fixture > "$f16_published/flake.nix"
+printf '%s\n' fixture > "$f16_published/flake.lock"
+
+dx_ai_update_flake() { :; }
+dx_ai_install_profile() { test_fail "a refused dx_ai_main must never reach dx_ai_install_profile"; }
+dx_ai_setup_credentials() { :; }
+dx_ai_ensure_keyring() { :; }
+dx_ai_verify() { :; }
+id() { printf '%s\n' 1000; }
+dx_ai_boot_id() { printf '%s\n' test-boot-id; }
+dx_ai_process_start() { printf '%s\n' 123; }
+nix() {
+    case "$*" in
+        "build --dry-run --extra-experimental-features "*"#ai-tools")
+            printf 'these 1 derivations will be built:\n  /nix/store/dddd10000000000000000000000001-codex-core-0.157.0.drv\n' >&2
+            return 0
+            ;;
+        *) command nix "$@" ;;
+    esac
+}
+
+f16_path_before="$PATH"
+DX_AI_BOOTSTRAP_ROOT="$f16_published" DX_AI_STATE_ROOT="$f16_state" dx_ai_main
+f16_main_rc=$?
+PATH="$f16_path_before"
+trap 'chmod -R u+w "$ai_fixture" 2>/dev/null || true; rm -rf "$ai_fixture"' EXIT
+unset -f nix id
+# shellcheck source=/dev/null
+source "$AI_SCRIPT"
+
+if [ "$f16_main_rc" -ne 0 ]; then
+    test_pass "a real cache-miss refusal makes dx_ai_main exit non-zero end to end"
+else
+    test_fail "a real cache-miss refusal makes dx_ai_main exit non-zero end to end"
+fi
+if [ ! -e "$f16_state/current" ] && [ ! -d "$f16_state/.lock" ]; then
+    test_pass "a real cache-miss refusal publishes no AI generation and releases its lock"
+else
+    test_fail "a real cache-miss refusal publishes no AI generation and releases its lock"
 fi
 
 # --- F15: --supports is a silent, exact-arity capability probe ---
