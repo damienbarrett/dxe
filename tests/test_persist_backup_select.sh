@@ -246,5 +246,29 @@ chmod 0755 "$denied_root/no-access"
 if grep -qi 'permission denied' "$denied_stderr"; then test_fail "a permission-denied subtree produces no noisy find stderr"; else test_pass "a permission-denied subtree produces no noisy find stderr"; fi
 if printf '%s\n' "$denied_listing" | stdin_matches -F "$(printf 'readable/file.txt\t')"; then test_pass "a permission-denied subtree does not stop readable siblings from being listed"; else test_fail "a permission-denied subtree does not stop readable siblings from being listed"; fi
 
+# --- Regression guard: the deny-list is inline-duplicated across four
+# `find` prune expressions (dx_pbs_walk_repo_files's two branches,
+# dx_pbs_list_outside_repos's two branches) as well as declared once in
+# DX_PBS_BUILTIN_COMPONENT_DENY. Chose a test over deriving the `find
+# -name` clauses from the variable at runtime (the coordinating session
+# offered either; this is the smaller, clearer change -- it leaves four
+# already-live-verified find pipelines exactly as they are, with their
+# deny names still literal and readable in place, rather than adding a
+# layer of array-building indirection to all four). This test fails
+# loudly the moment any of the five places (the variable, or any of the
+# four inline copies) drifts from the others. `.git` is excluded: it is a
+# separate, deliberate special case (pruned in some of the same `find`
+# expressions), never part of the deny-list. ---
+deny_words_sorted="$(printf '%s\n' $DX_PBS_BUILTIN_COMPONENT_DENY | LC_ALL=C sort)"
+deny_word_count="$(printf '%s\n' $DX_PBS_BUILTIN_COMPONENT_DENY | wc -l | tr -d '[:space:]')"
+extracted="$(grep -oE -- "-name '[^']*'|-name [^ ]+" "$SELECTOR" | sed -E "s/^-name '?//; s/'\$//" | grep -vFx '.git')"
+extracted_count="$(printf '%s\n' "$extracted" | grep -c .)"
+extracted_sorted_unique="$(printf '%s\n' "$extracted" | LC_ALL=C sort -u)"
+if [ "$extracted_count" -eq $((deny_word_count * 4)) ] && [ "$extracted_sorted_unique" = "$deny_words_sorted" ]; then
+    test_pass "the deny-list's 4 inline find-expression copies agree with DX_PBS_BUILTIN_COMPONENT_DENY"
+else
+    test_fail "the deny-list's 4 inline find-expression copies agree with DX_PBS_BUILTIN_COMPONENT_DENY (extracted $extracted_count entries, expected $((deny_word_count * 4)); extracted set: [$extracted_sorted_unique]; variable set: [$deny_words_sorted])"
+fi
+
 print_summary
 exit_with_code

@@ -198,7 +198,12 @@ dx_backup_restore_status() {
     container exec -u dx "$container_name" "$(dx_backup_selector_path)" --hash-paths "$DX_BACKUP_GUEST_ROOT" "${target_list[@]}" > "$hashes"
 
     for path in "${target_list[@]}"; do
-        line="$(grep -F -- "$(printf '%s\t' "$path")" "$hashes" | head -n1)"
+        # Exact match on field 1, not a substring search: a target path that
+        # is a suffix of another target's path (e.g. repo/.gitignore vs.
+        # other/repo/.gitignore) would otherwise let `grep -F` match the
+        # OTHER target's line too, and `head -n1` could pick it -- silently
+        # misclassifying this path with someone else's guest status/hash.
+        line="$(awk -F'\t' -v p="$path" '$1 == p { print; exit }' "$hashes")"
         guest_status="$(printf '%s\n' "$line" | cut -f2)"
         if [ "$guest_status" != present ]; then
             printf '%s\tcreate\n' "$path"

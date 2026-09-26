@@ -116,5 +116,34 @@ if [ "$(cat "$FIXTURE/persist/home/dx/one.txt")" = alpha ]; then test_pass "--fo
 # reports cleanly rather than erroring. ---
 if "$BASE_DIR/bin/dx-restore" no/such/path >/dev/null 2>&1; then test_fail "restoring a path absent from the mirror is an error"; else test_pass "restoring a path absent from the mirror is an error"; fi
 
+# --- A target path that is a SUFFIX of another target's path, queried in the
+# same --hash-paths batch, must not be misclassified by a substring match on
+# the guest-hash lookup (dx_backup_restore_status). The longer path is
+# listed FIRST so its hashes-file line is what a naive substring search for
+# the shorter path's own line would find first: "repo/.gitignore\t" is a
+# literal substring of "other/repo/.gitignore\tpresent\t...". The longer
+# path is present-and-different in the guest (a real conflict); the shorter
+# is entirely absent (a plain create). A field-exact match must tell them
+# apart. ---
+mirror_root="$DX_BACKUP_DIR/$DX_CONTAINER_NAME"
+mkdir -p "$mirror_root/current/other/repo" "$mirror_root/current/repo"
+printf 'mirror-content-for-longer\n' > "$mirror_root/current/other/repo/.gitignore"
+printf 'mirror-content-for-shorter\n' > "$mirror_root/current/repo/.gitignore"
+mkdir -p "$FIXTURE/persist/other/repo"
+printf 'guest-diverged-content\n' > "$FIXTURE/persist/other/repo/.gitignore"
+rm -f "$FIXTURE/persist/repo/.gitignore" 2>/dev/null
+suffix_dry_out="$("$BASE_DIR/bin/dx-restore" --dry-run other/repo/.gitignore repo/.gitignore 2>&1)"
+if printf '%s\n' "$suffix_dry_out" | stdin_matches -F 'would create: repo/.gitignore'; then
+    test_pass "a target path that is a suffix of another target's path is not misread as a conflict (correctly: create)"
+else
+    test_fail "a target path that is a suffix of another target's path is not misread as a conflict (correctly: create) (got: $suffix_dry_out)"
+fi
+if printf '%s\n' "$suffix_dry_out" | stdin_matches -F 'would OVERWRITE (conflicts with the guest): other/repo/.gitignore'; then
+    test_pass "the longer path (a genuine conflict) is still correctly classified alongside a suffix-colliding sibling"
+else
+    test_fail "the longer path (a genuine conflict) is still correctly classified alongside a suffix-colliding sibling (got: $suffix_dry_out)"
+fi
+rm -rf "$FIXTURE/persist/other" "$mirror_root/current/other" "$mirror_root/current/repo"
+
 print_summary
 exit_with_code
