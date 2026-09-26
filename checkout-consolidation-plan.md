@@ -1112,6 +1112,22 @@ a distinguishable keyring probe there needs that fixture extended too.
   and keep the guest reachable rather than fail bootstrap, if the keyring
   still cannot start after correct resolution.
 
+- **The keyring's D-Bus liveness check accepts a stale socket file (found
+  during the 2026-09-27 `dx-host` promotion; proposed as Branch 16).** After
+  `dx-stop-container`/`dx-start-container`, the previous boot's
+  `/tmp/dbus-*` socket file still exists in the container's writable layer,
+  `dx_keyring_address_is_live` treats it as a live bus, `setup_keyring_service`
+  skips starting `dbus-daemon` ("keyring persistence completed in 0s"), and
+  `gnome-keyring-daemon` is started against a dead address; `dx-ai`'s own
+  `dx_ai_ensure_keyring` does the same and starts a second keyring daemon.
+  Observed on `dx-host` read-only, and consistent with an earlier probe
+  before the promotion, so it is long-standing, not Branch 15's. Impact:
+  `agy` cannot persist OAuth tokens via Secret Service after a restart until
+  the bus is restarted; nothing else. Proposed fix (Branch 16, S): probe the
+  bus for real (connect to the socket, or check the recorded owner pid is
+  alive), remove a stale address file and socket on boot, and never start a
+  second keyring daemon; test with a fixture socket file and no listener.
+
 ## Decisions for you
 
 The questions are listed in the order they're needed. Each has the background
@@ -1418,28 +1434,25 @@ runs. No subagent promotes to `dx-host` on its own; the coordinating
 session runs this appendix with the user, after they have seen the
 rehearsed dry run on `dx-test`.
 
-**Status (2026-09-26):** `dx-host` (the primary guest) was promoted to
-`main` `08700a8` on 2026-09-26 following this appendix: manual `/persist`
-backup (kept privately), stop, `dx-start-container` with the new
-confirmation, verification (running == published generation, Home Manager
-activation completed, data intact). `dx-host` does **not** yet have
-OpenCode: Branch 6 (`feat/opencode`) landed on `main` on 2026-09-26 (see
-its section above). Promoting it to `dx-host` is a separate user decision,
-following this appendix in full. Branch 14 (landed 2026-09-27) removed the
-reason to enlarge the guest: `dx-ai` now tracks the cached channel and
-refuses silent source builds, so `dx-host` stays at the profile default.
-**Caution (2026-09-27, still in effect):** do not `dx-recreate` `dx-host`
-(or otherwise re-run its bootstrap on a fresh `/home/dx`) until `dx-host` is
-running a bootstrap that contains Branch 15's fix: with an AI generation
-present, unfixed `setup_keyring_service` fails to find `dbus-daemon` and
-bootstrap aborts before sshd, leaving the guest stopped (volumes intact). A
-plain `dx-stop-container`/`dx-start-container` is unaffected, as the
-2026-09-26 promotion showed. Branch 15 (`fix/keyring-bootstrap-recreate`)
-implements the fix and is validated at the code level (G1/G2); it is not
-yet merged to `main` or promoted to `dx-host` as this is written -- see its
-section above and `docs/evidence/20260927/keyring-recreate.md` for status.
-Promote `dx-host` to a `main` that contains Branch 15, following this
-appendix in full with the user's explicit approval, before any recreate.
+**Status (2026-09-27):** `dx-host` (the primary guest) was promoted to
+`main` `122258c` on 2026-09-27 following this appendix, with the user's
+explicit approval: fresh manual `/persist` backup (kept privately;
+103,241 files, 6.15 GiB, count verified against the guest), stop,
+`dx-start-container` with the publication confirmation (running ==
+published generation), `dx-wait-ssh`, verification (SSH, Home Manager
+activation completed in 9 s, all 103,242 `/persist` files present), then a
+cold `dx-ai` (no Herdr server running) that published a six-tool AI
+generation from the cache in under a minute -- `dx-host` now has OpenCode
+(1.18.31). The previous promotion (`main` `08700a8`, 2026-09-26) followed the
+same steps. The 2026-09-27 recreate caution is lifted: `dx-host` runs a
+bootstrap containing Branch 15, so `dx-recreate` is safe again.
+
+**Open finding from this promotion (needs a decision; see "Observations"):**
+after a container restart the keyring's D-Bus session is not actually
+running -- the previous boot's socket file survives in the container's
+writable layer and the liveness check accepts it. Not caused by Branch 15
+and not a regression of this promotion; it affects only `agy`'s
+Secret-Service token persistence until the bus is restarted.
 
 **Before promoting:**
 
