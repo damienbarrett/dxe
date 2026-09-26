@@ -1050,5 +1050,109 @@ else
     test_skip "Live: Herdr snapshot-recovery tests skipped, Herdr not installed in guest"
 fi
 
+# --- Live: the documented Herdr history cleanup removes the saved marker
+# (Branch 7 acceptance case 2, checkout-consolidation-plan.md "Branch 7 --
+# test/herdr-acceptance"). ---
+#
+# Follows docs/guest.md's "Herdr session persistence" cleanup steps exactly:
+# (1) an intentional cold stop, (2) delete session-history.json, (3) start
+# Herdr again and confirm the new session shows no restored contents. Proves
+# the marker is gone from every persisted Herdr file under BOTH
+# /persist/home/dx/.config/herdr and /persist/home/dx/.local/state/herdr (not
+# just session-history.json itself), and -- since a pane's shell PID is
+# available live via `herdr pane process-info` -- also proves live that the
+# cold stop actually terminates the pane's process, backing the accompanying
+# Section 10 docs assertion with a real observation on this guest.
+if run_guest "command -v herdr" >/dev/null 2>&1; then
+    herdr_b7_cleanup_marker="DXE-HERDR-B7-MARKER-$$"
+    herdr_b7_cleanup_template_file="$(mktemp "${TMPDIR:-/tmp}/dxe-b7-cleanup-template.XXXXXX")"
+    cat > "$herdr_b7_cleanup_template_file" <<'REMOTE_EOF'
+set -u
+MARKER="__MARKER__"
+BACKUP_DIR="$(mktemp -d)"
+herdr server stop >/dev/null 2>&1
+sleep 1
+[ -f "$HOME/.config/herdr/session.json" ] && mv "$HOME/.config/herdr/session.json" "$BACKUP_DIR/session.json.bak"
+[ -f "$HOME/.config/herdr/session-history.json" ] && mv "$HOME/.config/herdr/session-history.json" "$BACKUP_DIR/session-history.json.bak"
+LOG="/tmp/dxe-b7-herdr-cleanup-$$.log"
+
+nohup herdr server >"$LOG" 2>&1 &
+disown
+started=0
+for i in $(seq 1 20); do
+    herdr status --json 2>/dev/null | grep -q '"running":true' && { started=1; break; }
+    sleep 0.5
+done
+
+ws_out="$(herdr workspace create --label dxe-b7-cleanup 2>&1)"
+pane_id="$(printf '%s' "$ws_out" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)"
+shell_pid=""
+if [ -n "$pane_id" ]; then
+    shell_pid="$(herdr pane process-info --pane "$pane_id" 2>/dev/null | jq -r '.result.process_info.shell_pid // empty' 2>/dev/null)"
+    herdr pane run "$pane_id" "echo $MARKER" >/dev/null 2>&1
+fi
+
+captured=no
+for i in $(seq 1 20); do
+    grep -q "$MARKER" "$HOME/.config/herdr/session-history.json" 2>/dev/null && { captured=yes; break; }
+    sleep 1
+done
+
+# The documented steps, in order: intentional cold stop, then delete
+# session-history.json, then start again.
+herdr server stop >/dev/null 2>&1
+sleep 1
+
+pid_alive_after_stop=unknown
+if [ -n "$shell_pid" ]; then
+    if kill -0 "$shell_pid" 2>/dev/null; then pid_alive_after_stop=yes; else pid_alive_after_stop=no; fi
+fi
+
+rm -f "$HOME/.config/herdr/session-history.json"
+
+nohup herdr server >"$LOG.2" 2>&1 &
+disown
+restarted=0
+for i in $(seq 1 20); do
+    herdr status --json 2>/dev/null | grep -q '"running":true' && { restarted=1; break; }
+    sleep 0.5
+done
+
+restored_marker_visible=no
+if [ -n "$pane_id" ]; then
+    read_after="$(herdr pane read --lines 100 "$pane_id" 2>&1)"
+    printf '%s' "$read_after" | grep -q "$MARKER" && restored_marker_visible=yes
+fi
+
+marker_leftover="$(grep -rl "$MARKER" /persist/home/dx/.config/herdr /persist/home/dx/.local/state/herdr 2>/dev/null)"
+
+herdr server stop >/dev/null 2>&1
+sleep 1
+rm -f "$HOME/.config/herdr/session.json" "$HOME/.config/herdr/session-history.json" "$LOG" "$LOG.2" 2>/dev/null
+[ -f "$BACKUP_DIR/session.json.bak" ] && mv "$BACKUP_DIR/session.json.bak" "$HOME/.config/herdr/session.json"
+[ -f "$BACKUP_DIR/session-history.json.bak" ] && mv "$BACKUP_DIR/session-history.json.bak" "$HOME/.config/herdr/session-history.json"
+rm -rf "$BACKUP_DIR"
+
+leftover_empty=yes
+[ -n "$marker_leftover" ] && leftover_empty=no
+
+printf 'STARTED=%s CAPTURED=%s PID_ALIVE_AFTER_STOP=%s RESTARTED=%s RESTORED_MARKER_VISIBLE=%s LEFTOVER_EMPTY=%s\n' \
+    "$started" "$captured" "$pid_alive_after_stop" "$restarted" "$restored_marker_visible" "$leftover_empty"
+printf 'MARKER_LEFTOVER_FILES: %s\n' "$marker_leftover"
+REMOTE_EOF
+    HERDR_B7_CLEANUP_TEMPLATE="$(cat "$herdr_b7_cleanup_template_file")"
+    rm -f "$herdr_b7_cleanup_template_file"
+    herdr_b7_cleanup_script="${HERDR_B7_CLEANUP_TEMPLATE//__MARKER__/$herdr_b7_cleanup_marker}"
+
+    diag_cleanup="$(run_guest "$herdr_b7_cleanup_script" 2>&1)" || true
+    if printf '%s' "$diag_cleanup" | grep -q '^STARTED=1 CAPTURED=yes PID_ALIVE_AFTER_STOP=no RESTARTED=1 RESTORED_MARKER_VISIBLE=no LEFTOVER_EMPTY=yes'; then
+        test_pass "Live: the documented Herdr history cleanup removes the saved marker from every persisted file (characterisation)"
+    else
+        test_fail "Live: the documented Herdr history cleanup removes the saved marker from every persisted file (characterisation) ($diag_cleanup)"
+    fi
+else
+    test_skip "Live: Herdr history-cleanup test skipped, Herdr not installed in guest"
+fi
+
 print_summary
 exit_with_code

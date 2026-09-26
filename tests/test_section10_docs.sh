@@ -144,6 +144,12 @@ GUEST_DOC="$BASE_DIR/docs/guest.md"
 assert_file_contains_literal "$GUEST_DOC" 'without prompting for confirmation' "dx-herdr install-without-confirming behavior is documented accurately"
 assert_file_contains_literal "$GUEST_DOC" 'session-history.json' "the sensitive pane-history file is named for the documented cleanup path"
 assert_file_contains "$GUEST_DOC" 'ends its pane processes' "history cleanup warns it ends live pane processes"
+# Branch 7 (test/herdr-acceptance) live-verified this exact claim on dx-test:
+# a pane's shell PID (from `herdr pane process-info`) answers `kill -0`
+# before `herdr server stop` and fails ("No such process") immediately after.
+# Pin the precise wording so it cannot drift into overclaiming that a cold
+# stop "preserves" or "migrates" pane processes -- it does neither.
+assert_file_contains_literal "$GUEST_DOC" 'anything running in an attached pane is terminated, not preserved or migrated' "history cleanup's cold-stop claim matches its live-verified effect on pane processes exactly (Branch 7)"
 assert_file_contains_literal "$GUEST_DOC" 'no live upgrade' "cold-upgrade workflow states no live upgrade exists"
 assert_file_contains_literal "$GUEST_DOC" 'never refreshes an already-present bundle' "ordinary dx-herdr launches are documented as never refreshing an installed bundle"
 assert_file_contains_literal "$GUEST_DOC" 'It never modifies the published' "dx-ai's immutable bootstrap/source boundary is documented accurately (R6)"
