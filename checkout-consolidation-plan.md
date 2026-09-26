@@ -1021,11 +1021,37 @@ guaranteed on a fresh `/home/dx`.
    definition (which said Home Manager installs `dbus-daemon` into dx's
    profile -- no longer true) are corrected.
 
-**Validation:** G1 (bash-3.2, ShellCheck 0.10.0 pinned, syntax, Container-free
-contracts, `test_refactor_contracts.sh`) and G2 (100% sourceable coverage,
-scope-share ratchet) green in throwaway containers. G3 not applicable (no
-`.nix` file changed). G4 live proof on `dx-test`: pending as of this
-writing -- see `docs/evidence/20260927/keyring-recreate.md`.
+**Status (2026-09-27): all gates green, ready to land.** G1 (bash-3.2,
+ShellCheck 0.10.0 pinned, syntax, Container-free contracts,
+`test_refactor_contracts.sh`) and G2 (100% sourceable coverage, scope-share
+ratchet 1791 bp) green in throwaway containers. G3 not applicable (no
+`.nix` file changed). G4 live on `dx-test`: `dx-recreate` on the fixed
+bootstrap completes cleanly (no keyring warning), `DX_TEST_DESTRUCTIVE=1`
+Section 17 (99/0/0), the full live tier (one regression found in the new
+test's own fixture -- a `mkdir /persist` that a bare macOS host refuses --
+fixed and re-verified), and a second `dx-recreate` proving idempotence.
+`dx-test` cold-stopped afterward, volumes and AI generation intact. Full
+detail in `docs/evidence/20260927/keyring-recreate.md`.
+
+The precise start-vs-recreate mechanism could not be nailed down to a
+single deterministic cause: reproducing the pre-fix guest's `dx-recreate`
+live (once, per the "do not retry" instruction) did not reproduce Branch
+14's failure, despite an otherwise byte-identical bootstrap log sequence
+(down to matching Home Manager activation timings against Branch 14's own
+retry). It looks like a race around Home Manager's freshly-written
+`~/.profile`/`~/.bash_profile` becoming visible to a fresh process
+immediately after activation, not a deterministic ordering defect -- see
+the evidence doc for the full comparison. This does not affect the fix:
+`dx_resolve_keyring_bin` checks fixed absolute paths directly and does not
+depend on `~/.profile`/login-shell PATH at all.
+
+Follow-up candidate (not done in this branch, not blocking): `dx-status`
+(host) does not show a "keyring: not running" line for policy B's warning
+path. The task's failure-policy description mentions this as the intended
+observable outcome, but `bin/dx-status` was not in this branch's file list
+and its existing host-script test fixture (a fake `container exec ... bash`
+responder) answers every exec identically regardless of command, so adding
+a distinguishable keyring probe there needs that fixture extended too.
 
 ---
 

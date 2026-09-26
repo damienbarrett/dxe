@@ -5,9 +5,14 @@ No home directory paths, keys, fingerprints, or NAS identifiers appear below.
 
 Branch `fix/keyring-bootstrap-recreate`, from `main` `bf49f4d` (includes
 Branch 14). Commits, in order: `8b754d4` (resolve keyring binaries
-explicitly on recreate; warn instead of failing, policy B) plus a following
-docs/plan commit and a ratchet re-measurement (see the plan's Branch 15
-section for the final commit list once landed).
+explicitly on recreate; warn instead of failing, policy B), `d9159de`
+(docs/plan), `15ddbaf` and `c26ad20` (two coverage-fixture regressions
+`run-coverage-linux.sh` caught for real, both in the tests that exercised
+the old resolution mechanism, fixed to exercise the new one), `bb073ba`
+(ratchet re-measurement), `f922434` (a live-tier regression in the new
+Section 3 test's own fixture, found by `tests/run-tier.sh live` and fixed;
+also fixes a home-directory path this file had in its validation-method
+note), `9514fd2` (ratchet re-measurement).
 
 ## What changed and why
 
@@ -34,12 +39,61 @@ resolved it (the 2026-09-26 `dx-host` promotion worked); a `dx-recreate`
 (fresh `/home/dx`) did not.
 
 **Live diagnosis of the precise start-vs-recreate difference (Increment 1,
-first paragraph):** _pending -- dx-test was occupied by another branch's
-live gate for the first part of this work. This section is completed once
-the live run below happens; see the plan's Branch 15 section / this
-branch's progress file
-(`~/dxe-recovery/progress/branch-15-keyring-bootstrap-recreate.md`) for the
-live-tier commands and results once run._
+first paragraph).** dx-test was freed by the coordinating session partway
+through this work (a fresh guest at the profile default, created from
+Branch 8's tree, unfixed keyring lookup, no AI generation yet). Reproduction
+plan: opt the guest in for real (`DX_TEST_DESTRUCTIVE=1 ...
+tests/run_all_tests.sh --section=17`, 99/0/0, a real `dx-ai` run from cache
+published a working AI generation with the keyring running), capture the
+resolution facts while the guest was up, then `dx-recreate` on the same
+unfixed bootstrap.
+
+Facts captured live (`container exec` reproducing exactly what
+`run_as_dx`'s `bash -l -c` does): the login shell's `PATH` did contain the
+AI generation's `bin` directory (prepended twice, once via
+`programs.bash.profileExtra`'s literal `export PATH=...` line and once via
+`home.sessionVariables`), and `command -v dbus-daemon` resolved cleanly to
+the generation profile. `~/.bash_profile`/`~/.profile`/`~/.bashrc` are
+Home-Manager-managed symlinks into a `home-manager-files` store path;
+`~/.bash_profile`'s entire content is `[[ -f ~/.profile ]] && . ~/.profile`,
+so bash's login-file search order (which prefers `.bash_profile`) still
+reaches the same `PATH`-setting content either way. `~/.profile` sources an
+absolute-store-path `hm-session-vars.sh` first, then exports the literal
+`PATH=/persist/.../dx-ai/current/profile/bin:$HOME/.nix-profile/bin:...`
+line unconditionally -- this does not depend on `~/.nix-profile` resolving
+to anything for its first (AI-generation) component to be correct.
+
+**`dx-recreate` on this same unfixed bootstrap then did NOT reproduce the
+reported failure.** Full sequence identical to a normal boot up to and
+including "Bootstrap phase: Home Manager activation completed in 1s",
+immediately followed by "Setting up D-Bus keyring service..." /
+"Bootstrap phase: keyring persistence completed in 0s." -- no error, no
+warning; sshd started normally. Post-recreate, the keyring address and
+`.profile`/`.bash_profile`/`.nix-profile` were all freshly (re)created,
+pointing at the same store paths as before.
+
+Compared against the original failure logs from Branch 14's live gate (two
+runs, both failed identically): every step up to and including "Bootstrap
+phase: Home Manager activation completed in Ns" is structurally identical
+across all three runs (two failures, one success) -- including the retry,
+which was just as fast (1s) as this session's successful run, ruling out
+activation *timing* as the differentiator. No difference in the log text
+itself points at a distinguishing precondition.
+
+**Conclusion, reported rather than guessed further:** this looks like a
+race or visibility condition around Home Manager's freshly-written
+`~/.profile`/`~/.bash_profile` symlinks (or the store paths they point at)
+becoming reliably visible to a brand-new process immediately after Home
+Manager's own activation script exits, rather than a deterministic
+ordering defect in `configure_guest` -- `run_home_manager_activation`
+already ran unconditionally before `setup_keyring_service` in both the
+failures and this success, so the *ordering* itself was never the variable.
+This was not chased further with additional instrumentation of the pre-fix
+bootstrap (would need modifying and republishing it again, counter to the
+"do not retry" instruction this diagnosis ran under). It does not affect
+the fix's correctness: `dx_resolve_keyring_bin` checks fixed absolute paths
+directly and does not depend on `~/.profile`/login-shell PATH at all,
+immune to whatever this race is.
 
 ## The fix
 
@@ -64,12 +118,12 @@ live-tier commands and results once run._
 | --- | --- |
 | G1 bash-3.2 | green, 99/0/0 (`tests/run-bash32-tests.sh`, mac host) |
 | G1 syntax | `find bin tests container -type f \( -name '*.sh' -o -path 'bin/dx*' \) -print0 \| xargs -0 -n1 bash -n`: clean |
-| G1 pinned ShellCheck 0.10.0 | CI's exact file set, throwaway `nixos/nix:2.34.8`: _fill in after the re-run against the clean clone completes_ |
-| G1 container-free contracts (runner-matched) | `ubuntu:24.04` + apt shellcheck/jq/git, self-contained clone (not the worktree -- see note below), `tests/run_all_tests.sh --skip-integration`: _fill in_ |
-| G1 `test_refactor_contracts.sh` | _fill in_ |
-| G2 coverage | `tests/run-coverage-linux.sh`: _fill in_; ratchet re-measured on a clean export: _fill in_ |
-| G3 Nix | not applicable -- no `.nix` file changed |
-| G4 live | `dx-test`, pending (dx-test was occupied when this work started) |
+| G1 pinned ShellCheck 0.10.0 | CI's exact file set, throwaway `nixos/nix:2.34.8`, self-contained clone: exit 0, no warnings |
+| G1 container-free contracts (runner-matched) | `ubuntu:24.04` + apt shellcheck/jq/git, self-contained clone (not the worktree -- see note below), `tests/run_all_tests.sh --skip-integration`: "All tests PASSED!", exit 0 |
+| G1 `test_refactor_contracts.sh` | green (folded into the same container run, chained with `&&`) |
+| G2 coverage | `tests/run-coverage-linux.sh`: `covered=100% scope_share=17.91%`, exit 0; ratchet re-measured on a clean `git archive HEAD` export of the finished tip: 4,212 / 23,506 = 1791 bp (committed in `9514fd2`) |
+| G3 Nix | not applicable -- no `.nix` file changed (confirmed: no `flake.nix`/`flake.lock` in the diff) |
+| G4 live | `dx-test`, green -- see "Live results" below |
 | G5 CI | pending push |
 
 **Note on validation method:** a git worktree's `.git` is a file pointing at
@@ -114,9 +168,49 @@ proving the fallback (dx's login-shell PATH) was never used.
 
 ## Live results (Increment 3, G4)
 
-_Pending -- dx-test occupied by another branch's live gate when this work
-started. Filled in once run: `dx-recreate` completion, `dx-wait-ssh`,
-keyring running (or the documented warning + reachable guest under policy
-B), Section 17 destructive (`DX_TEST_DESTRUCTIVE=1 ... --section=17`), full
-live tier (`tests/run-tier.sh live`), and a second `dx-recreate` +
-`dx-wait-ssh` for idempotence._
+All run against `dx-test` (fresh guest, profile default 12 GB) after
+syncing the fix (`dx-start-container` from this branch onto the
+already-opted-in, unfixed-bootstrap guest, then a plain stop/start to pick
+up the newly published generation -- publishing alone does not restart an
+already-running container).
+
+1. **`dx-recreate` on the fixed bootstrap:** completed cleanly. `container
+   logs` shows "Setting up D-Bus keyring service for credential
+   persistence..." / "Bootstrap phase: keyring persistence completed in
+   0s." with no `Warning`/`Error`; `dx-wait-ssh` succeeded; the keyring
+   address was fresh and live, and `dbus-daemon` was confirmed resolving
+   from `/persist/home/dx/.local/state/dx-ai/current/profile/bin`.
+2. **`DX_TEST_DESTRUCTIVE=1 ./bin/dx-profile dx-test tests/run_all_tests.sh
+   --section=17`:** 99 passed, 0 failed, 0 skipped -- `dx-ai` completes
+   inside the guest, ensures the D-Bus keyring service, all six AI tools
+   available, keyring address written.
+3. **`tests/run-tier.sh live`:** every test file passed with 0 failures
+   except `test_section3_bootstrap.sh`, which hit one regression: the new
+   recreate-resolution test's fixture setup unconditionally
+   `mkdir -p /persist/home/dx/...`, and this "live" invocation runs Section
+   3 directly on the coordinating session's Mac (not inside a container),
+   where creating a new top-level directory under the read-only root
+   filesystem is refused ("mkdir: /persist: Read-only file system"),
+   aborting the file under `set -e` before its own Results summary printed.
+   Fixed in `f922434` (guard on whether the `mkdir` actually succeeds, not
+   just on whether the directory already exists; skip with a clear reason
+   when it cannot). Re-verified in isolation on the same host:
+   `bash tests/test_section3_bootstrap.sh` exits 0, 136 passed, 0 failed, 1
+   skipped (the new probe skips there; the policy-B "warns loudly" test
+   still passes). Every other file in the same live-tier run (Sections
+   0-27, `test_bootstrap_publication.sh`, `test_refactor_state_machines.sh`,
+   `test_nix_store_import.sh`, `test_herdr_config_persistence.sh`) passed
+   with 0 failures; the full tier was not re-run end-to-end after this
+   one-line test fix (a targeted re-verification plus the unaffected
+   container-based G1/G2 re-runs, both green against the true final tip,
+   were judged sufficient rather than re-spending ~40 minutes of contended
+   host time re-deriving already-green results).
+4. **Idempotence: a second `dx-recreate` + `dx-wait-ssh`:** also completed
+   cleanly, same signature as the first (no warning, fresh live keyring
+   address, `.profile`/`.bash_profile`/`.nix-profile` freshly recreated
+   pointing at the same store paths).
+5. `dx-test` was cold-stopped at the end, per the plan; volumes and the AI
+   generation are left in place.
+
+No lifecycle command was refused by the permission classifier at any point.
+`dx-host` and the NAS were never touched.
