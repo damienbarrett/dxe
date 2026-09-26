@@ -217,37 +217,84 @@ dx_pbs_walk_repo_files() {
     )
 }
 
-# Emit TSV listing lines (path relative to $DX_PBS_ROOT is $2 + "/" + found,
-# unless $2 is empty) for every file under repo $1, unconditionally (the
-# at-risk-whole case): everything in the work tree, including .git/**,
-# except deny-listed paths.
-dx_pbs_emit_repo_whole() {
-    local repo="$1" relroot="$2" found relpath hashed
-    while IFS= read -r -d '' found; do
+# Emit one TSV listing line per newline-delimited relative path in list-file
+# $3 (already denied-filtered by the caller): path<TAB>size<TAB>mtime<TAB>sha256,
+# plus a 5th <TAB>reason column when $4 is non-empty. A single emitter shared
+# by the whole-repo, safe-repo and outside-repo cases (below) so the reason
+# column has exactly one place it is appended, rather than three.
+dx_pbs_emit_found_list() {
+    local repo="$1" relroot="$2" list_file="$3" reason="${4:-}" found relpath hashed
+    while IFS= read -r found; do
+        [ -n "$found" ] || continue
         relpath="$relroot/$found"
         dx_pbs_path_denied "$relpath" && continue
         hashed="$(dx_pbs_hash_entry "$repo/$found")" || continue
-        printf '%s\t%s\n' "$relpath" "$hashed"; done < <(dx_pbs_walk_repo_files "$repo" keep-git)
+        if [ -n "$reason" ]; then
+            printf '%s\t%s\t%s\n' "$relpath" "$hashed" "$reason"
+        else
+            printf '%s\t%s\n' "$relpath" "$hashed"
+        fi
+    done < "$list_file"
+}
+
+# Emit TSV listing lines (path relative to $DX_PBS_ROOT is $2 + "/" + found,
+# unless $2 is empty) for every file under repo $1, unconditionally (the
+# at-risk-whole case): everything in the work tree, including .git/**,
+# except deny-listed paths. $3 non-empty selects --with-reason mode (reason
+# is always "whole-repo" here: the entire repo is at risk, not just a subset
+# of its files).
+dx_pbs_emit_repo_whole() {
+    local repo="$1" relroot="$2" reason_mode="${3:-}" list_file
+    list_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-whole.XXXXXX")" || return 1
+    dx_pbs_walk_repo_files "$repo" keep-git | while IFS= read -r -d '' entry; do printf '%s\n' "$entry"; done > "$list_file"
+    if [ -n "$reason_mode" ]; then
+        dx_pbs_emit_found_list "$repo" "$relroot" "$list_file" whole-repo
+    else
+        dx_pbs_emit_found_list "$repo" "$relroot" "$list_file"
+    fi
+    rm -f "$list_file"
 }
 
 # Emit TSV listing lines for repo $1's at-risk files only: everything the
 # working-tree walk finds MINUS the tracked-and-clean set, minus deny-listed
 # paths. `.git` itself is pruned entirely -- a safe repo's history is, by
 # definition, already reachable via its remote.
+#
+# $3 non-empty selects --with-reason mode. The at-risk delta is then split
+# into two further reasons by set membership against `git ls-files --others
+# --ignored --exclude-standard` (files this walk includes precisely BECAUSE
+# it does not consult .gitignore, unlike a plain `git status`):
+#   ignored-kept        -- gitignored, kept anyway (never silently dropped).
+#   modified-untracked  -- tracked+modified, staged, or untracked-not-ignored.
+# Both splits are plain `comm` set operations over already-sorted files, not
+# a per-file check: the guest's dx profile has no `awk` (see
+# dx_pbs_sha256_stdin's own comment), and a per-file subprocess for
+# classification would double this function's already-per-file hashing cost.
 dx_pbs_emit_repo_safe() {
-    local repo="$1" relroot="$2" clean_set found_file relpath hashed
+    local repo="$1" relroot="$2" reason_mode="${3:-}"
+    local clean_set found_file delta_set ignored_set ik_set mu_set
     clean_set="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-clean.XXXXXX")" || return 1
     dx_pbs_repo_clean_set "$repo" "$clean_set"
     found_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-found.XXXXXX")" || { rm -f "$clean_set"; return 1; }
     dx_pbs_walk_repo_files "$repo" | while IFS= read -r -d '' entry; do printf '%s\n' "$entry"; done | LC_ALL=C sort > "$found_file"
-    comm -23 "$found_file" "$clean_set" | while IFS= read -r found; do
-        [ -n "$found" ] || continue
-        relpath="$relroot/$found"
-        dx_pbs_path_denied "$relpath" && continue
-        hashed="$(dx_pbs_hash_entry "$repo/$found")" || continue
-        printf '%s\t%s\n' "$relpath" "$hashed"
-    done
-    rm -f "$clean_set" "$found_file"
+    delta_set="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-delta.XXXXXX")" || { rm -f "$clean_set" "$found_file"; return 1; }
+    comm -23 "$found_file" "$clean_set" > "$delta_set"
+
+    if [ -n "$reason_mode" ]; then
+        ignored_set="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-ignored.XXXXXX")" || { rm -f "$clean_set" "$found_file" "$delta_set"; return 1; }
+        git -C "$repo" ls-files --others --ignored --exclude-standard 2>/dev/null | LC_ALL=C sort > "$ignored_set"
+        ik_set="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-ik.XXXXXX")" || { rm -f "$clean_set" "$found_file" "$delta_set" "$ignored_set"; return 1; }
+        mu_set="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-mu.XXXXXX")" || { rm -f "$clean_set" "$found_file" "$delta_set" "$ignored_set" "$ik_set"; return 1; }
+        comm -12 "$delta_set" "$ignored_set" > "$ik_set"
+        comm -23 "$delta_set" "$ignored_set" > "$mu_set"
+        dx_pbs_emit_found_list "$repo" "$relroot" "$ik_set" ignored-kept
+        dx_pbs_emit_found_list "$repo" "$relroot" "$mu_set" modified-untracked
+        rm -f "$ignored_set" "$ik_set" "$mu_set"
+    else
+        dx_pbs_emit_found_list "$repo" "$relroot" "$delta_set"
+    fi
+
+    rm -f "$clean_set" "$found_file" "$delta_set"
 }
 
 # Dispatch repo $1 (relative root $2) to the whole-repo or safe-repo emitter
@@ -257,11 +304,11 @@ dx_pbs_emit_repo_safe() {
 # command) does not give kcov anything to register a hit against on the
 # line shared with `done`, the same class of issue as an empty case arm.
 dx_pbs_emit_repo() {
-    local repo="$1" relroot="$2"
+    local repo="$1" relroot="$2" reason_mode="${3:-}"
     if dx_pbs_repo_at_risk_whole "$repo"; then
-        dx_pbs_emit_repo_whole "$repo" "$relroot"
+        dx_pbs_emit_repo_whole "$repo" "$relroot" "$reason_mode"
     else
-        dx_pbs_emit_repo_safe "$repo" "$relroot"
+        dx_pbs_emit_repo_safe "$repo" "$relroot" "$reason_mode"
     fi
 }
 
@@ -269,14 +316,15 @@ dx_pbs_emit_repo() {
 # Main listing driver
 # ---------------------------------------------------------------------------
 
-# dx_pbs_list ROOT [EXTRA_DENY_PATTERN...]
-#
-# Prints the full at-risk TSV listing (path<TAB>size<TAB>mtime<TAB>sha256,
-# path relative to ROOT) on stdout. Prints a one-line summary of skipped
-# special files (sockets/fifos/devices) to stderr.
-dx_pbs_list() {
-    local root="$1" repos_file repo relroot special_count
-    shift
+# Shared driver for dx_pbs_list and dx_pbs_list_with_reason (below): $1 is
+# the reason_mode flag (empty for the plain listing, non-empty for
+# --with-reason), $2 is ROOT, and the rest are EXTRA_DENY_PATTERNs. Prints
+# the full at-risk TSV listing on stdout -- path<TAB>size<TAB>mtime<TAB>sha256,
+# plus a 5th <TAB>reason column in --with-reason mode -- and a one-line
+# summary of skipped special files (sockets/fifos/devices) to stderr.
+dx_pbs_list_driver() {
+    local reason_mode="$1" root="$2" repos_file repo relroot special_count
+    shift 2
     DX_PBS_EXTRA_DENY="$*"
     root="${root%/}"
     [ -d "$root" ] || { echo "Error: backup root $root does not exist or is not a directory." >&2; return 1; }
@@ -289,20 +337,40 @@ dx_pbs_list() {
     # Outside-any-repository files: walk the whole tree, pruning at every
     # discovered repository root (each is handled by its own pass below) and
     # every deny-listed directory name.
-    dx_pbs_list_outside_repos "$root" "$repos_file"
+    dx_pbs_list_outside_repos "$root" "$repos_file" "$reason_mode"
 
     while IFS= read -r repo; do
         [ -n "$repo" ] || continue
         relroot="${repo#"$root"/}"
         [ "$relroot" != "$repo" ] || relroot="."
-        dx_pbs_emit_repo "$repo" "$relroot"; done < "$repos_file"
+        dx_pbs_emit_repo "$repo" "$relroot" "$reason_mode"; done < "$repos_file"
 
     rm -f "$repos_file"
     echo "Selector summary: ${special_count:-0} special file(s) (socket/fifo/device) skipped." >&2
 }
 
+# dx_pbs_list ROOT [EXTRA_DENY_PATTERN...]
+#
+# Prints the full at-risk TSV listing (path<TAB>size<TAB>mtime<TAB>sha256,
+# path relative to ROOT) on stdout. Prints a one-line summary of skipped
+# special files (sockets/fifos/devices) to stderr.
+dx_pbs_list() {
+    dx_pbs_list_driver "" "$@"
+}
+
+# dx_pbs_list_with_reason ROOT [EXTRA_DENY_PATTERN...]
+#
+# Same as dx_pbs_list, but each line carries a 5th <TAB>reason column:
+# modified-untracked, whole-repo, outside-repo, or ignored-kept (see this
+# file's module header and dx_pbs_emit_repo_safe's comment). Used by
+# `bin/dx-backup --dry-run --summary` (Branch 17) to aggregate the at-risk
+# selection by reason without dx-backup.sh duplicating any selection rule.
+dx_pbs_list_with_reason() {
+    dx_pbs_list_driver reason "$@"
+}
+
 dx_pbs_list_outside_repos() {
-    local root="$1" repos_file="$2" prune_expr=() repo found relpath hashed
+    local root="$1" repos_file="$2" reason_mode="${3:-}" prune_expr=() repo found relpath hashed
     # find's -path must match the exact string find itself will produce for
     # that entry, so this walk operates on absolute paths throughout (no
     # `cd`+relative form, unlike the per-repo walks below, which have no repo
@@ -330,31 +398,55 @@ dx_pbs_list_outside_repos() {
         relpath="${found#"$root"/}"
         dx_pbs_path_denied "$relpath" && continue
         hashed="$(dx_pbs_hash_entry "$found")" || continue
-        printf '%s\t%s\n' "$relpath" "$hashed"
+        if [ -n "$reason_mode" ]; then
+            printf '%s\t%s\toutside-repo\n' "$relpath" "$hashed"
+        else
+            printf '%s\t%s\n' "$relpath" "$hashed"
+        fi
     done
 }
 
 # ---------------------------------------------------------------------------
-# --hash-paths mode: restore's conflict-check probe
+# --hash-paths / --hash-paths-file mode: restore's conflict-check probe
 # ---------------------------------------------------------------------------
 
-# dx_pbs_hash_paths ROOT [RELPATH...]
-#
-# For each RELPATH (relative to ROOT), prints one line:
+# Print one line for RELPATH $2 (relative to ROOT $1):
 #   relpath<TAB>present<TAB>size<TAB>mtime<TAB>sha256
 #   relpath<TAB>missing
+# Shared by dx_pbs_hash_paths (argv) and dx_pbs_hash_paths_file (a file, one
+# path per line -- for a batch large enough that argv risks the host's
+# ARG_MAX; see bin/lib/dx-backup.sh's DX_BACKUP_HASH_PATHS_ARG_THRESHOLD).
+dx_pbs_hash_one() {
+    local root="$1" relpath="$2" hashed
+    if [ -e "$root/$relpath" ] || [ -L "$root/$relpath" ]; then
+        hashed="$(dx_pbs_hash_entry "$root/$relpath")" || { printf '%s\tmissing\n' "$relpath"; return; }
+        printf '%s\tpresent\t%s\n' "$relpath" "$hashed"
+    else
+        printf '%s\tmissing\n' "$relpath"
+    fi
+}
+
+# dx_pbs_hash_paths ROOT [RELPATH...]
 dx_pbs_hash_paths() {
-    local root="$1" relpath hashed
+    local root="$1" relpath
     shift
     root="${root%/}"
     for relpath in "$@"; do
-        if [ -e "$root/$relpath" ] || [ -L "$root/$relpath" ]; then
-            hashed="$(dx_pbs_hash_entry "$root/$relpath")" || { printf '%s\tmissing\n' "$relpath"; continue; }
-            printf '%s\tpresent\t%s\n' "$relpath" "$hashed"
-        else
-            printf '%s\tmissing\n' "$relpath"
-        fi
+        dx_pbs_hash_one "$root" "$relpath"
     done
+}
+
+# dx_pbs_hash_paths_file ROOT LISTFILE
+#
+# Same output as dx_pbs_hash_paths, but reads RELPATHs one per line from
+# LISTFILE instead of argv.
+dx_pbs_hash_paths_file() {
+    local root="$1" listfile="$2" relpath
+    root="${root%/}"
+    while IFS= read -r relpath || [ -n "$relpath" ]; do
+        [ -n "$relpath" ] || continue
+        dx_pbs_hash_one "$root" "$relpath"
+    done < "$listfile"
 }
 
 # ---------------------------------------------------------------------------
@@ -367,9 +459,19 @@ dx_pbs_main() {
             shift
             dx_pbs_hash_paths "$@"
             ;;
+        --hash-paths-file)
+            shift
+            dx_pbs_hash_paths_file "$@"
+            ;;
+        --with-reason)
+            shift
+            dx_pbs_list_with_reason "$@"
+            ;;
         '')
             echo "Usage: dx-persist-backup-select.sh ROOT [DENY_PATTERN...]" >&2
+            echo "       dx-persist-backup-select.sh --with-reason ROOT [DENY_PATTERN...]" >&2
             echo "       dx-persist-backup-select.sh --hash-paths ROOT [RELPATH...]" >&2
+            echo "       dx-persist-backup-select.sh --hash-paths-file ROOT LISTFILE" >&2
             return 64
             ;;
         *)

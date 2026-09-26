@@ -270,5 +270,63 @@ else
     test_fail "the deny-list's 4 inline find-expression copies agree with DX_PBS_BUILTIN_COMPONENT_DENY (extracted $extracted_count entries, expected $((deny_word_count * 4)); extracted set: [$extracted_sorted_unique]; variable set: [$deny_words_sorted])"
 fi
 
+# --- Branch 17: --with-reason mode. Every line gets a 5th <TAB>reason
+# column: modified-untracked, whole-repo, outside-repo, or ignored-kept.
+# Reuses the exact fixtures built above -- no new tree needed, since every
+# reason already has a natural example in repo-a/b/c and the outside-repo
+# files. `bin/dx-backup --dry-run --summary` aggregates this listing; it
+# does not re-derive any selection rule of its own. ---
+reason_listing="$FIXTURE/listing-reason.tsv"
+dx_pbs_list_with_reason "$FIXTURE/persist" 'scratch/*.tmp' > "$reason_listing" 2>/dev/null
+
+assert_reason() {
+    local path="$1" expected="$2" message="${3:-$1 is tagged $2}"
+    local got
+    got="$(awk -F'\t' -v p="$path" '$1 == p { print $5; exit }' "$reason_listing")"
+    if [ "$got" = "$expected" ]; then test_pass "$message"; else test_fail "$message (got '$got')"; fi
+}
+
+assert_reason "git/repo-a/modified.txt" "modified-untracked" "a modified tracked file is reasoned modified-untracked"
+assert_reason "git/repo-a/staged-new.txt" "modified-untracked" "a staged new file is reasoned modified-untracked"
+assert_reason "git/repo-a/untracked.txt" "modified-untracked" "an untracked, not-ignored file is reasoned modified-untracked"
+assert_reason "git/repo-a/.gitignore" "modified-untracked" "the tracked-and-staged .gitignore itself is reasoned modified-untracked"
+assert_reason "git/repo-a/secret.local" "ignored-kept" "a gitignored-but-kept file is reasoned ignored-kept"
+assert_reason "git/repo-b/file.txt" "whole-repo" "a file in an at-risk-whole repo (unpushed commit) is reasoned whole-repo"
+assert_reason "git/repo-b/.git/HEAD" "whole-repo" "an at-risk-whole repo's .git contents are reasoned whole-repo too"
+assert_reason "git/repo-c/clean.txt" "whole-repo" "a file in an at-risk-whole repo (no remote) is reasoned whole-repo"
+assert_reason "home/dx/.bash_history" "outside-repo" "a file outside any repository is reasoned outside-repo"
+assert_reason "git/worktree-like/marker.txt" "outside-repo" "content beside a .git FILE (not a repo boundary) is reasoned outside-repo"
+
+# Every line has exactly 5 fields in --with-reason mode (the same "no drift"
+# check the plain listing gets above, extended by one column).
+malformed_reason="$(awk -F'\t' 'NF != 5 { print; count++ } END { exit count ? 1 : 0 }' "$reason_listing")"
+if [ -z "$malformed_reason" ]; then test_pass "every --with-reason listing line has exactly path/size/mtime/sha256/reason"; else test_fail "every --with-reason listing line has exactly path/size/mtime/sha256/reason: $malformed_reason"; fi
+
+# The plain (no-reason) listing is byte-for-byte unaffected by the
+# --with-reason code path existing at all.
+reason_stripped="$(cut -f1-4 "$reason_listing" | LC_ALL=C sort)"
+plain_sorted="$(LC_ALL=C sort "$listing_file")"
+if [ "$reason_stripped" = "$plain_sorted" ]; then test_pass "the plain listing and the reason listing agree on path/size/mtime/sha256"; else test_fail "the plain listing and the reason listing agree on path/size/mtime/sha256"; fi
+
+# --- dx_pbs_main dispatch: --with-reason and --hash-paths-file standalone. ---
+standalone_reason="$(bash "$SELECTOR" --with-reason "$FIXTURE/persist" 2>/dev/null)"
+if printf '%s\n' "$standalone_reason" | stdin_matches -F "$(printf 'home/dx/.bash_history\t')" && printf '%s\n' "$standalone_reason" | stdin_matches -F 'outside-repo'; then
+    test_pass "dx-persist-backup-select.sh --with-reason runs standalone"
+else
+    test_fail "dx-persist-backup-select.sh --with-reason runs standalone"
+fi
+
+hashpaths_list="$FIXTURE/hashpaths-list.txt"
+printf '%s\n' home/dx/.bash_history home/dx/.dangling home/dx/does-not-exist > "$hashpaths_list"
+hash_file_out="$FIXTURE/hash-file-out.tsv"
+dx_pbs_hash_paths_file "$FIXTURE/persist" "$hashpaths_list" > "$hash_file_out"
+if [ "$(cat "$hash_file_out")" = "$(cat "$hash_out")" ]; then
+    test_pass "--hash-paths-file agrees with --hash-paths for the same paths"
+else
+    test_fail "--hash-paths-file agrees with --hash-paths for the same paths (file: $(cat "$hash_file_out"), argv: $(cat "$hash_out"))"
+fi
+standalone_hash_file="$(bash "$SELECTOR" --hash-paths-file "$FIXTURE/persist" "$hashpaths_list")"
+if printf '%s\n' "$standalone_hash_file" | stdin_matches -F 'home/dx/.bash_history	present	'; then test_pass "dx-persist-backup-select.sh --hash-paths-file runs standalone"; else test_fail "dx-persist-backup-select.sh --hash-paths-file runs standalone"; fi
+
 print_summary
 exit_with_code
