@@ -46,6 +46,7 @@ assert_file_contains_literal "$QNAP_SPIKE" '127.0.0.1:2222:2222' "spike publishe
 
 STUB_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dxe-qnap-stub.XXXXXX")"
 MARKER="$(mktemp "${TMPDIR:-/tmp}/dxe-qnap-marker.XXXXXX")"
+export MARKER
 FAKE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/dxe-qnap-home.XXXXXX")"
 rm -f "$MARKER"
 cleanup_stub() { rm -rf "$STUB_DIR" "$FAKE_HOME"; rm -f "$MARKER"; }
@@ -308,7 +309,23 @@ case "$sub" in
         esac
         ;;
     run) : ;;
-    exec) : ;;
+    exec)
+        # Records the exact "-c" script text step 6's sha256-verification
+        # call ends up with, without actually running anything (no real
+        # tar extraction, no real sha256sum -- avoids any side effect on
+        # this test machine's real /tmp and any risk of a bare `sha256sum`
+        # blocking on stdin if quoting is broken). If the ssh hop's own
+        # argument concatenation mangled the "-c" argument, "$#" will not
+        # be exactly 3 (sh, -c, <script>) after shifting off exec/-i/the
+        # container name, and no line is recorded at all.
+        shift
+        if [ "${1:-}" = "-i" ]; then shift; fi
+        shift
+        if [ "${1:-}" = "sh" ] && [ "${2:-}" = "-c" ] && [ "$#" -eq 3 ]; then
+            printf 'FAKE_DOCKER_EXEC_SH_C: [%s]\n' "$3" >> "${MARKER:-/dev/null}"
+        fi
+        cat >/dev/null 2>&1 || true
+        ;;
     ps) : ;;
     rm) : ;;
     image) case "$2" in ls) : ;; esac ;;
@@ -934,6 +951,19 @@ if printf '%s' "$step5_block" | stdin_matches -F -- 'unexpected token'; then
     test_fail "step 5 never reproduces the remote shell's \"unexpected token\" syntax error"
 else
     test_pass "step 5 never reproduces the remote shell's \"unexpected token\" syntax error"
+fi
+
+# --- Defect (same class): step 6's sha256-verification exec must also ----
+# --- survive the ssh hop's own argument concatenation -- its "-c" script  --
+# --- has the same shape (spaces, ||, redirects) as step 5's, just less    --
+# --- loudly broken (a silent hash mismatch, not a hard syntax error).     --
+# --- Reuses the same full run/stub above (ssh_reparse_command's fake      --
+# --- docker records the exact "-c" argument it receives, without really  --
+# --- running anything).                                                  ---
+if grep -qF -- 'FAKE_DOCKER_EXEC_SH_C: [sha256sum /tmp/payload.txt 2>/dev/null || shasum -a 256 /tmp/payload.txt]' "$MARKER"; then
+    test_pass "step 6's sha256-verification exec survives the ssh hop's own argument concatenation"
+else
+    test_fail "step 6's sha256-verification exec survives the ssh hop's own argument concatenation"
 fi
 
 # --- Defect 2: step 9's diff guard must not flag step 2's own base-image --
