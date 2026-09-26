@@ -312,15 +312,47 @@ dxe_spike_run_steps() {
     done
 
     step_header 5 "Run a disposable container (Nix volume at /nix; no --privileged, no CAP_SYS_ADMIN)"
-    status=0
-    dxe_qnap_docker_run run -d \
-        --name "$(dxe_spike_name container)" \
-        --label "$DXE_SPIKE_LABEL" \
-        -v "$(dxe_spike_name nix):/nix" \
-        -p 127.0.0.1:2222:2222 \
-        "$(dxe_spike_name image):phase0" \
-        /bin/sh -c "$(dxe_spike_listener_command)" || status=$?
-    step_verdict 5 "$status" "container $(dxe_spike_name container)"
+    if [ "$DXE_DRY_RUN" = 1 ]; then
+        dxe_qnap_docker_run run -d \
+            --name "$(dxe_spike_name container)" \
+            --label "$DXE_SPIKE_LABEL" \
+            -v "$(dxe_spike_name nix):/nix" \
+            -p 127.0.0.1:2222:2222 \
+            "$(dxe_spike_name image):phase0" \
+            /bin/sh -c "$(dxe_spike_listener_command)"
+    else
+        # ssh concatenates every trailing argument after the destination
+        # host with a single space and hands the joined string to the
+        # remote login shell to parse (see dxe_qnap_ssh_raw and friends
+        # above) -- fine when every docker argument is a plain token, but
+        # this step's final argument is itself a POSIX-sh if/then/fi
+        # script full of spaces and shell metacharacters. Passed as one of
+        # several trailing ssh arguments (dxe_qnap_docker_run's usual
+        # shape, still used for the dry-run preview above), that quoting
+        # is destroyed the instant ssh rejoins the argv, and the remote
+        # shell re-parses "then"/"elif"/"fi" as bare words with no
+        # enclosing "if" -- exactly the "sh: -c: line 0: syntax error near
+        # unexpected token 'then'" the first real run hit. Fix: build the
+        # whole remote docker invocation as ONE already-quoted string with
+        # dxe_argv_desc (the same printf %q helper every dry-run preview
+        # in this file already trusts to round-trip an argv -- see its own
+        # comment) and hand ssh that single string as its only trailing
+        # argument, so there is nothing left for ssh's own rejoin step to
+        # break.
+        local ssh_opts=() ssh_opt remote_cmd
+        while IFS= read -r ssh_opt; do ssh_opts+=("$ssh_opt"); done <<<"$(dxe_qnap_ssh_opts)"
+        remote_cmd="$(dxe_argv_desc "$(dxe_qnap_docker_bin)" run -d \
+            --name "$(dxe_spike_name container)" \
+            --label "$DXE_SPIKE_LABEL" \
+            -v "$(dxe_spike_name nix):/nix" \
+            -p 127.0.0.1:2222:2222 \
+            "$(dxe_spike_name image):phase0" \
+            /bin/sh -c "$(dxe_spike_listener_command)")"
+        printf '+ ssh %s %s\n' "$(dxe_qnap_host)" "$remote_cmd" >&2
+        status=0
+        ssh "${ssh_opts[@]}" "$(dxe_qnap_host)" "$remote_cmd" || status=$?
+        step_verdict 5 "$status" "container $(dxe_spike_name container)"
+    fi
 
     step_header 6 "Stream a small tar payload through docker exec -i and verify sha256"
     if [ "$DXE_DRY_RUN" = 1 ]; then
