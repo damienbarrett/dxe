@@ -16,8 +16,20 @@
 #     ssh_config alias -- not this script -- owns identity file and host-key
 #     policy;
 #   - the tar-over-exec streaming in phase0-spike.sh's step 6 is the same
-#     shape as bin/dx-put/bin/dx-get, just against "docker -H ssh://..."
-#     instead of the local "container" CLI.
+#     shape as bin/dx-put/bin/dx-get, just piped into a plain ssh remote
+#     command instead of the local "container" CLI (see dxe_qnap_docker_run
+#     below for why this talks to Docker over ssh directly rather than
+#     through the local Docker CLI's own "-H ssh://" transport).
+#
+# Confidentiality note: the real NAS is a production system. Nothing in this
+# file, or in anything it prints, may ever hold its Tailscale MagicDNS name,
+# tailnet address, storage-pool/dataset names, account name, or any key
+# material -- only the ssh_config alias (DXE_QNAP_HOST). Absolute paths
+# under the Container Station/Tailscale qpkgs are discovered at runtime over
+# ssh and used only as ssh/docker command arguments; they are never the
+# only source of a value written into a file this repository tracks (see
+# phase0-inventory.sh/phase0-spike.sh's --summary output, and
+# tests/test_section1_secrets.sh's leak scan, which is the enforcement).
 
 # The ssh_config alias identifying the QNAP. DQ1: the alias owns username,
 # identity file, MagicDNS name, and host-key policy; this script only ever
@@ -37,8 +49,17 @@ dxe_qnap_ssh_opts() {
 }
 
 # The Docker CLI's command-scoped SSH endpoint (DQ1): "ssh://<alias>", never
-# a persistent global `docker context`.
+# a persistent global `docker context`. Used only by phase0-inventory.sh's
+# explicit "Mac-side control plane" check, which deliberately tests this
+# naive mechanism to document whether it works on the real NAS -- it is
+# NOT how phase0-spike.sh talks to Docker; see dxe_qnap_docker_run below.
 dxe_qnap_docker_host_arg() { printf 'ssh://%s' "$(dxe_qnap_host)"; }
+
+# The naive mechanism itself: the LOCAL Docker CLI's own ssh transport.
+# Deliberately distinct from dxe_qnap_docker_run/_capture below (the
+# mechanism phase0-spike.sh actually uses) -- conflating the two would
+# silently stop testing what this check exists to test.
+dxe_qnap_docker_naive_ssh_capture() { dxe_maybe_capture docker -H "$(dxe_qnap_docker_host_arg)" "$@"; }
 
 # Build a human-readable, exactly-reversible description of an argv for
 # dry-run preview and command tracing. printf %q is the single source of
@@ -121,12 +142,87 @@ dxe_qnap_require_reachable() {
     return 0
 }
 
-# Dry-run-aware docker-over-SSH call (DQ1: command-scoped endpoint, never a
-# persistent global context) whose exit status is what matters.
-dxe_qnap_docker_run() { dxe_maybe_run docker -H "$(dxe_qnap_docker_host_arg)" "$@"; }
+# --- Discovering the Docker CLI on the NAS's non-interactive PATH --------
+#
+# Confirmed against the real NAS (a QuTS hero unit): the non-interactive SSH
+# PATH does not include the Container Station qpkg's own bin directory, so
+# a bare `command -v docker` over ssh finds nothing, and -- because Docker's
+# own "-H ssh://" client transport also just runs "docker ..." on whatever
+# PATH the remote non-interactive shell resolves -- so does
+# `docker -H ssh://<alias> ...` run from the controller. This is exactly
+# the case DQ1 anticipates: "If QNAP's non-interactive PATH does not expose
+# the Container Station Docker CLI, Phase 0 must identify its stable
+# absolute path... invoke a small fixed remote command over SSH in that
+# case." phase0-spike.sh therefore never uses the local Docker CLI's
+# "-H ssh://" transport at all -- every docker command is run as a plain
+# ssh remote command against the discovered absolute path (dxe_qnap_ssh_exec/
+# _capture's own transport, just with the docker binary as the remote
+# command instead of an inline shell snippet).
+#
+# The absolute path itself is discovered at runtime (falling back to a glob
+# under the Container Station qpkg's own bin directory) and only ever
+# crosses as an ssh/docker command-line argument -- it is never the sole
+# source of anything written into a file this repository tracks.
+DXE_QNAP_DOCKER_BIN_GLOB='/share/*/.qpkg/container-station/bin/docker'
+
+# Same idea for Tailscale: its qpkg is not on the non-interactive PATH
+# either. Two candidate layouts, since qpkg install conventions vary.
+DXE_QNAP_TAILSCALE_BIN_GLOB='/share/*/.qpkg/Tailscale/tailscale /share/*/.qpkg/Tailscale/bin/tailscale'
+
+# The Docker CLI to invoke on the NAS: an explicit DXE_QNAP_DOCKER override,
+# or "docker" as a last-resort default (works only if some future NAS
+# actually has it on the non-interactive PATH). Callers that need the
+# confirmed-working absolute path must have already run discovery (see
+# phase0-spike.sh's dxe_qnap_ensure_docker_bin) and set DXE_QNAP_DOCKER.
+dxe_qnap_docker_bin() { printf '%s' "${DXE_QNAP_DOCKER:-docker}"; }
+
+# Prints a POSIX-sh snippet (safe to embed in a larger heredoc: BusyBox/ash
+# compatible, no bashisms) that assigns shell variable $1 to the first of
+# $2 found on PATH via `command -v`, or the first executable match of the
+# space-separated glob pattern(s) in $3. Leaves $1 empty if neither is
+# found. Used identically by phase0-inventory.sh (to discover both the
+# Docker CLI and Tailscale) and phase0-spike.sh (Docker only), so the
+# discovery logic itself cannot drift between the two scripts.
+dxe_qpkg_binary_discovery_snippet() {
+    local var="$1" cmd="$2" glob="$3"
+    printf '%s=""\n' "$var"
+    printf 'if command -v %s >/dev/null 2>&1; then %s="$(command -v %s)"; else for dxe_cand in %s; do if [ -x "$dxe_cand" ]; then %s="$dxe_cand"; break; fi; done; fi\n' \
+        "$cmd" "$var" "$cmd" "$glob" "$var"
+}
+
+# A standalone remote script (one ssh round trip) that discovers the Docker
+# CLI's absolute path and prints it alone (or NOTFOUND). Used by
+# phase0-spike.sh's dxe_qnap_ensure_docker_bin; phase0-inventory.sh embeds
+# dxe_qpkg_binary_discovery_snippet directly instead, since its discovery is
+# one field among many in a single larger combined session.
+dxe_qnap_docker_discovery_remote_script() {
+    printf '%s\necho "${DXE_DOCKER_BIN:-NOTFOUND}"\n' "$(dxe_qpkg_binary_discovery_snippet DXE_DOCKER_BIN docker "$DXE_QNAP_DOCKER_BIN_GLOB")"
+}
+
+# Dry-run-aware call whose exit status is what matters: runs the discovered
+# (or overridden) Docker CLI as a plain ssh remote command -- never through
+# the local Docker CLI's own "-H ssh://" transport (see above).
+dxe_qnap_docker_run() {
+    local ssh_opts=() opt
+    while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$(dxe_qnap_ssh_opts)"
+    dxe_maybe_run ssh "${ssh_opts[@]}" "$(dxe_qnap_host)" "$(dxe_qnap_docker_bin)" "$@"
+}
 
 # Same, but for a call whose stdout a caller needs to parse.
-dxe_qnap_docker_capture() { dxe_maybe_capture docker -H "$(dxe_qnap_docker_host_arg)" "$@"; }
+dxe_qnap_docker_capture() {
+    local ssh_opts=() opt
+    while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$(dxe_qnap_ssh_opts)"
+    dxe_maybe_capture ssh "${ssh_opts[@]}" "$(dxe_qnap_host)" "$(dxe_qnap_docker_bin)" "$@"
+}
+
+# --- Private, never-committed output location -----------------------------
+#
+# Both scripts' --report/--summary default here, never under the
+# repository: the NAS is a production system and nothing it reveals belongs
+# in a public git history. $HOME is used directly (not DX_PROJECT_ROOT),
+# so the default survives regardless of which checkout/worktree ran the
+# script.
+dxe_qnap_private_dir() { printf '%s/dxe-recovery/qnap' "${HOME:?}"; }
 
 # --- Spike resource naming/labelling (qnap-dxe-plan.md Phase 0 safety rule) ---
 #

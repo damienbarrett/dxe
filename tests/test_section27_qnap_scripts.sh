@@ -9,8 +9,15 @@
 # unreachable host, every created/queried resource is scoped to
 # "dxe-spike-*" + the "dxe.role=spike" label, --cleanup only ever removes
 # what a label-filtered query returned, guarded restarts stay off without
-# their flag, and a planted secret-shaped string never survives into the
-# inventory report.
+# their flag, a planted secret-shaped string never survives into either
+# report, the private summary never carries a path/account name, both
+# scripts discover the Docker CLI's absolute path over ssh rather than
+# assuming it is on PATH, and both default their (private) report/summary
+# paths under $HOME/dxe-recovery/qnap/, never under this repository.
+#
+# Every stub file path/value below is deliberately generic/fake ("/opt/fake/
+# ...") -- never a real QNAP-shaped storage-pool path -- so this file itself
+# passes tests/test_section1_secrets.sh's leak scan.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,8 +46,9 @@ assert_file_contains_literal "$QNAP_SPIKE" '127.0.0.1:2222:2222' "spike publishe
 
 STUB_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dxe-qnap-stub.XXXXXX")"
 MARKER="$(mktemp "${TMPDIR:-/tmp}/dxe-qnap-marker.XXXXXX")"
+FAKE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/dxe-qnap-home.XXXXXX")"
 rm -f "$MARKER"
-cleanup_stub() { rm -rf "$STUB_DIR"; rm -f "$MARKER"; }
+cleanup_stub() { rm -rf "$STUB_DIR" "$FAKE_HOME"; rm -f "$MARKER"; }
 trap cleanup_stub EXIT
 
 write_stub() {
@@ -51,9 +59,15 @@ write_stub() {
 
 reset_marker() { : >"$MARKER"; }
 
-# A connectable ssh that answers "true" and reachability probes, echoes a
-# loopback-only ss -ltn line, and returns canned inventory fields (including
-# a planted, token-shaped secret) for the phase0-inventory.sh heredoc.
+FAKE_DOCKER_BIN="/opt/fake/.qpkg/container-station/bin/docker"
+FAKE_TAILSCALE_BIN="/opt/fake/.qpkg/Tailscale/tailscale"
+
+# A connectable ssh that answers "true"/"reboot"/ss/container-station probes,
+# the standalone Docker-path discovery call phase0-spike.sh makes, the
+# combined inventory heredoc (including a planted, token-shaped secret and
+# an nproc/proc-cpuinfo CPU-count fallback -- the real NAS has no getconf),
+# and every "<ssh opts> <host> <fake docker path> <args...>" invocation
+# phase0-spike.sh's dxe_qnap_docker_run/_capture make.
 write_stub ssh '
 printf "ssh %s\n" "$*" >> "'"$MARKER"'"
 last=""
@@ -65,80 +79,117 @@ esac
 case "$*" in
     *"ss -ltn"*) printf "LISTEN 0 128 127.0.0.1:2222 0.0.0.0:*\n"; exit 0 ;;
     *"container-station.sh restart"*) exit 0 ;;
+    *"-W 127.0.0.1:2222"*) exit 0 ;;
 esac
+# The combined inventory heredoc (many DXE_-tagged fields in one script,
+# including its own embedded docker/tailscale discovery snippets -- so this
+# more specific check must run BEFORE the standalone-discovery check below,
+# which would otherwise also match the embedded "DXE_DOCKER_BIN" text below).
 case "$last" in
     *DXE_UNAME_M*)
         cat <<OUT
 DXE_UNAME_M=x86_64
-DXE_UNAME_R=5.10.60-qnap
-DXE_DOCKER_PATH=/usr/local/bin/docker
+DXE_UNAME_R=6.6.32-fake
+DXE_DOCKER_PATH='"$FAKE_DOCKER_BIN"'
 DXE_DOCKER_VERSION_BEGIN
-Docker version 24.0.7, build afdd53b
+Docker version 27.1.2-fake, build afdd53b
 Authorization: Bearer ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef1234
 DXE_DOCKER_VERSION_END
-DXE_DOCKER_INFO=ServerVersion=24.0.7 OSType=linux Architecture=x86_64 NCPU=8 MemTotalBytes=16000000000 CgroupDriver=cgroupfs StorageDriver=overlay2 DockerRootDir=/share/CACHEDEV1_DATA/.qpkg/container-station/docker
-DXE_DOCKER_COMPOSE_VERSION=Docker Compose version v2.20.0
-DXE_ROOT_DIR_FREE=500000000K free of 900000000K total
+DXE_DOCKER_INFO=ServerVersion=27.1.2 OSType=linux Architecture=x86_64 NCPU=8 MemTotalBytes=16000000000 CgroupDriver=cgroupfs StorageDriver=overlay2
+DXE_DOCKER_COMPOSE_VERSION=v5.1.1-fake
+DXE_ROOT_DIR_FREE=500000000
+DXE_ROOT_DIR_TOTAL=900000000
 DXE_DIAL_STDIO_EXIT=0
 DXE_CPU_COUNT=8
 DXE_MEMINFO=MemTotal: 16384000 kB; MemAvailable: 8000000 kB;
 DXE_LOADAVG=0.10 0.05 0.01 1/200 1234
-DXE_TAILSCALE_PATH=/usr/sbin/tailscale
-DXE_TAILSCALE_VERSION=1.60.0
-DXE_QTS_VERSION=5.1.0
-DXE_CONTAINER_STATION_VERSION=3.0.1
+DXE_TAILSCALE_PATH='"$FAKE_TAILSCALE_BIN"'
+DXE_TAILSCALE_VERSION=1.60.0-fake
+DXE_QTS_VERSION=h5.1.0-fake
+DXE_CONTAINER_STATION_VERSION=3.0.1-fake
 DXE_BACKUP_INDICATION=present (snapshot config file found; not read)
+DXE_ACCOUNT_IS_DEFAULT_SUPERUSER=no
+DXE_ACCOUNT_IN_ADMIN_GROUP=yes
 OUT
         exit 0
         ;;
 esac
-exit 0
-'
-
-# A connectable docker that records every invocation and answers with
-# canned, minimal, always-successful output.
-write_stub docker '
-printf "docker %s\n" "$*" >> "'"$MARKER"'"
-args=("$@")
-case "${args[0]:-}" in -H) unset "args[0]" "args[1]"; args=("${args[@]}") ;; esac
-sub="${args[0]:-}"
-case "$sub" in
-    version) echo "Docker version 24.0.7, build local"; exit 0 ;;
-    pull) echo "digest: sha256:deadbeef"; exit 0 ;;
-    inspect) echo "sha256:deadbeef"; exit 0 ;;
-    build) echo "Successfully built"; exit 0 ;;
-    volume)
-        case "${args[1]:-}" in
-            create) echo "${args[*]: -1}"; exit 0 ;;
-            ls) exit 0 ;;
-            rm) exit 0 ;;
-        esac
+# The standalone docker-path discovery script (phase0-spike.sh): its last
+# line is a lone echo of the discovered path/NOTFOUND, with no other
+# DXE_-tagged fields alongside it. Checked only once the more specific
+# combined-heredoc case above has already had first refusal.
+case "$last" in
+    *DXE_DOCKER_BIN*)
+        echo "'"$FAKE_DOCKER_BIN"'"
+        exit 0
         ;;
-    run) exit 0 ;;
-    exec) exit 0 ;;
-    ps) exit 0 ;;
-    rm) exit 0 ;;
-    image)
-        case "${args[1]:-}" in ls) exit 0 ;; esac
-        ;;
-    rmi) exit 0 ;;
-    restart) exit 0 ;;
 esac
+# Docker invocation: find the discovered docker path among the args and
+# dispatch on the subcommand(s) right after it, exactly like a real
+# "ssh <opts> <host> <docker-bin> <docker argv...>" call.
+args=("$@")
+docker_idx=-1
+i=0
+for a in "${args[@]}"; do
+    [ "$a" = "'"$FAKE_DOCKER_BIN"'" ] && docker_idx=$i
+    i=$((i + 1))
+done
+if [ "$docker_idx" -ge 0 ]; then
+    sub="${args[$((docker_idx + 1))]:-}"
+    sub2="${args[$((docker_idx + 2))]:-}"
+    last_arg="${args[$((${#args[@]} - 1))]:-}"
+    case "$sub" in
+        version) echo "Docker version 27.1.2-fake, build local"; exit 0 ;;
+        pull) echo "digest: sha256:deadbeef"; exit 0 ;;
+        inspect) echo "sha256:deadbeef"; exit 0 ;;
+        build) echo "Successfully built"; exit 0 ;;
+        volume)
+            case "$sub2" in
+                create) echo "$last_arg"; exit 0 ;;
+                ls) exit 0 ;;
+                rm) exit 0 ;;
+            esac
+            ;;
+        run) exit 0 ;;
+        exec) exit 0 ;;
+        ps) exit 0 ;;
+        rm) exit 0 ;;
+        image)
+            case "$sub2" in ls) exit 0 ;; esac
+            ;;
+        rmi) exit 0 ;;
+        restart) exit 0 ;;
+    esac
+fi
 exit 0
 '
 
-# A docker whose *labelled* queries return one container, three volumes, and
-# one image, but whose *unfiltered* (full) queries additionally return an
-# unrelated, non-spike resource -- proving cleanup only ever acts on the
-# label-filtered set, never the full listing.
-write_stub docker_with_unrelated '
-printf "docker %s\n" "$*" >> "'"$MARKER"'"
+# Same ssh stub, but its labelled docker queries (ps -a/volume ls/image ls
+# with --filter label=dxe.role=spike) return one container, three volumes,
+# and one image, while its *unfiltered* queries additionally return an
+# unrelated, non-spike resource -- proving --cleanup only ever acts on the
+# label-filtered set, never a blanket listing.
+write_stub ssh_with_unrelated '
+printf "ssh %s\n" "$*" >> "'"$MARKER"'"
+last=""
+for a in "$@"; do last="$a"; done
+case "$last" in
+    true) exit 0 ;;
+    *DXE_DOCKER_BIN*) echo "'"$FAKE_DOCKER_BIN"'"; exit 0 ;;
+esac
 args=("$@")
-case "${args[0]:-}" in -H) unset "args[0]" "args[1]"; args=("${args[@]}") ;; esac
-sub="${args[0]:-}"
+docker_idx=-1
+i=0
+for a in "${args[@]}"; do
+    [ "$a" = "'"$FAKE_DOCKER_BIN"'" ] && docker_idx=$i
+    i=$((i + 1))
+done
+[ "$docker_idx" -ge 0 ] || exit 0
+sub="${args[$((docker_idx + 1))]:-}"
+sub2="${args[$((docker_idx + 2))]:-}"
 has_label_filter=0
 for a in "${args[@]}"; do
-    case "$a" in "label=dxe.role=spike") has_label_filter=1 ;; esac
+    [ "$a" = "label=dxe.role=spike" ] && has_label_filter=1
 done
 case "$sub" in
     ps)
@@ -146,7 +197,7 @@ case "$sub" in
         exit 0
         ;;
     volume)
-        case "${args[1]:-}" in
+        case "$sub2" in
             ls)
                 if [ "$has_label_filter" -eq 1 ]; then
                     printf "dxe-spike-nix\ndxe-spike-persist\ndxe-spike-bootstrap\n"
@@ -159,7 +210,7 @@ case "$sub" in
         esac
         ;;
     image)
-        case "${args[1]:-}" in
+        case "$sub2" in
             ls)
                 if [ "$has_label_filter" -eq 1 ]; then echo "dxe-spike-image:phase0"; else echo "dxe-spike-image:phase0"; echo "some-other-image:latest"; fi
                 exit 0
@@ -171,15 +222,47 @@ esac
 exit 0
 '
 
+# An ssh stub whose docker pull always fails (step 2), for the "one failing
+# step does not abort the run" regression case.
+write_stub ssh_step2_fails '
+printf "ssh %s\n" "$*" >> "'"$MARKER"'"
+last=""
+for a in "$@"; do last="$a"; done
+case "$last" in
+    true) exit 0 ;;
+    *DXE_DOCKER_BIN*) echo "'"$FAKE_DOCKER_BIN"'"; exit 0 ;;
+esac
+case "$*" in *"-W 127.0.0.1:2222"*) exit 0 ;; *"ss -ltn"*) echo "LISTEN 0 128 127.0.0.1:2222 0.0.0.0:*"; exit 0 ;; esac
+args=("$@")
+docker_idx=-1
+i=0
+for a in "${args[@]}"; do [ "$a" = "'"$FAKE_DOCKER_BIN"'" ] && docker_idx=$i; i=$((i + 1)); done
+[ "$docker_idx" -ge 0 ] || exit 0
+sub="${args[$((docker_idx + 1))]:-}"
+sub2="${args[$((docker_idx + 2))]:-}"
+last_arg="${args[$((${#args[@]} - 1))]:-}"
+case "$sub" in
+    pull) exit 1 ;;
+    volume) case "$sub2" in create) echo "$last_arg"; exit 0 ;; ls|rm) exit 0 ;; esac ;;
+    image) case "$sub2" in ls) exit 0 ;; esac ;;
+    version|inspect|build|run|exec|ps|rm|rmi|restart) exit 0 ;;
+esac
+exit 0
+'
+
 # An unreachable ssh: every invocation (including the mandatory preflight)
 # fails exactly the way OpenSSH reports a transport failure (exit 255).
 write_stub ssh_unreachable '
 printf "ssh %s\n" "$*" >> "'"$MARKER"'"
 exit 255
 '
-write_stub docker_unreachable '
-printf "docker %s\n" "$*" >> "'"$MARKER"'"
-exit 0
+
+# The LOCAL Docker CLI, used only by phase0-inventory.sh's explicit Mac-side
+# "docker -H ssh://<alias> ..." naive-mechanism check. Fails by default,
+# matching what was confirmed on the real NAS (the remote non-interactive
+# shell that transport uses cannot find "docker" either).
+write_stub docker '
+exit 1
 '
 
 run_with_stubs() {
@@ -196,6 +279,16 @@ run_with_stubs() {
     return $status
 }
 
+# Every invocation below explicitly names both --report and --summary under
+# $STUB_DIR (never the script's own default) so no test run ever writes into
+# the real developer's $HOME -- the one dedicated exception is the "defaults
+# are private" case near the end, which overrides HOME to a throwaway
+# directory instead.
+INV_REPORT="$STUB_DIR/inv-report.md"
+INV_SUMMARY="$STUB_DIR/inv-summary.md"
+SPIKE_REPORT="$STUB_DIR/spike-report.log"
+SPIKE_SUMMARY="$STUB_DIR/spike-summary.md"
+
 # --- (a) --dry-run prints the exact remote command list, never connects ---
 
 reset_marker
@@ -203,17 +296,23 @@ inv_dry_out="$(run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QN
 if [ ! -s "$MARKER" ]; then test_pass "inventory --dry-run never invokes ssh/docker"; else test_fail "inventory --dry-run never invokes ssh/docker"; fi
 if printf '%s' "$inv_dry_out" | stdin_matches -F -- "section27-host" \
     && printf '%s' "$inv_dry_out" | stdin_matches -F -- "uname -m" \
+    && printf '%s' "$inv_dry_out" | stdin_matches -F -- "nproc" \
     && printf '%s' "$inv_dry_out" | stdin_matches -F -- "docker -H ssh://section27-host version"; then
     test_pass "inventory --dry-run prints the exact planned remote command list"
 else
     test_fail "inventory --dry-run prints the exact planned remote command list"
 fi
+if printf '%s' "$inv_dry_out" | stdin_matches -F -- "getconf"; then
+    test_fail "inventory never uses bare getconf (the real NAS's BusyBox shell has none)"
+else
+    test_pass "inventory never uses bare getconf (the real NAS's BusyBox shell has none)"
+fi
 
 reset_marker
 spike_dry_out="$(run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --dry-run 2>&1)"
 if [ ! -s "$MARKER" ]; then test_pass "spike --dry-run never invokes ssh/docker"; else test_fail "spike --dry-run never invokes ssh/docker"; fi
-if printf '%s' "$spike_dry_out" | stdin_matches -F -- "DRY-RUN: docker -H ssh://section27-host pull" \
-    && printf '%s' "$spike_dry_out" | stdin_matches -F -- "DRY-RUN: docker -H ssh://section27-host volume create --label dxe.role=spike dxe-spike-nix" \
+if printf '%s' "$spike_dry_out" | stdin_matches -F -- "DRY-RUN: ssh -o BatchMode=yes -o ConnectTimeout=10 -o LogLevel=ERROR section27-host \\<discovered-docker-path\\> pull" \
+    && printf '%s' "$spike_dry_out" | stdin_matches -F -- "volume create --label dxe.role=spike dxe-spike-nix" \
     && printf '%s' "$spike_dry_out" | stdin_matches -F -- "-W 127.0.0.1:2222"; then
     test_pass "spike --dry-run prints the exact planned remote command list"
 else
@@ -224,7 +323,7 @@ fi
 
 reset_marker
 set +e
-run_with_stubs "ssh_unreachable docker_unreachable" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" >"$STUB_DIR/refuse_out.log" 2>&1
+run_with_stubs "ssh_unreachable docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" >"$STUB_DIR/refuse_out.log" 2>&1
 refuse_status=$?
 set -e
 refuse_out="$(cat "$STUB_DIR/refuse_out.log")"
@@ -234,10 +333,10 @@ if printf '%s' "$refuse_out" | stdin_matches -F -- "cannot reach" && printf '%s'
 else
     test_fail "spike prints a clear unreachable-host error naming the host alias"
 fi
-if [ "$(grep -c '^ssh ' "$MARKER" || true)" -eq 1 ] && ! stdin_matches -F -- "docker " <"$MARKER"; then
-    test_pass "spike issues only the reachability preflight before refusing -- no docker call, no further ssh call"
+if [ "$(grep -c '^ssh ' "$MARKER" || true)" -eq 1 ]; then
+    test_pass "spike issues only the reachability preflight before refusing -- no further ssh call"
 else
-    test_fail "spike issues only the reachability preflight before refusing -- no docker call, no further ssh call"
+    test_fail "spike issues only the reachability preflight before refusing -- no further ssh call"
 fi
 
 # --- (c) every docker create/run/volume-create invocation in dry-run output ---
@@ -278,7 +377,7 @@ fi
 
 reset_marker
 set +e
-run_with_stubs "ssh docker_with_unrelated" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --cleanup >"$STUB_DIR/cleanup_out.log" 2>&1
+run_with_stubs "ssh_with_unrelated docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --cleanup --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" >"$STUB_DIR/cleanup_out.log" 2>&1
 cleanup_status=$?
 set -e
 if [ "$cleanup_status" -eq 0 ]; then test_pass "spike --cleanup exits 0 against a reachable host"; else test_fail "spike --cleanup exits 0 against a reachable host"; fi
@@ -298,7 +397,7 @@ done
 # --cleanup is idempotent: nothing labelled left means nothing removed, exit 0.
 reset_marker
 set +e
-run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --cleanup >"$STUB_DIR/cleanup_empty_out.log" 2>&1
+run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --cleanup --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" >"$STUB_DIR/cleanup_empty_out.log" 2>&1
 cleanup_empty_status=$?
 set -e
 cleanup_empty_out="$(cat "$STUB_DIR/cleanup_empty_out.log")"
@@ -312,7 +411,7 @@ fi
 
 reset_marker
 set +e
-run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" >"$STUB_DIR/norestart_out.log" 2>&1
+run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" >"$STUB_DIR/norestart_out.log" 2>&1
 set -e
 norestart_out="$(cat "$STUB_DIR/norestart_out.log")"
 if printf '%s' "$norestart_out" | stdin_matches -F -- "Step 8a: SKIP" \
@@ -335,64 +434,97 @@ fi
 
 reset_marker
 set +e
-run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --with-service-restart --with-nas-reboot >"$STUB_DIR/withrestart_out.log" 2>&1
+run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --with-service-restart --with-nas-reboot --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" >"$STUB_DIR/withrestart_out.log" 2>&1
 set -e
 if grep -q 'restart dxe-spike-container' "$MARKER"; then test_pass "--with-service-restart issues the container restart"; else test_fail "--with-service-restart issues the container restart"; fi
 if grep -q 'container-station.sh restart' "$MARKER"; then test_pass "--with-service-restart issues the Container Station restart"; else test_fail "--with-service-restart issues the Container Station restart"; fi
 if grep -qE ' reboot$' "$MARKER"; then test_pass "--with-nas-reboot issues the NAS reboot"; else test_fail "--with-nas-reboot issues the NAS reboot"; fi
 
-# --- (f) the inventory report redacts a planted token-like string ---------
+# --- (f) redaction: a planted token-like string never survives into either ---
+# --- inventory report; the summary additionally never carries a path/name ---
 
-REPORT_OUT="$STUB_DIR/report.md"
 reset_marker
 set +e
-run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_INV" --report "$REPORT_OUT" >/dev/null 2>&1
+run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_INV" --report "$INV_REPORT" --summary "$INV_SUMMARY" >/dev/null 2>&1
 inv_status=$?
 set -e
 if [ "$inv_status" -eq 0 ]; then test_pass "inventory exits 0 against a reachable host"; else test_fail "inventory exits 0 against a reachable host"; fi
-assert_file_exists "$REPORT_OUT" "inventory writes a report file"
-if [ -f "$REPORT_OUT" ]; then
-    if grep -qF -- 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef1234' "$REPORT_OUT"; then
-        test_fail "the planted token-like string is redacted from the report"
+assert_file_exists "$INV_REPORT" "inventory writes a full report file"
+assert_file_exists "$INV_SUMMARY" "inventory writes a summary file"
+for f in "$INV_REPORT" "$INV_SUMMARY"; do
+    if grep -qF -- 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef1234' "$f"; then
+        test_fail "the planted token-like string is redacted from $(basename "$f")"
     else
-        test_pass "the planted token-like string is redacted from the report"
+        test_pass "the planted token-like string is redacted from $(basename "$f")"
     fi
-    assert_file_contains_literal "$REPORT_OUT" '[REDACTED' "the report carries a redaction marker in its place"
-    assert_file_contains_literal "$REPORT_OUT" 'Host alias:' "the report header names the host alias"
-    assert_file_contains_literal "$REPORT_OUT" 'Commit:' "the report header names the script's git commit"
+done
+assert_file_contains_literal "$INV_REPORT" '[REDACTED' "the full report carries a redaction marker in its place"
+assert_file_contains_literal "$INV_REPORT" 'Host alias:' "the full report header names the host alias"
+assert_file_contains_literal "$INV_REPORT" 'Commit:' "the full report header names the script's git commit"
+if grep -qF -- "$FAKE_DOCKER_BIN" "$INV_SUMMARY"; then
+    test_fail "the summary never carries the discovered Docker CLI path"
+else
+    test_pass "the summary never carries the discovered Docker CLI path"
+fi
+assert_file_contains_literal "$INV_SUMMARY" 'A non-default administrator account can run Docker non-interactively: yes' "the summary answers the non-default-admin-docker question without an account name"
+
+# --- Spike's --summary is step verdicts + prefix only, never a path -------
+
+reset_marker
+set +e
+run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" >/dev/null 2>&1
+set -e
+assert_file_exists "$SPIKE_REPORT" "spike writes a full report file"
+assert_file_exists "$SPIKE_SUMMARY" "spike writes a summary file"
+if grep -qF -- "$FAKE_DOCKER_BIN" "$SPIKE_SUMMARY"; then
+    test_fail "spike's summary never carries the discovered Docker CLI path"
+else
+    test_pass "spike's summary never carries the discovered Docker CLI path"
+fi
+if grep -qE '^Step [A-Za-z0-9-]+: (PASS|FAIL|SKIP)$' "$SPIKE_SUMMARY"; then
+    test_pass "spike's summary lines are bare step verdicts with no detail"
+else
+    test_fail "spike's summary lines are bare step verdicts with no detail"
+fi
+if grep -qF -- "$FAKE_DOCKER_BIN" "$SPIKE_REPORT"; then
+    test_pass "spike's full report may still record the discovered path (private file)"
+else
+    test_fail "spike's full report may still record the discovered path (private file)"
+fi
+
+# --- Both scripts default their reports OUTSIDE the repository -----------
+#
+# HOME is overridden to a throwaway directory for this one case (never the
+# real developer $HOME) precisely so this test can observe the *default*
+# path without ever writing into anyone's real ~/dxe-recovery/qnap/.
+reset_marker
+set +e
+HOME="$FAKE_HOME" run_with_stubs "ssh docker" env DXE_QNAP_HOST=section27-host HOME="$FAKE_HOME" "$QNAP_INV" >/dev/null 2>&1
+set -e
+if find "$FAKE_HOME/dxe-recovery/qnap" -type f -name '*.md' 2>/dev/null | stdin_matches .; then
+    test_pass "inventory's default report/summary paths land outside the repository (under \$HOME/dxe-recovery/qnap/)"
+else
+    test_fail "inventory's default report/summary paths land outside the repository (under \$HOME/dxe-recovery/qnap/)"
+fi
+if find "$BASE_DIR/docs/evidence/qnap" -type f 2>/dev/null | stdin_matches .; then
+    test_fail "inventory never defaults into docs/evidence/qnap/ (repository)"
+else
+    test_pass "inventory never defaults into docs/evidence/qnap/ (repository)"
 fi
 
 # --- A single failing step reports FAIL and does not abort the run --------
 #
 # The spike script runs under its own `set -euo pipefail`. Every step calls
-# a function whose last command is the real docker/ssh invocation, so a
+# a function whose last command is the real ssh/docker invocation, so a
 # bare "cmd; step_verdict "$?"" pair would make the *first* failing step
 # kill the whole script before it could ever print FAIL or reach later
 # steps/cleanup -- exactly the bug this test caught by hand while writing
 # phase0-spike.sh (see the branch progress file). Force step 2's base-image
 # pull to fail and confirm steps 3-9 still run and the run still exits
 # non-zero (not merely "some assertion never ran").
-write_stub docker_step2_fails '
-printf "docker %s\n" "$*" >> "'"$MARKER"'"
-args=("$@")
-case "${args[0]:-}" in -H) unset "args[0]" "args[1]"; args=("${args[@]}") ;; esac
-sub="${args[0]:-}"
-case "$sub" in
-    pull) exit 1 ;;
-    volume)
-        case "${args[1]:-}" in create) echo "${args[*]: -1}"; exit 0 ;; ls|rm) exit 0 ;; esac
-        ;;
-    image)
-        case "${args[1]:-}" in ls) exit 0 ;; esac
-        ;;
-    version|inspect|build|run|exec|ps|rm|rmi|restart) exit 0 ;;
-esac
-exit 0
-'
-
 reset_marker
 set +e
-run_with_stubs "ssh docker_step2_fails" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" >"$STUB_DIR/step2fail_out.log" 2>&1
+run_with_stubs "ssh_step2_fails docker" env DXE_QNAP_HOST=section27-host "$QNAP_SPIKE" --report "$SPIKE_REPORT" --summary "$SPIKE_SUMMARY" >"$STUB_DIR/step2fail_out.log" 2>&1
 step2fail_status=$?
 set -e
 step2fail_out="$(cat "$STUB_DIR/step2fail_out.log")"

@@ -28,6 +28,15 @@
 # volumes, then the built image), proven by a before/after diff of the full
 # (unfiltered) container/volume/image listing.
 #
+# The NAS is a production system: --report writes the FULL step-by-step log
+# (may include the discovered Docker CLI absolute path -- fine, since this
+# file is private), and --summary writes only step verdicts plus a reminder
+# that resources use the dxe-spike- prefix, nothing else. BOTH default to a
+# location OUTSIDE this repository (see dxe_qnap_private_dir in
+# lib/phase0-common.sh) -- this repository never gets more than the one-line
+# outcome the operator adds to qnap-dxe-plan.md by hand. See
+# tests/qnap/README.md.
+#
 # See tests/qnap/README.md for how to prepare access and read step output.
 set -euo pipefail
 
@@ -42,10 +51,12 @@ DXE_DRY_RUN=0
 DXE_CLEANUP=0
 DXE_WITH_SERVICE_RESTART=0
 DXE_WITH_NAS_REBOOT=0
+REPORT_PATH=""
+SUMMARY_PATH=""
 
 usage() {
-    echo "Usage: $(basename "$0") [--dry-run] [--with-service-restart] [--with-nas-reboot]" >&2
-    echo "       $(basename "$0") --cleanup [--dry-run]" >&2
+    echo "Usage: $(basename "$0") [--dry-run] [--with-service-restart] [--with-nas-reboot] [--report FILE] [--summary FILE]" >&2
+    echo "       $(basename "$0") --cleanup [--dry-run] [--report FILE] [--summary FILE]" >&2
 }
 
 while [ "$#" -gt 0 ]; do
@@ -54,10 +65,17 @@ while [ "$#" -gt 0 ]; do
         --cleanup) DXE_CLEANUP=1; shift ;;
         --with-service-restart) DXE_WITH_SERVICE_RESTART=1; shift ;;
         --with-nas-reboot) DXE_WITH_NAS_REBOOT=1; shift ;;
+        --report) [ "$#" -ge 2 ] || { echo "Error: --report requires FILE." >&2; exit 2; }; REPORT_PATH="$2"; shift 2 ;;
+        --report=*) REPORT_PATH="${1#*=}"; shift ;;
+        --summary) [ "$#" -ge 2 ] || { echo "Error: --summary requires FILE." >&2; exit 2; }; SUMMARY_PATH="$2"; shift 2 ;;
+        --summary=*) SUMMARY_PATH="${1#*=}"; shift ;;
         --help) usage; exit 0 ;;
         *) echo "Error: unknown argument: $1" >&2; usage; exit 2 ;;
     esac
 done
+
+[ -n "$REPORT_PATH" ] || REPORT_PATH="$(dxe_qnap_private_dir)/phase0-spike-$(dxe_qnap_utc_date).log"
+[ -n "$SUMMARY_PATH" ] || SUMMARY_PATH="$(dxe_qnap_private_dir)/phase0-spike-summary-$(dxe_qnap_utc_date).md"
 
 STEP_FAILED=0
 step_header() { printf '\n--- Step %s: %s ---\n' "$1" "$2"; }
@@ -78,6 +96,34 @@ step_verdict() {
 }
 
 step_skip() { printf 'Step %s: SKIP (%s)\n' "$1" "$2"; }
+
+# --- Discover the Docker CLI's absolute path (once, before any step) ------
+#
+# Confirmed on the real NAS: the non-interactive PATH lacks the Docker CLI,
+# so every step below must use the discovered absolute path rather than a
+# bare "docker" -- see lib/phase0-common.sh's dxe_qnap_docker_run comment.
+# An explicit DXE_QNAP_DOCKER always wins (skips the round trip). Never
+# prints the discovered path outside the full --report (private).
+dxe_qnap_ensure_docker_bin() {
+    if [ -n "${DXE_QNAP_DOCKER:-}" ]; then
+        echo "Using DXE_QNAP_DOCKER override (absolute path not repeated here)."
+        return 0
+    fi
+    if [ "$DXE_DRY_RUN" = 1 ]; then
+        dxe_qnap_ssh_capture "$(dxe_qnap_docker_discovery_remote_script)" >/dev/null
+        DXE_QNAP_DOCKER='<discovered-docker-path>'
+        return 0
+    fi
+    local discovered
+    discovered="$(dxe_qnap_ssh_capture "$(dxe_qnap_docker_discovery_remote_script)")"
+    discovered="$(printf '%s\n' "$discovered" | tail -n1 | tr -d '\r')"
+    if [ -z "$discovered" ] || [ "$discovered" = NOTFOUND ]; then
+        echo "Error: could not discover the Docker CLI's absolute path on $(dxe_qnap_host) (checked the non-interactive PATH and the Container Station qpkg's own bin directory). Set DXE_QNAP_DOCKER=<path> to override. See tests/qnap/README.md." >&2
+        exit 1
+    fi
+    DXE_QNAP_DOCKER="$discovered"
+    echo "Discovered the Docker CLI (absolute path recorded only in the private --report, never in --summary)."
+}
 
 # --- Base image reference (DQ7: native architecture; step 2) --------------
 
@@ -188,6 +234,7 @@ dxe_spike_cleanup() {
 
     after="$(dxe_spike_snapshot)"
     dxe_spike_diff_snapshot "$before" "$after" || true
+    return "$STEP_FAILED"
 }
 
 # --- The nine spike steps --------------------------------------------------
@@ -202,7 +249,7 @@ dxe_spike_run_steps() {
     status=0; dxe_qnap_ssh_exec true || status=$?
     step_verdict 1a "$status" "ssh reachability (already verified before mutation)"
     status=0; dxe_qnap_docker_run version || status=$?
-    step_verdict 1b "$status" "docker -H $(dxe_qnap_docker_host_arg) version"
+    step_verdict 1b "$status" "$(dxe_qnap_docker_bin) version via ssh"
 
     step_header 2 "Pull pinned base image for native architecture"
     local base_ref tag_ref resolved tag_resolved
@@ -254,14 +301,18 @@ dxe_spike_run_steps() {
         dxe_qnap_docker_run exec "$(dxe_spike_name container)" sh -c 'sha256sum /tmp/payload.txt'
     else
         local payload_dir local_sha remote_sha stream_status=0
+        local ssh_opts=() ssh_opt
+        while IFS= read -r ssh_opt; do ssh_opts+=("$ssh_opt"); done <<<"$(dxe_qnap_ssh_opts)"
         payload_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-spike-payload.XXXXXX")"
         printf 'dxe phase0 spike payload %s\n' "$(date -u +%s)" >"$payload_dir/payload.txt"
         local_sha="$(shasum -a 256 "$payload_dir/payload.txt" 2>/dev/null | awk '{print $1}')"
         [ -n "$local_sha" ] || local_sha="$(sha256sum "$payload_dir/payload.txt" | awk '{print $1}')"
-        printf '+ tar -C %s -cf - payload.txt | docker -H %s exec -i %s tar -xf - -C /tmp\n' \
-            "$payload_dir" "$(dxe_qnap_docker_host_arg)" "$(dxe_spike_name container)" >&2
-        tar -C "$payload_dir" -cf - payload.txt | docker -H "$(dxe_qnap_docker_host_arg)" exec -i "$(dxe_spike_name container)" tar -xf - -C /tmp || stream_status=$?
-        remote_sha="$(docker -H "$(dxe_qnap_docker_host_arg)" exec "$(dxe_spike_name container)" sh -c 'sha256sum /tmp/payload.txt 2>/dev/null || shasum -a 256 /tmp/payload.txt' 2>/dev/null | awk '{print $1}')"
+        printf '+ tar -C %s -cf - payload.txt | ssh %s %s exec -i %s tar -xf - -C /tmp\n' \
+            "$payload_dir" "$(dxe_qnap_host)" "$(dxe_qnap_docker_bin)" "$(dxe_spike_name container)" >&2
+        tar -C "$payload_dir" -cf - payload.txt \
+            | ssh "${ssh_opts[@]}" "$(dxe_qnap_host)" "$(dxe_qnap_docker_bin)" exec -i "$(dxe_spike_name container)" tar -xf - -C /tmp \
+            || stream_status=$?
+        remote_sha="$(ssh "${ssh_opts[@]}" "$(dxe_qnap_host)" "$(dxe_qnap_docker_bin)" exec "$(dxe_spike_name container)" sh -c 'sha256sum /tmp/payload.txt 2>/dev/null || shasum -a 256 /tmp/payload.txt' 2>/dev/null | awk '{print $1}')"
         rm -rf "$payload_dir"
         if [ "$stream_status" -eq 0 ] && [ -n "$remote_sha" ] && [ "$remote_sha" = "$local_sha" ]; then
             step_verdict 6 0 "sha256 matched ($local_sha)"
@@ -331,20 +382,16 @@ dxe_spike_run_steps() {
     fi
 
     step_header 9 "Delete only labelled spike resources; prove nothing else changed"
-    dxe_spike_cleanup
+    dxe_spike_cleanup || true
     if [ "$DXE_DRY_RUN" != 1 ]; then
         local after
         after="$(dxe_spike_snapshot)"
         dxe_spike_diff_snapshot "$before" "$after" || true
     fi
+    return "$STEP_FAILED"
 }
 
 # --- Entry point ------------------------------------------------------------
-
-if [ "$DXE_DRY_RUN" != 1 ] && ! command -v docker >/dev/null 2>&1; then
-    echo "Error: local 'docker' CLI not found. The Docker-over-SSH control plane (DQ1) requires Docker installed on the controller (this Mac)." >&2
-    exit 1
-fi
 
 if [ "$DXE_DRY_RUN" != 1 ]; then
     dxe_qnap_require_reachable || exit 1
@@ -352,11 +399,63 @@ fi
 
 echo "QNAP Phase 0 spike -- host alias: $(dxe_qnap_host)$( [ "$DXE_DRY_RUN" = 1 ] && printf ' (DRY RUN: nothing will connect)' || true)"
 
-if [ "$DXE_CLEANUP" = 1 ]; then
-    step_header cleanup "Remove only dxe.role=spike-labelled leftovers"
-    dxe_spike_cleanup
+dxe_qnap_ensure_docker_bin || exit 1
+
+if [ "$DXE_DRY_RUN" = 1 ]; then
+    # Streams directly to the terminal as it runs; nothing is written to
+    # disk under --dry-run (nothing was connected, so there is nothing to
+    # report -- matches phase0-inventory.sh's own --dry-run behavior).
+    if [ "$DXE_CLEANUP" = 1 ]; then
+        step_header cleanup "Remove only dxe.role=spike-labelled leftovers"
+        dxe_spike_cleanup || true
+    else
+        dxe_spike_run_steps || true
+    fi
 else
-    dxe_spike_run_steps
+    mkdir -p "$(dirname "$REPORT_PATH")" "$(dirname "$SUMMARY_PATH")"
+    # Captured (not streamed) so STEP_FAILED can be recovered from the
+    # subshell command substitution creates via its own exit status --
+    # a piped "| tee" would run the same subshell without exposing that
+    # status cleanly, and everything below still needs it. set +e/-e
+    # brackets the assignment itself: under this script's own set -e, a
+    # failing "var=$(cmd)" assignment is fatal on the spot (same class of
+    # bug the "status=0; cmd || status=$?" idiom elsewhere in this file
+    # exists to avoid) -- "|| true" on the assignment would dodge that abort
+    # but also discard the real status before "$?" could ever read it.
+    set +e
+    if [ "$DXE_CLEANUP" = 1 ]; then
+        full_output="$( { step_header cleanup "Remove only dxe.role=spike-labelled leftovers"; dxe_spike_cleanup; } 2>&1 )"
+    else
+        full_output="$(dxe_spike_run_steps 2>&1)"
+    fi
+    STEP_FAILED=$?
+    set -e
+    printf '%s\n' "$full_output"
+
+    full_output="$(printf '%s\n' "$full_output" | dxe_redact_secrets)"
+
+    {
+        dxe_qnap_report_header "$BASE_DIR" "QNAP Phase 0 spike (FULL -- private, never commit)"
+        printf '%s\n' "$full_output"
+    } >"$REPORT_PATH.tmp.$$" || { rm -f "$REPORT_PATH.tmp.$$"; exit 1; }
+    mv "$REPORT_PATH.tmp.$$" "$REPORT_PATH"
+
+    {
+        dxe_qnap_report_header "$BASE_DIR" "QNAP Phase 0 spike (summary)"
+        echo "Whitelisted fields only: step verdicts and the fact that every"
+        echo "resource uses the \"$DXE_SPIKE_PREFIX<role>\" name prefix -- no"
+        echo "hostnames, paths, digests, or account names. Private by default"
+        echo "(see tests/qnap/README.md)."
+        echo
+        printf '%s\n' "$full_output" \
+            | grep -E '^Step [A-Za-z0-9-]+: (PASS|FAIL|SKIP)' \
+            | sed -E 's/^(Step [A-Za-z0-9-]+: (PASS|FAIL|SKIP)).*/\1/' \
+            || echo "(no step verdicts recorded)"
+    } >"$SUMMARY_PATH.tmp.$$" || { rm -f "$SUMMARY_PATH.tmp.$$"; exit 1; }
+    mv "$SUMMARY_PATH.tmp.$$" "$SUMMARY_PATH"
+
+    echo "Full report (private, do not commit): $REPORT_PATH" >&2
+    echo "Summary (private, do not commit): $SUMMARY_PATH" >&2
 fi
 
 echo

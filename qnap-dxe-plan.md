@@ -348,17 +348,34 @@ Versioned, non-interactive, idempotent replacements for running the
 Inventory and Disposable spike sections above by hand:
 
 - `tests/qnap/phase0-inventory.sh` — runs the Inventory list's commands
-  over one SSH session plus the Mac-side `docker -H ssh://<alias> version`
-  control-plane check, and writes a sanitised, redacted Markdown report.
+  over one SSH session (discovering the Docker CLI and Tailscale by glob
+  rather than assuming either is on the non-interactive PATH — confirmed on
+  the real NAS that neither is) plus the Mac-side `docker -H ssh://<alias>
+  version` control-plane finding, and writes a full report and a small
+  whitelisted-fields-only summary.
 - `tests/qnap/phase0-spike.sh` — runs the Disposable spike's nine steps as
   individually reported steps, scoped throughout to `dxe-spike-*`-named,
-  `dxe.role=spike`-labelled resources; `--cleanup` alone removes only
-  those.
+  `dxe.role=spike`-labelled resources; every Docker command runs as a plain
+  SSH remote command against the discovered absolute path (DQ1's fallback,
+  not the local Docker CLI's own ssh transport); `--cleanup` alone removes
+  only those.
 - `tests/qnap/README.md` — access setup (the `ssh_config` alias and
   authorized-keys step), how to run both scripts, how to read their
   output, and this section's exit gate restated for operators.
 - `tests/test_section27_qnap_scripts.sh` — container-free contracts against
   a stub `ssh`/`docker`, run in CI and via `tests/run-tier.sh unit/static`.
+- `tests/test_section1_secrets.sh` — extended with generic leak-shape
+  detectors (tailnet IPs, Tailscale MagicDNS suffixes, QNAP storage-pool
+  paths, SSH public-key blobs/fingerprints, PEM private-key headers) so a
+  future accidental paste of NAS-identifying detail into a tracked file
+  fails this gate.
+
+The NAS is a production system and this repository is public: both
+scripts' full report and summary default OUTSIDE the repository (under
+`$HOME/dxe-recovery/qnap/`), never inside it. The only thing this plan
+document should ever record from a real run is a one-line outcome —
+native architecture supported (yes/no) and Docker-over-SSH viability —
+added by hand; never the full or summary report content.
 
 Status unchanged: this is tooling for Phase 0, not a run of it. Nothing
 above has been executed against a real QNAP; see `tests/qnap/README.md`
