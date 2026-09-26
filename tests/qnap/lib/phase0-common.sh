@@ -166,7 +166,10 @@ dxe_qnap_require_reachable() {
 DXE_QNAP_DOCKER_BIN_GLOB='/share/*/.qpkg/container-station/bin/docker'
 
 # Same idea for Tailscale: its qpkg is not on the non-interactive PATH
-# either. Two candidate layouts, since qpkg install conventions vary.
+# either. Two candidate layouts, since qpkg install conventions vary. Used
+# only by phase0-inventory.sh, not within this file, so ShellCheck (run
+# per-file) cannot see that use.
+# shellcheck disable=SC2034
 DXE_QNAP_TAILSCALE_BIN_GLOB='/share/*/.qpkg/Tailscale/tailscale /share/*/.qpkg/Tailscale/bin/tailscale'
 
 # The Docker CLI to invoke on the NAS: an explicit DXE_QNAP_DOCKER override,
