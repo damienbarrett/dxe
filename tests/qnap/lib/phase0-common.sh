@@ -166,10 +166,10 @@ dxe_qnap_require_reachable() {
 DXE_QNAP_DOCKER_BIN_GLOB='/share/*/.qpkg/container-station/bin/docker'
 
 # Same idea for Tailscale: its qpkg is not on the non-interactive PATH
-# either. Two candidate layouts, since qpkg install conventions vary. Used
-# only by phase0-inventory.sh, not within this file, so ShellCheck (run
-# per-file) cannot see that use.
-# shellcheck disable=SC2034
+# either. Two candidate layouts, since qpkg install conventions vary. Used by
+# phase0-inventory.sh's own discovery and, below, by this file's own
+# dxe_qnap_tailnet_addr_discovery_remote_script (DQ5: the guest SSH port
+# publishes to this address only).
 DXE_QNAP_TAILSCALE_BIN_GLOB='/share/*/.qpkg/Tailscale/tailscale /share/*/.qpkg/Tailscale/bin/tailscale'
 
 # The Docker CLI to invoke on the NAS: an explicit DXE_QNAP_DOCKER override,
@@ -200,6 +200,29 @@ dxe_qpkg_binary_discovery_snippet() {
 # one field among many in a single larger combined session.
 dxe_qnap_docker_discovery_remote_script() {
     printf '%s\necho "${DXE_DOCKER_BIN:-NOTFOUND}"\n' "$(dxe_qpkg_binary_discovery_snippet DXE_DOCKER_BIN docker "$DXE_QNAP_DOCKER_BIN_GLOB")"
+}
+
+# Same idea, for the NAS's Tailscale IPv4 address (DQ5, amended 2026-09-26:
+# the guest's SSH port publishes there only). Tries the Tailscale qpkg CLI's
+# own "ip -4" subcommand first -- authoritative, since it is the address
+# Tailscale itself currently considers current -- falling back to reading
+# the address assigned to the "tailscale0" interface directly if the CLI is
+# not found or prints nothing. Both paths are BusyBox/ash-compatible (no
+# bashisms), matching every other remote snippet this file builds. Used by
+# phase0-spike.sh's dxe_qnap_ensure_tailnet_addr; never hard-coded, never the
+# sole source of anything this repository tracks.
+dxe_qnap_tailnet_addr_discovery_remote_script() {
+    cat <<REMOTE
+$(dxe_qpkg_binary_discovery_snippet DXE_TAILSCALE_BIN tailscale "$DXE_QNAP_TAILSCALE_BIN_GLOB")
+DXE_TAILNET_ADDR=""
+if [ -n "\$DXE_TAILSCALE_BIN" ]; then
+    DXE_TAILNET_ADDR="\$("\$DXE_TAILSCALE_BIN" ip -4 2>/dev/null | head -n1)"
+fi
+if [ -z "\$DXE_TAILNET_ADDR" ]; then
+    DXE_TAILNET_ADDR="\$(ip -4 addr show tailscale0 2>/dev/null | awk '/inet /{print \$2}' | cut -d/ -f1 | head -n1)"
+fi
+echo "\${DXE_TAILNET_ADDR:-NOTFOUND}"
+REMOTE
 }
 
 # Dry-run-aware call whose exit status is what matters: runs the discovered

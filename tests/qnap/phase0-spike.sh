@@ -6,7 +6,11 @@
 # resource this script creates is named "dxe-spike-<role>" AND carries the
 # label dxe.role=spike; every query/delete filters by that label, so nothing
 # unlabelled is ever touched. Never privileged, never CAP_SYS_ADMIN, never
-# published beyond 127.0.0.1, never a TCP-exposed daemon.
+# published to the LAN or the internet, never a TCP-exposed daemon. Guest SSH
+# (step 5/7) is published on the NAS's own Tailscale address only (DQ5,
+# amended 2026-09-26) -- discovered at run time, never hard-coded -- or, if
+# that address cannot be discovered, on 127.0.0.1 as a fallback (in which
+# case step 7 reports FAIL: there is nothing tailnet-reachable to verify).
 #
 # Usage:
 #   tests/qnap/phase0-spike.sh [--dry-run] [--with-container-restart] [--with-service-restart] [--with-nas-reboot]
@@ -127,6 +131,39 @@ dxe_qnap_ensure_docker_bin() {
     fi
     DXE_QNAP_DOCKER="$discovered"
     echo "Discovered the Docker CLI (absolute path recorded only in the private --report, never in --summary)."
+}
+
+# --- Discover the NAS's Tailscale IPv4 address (once, before any step) ----
+#
+# DQ5 (amended 2026-09-26): the guest's SSH port publishes on the NAS's own
+# Tailscale address only -- not loopback, not the LAN, not 0.0.0.0 -- so the
+# controller reaches it directly over the tailnet (exposure governed by
+# Tailscale ACLs), instead of jumping through the NAS (that jump failed on
+# the real NAS: sshd's QTS-default "AllowTcpForwarding no" makes ssh -W/
+# ProxyJump "administratively prohibited"). Never hard-coded, never printed
+# outside the private --report (same rule as the discovered Docker CLI path
+# above). Unlike dxe_qnap_ensure_docker_bin, failure here is never fatal:
+# step 5 falls back to binding 127.0.0.1 only so the rest of the spike still
+# runs, and step 7 reports FAIL with a clear reason instead of silently
+# checking nothing.
+DXE_QNAP_TAILNET_ADDR=""
+
+dxe_qnap_ensure_tailnet_addr() {
+    if [ "$DXE_DRY_RUN" = 1 ]; then
+        dxe_qnap_ssh_capture "$(dxe_qnap_tailnet_addr_discovery_remote_script)" >/dev/null
+        DXE_QNAP_TAILNET_ADDR='<tailnet-ip>'
+        return 0
+    fi
+    local discovered
+    discovered="$(dxe_qnap_ssh_capture "$(dxe_qnap_tailnet_addr_discovery_remote_script)")"
+    discovered="$(printf '%s\n' "$discovered" | tail -n1 | tr -d '\r')"
+    if [ -z "$discovered" ] || [ "$discovered" = NOTFOUND ]; then
+        DXE_QNAP_TAILNET_ADDR=""
+        echo "Warning: could not discover the NAS's Tailscale address (checked the Tailscale qpkg CLI's \"ip -4\" and the tailscale0 interface directly). Step 5 will fall back to publishing 127.0.0.1 only; step 7 will report FAIL. See tests/qnap/README.md."
+        return 0
+    fi
+    DXE_QNAP_TAILNET_ADDR="$discovered"
+    echo "Discovered the NAS's Tailscale address (recorded only in the private --report, never in --summary)."
 }
 
 # --- Base image reference (DQ7: native architecture; step 2) --------------
@@ -352,12 +389,25 @@ dxe_spike_run_steps() {
     done
 
     step_header 5 "Run a disposable container (Nix volume at /nix; no --privileged, no CAP_SYS_ADMIN)"
+    # DQ5 (amended 2026-09-26): publish to the NAS's own discovered Tailscale
+    # address only, never loopback and never 0.0.0.0 -- unless that address
+    # could not be discovered (dxe_qnap_ensure_tailnet_addr above), in which
+    # case fall back to 127.0.0.1 so the rest of the spike still runs; step 7
+    # then reports FAIL (there is nothing tailnet-reachable to verify).
+    local publish_addr publish_detail
+    if [ -n "$DXE_QNAP_TAILNET_ADDR" ]; then
+        publish_addr="$DXE_QNAP_TAILNET_ADDR"
+        publish_detail="published to the NAS's Tailscale address only; exposure governed by Tailscale ACLs"
+    else
+        publish_addr="127.0.0.1"
+        publish_detail="Tailscale address not discovered -- fell back to loopback-only publication; step 7 will report FAIL"
+    fi
     if [ "$DXE_DRY_RUN" = 1 ]; then
         dxe_qnap_docker_run run -d \
             --name "$(dxe_spike_name container)" \
             --label "$DXE_SPIKE_LABEL" \
             -v "$(dxe_spike_name nix):/nix" \
-            -p 127.0.0.1:2222:2222 \
+            -p "$publish_addr:2222:2222" \
             "$(dxe_spike_name image):phase0" \
             /bin/sh -c "$(dxe_spike_listener_command)"
     else
@@ -385,13 +435,13 @@ dxe_spike_run_steps() {
             --name "$(dxe_spike_name container)" \
             --label "$DXE_SPIKE_LABEL" \
             -v "$(dxe_spike_name nix):/nix" \
-            -p 127.0.0.1:2222:2222 \
+            -p "$publish_addr:2222:2222" \
             "$(dxe_spike_name image):phase0" \
             /bin/sh -c "$(dxe_spike_listener_command)")"
         printf '+ ssh %s %s\n' "$(dxe_qnap_host)" "$remote_cmd" >&2
         status=0
         ssh "${ssh_opts[@]}" "$(dxe_qnap_host)" "$remote_cmd" || status=$?
-        step_verdict 5 "$status" "container $(dxe_spike_name container)"
+        step_verdict 5 "$status" "container $(dxe_spike_name container) ($publish_detail)"
     fi
 
     step_header 6 "Stream a small tar payload through docker exec -i and verify sha256"
@@ -434,46 +484,71 @@ dxe_spike_run_steps() {
         fi
     fi
 
-    step_header 7 "Bind guest port 2222 to QNAP loopback only and verify"
-    # -W hands ssh's own stdio to a raw TCP connection the NAS makes to its
-    # own loopback:2222 -- an ssh CLI option, so it must sit before the
-    # destination, unlike every other call in this script (which passes a
-    # remote command string after the destination). There is no sshd in the
-    # spike container to "-J" through past this single hop (see the comment
-    # on dxe_spike_listener_command above), so this -W probe alone is the
-    # reachability proof; both the dry-run preview and the real probe below
-    # build the same ssh_opts array so they can never drift apart.
-    local ssh_opts=() ssh_opt
-    while IFS= read -r ssh_opt; do ssh_opts+=("$ssh_opt"); done <<<"$(dxe_qnap_ssh_opts)"
+    step_header 7 "Bind guest port 2222 to the NAS's Tailscale address only and verify"
+    # DQ5 (amended 2026-09-26): the real first spike run confirmed loopback
+    # binding but then found "ssh -W"/ProxyJump through the NAS
+    # "administratively prohibited" -- the NAS's sshd carries QTS's default
+    # "AllowTcpForwarding no", and QTS regenerates its sshd config, so a
+    # persistent local override would be fragile. A BusyBox `nc`
+    # exec-channel relay was proven possible and considered, but rejected in
+    # favour of publishing directly to the NAS's Tailscale address (step 5)
+    # and having the controller connect there directly -- no jump host, no
+    # forwarding, exposure governed entirely by Tailscale ACLs. There is
+    # still no sshd in the spike container to reach via a normal ssh
+    # connection (see the comment on dxe_spike_listener_command above), so
+    # this step proves reachability with a plain TCP connect from the
+    # controller instead.
     if [ "$DXE_DRY_RUN" = 1 ]; then
         # dxe_maybe_run is a pure preview here (DXE_DRY_RUN=1 always returns
-        # without executing); the real probe below is a distinct,
-        # timeout-wrapped invocation because -W blocks until the tunnel
-        # closes, which a bare dxe_maybe_run call must never attempt.
-        dxe_maybe_run ssh "${ssh_opts[@]}" -W 127.0.0.1:2222 "$(dxe_qnap_host)"
+        # without executing) against the placeholder address
+        # dxe_qnap_ensure_tailnet_addr set above.
+        dxe_maybe_run nc -z -w 5 "$DXE_QNAP_TAILNET_ADDR" 2222
+        dxe_maybe_run curl -s --http0.9 --max-time 5 "http://$DXE_QNAP_TAILNET_ADDR:2222/"
+    elif [ -z "$DXE_QNAP_TAILNET_ADDR" ]; then
+        step_verdict 7 1 "the NAS's Tailscale address could not be discovered (see step 5); nothing to verify"
     else
-        local ss_output loopback_ok=1
+        local ss_output tailnet_only=1 ss_line
         ss_output="$(dxe_qnap_ssh_capture 'ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null')"
-        case "$ss_output" in *"127.0.0.1:2222"*) ;; *) loopback_ok=0 ;; esac
-        case "$ss_output" in *"0.0.0.0:2222"*|*":::2222"*|*"*:2222"*) loopback_ok=0 ;; esac
-        if [ "$loopback_ok" -eq 1 ]; then
-            echo "Step 7: ss -ltn confirms 2222 is bound to 127.0.0.1 only."
-            # A forced timeout closing an otherwise-live connection (124)
-            # counts as reached; an immediate SSH-level connect failure
-            # (255) does not.
-            local reach_rc=0
-            if command -v timeout >/dev/null 2>&1; then
-                timeout 5 ssh "${ssh_opts[@]}" -W 127.0.0.1:2222 "$(dxe_qnap_host)" </dev/null >/dev/null 2>&1 || reach_rc=$?
+        case "$ss_output" in *"$DXE_QNAP_TAILNET_ADDR:2222"*) ;; *) tailnet_only=0 ;; esac
+        # Every LISTEN line naming :2222 must be the discovered tailnet
+        # address -- not 0.0.0.0:2222, not [::]:2222, not any other address.
+        while IFS= read -r ss_line; do
+            case "$ss_line" in
+                *:2222*)
+                    case "$ss_line" in
+                        *"$DXE_QNAP_TAILNET_ADDR:2222"*) ;;
+                        *) tailnet_only=0 ;;
+                    esac
+                    ;;
+            esac
+        done <<<"$ss_output"
+        if [ "$tailnet_only" -eq 1 ]; then
+            echo "Step 7: ss -ltn confirms 2222 is bound to the NAS's Tailscale address only (address recorded in the private report only)."
+            local connect_rc=0 pong_ok=0 fetch_out=""
+            if command -v nc >/dev/null 2>&1; then
+                nc -z -w 5 "$DXE_QNAP_TAILNET_ADDR" 2222 || connect_rc=$?
+            elif ( exec 3<>"/dev/tcp/$DXE_QNAP_TAILNET_ADDR/2222" ) 2>/dev/null; then
+                connect_rc=0
             else
-                ssh "${ssh_opts[@]}" -W 127.0.0.1:2222 "$(dxe_qnap_host)" </dev/null >/dev/null 2>&1 || reach_rc=$?
+                connect_rc=1
             fi
-            if [ "$reach_rc" -eq 0 ] || [ "$reach_rc" -eq 124 ]; then
-                step_verdict 7 0 "loopback-only, reachable via the NAS as jump"
+            if [ "$connect_rc" -eq 0 ]; then
+                if command -v curl >/dev/null 2>&1; then
+                    fetch_out="$(curl -s --http0.9 --max-time 5 "http://$DXE_QNAP_TAILNET_ADDR:2222/" 2>/dev/null || true)"
+                else
+                    fetch_out="$( { exec 3<>"/dev/tcp/$DXE_QNAP_TAILNET_ADDR/2222"; cat <&3; } 2>/dev/null || true )"
+                fi
+                case "$fetch_out" in *PONG*) pong_ok=1 ;; esac
+            fi
+            if [ "$connect_rc" -eq 0 ] && [ "$pong_ok" -eq 1 ]; then
+                step_verdict 7 0 "bound to the tailnet address only, reachable directly from the controller, PONG confirmed"
+            elif [ "$connect_rc" -eq 0 ]; then
+                step_verdict 7 1 "bound to the tailnet address only, direct TCP connect succeeded but PONG not confirmed"
             else
-                step_verdict 7 1 "loopback-only confirmed, but the raw TCP forward failed (rc=$reach_rc)"
+                step_verdict 7 1 "bound to the tailnet address only, but the direct TCP connect from the controller failed (rc=$connect_rc)"
             fi
         else
-            step_verdict 7 1 "loopback-only publication NOT confirmed by ss -ltn"
+            step_verdict 7 1 "bound-to-tailnet-address-only NOT confirmed by ss -ltn"
         fi
     fi
 
@@ -520,6 +595,7 @@ fi
 echo "QNAP Phase 0 spike -- host alias: $(dxe_qnap_host)$( [ "$DXE_DRY_RUN" = 1 ] && printf ' (DRY RUN: nothing will connect)' || true)"
 
 dxe_qnap_ensure_docker_bin || exit 1
+dxe_qnap_ensure_tailnet_addr
 
 if [ "$DXE_DRY_RUN" = 1 ]; then
     # Streams directly to the terminal as it runs; nothing is written to
