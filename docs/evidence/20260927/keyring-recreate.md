@@ -4,15 +4,15 @@ Sanitised evidence record for `checkout-consolidation-plan.md`'s Branch 15.
 No home directory paths, keys, fingerprints, or NAS identifiers appear below.
 
 Branch `fix/keyring-bootstrap-recreate`, from `main` `bf49f4d` (includes
-Branch 14). Commits, in order: `8b754d4` (resolve keyring binaries
-explicitly on recreate; warn instead of failing, policy B), `d9159de`
-(docs/plan), `15ddbaf` and `c26ad20` (two coverage-fixture regressions
+Branch 14). Commits, in order: `87abc83` (resolve keyring binaries
+explicitly on recreate; warn instead of failing, policy B), `80f98cb`
+(docs/plan), `4197fbd` and `341a1f3` (two coverage-fixture regressions
 `run-coverage-linux.sh` caught for real, both in the tests that exercised
-the old resolution mechanism, fixed to exercise the new one), `bb073ba`
-(ratchet re-measurement), `f922434` (a live-tier regression in the new
+the old resolution mechanism, fixed to exercise the new one), `8edbc51`
+(ratchet re-measurement), `aff5708` (a live-tier regression in the new
 Section 3 test's own fixture, found by `tests/run-tier.sh live` and fixed;
 also fixes a home-directory path this file had in its validation-method
-note), `9514fd2` (ratchet re-measurement).
+note), `19164ec` (ratchet re-measurement).
 
 ## What changed and why
 
@@ -121,7 +121,7 @@ immune to whatever this race is.
 | G1 pinned ShellCheck 0.10.0 | CI's exact file set, throwaway `nixos/nix:2.34.8`, self-contained clone: exit 0, no warnings |
 | G1 container-free contracts (runner-matched) | `ubuntu:24.04` + apt shellcheck/jq/git, self-contained clone (not the worktree -- see note below), `tests/run_all_tests.sh --skip-integration`: "All tests PASSED!", exit 0 |
 | G1 `test_refactor_contracts.sh` | green (folded into the same container run, chained with `&&`) |
-| G2 coverage | `tests/run-coverage-linux.sh`: `covered=100% scope_share=17.91%`, exit 0; ratchet re-measured on a clean `git archive HEAD` export of the finished tip: 4,212 / 23,506 = 1791 bp (committed in `9514fd2`) |
+| G2 coverage | `tests/run-coverage-linux.sh`: `covered=100% scope_share=17.91%`, exit 0; ratchet re-measured on a clean `git archive HEAD` export of the finished tip: 4,212 / 23,506 = 1791 bp (committed in `19164ec`) |
 | G3 Nix | not applicable -- no `.nix` file changed (confirmed: no `flake.nix`/`flake.lock` in the diff) |
 | G4 live | `dx-test`, green -- see "Live results" below |
 | G5 CI | pending push |
@@ -192,7 +192,7 @@ already-running container).
    where creating a new top-level directory under the read-only root
    filesystem is refused ("mkdir: /persist: Read-only file system"),
    aborting the file under `set -e` before its own Results summary printed.
-   Fixed in `f922434` (guard on whether the `mkdir` actually succeeds, not
+   Fixed in `aff5708` (guard on whether the `mkdir` actually succeeds, not
    just on whether the directory already exists; skip with a clear reason
    when it cannot). Re-verified in isolation on the same host:
    `bash tests/test_section3_bootstrap.sh` exits 0, 136 passed, 0 failed, 1
@@ -214,3 +214,19 @@ already-running container).
 
 No lifecycle command was refused by the permission classifier at any point.
 `dx-host` and the NAS were never touched.
+
+## Landing (2026-09-27)
+
+Rebased onto `main` `7f1a81d` (Branch 8 had landed meanwhile; only
+`tests/coverage/ratchet.env` overlapped). This branch's own files are
+byte-identical before and after the rebase (the Section 3 file differs only
+by Branch 8's own guard-test removal on `main`), so the live results above
+stand for the rebased commits. Ratchet re-measured on a clean export of the
+rebased tip: 4,198 / 23,456 = 1789 bp. Re-checked by the coordinating session
+on the rebased tip: bash-3.2 suite, Sections 1, 10 and 27, the Phase 0
+dry-runs, the private identifier scan. The subagent's judgement not to
+re-run the full live tier after fixing only its own test fixture was
+accepted: every other section of that run passed with 0 failures, the fixed
+Section 3 was re-run green in isolation, and CI runs Section 3 in the Linux
+container where the probe executes. G5: GitHub Actions on the pushed rebased
+branch, green before `main` was fast-forwarded.

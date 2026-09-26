@@ -109,6 +109,7 @@ with an actual build-and-run check of `main`.
 | 12 | `fix/store-trust` (may split in two) | Safe handling of the two Nix-store trust problems in `store-trust-plan.md` | L | Yes | No (Q6 resolved: fail fast) | Not started |
 | 13 | `refactor/bootstrap-v2`, `refactor/declarative-nix` | The two remaining large proposals. No branch until you accept one | L each | Yes | Q7 (still open) | Not started |
 | 14 | `fix/dx-ai-no-source-builds` | Stop `dx-ai` from silently compiling heavy AI tools from source when a `nixpkgs-unstable` refresh misses the binary cache (found on Branch 6, 2026-09-26) | S–M | Yes (`dx-test`, disposable) | No | **Done**: landed on `main` 2026-09-27 (rebased onto `cf9f35f`, CI green); fresh 12 GB guest's first `dx-ai` from cache, peak ~8.6 GiB; live tier 1298/0/8; see `docs/evidence/20260927/dx-ai-no-source-builds.md` |
+| 15 | `fix/keyring-bootstrap-recreate` | Make `dx-recreate` of an AI-opted-in guest work: resolve the keyring binaries from the AI generation explicitly and warn instead of aborting bootstrap (found on Branch 14's live gate) | S | Yes (`dx-test`) | Policy B chosen 2026-09-27 | **Done**: landed on `main` 2026-09-27 (rebased onto `7f1a81d`, CI green; live: recreate ×2 clean, Section 17 99/0, live tier green); `dx-host` promotion pending |
 
 ```text
 Priority 1:  0 ✓ ─► 1 ✓ ─► 2 ✓ ─► 3 ✓ ─► 4 ✓ ─► 4a ✓ ─► 4b ✓ ─► 4c   (main complete, green, buildable, proven on a guest)
@@ -1021,7 +1022,7 @@ guaranteed on a fresh `/home/dx`.
    definition (which said Home Manager installs `dbus-daemon` into dx's
    profile -- no longer true) are corrected.
 
-**Status (2026-09-27): all gates green, ready to land.** G1 (bash-3.2,
+**Status (2026-09-27): landed on `main`** (rebased onto `7f1a81d`, CI green, then fast-forwarded; `dx-host` still needs promoting to a `main` that contains it — see Appendix D). All gates green: G1 (bash-3.2,
 ShellCheck 0.10.0 pinned, syntax, Container-free contracts,
 `test_refactor_contracts.sh`) and G2 (100% sourceable coverage, scope-share
 ratchet 1791 bp) green in throwaway containers. G3 not applicable (no
