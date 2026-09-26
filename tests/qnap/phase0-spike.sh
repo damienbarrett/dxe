@@ -206,10 +206,22 @@ dxe_spike_cleanup() {
         return 0
     fi
 
+    # Every removal below redirects its own stdin from /dev/null: each
+    # dxe_qnap_docker_run call forks a real ssh process, and ssh (like the
+    # real one this stubs) keeps stdin connected to the remote command
+    # unless told otherwise. Left alone inside a "while read <<<\"$list\""
+    # loop, that ssh process inherits the SAME file descriptor the loop's
+    # own "read" is consuming from, and draining it (as a real ssh
+    # commonly does for even a short remote command) leaves nothing for
+    # the next "read" -- so the loop silently stops after its first
+    # iteration. This is exactly what the first real --cleanup run hit:
+    # "dxe-spike-nix" was removed and the run stopped, leaving the other
+    # labelled volumes behind. Redirecting each removal's stdin away from
+    # the loop's here-string keeps the two completely separate.
     if [ -n "$containers" ]; then
         while IFS= read -r name; do
             [ -n "$name" ] || continue
-            status=0; dxe_qnap_docker_run rm -f "$name" || status=$?
+            status=0; dxe_qnap_docker_run rm -f "$name" </dev/null || status=$?
             step_verdict "cleanup-container" "$status" "$name"
         done <<<"$containers"
     else
@@ -219,7 +231,7 @@ dxe_spike_cleanup() {
     if [ -n "$volumes" ]; then
         while IFS= read -r name; do
             [ -n "$name" ] || continue
-            status=0; dxe_qnap_docker_run volume rm "$name" || status=$?
+            status=0; dxe_qnap_docker_run volume rm "$name" </dev/null || status=$?
             step_verdict "cleanup-volume" "$status" "$name"
         done <<<"$volumes"
     else
@@ -229,7 +241,7 @@ dxe_spike_cleanup() {
     if [ -n "$images" ]; then
         while IFS= read -r name; do
             [ -n "$name" ] || continue
-            status=0; dxe_qnap_docker_run rmi "$name" || status=$?
+            status=0; dxe_qnap_docker_run rmi "$name" </dev/null || status=$?
             step_verdict "cleanup-image" "$status" "$name"
         done <<<"$images"
     else
