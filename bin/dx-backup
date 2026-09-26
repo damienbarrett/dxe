@@ -1,0 +1,83 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+dx_require_container_cli
+# shellcheck source=lib/dx-backup.sh
+source "$SCRIPT_DIR/lib/dx-backup.sh"
+
+DRY_RUN=false
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=true ;;
+        --help)
+            echo "Usage: dx-backup [--dry-run]"
+            echo "Capture the at-risk contents of /persist into DX_BACKUP_DIR (default: \$HOME/Backups/dxe-persist/\$DX_CONTAINER_NAME)."
+            exit 0
+            ;;
+        *) echo "Error: unrecognized argument '$arg'. Usage: dx-backup [--dry-run]" >&2; exit 64 ;;
+    esac
+done
+
+container_exists "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME does not exist. Run ./bin/dx-create-container first." >&2; exit 1; }
+container_is_running "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start-container first." >&2; exit 1; }
+
+BACKUP_DIR="$(dx_backup_resolve_dir)"
+MANIFEST="$BACKUP_DIR/manifest.tsv"
+
+DENY_PATTERNS=()
+if [ -n "${DX_BACKUP_EXCLUDE_FILE:-}" ]; then
+    while IFS= read -r pattern; do
+        DENY_PATTERNS+=("$pattern")
+    done < <(dx_backup_read_exclude_patterns "$DX_BACKUP_EXCLUDE_FILE")
+fi
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dx-backup.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+LISTING="$WORK/listing.tsv"
+FETCH="$WORK/fetch.tsv"
+REMOVE="$WORK/remove.txt"
+
+echo "Selecting at-risk content from $DX_CONTAINER_NAME:/persist..."
+dx_backup_fetch_listing "$DX_CONTAINER_NAME" "${DENY_PATTERNS[@]+"${DENY_PATTERNS[@]}"}" > "$LISTING"
+
+dx_backup_diff "$MANIFEST" "$LISTING" "$FETCH" "$REMOVE"
+fetch_count="$(wc -l < "$FETCH" | tr -d '[:space:]')"
+fetch_bytes="$(dx_backup_sum_sizes "$FETCH")"
+remove_count="$(wc -l < "$REMOVE" | tr -d '[:space:]')"
+
+if [ "$DRY_RUN" = true ]; then
+    echo "Dry run: destination $BACKUP_DIR"
+    if [ "${fetch_count:-0}" -gt 0 ]; then
+        echo "Would transfer:"
+        cut -f1 "$FETCH" | sed 's/^/  /'
+    fi
+    if [ "${remove_count:-0}" -gt 0 ]; then
+        echo "Would remove from the mirror (no longer at-risk):"
+        sed 's/^/  /' "$REMOVE"
+    fi
+    echo "${fetch_count:-0} files, ${fetch_bytes:-0} bytes would be transferred."
+    exit 0
+fi
+
+mkdir -p "$BACKUP_DIR/current"
+
+if [ "${fetch_count:-0}" -gt 0 ]; then
+    echo "Fetching ${fetch_count} changed file(s)..."
+    dx_backup_fetch_paths "$DX_CONTAINER_NAME" "$BACKUP_DIR" "$FETCH"
+fi
+if [ "${remove_count:-0}" -gt 0 ]; then
+    echo "Removing ${remove_count} path(s) no longer at-risk from the mirror..."
+    dx_backup_remove_paths "$BACKUP_DIR" "$REMOVE"
+fi
+if [ "${fetch_count:-0}" -gt 0 ] || [ "${remove_count:-0}" -gt 0 ]; then
+    dx_backup_write_manifest_atomic "$MANIFEST" "$LISTING"
+fi
+
+summary="${fetch_count:-0} files, ${fetch_bytes:-0} bytes transferred."
+echo "$summary"
+{
+    printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ) $summary"
+    [ "${remove_count:-0}" -eq 0 ] || printf '%s\n' "  removed from mirror: ${remove_count} path(s)"
+} >> "$BACKUP_DIR/last-run.log"
