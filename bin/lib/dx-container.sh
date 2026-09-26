@@ -1,48 +1,37 @@
 #!/bin/bash
 # Apple Container adapter. No preflight is performed while this file is sourced.
+#
+# Branch 11 / Phase 1 (qnap-dxe-plan.md DQ2): every function below that used
+# to invoke the raw `container` binary now calls the runtime-neutral
+# contract (bin/lib/dx-runtime.sh) instead; behaviour, output, and error
+# handling are unchanged, only the raw call site moved to
+# bin/lib/dx-runtime-apple.sh. Every name here is preserved exactly for
+# existing callers and tests. `dx_container_list_names` in particular has no
+# Docker equivalent to dispatch to (it is Apple CLI-version fallback logic,
+# not a contract operation), so it calls the Apple adapter directly rather
+# than through dx_runtime_dispatch_ok.
 
-dx_require_container_cli() {
-    command -v container >/dev/null 2>&1 && return 0
-    cat >&2 <<'EOF'
-Error: Apple 'container' command not found on this host.
+DX_CONTAINER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=dx-runtime.sh
+source "$DX_CONTAINER_LIB_DIR/dx-runtime.sh"
 
-The DX Experience requires Apple's container runtime for macOS.
-Install it from: https://github.com/apple/container/releases
-EOF
-    return 1
-}
+dx_require_container_cli() { dx_runtime_available; }
 
-container_system_is_running() { container system status >/dev/null 2>&1; }
+container_system_is_running() { dx_runtime_system_running; }
 container_system_ensure_started() {
-    if ! container_system_is_running; then echo "Apple container system is not running; starting it..."; container system start; fi
+    if ! container_system_is_running; then echo "Apple container system is not running; starting it..."; dx_runtime_system_start; fi
 }
 
-dx_container_list_names() {
-    local include_all="$1" output
-    if [ "$include_all" = true ]; then
-        output="$(container list -a --quiet 2>/dev/null)" && { printf '%s\n' "$output"; return; }
-        container list -a | awk 'NR > 1 {print $1}'
-    else
-        output="$(container list --quiet 2>/dev/null)" && { printf '%s\n' "$output"; return; }
-        container list | awk 'NR > 1 {print $1}'
-    fi
-}
+dx_container_list_names() { dx_runtime_apple_container_list_names "$@"; }
 
 # No `-q`: see tests/test_helpers.sh's stdin_matches comment for why
 # `writer | grep -q` is unsafe under `set -o pipefail` (every caller of these
 # two functions). Redirecting to /dev/null instead keeps grep reading to EOF
 # so the writer's later `printf` calls never see a closed pipe.
-container_exists() { dx_container_list_names true | grep -F -x -- "$1" >/dev/null; }
-container_is_running() { dx_container_list_names false | grep -F -x -- "$1" >/dev/null; }
-container_image_exists() {
-    local wanted="$1" output
-    output="$(container image list --quiet 2>/dev/null)" && {
-        printf '%s\n' "$output" | awk -v wanted="$wanted" '$0 == wanted || $0 == wanted ":latest" { found=1 } END { exit !found }'
-        return
-    }
-    container image list | awk -v wanted="$wanted" 'NR > 1 && ($1 == wanted || $1 ":" $2 == wanted) { found=1 } END { exit !found }'
-}
-container_ensure_volume() { container volume inspect "$1" >/dev/null 2>&1 || container volume create "$1"; }
+container_exists() { dx_runtime_container_exists "$1"; }
+container_is_running() { dx_runtime_container_running "$1"; }
+container_image_exists() { dx_runtime_image_exists "$1"; }
+container_ensure_volume() { dx_runtime_volume_exists "$1" || dx_runtime_volume_create "$1"; }
 
 container_wait_stopped() {
     local name="$1" timeout="$2" elapsed=0
@@ -110,10 +99,10 @@ container_stop_bounded() {
     if ! container_exists "$name"; then echo "Container $name does not exist. Nothing to stop."; return 0; fi
     if ! container_is_running "$name"; then echo "Container $name is already stopped."; return 0; fi
     echo "Stopping DX container: $name..."
-    run_with_timeout "$DX_STOP_COMMAND_TIMEOUT" container stop --time "$DX_STOP_GRACE_SECONDS" "$name" || echo "Graceful stop command did not complete cleanly for $name." >&2
+    run_with_timeout "$DX_STOP_COMMAND_TIMEOUT" dx_runtime_container_stop --time "$DX_STOP_GRACE_SECONDS" "$name" || echo "Graceful stop command did not complete cleanly for $name." >&2
     container_wait_stopped "$name" "$DX_STOP_WAIT_TIMEOUT" && return 0
     echo "Container $name did not stop; sending container kill..." >&2
-    run_with_timeout "$DX_STOP_COMMAND_TIMEOUT" container kill "$name" || true
+    run_with_timeout "$DX_STOP_COMMAND_TIMEOUT" dx_runtime_container_kill "$name" || true
     container_wait_stopped "$name" "$DX_STOP_WAIT_TIMEOUT" && return 0
     echo "Container $name is still running after container kill; terminating runtime process..." >&2
     container_kill_runtime_process "$name" || true
@@ -243,7 +232,7 @@ dx_bootstrap_confirm_publication() {
     local name="$1" bootstrap_path="$2" published="$3" timeout="$4"
     local waited=0 lease_listing running=""
     while :; do
-        lease_listing="$(container exec "$name" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$bootstrap_path" 2>/dev/null || true)"
+        lease_listing="$(dx_runtime_exec "$name" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$bootstrap_path" 2>/dev/null || true)"
         running=""
         [ -z "$lease_listing" ] || running="$(dx_bootstrap_lease_generation "$lease_listing" || true)"
         [ "$running" = "$published" ] && return 0
