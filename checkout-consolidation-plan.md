@@ -899,6 +899,28 @@ as a whole phase stack.
   `~/dxe-recovery/progress/SUBAGENT-BRIEF.md`, and each task prompt references
   it. Mandatory progress files are why Branch 1's stall and Branch 2's
   session-limit stop cost nothing.
+- **`dx-ai`'s "build from source" fallback is memory-fragile (found on
+  Branch 6, 2026-09-26).** A fresh guest's first `dx-ai` run refreshes
+  `nixpkgs-unstable` before installing the optional AI tools bundle, so it
+  depends on the binary cache actually having every AI tool built for
+  `aarch64-linux` at whatever revision that refresh lands on. When the
+  cache misses (observed for `codex-cli` at `codex-0.157.0`), Nix falls
+  back to building a large Rust workspace from source locally, which needs
+  far more memory than the profile's 12 GB default -- it OOM-killed
+  (`rustc ... terminated by a deadly signal`) building `codex-core`/
+  `codex-tui` under the default 12 GB / 4 CPU `dx-test`/`dx-host`
+  allocation, and only succeeded after a disposable-guest-only recreate at
+  24 GB. This is not an OpenCode-specific defect (`codex` is one of the
+  five original optional tools) and nothing here changes it -- it is
+  recorded as a backlog candidate, not implemented: **"dx-ai
+  cache-dependency / memory-aware build, or a pinned AI lock"** -- options
+  include pinning `nixpkgs-unstable` to a revision confirmed to have a
+  cache hit for every `aiPackages` member on `aarch64-linux` (trading
+  freshness for reliability), raising the profile's default container
+  memory, detecting an imminent from-source build and warning before it
+  OOMs, or accepting the occasional slow/large local build as a known
+  cost of tracking unstable. Needs a user decision on which trade-off to
+  take; out of scope for Branch 6 to resolve unilaterally.
 
 ## Decisions for you
 
