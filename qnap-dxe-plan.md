@@ -464,6 +464,33 @@ This phase changes structure without adding QNAP behavior.
 - The repository is green between the mechanical extraction and any Docker
   implementation commit.
 
+**Status 2026-09-27: items 1-6 complete, on `refactor/runtime-boundary`.**
+Every raw Apple `container` call the extraction's own inventory found (70
+call sites across 19 `bin/` files) now goes through
+`bin/lib/dx-runtime.sh`/`dx-runtime-apple.sh`; see
+`docs/refactor/runtime-boundary.md` for the design and
+`docs/refactor/runtime-boundary-inventory.md` for the full call-by-call
+mapping. Exit-gate evidence:
+
+- Full container-free suite green (`tests/run_all_tests.sh
+  --skip-integration`, 0 failures) after every one of the 11 mechanical
+  entrypoint-migration commits and after the automated source audit
+  (`tests/test_runtime_boundary_audit.sh`, Section 32) landed clean.
+- `DX_RUNTIME` joined the configuration registry (default `apple`;
+  `docker` rejected with a "not implemented until Phase 2" message); the
+  two sourceable libraries remain side-effect free while sourced (the
+  existing generic import-only check in `tests/test_section9_host_scripts.sh`
+  covers both new files automatically).
+- `tests/run-coverage-linux.sh`: `covered=100% scope_share=19.54%`. Stdin
+  passthrough (piped, file-redirected) and verbatim argv passthrough are
+  proven directly in `tests/test_sourceable_coverage.sh`, with the guest
+  command's exit status shown unchanged under `set -o pipefail`.
+- ShellCheck (pinned, `--severity=warning`) and the macOS Bash 3.2 gate are
+  both green on the finished tree.
+- Item 7 (the full Apple live tier plus a layered bring-up against
+  `dx-test`) is in progress next; this status will be completed with its
+  totals once that run finishes.
+
 ## Phase 2 — Add the remote Docker adapter safely
 
 Develop with fake `docker` and `ssh` boundaries first.

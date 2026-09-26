@@ -872,6 +872,13 @@ green, then fast-forwarded).
 
 ## Branch 11 — QNAP runtime (`qnap-dxe-plan.md`; accepted 2026-09-26)
 
+**Status 2026-09-27:** Phase 1 (runtime-boundary extraction) landed on
+`refactor/runtime-boundary` — items 1-6 complete and validated (container-
+free suite, ShellCheck, Bash 3.2, and 100% sourceable coverage all green);
+see `qnap-dxe-plan.md`'s Phase 1 exit-gate status for the full evidence.
+Item 7 (the full Apple live tier) follows immediately. Phases 2-7
+(the Docker adapter and everything after it) are not started.
+
 **Target:** QNAP TVS-h674T. Its Intel Core 12th-gen CPU means **x86_64**;
 Phase 0 confirms this with `uname -m`. The guest flake currently builds only
 `aarch64-linux`, so the QNAP plan's **Phase 4** (an architecture-neutral

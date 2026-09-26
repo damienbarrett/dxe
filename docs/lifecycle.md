@@ -43,6 +43,14 @@ operations.
    never touched implicitly. Image (minutes) is rebuilt only by `dx-recreate`
    or explicit destroy. Container and runtime state (seconds) are freely
    rebuilt.
+9. **Runtime-neutral entrypoints.** No lifecycle script calls the `container`
+   binary directly; each reaches it through `bin/lib/dx-runtime.sh`'s
+   `dx_runtime_<op>` contract, which dispatches on the `DX_RUNTIME`
+   configuration field (default, and today the only implemented value,
+   `apple`) to an adapter. An automated audit
+   (`tests/test_runtime_boundary_audit.sh`) fails the build if a raw
+   `container` call reappears outside the adapter. See
+   [`docs/refactor/runtime-boundary.md`](refactor/runtime-boundary.md).
 
 ### Layered lifecycle scripts
 
