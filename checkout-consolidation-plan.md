@@ -99,8 +99,8 @@ with an actual build-and-run check of `main`.
 | 4c | `fix/guest-sigpipe-pipelines` | Fix the same `\| grep -q` / `\| head -n1` under `pipefail` SIGPIPE shape as Branch 4a, in `bootstrap/activation.sh` and the guest scripts `scripts/dx-theme.sh:30` and `scripts/dx-theme-write-tool-themes.sh:374` | S | No | No | In progress |
 | **Priority 2 — fix the start-generation bug, then finish in-flight work (the duplicate clone was retired early)** | | | | | | |
 | 5 | `docs/plan-cleanup` | Remove stale plan text, delete the OpenCode handoff note, import August evidence, move this plan into the repo | S | No | No | **Done**: `main` = `9064bb9`, CI green |
-| 9 | `fix/bootstrap-start-generation` | Make a restarted guest run the bootstrap code that was just published, not the previous version | M | Yes | No (Q4 resolved: fail the start) | **Done** on `fix/bootstrap-start-generation` (tip `2257631`, rebased onto `main`), not yet merged. Step 1 found the core defect already fixed on `main`; Step 2 implemented D7 option 3 and closed `dx-start-plan.md` |
-| 6 | `feat/opencode` | Land OpenCode as one complete delivery: the original support plus safe migration, rollback and ownership repair | M | Yes | No (Q1 resolved: after Branch 9) | Code exists, preserved as this repository's own local branch `preserve/dxe-agent-opencode` |
+| 9 | `fix/bootstrap-start-generation` | Make a restarted guest run the bootstrap code that was just published, not the previous version | M | Yes | No (Q4 resolved: fail the start) | **Done**: landed on `main` 2026-09-26 and `dx-host` promoted to `main` `08700a8` per Appendix D. Step 1 found the core defect already fixed on `main`; Step 2 implemented D7 option 3 and closed `dx-start-plan.md` |
+| 6 | `feat/opencode` | Land OpenCode as one complete delivery: the original support plus safe migration, rollback and ownership repair | M | Yes | No (Q1 resolved: after Branch 9) | **Done**: landed on `main` 2026-09-26 (rebased onto `d5ca161`, CI green, live tier 1247/0/8 on `dx-test`); `dx-host` promotion is a separate open decision (Appendix D) |
 | **Priority 3 — backlog** | | | | | | |
 | 7 | `test/herdr-acceptance` | Two missing Herdr tests: bad-snapshot recovery and pane-history deletion | S | Possibly | No (Q3 resolved: do them) | Not started |
 | 8 | `refactor/legacy-migration-cleanup` | Check that every guest has left the old base image, then delete the old-base guards. This finishes `refactor-plan.md` | S–M | Yes (inventory) | No | Not started |
@@ -584,17 +584,18 @@ pass.
 
 ---
 
-## Branch 6 — `feat/opencode` (size M, code exists; done on the branch 2026-09-26)
+## Branch 6 — `feat/opencode` (size M; landed on `main` 2026-09-26)
 
 **Depends on:** Branches 1–3 merged, Step 4 passed, and Branch 9 landed.
 **Decision:** Q1 -- **resolved 2026-09-26: fix the start-generation bug
 first.** Branch 9 now runs before this one (see the summary table and "Why
 this order").
 
-**Status (2026-09-26): all work and validation complete on the branch,
-not yet merged to `main`** (that fast-forward, and the Appendix D
-promotion decision, are for the coordinating session and the user, not
-this subagent). All six increments below are done, including 4.5 (the
+**Status (2026-09-26): landed on `main`** (rebased onto `d5ca161`,
+CI green on the rebased branch, then fast-forwarded; see the evidence
+record's "Landing" section). The Appendix D promotion of OpenCode to
+`dx-host` is a separate user decision, still open. All six increments
+below are done, including 4.5 (the
 two-loader-paths design is justified, not reduced -- see the increment 3
 commit message) and 4.6 (Section 12 present/absent assertions, done as
 part of increment 1). G1 (bash32, runner-matched Ubuntu contracts,
@@ -1240,10 +1241,11 @@ rehearsed dry run on `dx-test`.
 backup (kept privately), stop, `dx-start-container` with the new
 confirmation, verification (running == published generation, Home Manager
 activation completed, data intact). `dx-host` does **not** yet have
-OpenCode: Branch 6 (`feat/opencode`) is still in progress on its own
-branch (see its section above) and has not merged to `main`. Promoting it
-to `dx-host` is a separate user decision to make after it lands, following
-this appendix in full.
+OpenCode: Branch 6 (`feat/opencode`) landed on `main` on 2026-09-26 (see
+its section above). Promoting it to `dx-host` is a separate user decision,
+following this appendix in full; note the Branch 6 finding that a fresh
+`dx-ai` run can build `codex` from source and OOM at the profile's 12 GB
+default, so the promotion plan must decide the guest's memory first.
 
 **Before promoting:**
 

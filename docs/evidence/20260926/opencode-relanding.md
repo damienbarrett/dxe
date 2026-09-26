@@ -4,23 +4,25 @@ Sanitised evidence record for `checkout-consolidation-plan.md`'s Branch 6:
 re-landing OpenCode as one complete delivery after Branch 2's revert. No
 home directory paths, keys, fingerprints, or NAS identifiers appear below.
 
-Branch `feat/opencode`, from `main` `08700a8`. Commits, in order:
-`cfc7394` (original support), `144becf` (persistence helper), `fa79410`
-(activation/dx-ai wiring), `e0258b1` (per-generation manifests), `693f920`
-(docs), `30488ee` (ShellCheck SC2120 fix), `6bb0156` (ratchet rebaseline
-1910→1921), `7251487`/`df94168` (coordinating-session plan updates, folded
-in since they touch the same file), `fed063b` (loader coverage),
-`190817e` (backlog item), `35de0fb` (ratchet rebaseline 1921→1917).
+Branch `feat/opencode`, from `main` `08700a8`, rebased onto `main` `d5ca161`
+before landing (commit ids below are the rebased ones; the pre-rebase ids
+appear only in the private consolidation ledger). Commits, in order:
+`0cec55a` (original support), `c7175d3` (persistence helper), `6ebd283`
+(activation/dx-ai wiring), `81973e6` (per-generation manifests), `c2f24d6`
+(docs), `8b6e253` (ShellCheck SC2120 fix), `13a3d14` (ratchet rebaseline
+1910→1921), `9f46e8f`/`326581c` (coordinating-session plan updates, folded
+in since they touch the same file), `3a84acc` (loader coverage),
+`aa3ef16` (backlog item), `4ee8f7f` (ratchet rebaseline 1921→1917).
 
 ## Gates
 
 | Gate | Result |
 | --- | --- |
 | G1 bash32 | `bash tests/run-bash32-tests.sh` on macOS `/bin/bash` 3.2: 69 passed, 0 failed |
-| G1 container-free contracts (runner-matched) | Throwaway `dxe-scratch-b6-<pid>-g1ubuntu` (`ubuntu:24.04`, `-m 4g`), apt-installed `git`/`shellcheck`/`jq` (confirmed ShellCheck 0.9.0, matching the GitHub runner), `git clone --local --no-hardlinks /work` (plain `--local` fails: `/work` is a read-only bind mount, cross-device hardlinks are refused), `SKIP_INTEGRATION=true bash tests/run_all_tests.sh --skip-integration`. First run caught a real ShellCheck SC2120 on `dx-ai.sh` (fixed in `30488ee`); second run on a fresh clone at that commit: fully green, Section 0 visibly ran ShellCheck per file (not silently skipped) |
+| G1 container-free contracts (runner-matched) | Throwaway `dxe-scratch-b6-<pid>-g1ubuntu` (`ubuntu:24.04`, `-m 4g`), apt-installed `git`/`shellcheck`/`jq` (confirmed ShellCheck 0.9.0, matching the GitHub runner), `git clone --local --no-hardlinks /work` (plain `--local` fails: `/work` is a read-only bind mount, cross-device hardlinks are refused), `SKIP_INTEGRATION=true bash tests/run_all_tests.sh --skip-integration`. First run caught a real ShellCheck SC2120 on `dx-ai.sh` (fixed in `8b6e253`); second run on a fresh clone at that commit: fully green, Section 0 visibly ran ShellCheck per file (not silently skipped) |
 | G1 pinned ShellCheck 0.10.0 | Throwaway `dxe-scratch-b6-<pid>-g1nix` (`nixos/nix:2.34.8`, `-m 6g`), clean `git archive HEAD \| tar -x` export, CI's exact command (`find bin tests container -type f \( -name '*.sh' -o -path 'bin/dx*' \) -print0 \| xargs -0 nix shell nixpkgs/nixos-25.05#shellcheck --command shellcheck --severity=warning`): confirmed ShellCheck 0.10.0, exit 0, no warnings |
 | G1 syntax | CI's `bash -n` over the same file set: exit 0 |
-| G2 coverage | `tests/run-coverage-linux.sh` via Apple `container` (`-m 6g`, existing `dxe-kcov:ubuntu-24.04` image; the script's own provider path has no memory flag, so it was invoked directly with one added): `covered=100%`. Ratchet re-measured across the branch: 1910 → 1921 bp (`6bb0156`, OpenCode's own new scope lines: the persistence helper plus its activation/persistence.sh wiring) → 1917 bp (`35de0fb`, test-dilution from the loader-coverage commit, the file's documented acceptable edge). Final confirmed run: `covered=100% scope_share=19.17%` |
+| G2 coverage | `tests/run-coverage-linux.sh` via Apple `container` (`-m 6g`, existing `dxe-kcov:ubuntu-24.04` image; the script's own provider path has no memory flag, so it was invoked directly with one added): `covered=100%`. Ratchet re-measured across the branch: 1910 → 1921 bp (`13a3d14`, OpenCode's own new scope lines: the persistence helper plus its activation/persistence.sh wiring) → 1917 bp (`4ee8f7f`, test-dilution from the loader-coverage commit, the file's documented acceptable edge). Final confirmed run: `covered=100% scope_share=19.17%` |
 | G3 Nix | `nix flake check --no-build --no-write-lock-file ./container/aarch64-darwin-apple-container-dx-nixos-26.05` in the same 6 GB `nixos/nix:2.34.8` container: "all checks passed!"; `flake.lock` sha256 (`ee4d64dcb658b5e01b1e916965fcc3900a33b3dfaa20da30a0b8995fd4a4b6f9`) unchanged before/after |
 | G4 Live | `dx-test`, see below |
 | G5 CI | Not applicable: this branch is local only (per the standing brief, subagents do not push) |
@@ -60,7 +62,7 @@ is outside kcov's declared scope (`bin/lib`, guest `bootstrap/`, guest
 | `dx_ai_validate_publish_generation` (new) | Section 17 "AI publication rejects a candidate missing its declared opencode executable" / "... accepts the same candidate after its opencode executable is added" |
 | `dx_ai_publish_generation` calls it | Same two tests, plus the pre-existing "AI publication atomically advances current and retains predecessor" |
 | `dx_ai_setup_credentials`: `(persist_home, home)` params, OpenCode wiring, `ln -sfnT` hardening on the four legacy links | Section 17's credentials battery: fresh fixture, idempotent repeat, unsafe-ancestry end-to-end refusal, dedicated hardening test |
-| `dx_ai_setup_credentials`'s call site now passes explicit args | Runner-matched ShellCheck 0.9.0 caught the SC2120 this created (`30488ee`'s own red/green); exercised functionally by every live guest `dx-ai` run below |
+| `dx_ai_setup_credentials`'s call site now passes explicit args | Runner-matched ShellCheck 0.9.0 caught the SC2120 this created (`8b6e253`'s own red/green); exercised functionally by every live guest `dx-ai` run below |
 | `dx_ai_verify(generation)` rewritten | Section 17: legacy generation-local inventory, rejects a missing generation executable despite a PATH fallback, rejects a malformed inventory before reporting any tool |
 | `dx_ai_main`'s two call sites pass `"$state/current"` to `dx_ai_verify` | Known minor gap: the F8 sourced-`dx_ai_main` test stubs `dx_ai_verify`, so it does not check which argument was passed. Low risk (one-line change, `dx_ai_verify`'s own behaviour is thoroughly tested standalone); the live guest runs below exercise the real call sites end to end (both the fresh-opt-in `dx-ai` run and the `--recover` run report the correct generation's tools) |
 
@@ -286,5 +288,30 @@ test ! -e /persist/home/dx/.local/state/dx-ai/current/profile/bin/opencode \
 | Skip | Reason | Covering gate |
 | --- | --- | --- |
 | Standalone host-side Section 12 (`nix profile add` build check) | Task's gate list asked for `nix flake check --no-build` + Section 10, not Section 12; `--no-build` cannot prove a package actually builds | Live `dx-test` opt-in (step a) runs the same build for real, inside guest activation — a strictly stronger proof |
-| G5 CI | This branch is local only; subagents do not push | N/A until the coordinating session pushes and CI runs on the exact merge commit |
+| G5 CI (at the branch's own tip) | The subagent's branch was local only; subagents do not push | G5 ran on the rebased branch before `main` was fast-forwarded — see "Landing" below |
 | `dx_ai_main`'s `dx_ai_verify "$state/current"` argument, specifically | The F8 sourced-`dx_ai_main` test stubs `dx_ai_verify` entirely | `dx_ai_verify`'s own behaviour is thoroughly unit-tested; both live guest runs (fresh opt-in and `--recover`) exercise the real call sites end to end and report the correct generation's tools each time |
+
+## Landing (2026-09-26)
+
+Rebased onto `main` `d5ca161`, which had meanwhile gained the QNAP Phase 0
+spike fixes and their Section 27 tests (`tests/qnap/`,
+`tests/test_section27_qnap_scripts.sh`, `qnap-dxe-plan.md`, `ratchet.env`).
+The only textual overlap was `tests/coverage/ratchet.env`, resolved by
+keeping both sides' entries; the rebased tree's `bin/`, `container/`,
+`docs/` and this branch's test files are byte-identical to the
+live-validated pre-rebase tip (`git diff --quiet <pre-rebase tip> HEAD --
+bin container docs tests/test_section17_dx_ai_runtime.sh
+tests/test_sourceable_coverage.sh tests/test_section3_bootstrap.sh
+tests/test_section6_tools.sh tests/test_section12_validate_linux.sh` is
+empty), so the G4 live results above stand for the rebased commits without
+a second live run. `flake.lock` unchanged against `main`.
+
+Re-checked on the rebased tree by the coordinating session: bash-3.2 suite
+99/0/0 (it now includes Section 27); Section 27 99/0/0; both Phase 0
+scripts' `--dry-run` still print their full command lists (the QNAP
+non-regression stand-in required by Appendix C's dual-target gate, since no
+QNAP guest exists yet). Ratchet re-measured on a clean export of the rebased
+tip: 4,158 / 22,559 = 1843 bp (`ratchet.env` entry dated 2026-09-26).
+G5: GitHub Actions ran on the pushed rebased branch (both jobs green) before
+`main` was fast-forwarded to it. The Appendix D promotion of OpenCode to
+`dx-host` remains a separate, explicit user decision.
