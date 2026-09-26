@@ -119,7 +119,12 @@ for the changeover completing on 2026-07-05 behind an `OLD_BASE_ABSENT` gate
 with the full suite green. The remaining inventory is side containers and
 named profiles.
 
-- [ ] Satisfied on \_\_\_\_ (date), inventory: \_\_\_\_
+- [x] Satisfied on 2026-09-26, inventory:
+  [`docs/evidence/20260926/legacy-guard-removal.md`](../evidence/20260926/legacy-guard-removal.md) —
+  the primary (`dx-host`) confirmed off the old base by live guard probe
+  (`OLD_BASE_ABSENT`); `dx-test` and any future guest off the old base by
+  Containerfile construction (the single-line official-base `FROM`); no
+  `dx-tinty` guest exists to be on any base.
 
 ---
 
