@@ -55,8 +55,11 @@ unset -f ps
 # ownership by volume name, even when profiles use separate identity dirs.
 (
     source "$BASE_DIR/bin/lib/dx-host-util.sh"
-    DX_TUNNEL_LOCK_TIMEOUT=1
-    DXE_SELF_PROCESS_IDENTITY="test-$$"
+    # Exported: these are environment inputs the sourced library reads inside
+    # dx_nix_volume_claim_acquire, not local bookkeeping, so ShellCheck can't
+    # see the consumer and flags them SC2034 without the export.
+    export DX_TUNNEL_LOCK_TIMEOUT=1
+    export DXE_SELF_PROCESS_IDENTITY="test-$$"
     HOME="$config_fixture/claim-home"
     existing="first"
     container_exists() { [ "$existing" = "$1" ]; }
