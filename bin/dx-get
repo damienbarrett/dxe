@@ -14,14 +14,14 @@ if [ -z "$SOURCE" ]; then
 fi
 
 # Check if source exists in container
-if ! container exec "$DX_CONTAINER_NAME" [ -e "$SOURCE" ]; then
+if ! dx_runtime_exec "$DX_CONTAINER_NAME" [ -e "$SOURCE" ]; then
     echo "Error: Source path '$SOURCE' does not exist in container $DX_CONTAINER_NAME."
     exit 1
 fi
 
 # Determine if source is a directory in the container
 IS_DIR=0
-if container exec "$DX_CONTAINER_NAME" [ -d "$SOURCE" ]; then
+if dx_runtime_exec "$DX_CONTAINER_NAME" [ -d "$SOURCE" ]; then
     IS_DIR=1
 fi
 
@@ -36,11 +36,11 @@ if [ "$IS_DIR" -eq 1 ]; then
     # nested DEST/basename(SOURCE).
     if [[ "$DEST" == */ ]] || [ -d "$DEST" ]; then
         mkdir -p "$DEST"
-        container exec "$DX_CONTAINER_NAME" tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
+        dx_runtime_exec "$DX_CONTAINER_NAME" tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
             | tar -xf - -C "$DEST"
     else
         mkdir -p "$DEST"
-        container exec "$DX_CONTAINER_NAME" tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
+        dx_runtime_exec "$DX_CONTAINER_NAME" tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
             | tar -xf - -C "$DEST" --strip-components=1
     fi
 else
@@ -53,5 +53,5 @@ else
         FINAL_DEST="$DEST"
         mkdir -p "$(dirname "$FINAL_DEST")"
     fi
-    container exec "$DX_CONTAINER_NAME" cat "$SOURCE" > "$FINAL_DEST"
+    dx_runtime_exec "$DX_CONTAINER_NAME" cat "$SOURCE" > "$FINAL_DEST"
 fi

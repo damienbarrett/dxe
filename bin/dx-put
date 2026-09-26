@@ -23,7 +23,7 @@ echo "Copying $SOURCE to $DX_CONTAINER_NAME:$DEST"
 # Idempotently create a guest directory and hand ownership to dx.
 dx_put_ensure_guest_dir() {
     local guest_dir="$1"
-    container exec "$DX_CONTAINER_NAME" bash -c '[ -d "$1" ] || (mkdir -p "$1" && chown dx:dx "$1")' -- "$guest_dir"
+    dx_runtime_exec "$DX_CONTAINER_NAME" bash -c '[ -d "$1" ] || (mkdir -p "$1" && chown dx:dx "$1")' -- "$guest_dir"
 }
 
 if [ -d "$SOURCE" ]; then
@@ -33,7 +33,7 @@ if [ -d "$SOURCE" ]; then
     # itself ("copy AS"), so extraction strips the leading basename(SOURCE)/
     # path component and SOURCE's contents land directly in DEST instead of
     # a nested DEST/basename(SOURCE).
-    if [[ "$DEST" == */ ]] || container exec "$DX_CONTAINER_NAME" [ -d "$DEST" ]; then
+    if [[ "$DEST" == */ ]] || dx_runtime_exec "$DX_CONTAINER_NAME" [ -d "$DEST" ]; then
         TARGET_DIR="${DEST%/}"
         [ -n "$TARGET_DIR" ] || TARGET_DIR="/"
         FINAL_DEST="$TARGET_DIR/$(basename "$SOURCE")"
@@ -42,18 +42,18 @@ if [ -d "$SOURCE" ]; then
         # stray ._pack-*.idx alongside a real git pack corrupts git's object
         # store ("index file too small"). Exclude them on every put.
         COPYFILE_DISABLE=1 tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
-            | container exec -i "$DX_CONTAINER_NAME" tar -xf - -C "$TARGET_DIR"
+            | dx_runtime_exec -i "$DX_CONTAINER_NAME" tar -xf - -C "$TARGET_DIR"
     else
         FINAL_DEST="$DEST"
         dx_put_ensure_guest_dir "$DEST"
         COPYFILE_DISABLE=1 tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
-            | container exec -i "$DX_CONTAINER_NAME" tar -xf - -C "$DEST" --strip-components=1
+            | dx_runtime_exec -i "$DX_CONTAINER_NAME" tar -xf - -C "$DEST" --strip-components=1
     fi
-    container exec "$DX_CONTAINER_NAME" chown -R dx:dx "$FINAL_DEST"
+    dx_runtime_exec "$DX_CONTAINER_NAME" chown -R dx:dx "$FINAL_DEST"
 else
     # File: land at DEST/basename(SOURCE) if DEST is/looks like a directory
     # in the guest, otherwise DEST is the exact destination path.
-    if [[ "$DEST" == */ ]] || container exec "$DX_CONTAINER_NAME" [ -d "$DEST" ]; then
+    if [[ "$DEST" == */ ]] || dx_runtime_exec "$DX_CONTAINER_NAME" [ -d "$DEST" ]; then
         TARGET_DIR="${DEST%/}"
         [ -n "$TARGET_DIR" ] || TARGET_DIR="/"
         FINAL_DEST="$TARGET_DIR/$(basename "$SOURCE")"
@@ -62,6 +62,6 @@ else
         FINAL_DEST="$DEST"
         dx_put_ensure_guest_dir "$(dirname "$FINAL_DEST")"
     fi
-    container exec -i "$DX_CONTAINER_NAME" bash -c 'cat > "$1"' -- "$FINAL_DEST" < "$SOURCE"
-    container exec "$DX_CONTAINER_NAME" chown dx:dx "$FINAL_DEST"
+    dx_runtime_exec -i "$DX_CONTAINER_NAME" bash -c 'cat > "$1"' -- "$FINAL_DEST" < "$SOURCE"
+    dx_runtime_exec "$DX_CONTAINER_NAME" chown dx:dx "$FINAL_DEST"
 fi
