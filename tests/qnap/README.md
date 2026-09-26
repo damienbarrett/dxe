@@ -151,6 +151,25 @@ unlabelled and nothing pre-existing is ever touched. It captures a full
 after each run (and around `--cleanup` alone) and prints a diff proof that
 only `dxe-spike-*` entries changed.
 
+Step 3 tags the base image step 2 already pulled as `dxe-spike-image:phase0`
+rather than running a remote `docker build` -- confirmed against the real
+NAS that QNAP's Docker wrapper creates a per-user build directory under
+Container Station's own data area and refuses it for a non-default
+administrator (`mkdir .../container-station/homes/<user>: permission
+denied`). Since the guest Containerfile is a single `FROM <pinned ref>`
+line, a remote build added nothing but a name anyway. The pinned reference
+is parsed once, at run time, from the guest Containerfile's `FROM` line
+(`dxe_spike_base_image_ref`) -- the single source of truth for the pin;
+nothing else in this script or the Phase 3 adapter should hardcode it a
+second time. Because `docker tag` does not attach a label, `--cleanup`
+removes the spike tag by its fixed name (`docker rmi dxe-spike-image:phase0`,
+an untag only) in addition to its label-filtered removals; the base image
+itself keeps its own reference and stays cached, so re-running the spike
+never has to re-pull it. The Phase 3 adapter that eventually builds the
+real image on the QNAP should follow the same pull+tag (or pull-only, if no
+local build is ever needed) shape for the same reason, reading the pin from
+the Containerfile rather than its own copy.
+
 Step 8's three restarts are each guarded by their own flag and, without it,
 reported as skipped:
 
