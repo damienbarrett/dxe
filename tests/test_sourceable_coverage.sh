@@ -38,6 +38,7 @@ source "$ROOT/bin/lib/dx-ssh-common.sh"
 source "$ROOT/bin/lib/dx-mount-plan.sh"
 source "$ROOT/bin/lib/dx-tunnel.sh"
 source "$GUEST/scripts/lib/dx-keyring.sh"
+source "$GUEST/scripts/lib/dx-opencode-persistence.sh"
 source "$GUEST/bootstrap/common.sh"
 source "$GUEST/bootstrap/base-and-storage.sh"
 source "$GUEST/bootstrap/system.sh"
@@ -1132,6 +1133,140 @@ printf '%s\n' file > "$persist_edge/not-a-directory"
     ln -s "$persist_edge" "$persist_edge/owned-directory-symlink"
     dx_prepare_owned_directory "$persist_edge/owned-directory-symlink" 0700 >/dev/null 2>&1 || true
 )
+
+# OpenCode persistence exercises both the dx-ai and activation ownership
+# boundaries: normal migration, idempotent repeat, conflict preservation,
+# symlinked-ancestor refusal, non-directory-component refusal, and a
+# partial-failure leaving no dangling symlink.
+opencode_fixture="$fixture/opencode-persistence"
+mkdir -p "$opencode_fixture/persist/home/dx" "$opencode_fixture/home/dx"
+chmod 0755 "$fixture" "$opencode_fixture" "$opencode_fixture/persist" "$opencode_fixture/persist/home" "$opencode_fixture/persist/home/dx" "$opencode_fixture/home" "$opencode_fixture/home/dx"
+mkdir -p "$opencode_fixture/persist/home/dx/.config" "$opencode_fixture/persist/home/dx/.local/share"
+dx_ai_opencode_prepare_activation_ancestors "$opencode_fixture/persist/home/dx"
+if id -u dx >/dev/null 2>&1 && id -g dx >/dev/null 2>&1; then
+    [ "$(stat -c '%U:%G' "$opencode_fixture/persist/home/dx/.config")" = dx:dx ]
+    [ "$(stat -c '%U:%G' "$opencode_fixture/persist/home/dx/.local")" = dx:dx ]
+    [ "$(stat -c '%U:%G' "$opencode_fixture/persist/home/dx/.local/share")" = dx:dx ]
+fi
+# Normal migration: pre-existing real content in both live paths, nothing yet
+# under persist.
+mkdir -p "$opencode_fixture/home/dx/.config/opencode" "$opencode_fixture/home/dx/.local/share/opencode"
+printf '%s\n' live-config > "$opencode_fixture/home/dx/.config/opencode/config.json"
+printf '%s\n' live-data > "$opencode_fixture/home/dx/.local/share/opencode/session.db"
+dx_ai_opencode_persistence "$opencode_fixture/persist/home/dx" "$opencode_fixture/home/dx"
+[ "$(stat -c '%a' "$opencode_fixture/persist/home/dx/.config/opencode")" = 700 ]
+[ "$(cat "$opencode_fixture/persist/home/dx/.config/opencode/config.json")" = live-config ]
+[ "$(cat "$opencode_fixture/persist/home/dx/.local/share/opencode/session.db")" = live-data ]
+[ -L "$opencode_fixture/home/dx/.config/opencode" ]
+[ -L "$opencode_fixture/home/dx/.local/share/opencode" ]
+if id -u dx >/dev/null 2>&1 && id -g dx >/dev/null 2>&1; then
+    [ "$(stat -c '%U:%G' "$opencode_fixture/persist/home/dx/.config/opencode")" = dx:dx ]
+    run_as_dx "touch '$opencode_fixture/home/dx/.config/opencode/dx-write'"
+else
+    touch "$opencode_fixture/home/dx/.config/opencode/dx-write"
+fi
+[ -f "$opencode_fixture/persist/home/dx/.config/opencode/dx-write" ]
+if id -u dx >/dev/null 2>&1 && id -g dx >/dev/null 2>&1; then
+    run_as_dx "touch '$opencode_fixture/home/dx/.local/share/opencode/dx-write'"
+else
+    touch "$opencode_fixture/home/dx/.local/share/opencode/dx-write"
+fi
+[ -f "$opencode_fixture/persist/home/dx/.local/share/opencode/dx-write" ]
+# Idempotent repeat: already-migrated (both live paths are already the
+# correct symlinks) leaves everything unchanged.
+before_config_link="$(readlink "$opencode_fixture/home/dx/.config/opencode")"
+before_data_link="$(readlink "$opencode_fixture/home/dx/.local/share/opencode")"
+dx_ai_opencode_persistence "$opencode_fixture/persist/home/dx" "$opencode_fixture/home/dx"
+[ "$(readlink "$opencode_fixture/home/dx/.config/opencode")" = "$before_config_link" ]
+[ "$(readlink "$opencode_fixture/home/dx/.local/share/opencode")" = "$before_data_link" ]
+[ "$(cat "$opencode_fixture/persist/home/dx/.config/opencode/config.json")" = live-config ]
+
+dx_opencode_validate_directory_path relative relative >/dev/null 2>&1 || true
+dx_opencode_validate_directory_path "$opencode_fixture/../not-normal" normalized >/dev/null 2>&1 || true
+printf '%s\n' file > "$opencode_fixture/non-directory"
+dx_opencode_validate_directory_path "$opencode_fixture/non-directory/child" non-directory >/dev/null 2>&1 || true
+
+# Symlinked ancestor refused: a symlinked persist root must never be
+# traversed, migrated through, or have its ownership repaired.
+symlinked_ancestor_fixture="$fixture/opencode-symlinked-ancestor"
+mkdir -p "$symlinked_ancestor_fixture/outside" "$symlinked_ancestor_fixture/home/dx/.config" "$symlinked_ancestor_fixture/home/dx/.local/share"
+ln -s "$symlinked_ancestor_fixture/outside" "$symlinked_ancestor_fixture/persist"
+if dx_ai_opencode_persistence "$symlinked_ancestor_fixture/persist/home/dx" "$symlinked_ancestor_fixture/home/dx" >/dev/null 2>&1; then
+    echo "Error: dx_ai_opencode_persistence traversed a symlinked persist ancestor" >&2
+    exit 1
+fi
+[ ! -e "$symlinked_ancestor_fixture/outside/home" ]
+if dx_ai_opencode_prepare_activation_ancestors "$symlinked_ancestor_fixture/persist/home/dx" >/dev/null 2>&1; then
+    echo "Error: dx_ai_opencode_prepare_activation_ancestors traversed a symlinked persist ancestor" >&2
+    exit 1
+fi
+[ ! -e "$symlinked_ancestor_fixture/outside/home" ]
+
+# Non-directory component refused: a persisted path that is a plain file
+# rather than a directory must never be traversed into.
+non_directory_fixture="$fixture/opencode-non-directory"
+mkdir -p "$non_directory_fixture/persist/home/dx" "$non_directory_fixture/home/dx/.config" "$non_directory_fixture/home/dx/.local/share"
+printf '%s\n' file > "$non_directory_fixture/persist/home/dx/.config"
+if dx_ai_opencode_persistence "$non_directory_fixture/persist/home/dx" "$non_directory_fixture/home/dx" >/dev/null 2>&1; then
+    echo "Error: dx_ai_opencode_persistence traversed a non-directory persist component" >&2
+    exit 1
+fi
+[ -f "$non_directory_fixture/persist/home/dx/.config" ]
+[ ! -L "$non_directory_fixture/home/dx/.config/opencode" ]
+
+wrong_link_fixture="$fixture/opencode-wrong-link"
+mkdir -p "$wrong_link_fixture/persist/home/dx" "$wrong_link_fixture/home/dx/.config" "$wrong_link_fixture/home/dx/.local/share" "$wrong_link_fixture/outside"
+ln -s "$wrong_link_fixture/outside" "$wrong_link_fixture/home/dx/.config/opencode"
+dx_ai_opencode_persistence "$wrong_link_fixture/persist/home/dx" "$wrong_link_fixture/home/dx" >/dev/null 2>&1 || true
+
+# Conflicting content: both the live path and the persistent target already
+# have a same-named file. Neither is discarded; the live copy is kept
+# alongside as a `.dxe-conflict-…` file.
+regular_live_fixture="$fixture/opencode-regular-live"
+mkdir -p "$regular_live_fixture/persist/home/dx/.config/opencode" "$regular_live_fixture/home/dx/.config" "$regular_live_fixture/home/dx/.local/share"
+printf '%s\n' persisted > "$regular_live_fixture/persist/home/dx/.config/opencode/config.json"
+mkdir -p "$regular_live_fixture/home/dx/.config/opencode"
+printf '%s\n' live-conflict > "$regular_live_fixture/home/dx/.config/opencode/config.json"
+dx_ai_opencode_persistence "$regular_live_fixture/persist/home/dx" "$regular_live_fixture/home/dx"
+[ "$(cat "$regular_live_fixture/persist/home/dx/.config/opencode/config.json")" = persisted ]
+live_conflict_backup=""
+for conflict_backup in "$regular_live_fixture/persist/home/dx/.config/opencode"/.dxe-conflict-config.json.*; do
+    [ -f "$conflict_backup" ] || continue
+    [ "$(cat "$conflict_backup")" = live-conflict ] && live_conflict_backup="$conflict_backup"
+done
+[ -n "$live_conflict_backup" ]
+
+# A live path that is itself a plain file (not a directory) is preserved
+# wholesale as a `.dxe-conflict-live-opencode.…` backup rather than merged
+# item by item.
+live_file_fixture="$fixture/opencode-live-file"
+mkdir -p "$live_file_fixture/persist/home/dx" "$live_file_fixture/home/dx/.config" "$live_file_fixture/home/dx/.local/share"
+printf '%s\n' preserved > "$live_file_fixture/home/dx/.config/opencode"
+dx_ai_opencode_persistence "$live_file_fixture/persist/home/dx" "$live_file_fixture/home/dx"
+grep -q preserved "$live_file_fixture/persist/home/dx/.config/opencode"/.dxe-conflict-live-opencode.*
+[ -L "$live_file_fixture/home/dx/.config/opencode" ]
+
+# dx_opencode_unused_path must keep searching past an already-taken
+# candidate rather than reuse it.
+unused_path_fixture="$fixture/opencode-unused-path"
+mkdir -p "$unused_path_fixture"
+: > "$unused_path_fixture/marker.$$"
+if [ "$(dx_opencode_unused_path "$unused_path_fixture/marker")" != "$unused_path_fixture/marker.$$.1" ]; then
+    echo "Error: dx_opencode_unused_path did not skip past an already-taken candidate" >&2
+    exit 1
+fi
+
+# Partial-failure leaves no dangling symlink: a failed rename of the
+# temporary link must never leave a stray `.dxe-link.*` behind.
+publish_failure="$fixture/opencode-publish-failure"
+mkdir -p "$publish_failure"
+[ "$(mv() { return 1; }; dx_opencode_publish_link "$publish_failure/target" "$publish_failure/live" >/dev/null 2>&1 || true; find "$publish_failure" -name '*.dxe-link.*' -print -quit)" = "" ]
+[ ! -e "$publish_failure/live" ]
+dx_opencode_validate_directory_path "$opencode_fixture" valid-directory
+dx_opencode_validate_directory_path /tmp root-directory
+dx_opencode_prepare_directory "$opencode_fixture/persist/home/dx/.config" 0700
+( unset -f dx_prepare_owned_directory; dx_ai_opencode_prepare_activation_ancestors "$opencode_fixture/persist/home/dx" >/dev/null 2>&1 || true )
+( unset -f dx_prepare_owned_directory; dx_opencode_prepare_directory "$fixture/opencode-no-helper" 0755; [ -d "$fixture/opencode-no-helper" ] )
 
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin /home/dx/.nix-profile/bin
 : > /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex; chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex
