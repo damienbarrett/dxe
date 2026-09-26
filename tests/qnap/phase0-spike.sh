@@ -245,8 +245,6 @@ dxe_spike_cleanup() {
 
 dxe_spike_run_steps() {
     local before=""
-    [ "$DXE_DRY_RUN" = 1 ] || before="$(dxe_spike_snapshot)"
-
     local status=0
 
     step_header 1 "Connect with a command-scoped Docker SSH endpoint"
@@ -275,6 +273,19 @@ dxe_spike_run_steps() {
             fi
         fi
     fi
+
+    # The step-9 safety snapshot is taken here, AFTER step 2's pull(s), not
+    # at the very start of the run: step 2 deliberately pulls the pinned
+    # base image (and its floating tag, when it differs) as part of the
+    # spike itself, so a snapshot taken before that pull would see the
+    # newly cached image as an "unexpected" non-spike change in step 9's
+    # diff guard purely because of what step 2 itself just did -- the
+    # first real run hit exactly this ("Error: unexpected change to a
+    # non-spike resource: > <base image ref>"), reporting a false FAIL
+    # unrelated to cleanup. Steps 1 and 2 never create or delete a
+    # container/volume/image other than this expected pull, so nothing is
+    # lost by starting the safety snapshot here instead of at step 1.
+    [ "$DXE_DRY_RUN" = 1 ] || before="$(dxe_spike_snapshot)"
 
     step_header 3 "Build the current minimal Containerfile remotely"
     # The remote Docker daemon runs on the QNAP and cannot resolve a path
