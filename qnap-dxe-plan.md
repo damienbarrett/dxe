@@ -487,9 +487,20 @@ mapping. Exit-gate evidence:
   command's exit status shown unchanged under `set -o pipefail`.
 - ShellCheck (pinned, `--severity=warning`) and the macOS Bash 3.2 gate are
   both green on the finished tree.
-- Item 7 (the full Apple live tier plus a layered bring-up against
-  `dx-test`) is in progress next; this status will be completed with its
-  totals once that run finishes.
+- **Item 7, completed:** the full Apple live tier (`tests/run-tier.sh live`)
+  against `dx-test` — 1,441 passed, 0 failed, 9 skipped (expected skips:
+  destructive/guest-runtime cases gated behind flags this run did not set).
+  A complete layered bring-up on the guard-free path
+  (`dx-stop-container` → `dx-start-container` → `dx-wait-ssh`) succeeded,
+  as did `dx-recreate` (destroy, rebuild image, recreate container,
+  restart, confirm the unchanged bootstrap content skip, wait for SSH) plus
+  an independent follow-up `dx-wait-ssh`; `/nix`, `/persist`, and the
+  bootstrap volume survived the recreate untouched, exactly as designed.
+  `dx-backup --dry-run` against `dx-test` (scratch `DX_BACKUP_DIR`)
+  exercised the exec-with-stdin/-u path through the adapter cleanly: 168
+  files, 662,590 bytes would transfer. `dx-test` was cold-stopped at the
+  end with its volumes and AI-tooling generation left in place. Phase 1 is
+  done.
 
 ## Phase 2 — Add the remote Docker adapter safely
 
