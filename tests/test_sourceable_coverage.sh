@@ -753,108 +753,259 @@ rm -rf "$fixture/herdr-activate"; mkdir -p "$fixture/herdr-activate/persist/home
     dx_activate_herdr "$fixture/herdr-fail/persist/home/dx" "$fixture/herdr-fail/home/dx" "$GUEST/bootstrap/herdr-config.toml" >/dev/null 2>&1 || true
 )
 
-# setup_keyring_service resolves dbus-daemon/gnome-keyring-daemon directly
-# from fixed locations (dx_resolve_keyring_bin: the published AI generation's
-# profile first, dx's Home Manager profile as a fallback) instead of asking
-# dx's login shell to find them on PATH. Exercise every branch: a
-# generation-profile hit for both binaries (including the reuse-a-live-session
-# path), the HM-profile fallback when no generation profile exists, dbus-daemon
-# unresolvable anywhere (policy B: a Warning, not a failure), a resolved
-# dbus-daemon with no session.conf next to it, an invalid bus address from
-# dbus-daemon, and gnome-keyring-daemon unresolvable while dbus-daemon still
-# starts.
-rm -rf /persist/home/dx /home/dx
-mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin \
-    /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1 /home/dx
-: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
-: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon
-chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon \
-    /persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon
-: > /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1/session.conf
-(
-    chown() { :; }
-    run_as_dx() { :; }
-    setpriv() { case "$*" in *--print-address*) printf '%s\n' unix:path=/tmp/dxe-coverage-bus ;; esac; }
-    setup_keyring_service
-    dx_keyring_address_is_live() { return 0; }
-    setup_keyring_service
-)
-rm -f /persist/home/dx/.local/state/dx/keyring-address
+# --- Branch 16: dx_keyring_probe/_clear_stale/_secrets_registered/
+# _pids_matching/_start/_status (scripts/lib/dx-keyring.sh). Real dbus/
+# gnome-keyring are never installed in this container, so dbus-daemon,
+# dbus-send, and gnome-keyring-daemon are faked under fixture/keyring-fakebin
+# (a bin/ subdirectory, matching dx_keyring_session_config's
+# `${real%/bin/dbus-daemon}` prefix stripping) and prepended to PATH only for
+# this block. `[ -S ... ]` still needs a REAL socket-typed filesystem entry
+# (python3 -- available in this image for kcov's own build -- is the only
+# portable way to create one without a real dbus-daemon; the live diagnosis
+# in dx_keyring_probe's own comment already proved dbus-send's actual
+# connect/reply behavior against the pinned dbus package in a real guest, so
+# faking the client here only needs to reproduce its exit-code contract).
+keyring_fixture="$fixture/keyring"
+mkdir -p "$keyring_fixture/keyring-fakebin/bin" "$keyring_fixture/keyring-fakebin/share/dbus-1" "$keyring_fixture/nokeyringbin/bin"
+: > "$keyring_fixture/keyring-fakebin/share/dbus-1/session.conf"
+fake_log="$keyring_fixture/fake-invocations.log"
+fake_dbus_daemon_fail="$keyring_fixture/.fake-dbus-daemon-fail"
+fake_dbus_daemon_addr_file="$keyring_fixture/.fake-dbus-daemon-addr"
+fake_dbus_send_fail="$keyring_fixture/.fake-dbus-send-fail"
+fake_dbus_send_nosecrets="$keyring_fixture/.fake-dbus-send-nosecrets"
+fake_socket="$keyring_fixture/fake.sock"
+python3 - "$fake_socket" <<'PY'
+import os, socket, sys
+path = sys.argv[1]
+if os.path.exists(path):
+    os.remove(path)
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(path)
+s.close()
+PY
+printf 'unix:path=%s,guid=deadbeefdeadbeefdeadbeefdeadbeef\n' "$fake_socket" > "$fake_dbus_daemon_addr_file"
+# Captured once as a plain variable (not repeatedly re-`cat`, an external
+# command) so the PATH=/dev/null probes below -- which deliberately break
+# external-command resolution to test "the binary is nowhere on PATH" --
+# don't also break reading this fixture's own address.
+fake_address="$(cat "$fake_dbus_daemon_addr_file")"
 
-# HM-profile fallback: no generation profile at all, only dx's own Home
-# Manager profile has the binaries.
-rm -rf /persist/home/dx/.local/state/dx-ai
-mkdir -p /home/dx/.nix-profile/bin /home/dx/.nix-profile/share/dbus-1
-: > /home/dx/.nix-profile/bin/dbus-daemon; : > /home/dx/.nix-profile/bin/gnome-keyring-daemon
-chmod +x /home/dx/.nix-profile/bin/dbus-daemon /home/dx/.nix-profile/bin/gnome-keyring-daemon
-: > /home/dx/.nix-profile/share/dbus-1/session.conf
-(
-    chown() { :; }; run_as_dx() { :; }
-    setpriv() { case "$*" in *--print-address*) printf '%s\n' unix:path=/tmp/dxe-coverage-bus-fallback ;; esac; }
-    setup_keyring_service
-)
-rm -f /persist/home/dx/.local/state/dx/keyring-address
-rm -rf /home/dx/.nix-profile
+cat > "$keyring_fixture/keyring-fakebin/bin/dbus-daemon" <<FAKE
+#!/bin/sh
+printf '%s\n' "dbus-daemon \$*" >> "$fake_log"
+[ ! -f "$fake_dbus_daemon_fail" ] || exit 1
+cat "$fake_dbus_daemon_addr_file"
+FAKE
+cat > "$keyring_fixture/keyring-fakebin/bin/gnome-keyring-daemon" <<FAKE
+#!/bin/sh
+printf '%s\n' "gnome-keyring-daemon \$*" >> "$fake_log"
+exit 0
+FAKE
+cat > "$keyring_fixture/keyring-fakebin/bin/dbus-send" <<FAKE
+#!/bin/sh
+printf '%s\n' "dbus-send \$*" >> "$fake_log"
+[ ! -f "$fake_dbus_send_fail" ] || exit 1
+if [ -f "$fake_dbus_send_nosecrets" ]; then
+    printf '   array [\n      string "org.freedesktop.DBus"\n   ]\n'
+else
+    printf '   array [\n      string "org.freedesktop.DBus"\n      string "org.freedesktop.secrets"\n   ]\n'
+fi
+FAKE
+chmod +x "$keyring_fixture/keyring-fakebin/bin/dbus-daemon" "$keyring_fixture/keyring-fakebin/bin/gnome-keyring-daemon" "$keyring_fixture/keyring-fakebin/bin/dbus-send"
+# A second fakebin with dbus-daemon/dbus-send but no gnome-keyring-daemon, for
+# the "secrets binary unresolvable, bus still starts" branch.
+cp "$keyring_fixture/keyring-fakebin/bin/dbus-daemon" "$keyring_fixture/nokeyringbin/bin/dbus-daemon"
+cp "$keyring_fixture/keyring-fakebin/bin/dbus-send" "$keyring_fixture/nokeyringbin/bin/dbus-send"
+chmod +x "$keyring_fixture/nokeyringbin/bin/dbus-daemon" "$keyring_fixture/nokeyringbin/bin/dbus-send"
+mkdir -p "$keyring_fixture/nokeyringbin/share/dbus-1"
+: > "$keyring_fixture/nokeyringbin/share/dbus-1/session.conf"
 
-# Unresolvable anywhere: policy B warns and returns success rather than
-# failing bootstrap.
+# dx_keyring_socket_from_address/_address_valid/_address_is_live already have
+# dedicated probes above; exercise the new real-liveness primitives directly.
+dx_keyring_probe not-an-address >/dev/null 2>&1 || true
+dx_keyring_probe "unix:path=$keyring_fixture/no-such-socket" >/dev/null 2>&1 || true
 (
-    chown() { :; }; run_as_dx() { :; }; setpriv() { :; }
-    setup_keyring_service
+    PATH="$keyring_fixture/keyring-fakebin/bin:$PATH"
+    rm -f "$fake_dbus_send_fail"
+    dx_keyring_probe "$fake_address" >/dev/null 2>&1
 )
-rm -f /persist/home/dx/.local/state/dx/keyring-address
+(
+    PATH="$keyring_fixture/keyring-fakebin/bin:$PATH"
+    : > "$fake_dbus_send_fail"
+    dx_keyring_probe "$fake_address" >/dev/null 2>&1 || true
+    rm -f "$fake_dbus_send_fail"
+)
+(
+    # dbus-send entirely unresolvable: deliberately break command lookup,
+    # a subshell-scoped probe of dx_keyring_probe's own fail-closed path.
+    # shellcheck disable=SC2123
+    PATH=/dev/null
+    dx_keyring_probe "$fake_address" >/dev/null 2>&1 || true
+)
 
-# dbus-daemon resolves but its session.conf is missing next to it: also a
-# warning, not fatal.
-mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin
-: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
-chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
 (
-    chown() { :; }; run_as_dx() { :; }; setpriv() { :; }
-    setup_keyring_service
+    PATH="$keyring_fixture/keyring-fakebin/bin:$PATH"
+    dx_keyring_secrets_registered "$fake_address" >/dev/null 2>&1
+    : > "$fake_dbus_send_nosecrets"
+    dx_keyring_secrets_registered "$fake_address" >/dev/null 2>&1 || true
+    rm -f "$fake_dbus_send_nosecrets"
+    : > "$fake_dbus_send_fail"
+    dx_keyring_secrets_registered "$fake_address" >/dev/null 2>&1 || true
+    rm -f "$fake_dbus_send_fail"
+    # dbus-send entirely unresolvable, subshell-scoped.
+    # shellcheck disable=SC2123
+    PATH=/dev/null
+    dx_keyring_secrets_registered "$fake_address" >/dev/null 2>&1 || true
 )
-rm -f /persist/home/dx/.local/state/dx/keyring-address
-rm -rf /persist/home/dx/.local/state/dx-ai
 
-# dbus-daemon resolves and has a session.conf, but returns an invalid bus
-# address: also a warning, not fatal.
-mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin \
-    /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1
-: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
-chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
-: > /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1/session.conf
+# dx_keyring_clear_stale: absent (no-op), live (no-op, files survive), stale
+# (removes both the address file and the socket it names).
+clear_stale_address_file="$keyring_fixture/clear-stale-address"
+dx_keyring_clear_stale "$clear_stale_address_file" >/dev/null 2>&1
 (
-    chown() { :; }; run_as_dx() { :; }
-    setpriv() { case "$*" in *--print-address*) printf 'not-a-valid-address\n' ;; esac; }
-    setup_keyring_service
+    PATH="$keyring_fixture/keyring-fakebin/bin:$PATH"
+    rm -f "$fake_dbus_send_fail"
+    dx_keyring_write_address "$clear_stale_address_file" "$fake_address"
+    dx_keyring_clear_stale "$clear_stale_address_file"
 )
-rm -f /persist/home/dx/.local/state/dx/keyring-address
+if [ -f "$clear_stale_address_file" ]; then :; else echo "Error: dx_keyring_clear_stale removed a live address file." >&2; exit 1; fi
+(
+    PATH="$keyring_fixture/keyring-fakebin/bin:$PATH"
+    : > "$fake_dbus_send_fail"
+    dx_keyring_clear_stale "$clear_stale_address_file"
+    rm -f "$fake_dbus_send_fail"
+)
+if [ ! -f "$clear_stale_address_file" ]; then :; else echo "Error: dx_keyring_clear_stale kept a stale address file." >&2; exit 1; fi
+if [ ! -S "$fake_socket" ]; then :; else echo "Error: dx_keyring_clear_stale kept a stale socket." >&2; exit 1; fi
+# Recreate the fake socket for the dx_keyring_start probes below.
+python3 - "$fake_socket" <<'PY'
+import os, socket, sys
+path = sys.argv[1]
+if os.path.exists(path):
+    os.remove(path)
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(path)
+s.close()
+PY
 
-# gnome-keyring-daemon unresolvable while dbus-daemon still starts: a
-# warning for the missing secrets component, but the bus address is still
-# persisted.
-: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
-chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
-rm -f /persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon
-(
-    chown() { :; }; run_as_dx() { :; }
-    setpriv() { case "$*" in *--print-address*) printf '%s\n' unix:path=/tmp/dxe-coverage-bus-nokeyring ;; esac; }
-    setup_keyring_service
-)
-rm -rf /persist/home/dx/.local/state/dx-ai
-rm -f /persist/home/dx/.local/state/dx/keyring-address
+# dx_keyring_pids_matching: a real match (this shell's own dummy background
+# marker process) and the ordinary no-match sweep over the rest of /proc.
+bash -c 'exec -a dxe-coverage-keyring-marker sleep 60' &
+marker_pid=$!
+sleep 1
+matched_pids="$(dx_keyring_pids_matching dxe-coverage-keyring-marker)"
+kill "$marker_pid" 2>/dev/null || true
+wait "$marker_pid" 2>/dev/null || true
+case "$matched_pids" in
+    *"$marker_pid"*) ;;
+    *) echo "Error: dx_keyring_pids_matching did not find its own marker process." >&2; exit 1 ;;
+esac
+dx_keyring_pids_matching dxe-coverage-keyring-pattern-that-matches-nothing >/dev/null
 
-printf '%s\n' "export DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dxe-coverage-bus'" > /home/dx/.dx-keyring-env
+# dx_keyring_start: fresh start (no address recorded), idempotent second call
+# (no new invocations of either fake daemon), stale recovery (a third call
+# after the recorded bus goes dead), dbus-daemon wholly unresolvable
+# (fail-closed), an invalid bus address from dbus-daemon, and
+# gnome-keyring-daemon unresolvable while dbus-daemon still starts.
+start_address_file="$keyring_fixture/start-address"
+rm -f "$fake_log"
 (
-    chown() { :; }; run_as_dx() { :; }; setpriv() { :; }; dx_keyring_address_is_live() { return 0; }
-    setup_keyring_service
+    PATH="$keyring_fixture/keyring-fakebin/bin:$PATH"
+    rm -f "$fake_dbus_send_fail"; : > "$fake_dbus_send_nosecrets"
+    dx_keyring_start "$start_address_file" >/dev/null 2>&1
 )
-printf '%s\n' malicious > /home/dx/.dx-keyring-env
-rm -f /persist/home/dx/.local/state/dx/keyring-address
+first_dbus_calls="$(grep -c '^dbus-daemon ' "$fake_log" 2>/dev/null || true)"
+first_keyring_calls="$(grep -c '^gnome-keyring-daemon ' "$fake_log" 2>/dev/null || true)"
+if [ "${first_dbus_calls:-0}" -eq 1 ]; then :; else echo "Error: dx_keyring_start's fresh start did not invoke dbus-daemon exactly once (got ${first_dbus_calls:-0})." >&2; exit 1; fi
+if [ "${first_keyring_calls:-0}" -eq 1 ]; then :; else echo "Error: dx_keyring_start's fresh start did not invoke gnome-keyring-daemon exactly once (got ${first_keyring_calls:-0})." >&2; exit 1; fi
 (
-    chown() { :; }; run_as_dx() { :; }; setpriv() { :; }
-    setup_keyring_service >/dev/null 2>&1 || true
+    PATH="$keyring_fixture/keyring-fakebin/bin:$PATH"
+    rm -f "$fake_dbus_send_fail" "$fake_dbus_send_nosecrets"
+    dx_keyring_start "$start_address_file" >/dev/null 2>&1
 )
+second_dbus_calls="$(grep -c '^dbus-daemon ' "$fake_log" 2>/dev/null || true)"
+second_keyring_calls="$(grep -c '^gnome-keyring-daemon ' "$fake_log" 2>/dev/null || true)"
+if [ "$second_dbus_calls" -eq "$first_dbus_calls" ]; then :; else echo "Error: dx_keyring_start's idempotent second call started a new dbus-daemon." >&2; exit 1; fi
+if [ "$second_keyring_calls" -eq "$first_keyring_calls" ]; then :; else echo "Error: dx_keyring_start's idempotent second call started a new gnome-keyring-daemon." >&2; exit 1; fi
+(
+    PATH="$keyring_fixture/keyring-fakebin/bin:$PATH"
+    : > "$fake_dbus_send_fail"; : > "$fake_dbus_send_nosecrets"
+    dx_keyring_start "$start_address_file" >/dev/null 2>&1
+    rm -f "$fake_dbus_send_fail" "$fake_dbus_send_nosecrets"
+)
+third_dbus_calls="$(grep -c '^dbus-daemon ' "$fake_log" 2>/dev/null || true)"
+third_keyring_calls="$(grep -c '^gnome-keyring-daemon ' "$fake_log" 2>/dev/null || true)"
+if [ "$third_dbus_calls" -eq 2 ]; then :; else echo "Error: dx_keyring_start's stale recovery did not start exactly one new dbus-daemon (total ${third_dbus_calls})." >&2; exit 1; fi
+if [ "$third_keyring_calls" -eq 2 ]; then :; else echo "Error: dx_keyring_start's stale recovery did not start exactly one new gnome-keyring-daemon (total ${third_keyring_calls})." >&2; exit 1; fi
+rm -f "$keyring_fixture/unresolvable-address"
+(
+    # rm runs before PATH is broken: it is an external command too, and this
+    # subshell's whole point is to make dbus-daemon (and everything else)
+    # unresolvable.
+    # shellcheck disable=SC2123
+    PATH=/dev/null
+    dx_keyring_start "$keyring_fixture/unresolvable-address" >/dev/null 2>&1 || true
+)
+if [ ! -f "$keyring_fixture/unresolvable-address" ]; then :; else echo "Error: dx_keyring_start recorded an address despite dbus-daemon being unresolvable." >&2; exit 1; fi
+(
+    PATH="$keyring_fixture/keyring-fakebin/bin:$PATH"
+    printf 'not-a-valid-address\n' > "$fake_dbus_daemon_addr_file"
+    rm -f "$keyring_fixture/invalid-address"
+    dx_keyring_start "$keyring_fixture/invalid-address" >/dev/null 2>&1 || true
+    printf 'unix:path=%s,guid=deadbeefdeadbeefdeadbeefdeadbeef\n' "$fake_socket" > "$fake_dbus_daemon_addr_file"
+)
+if [ ! -f "$keyring_fixture/invalid-address" ]; then :; else echo "Error: dx_keyring_start recorded an invalid bus address." >&2; exit 1; fi
+(
+    PATH="$keyring_fixture/keyring-fakebin/bin:$PATH"
+    : > "$fake_dbus_daemon_fail"
+    rm -f "$keyring_fixture/daemon-fail-address"
+    dx_keyring_start "$keyring_fixture/daemon-fail-address" >/dev/null 2>&1 || true
+    rm -f "$fake_dbus_daemon_fail"
+)
+if [ ! -f "$keyring_fixture/daemon-fail-address" ]; then :; else echo "Error: dx_keyring_start recorded an address despite dbus-daemon itself failing." >&2; exit 1; fi
+(
+    PATH="$keyring_fixture/nokeyringbin/bin:$PATH"
+    : > "$fake_dbus_send_nosecrets"
+    rm -f "$keyring_fixture/nokeyring-address"
+    dx_keyring_start "$keyring_fixture/nokeyring-address" >/dev/null 2>&1 || true
+    rm -f "$fake_dbus_send_nosecrets"
+)
+if [ -f "$keyring_fixture/nokeyring-address" ]; then :; else echo "Error: dx_keyring_start did not persist the bus address when gnome-keyring-daemon was unresolvable." >&2; exit 1; fi
+
+# The stale-recovery dx_keyring_start call above (fake_dbus_send_fail set)
+# went through dx_keyring_clear_stale internally, which removed fake_socket
+# for real -- recreate it so the "live" status probe below has a genuine
+# socket-typed file to find again.
+python3 - "$fake_socket" <<'PY'
+import os, socket, sys
+path = sys.argv[1]
+if os.path.exists(path):
+    os.remove(path)
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(path)
+s.close()
+PY
+
+# dx_keyring_status: absent (no file), absent (unparseable content), live,
+# and stale.
+dx_keyring_status "$keyring_fixture/status-absent" >/dev/null
+printf 'unix:path=/tmp/x\n\nextra\n' > "$keyring_fixture/status-garbled"
+dx_keyring_status "$keyring_fixture/status-garbled" >/dev/null
+(
+    PATH="$keyring_fixture/keyring-fakebin/bin:$PATH"
+    rm -f "$fake_dbus_send_fail"
+    dx_keyring_write_address "$keyring_fixture/status-live" "$fake_address"
+    dx_keyring_status "$keyring_fixture/status-live" >/dev/null
+)
+(
+    PATH="$keyring_fixture/keyring-fakebin/bin:$PATH"
+    : > "$fake_dbus_send_fail"
+    dx_keyring_write_address "$keyring_fixture/status-stale" "$fake_address"
+    dx_keyring_status "$keyring_fixture/status-stale" >/dev/null
+    rm -f "$fake_dbus_send_fail"
+)
+rm -f "$fake_log" "$fake_dbus_send_fail" "$fake_dbus_send_nosecrets" "$fake_dbus_daemon_fail"
+rm -f "$fake_socket"
 
 # Herdr persistence and config seeding probes. The Herdr cases below each
 # `rm -rf /persist/home/dx /home/dx` and recreate their own fixture before use,
@@ -1353,114 +1504,59 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.local/state/dx-ai/c
 : > /home/dx/.nix-profile/bin/nu
 (
     ensure_nix_ownership() { :; }; chown() { :; }; run_as_dx() { :; }
-    setup_gh_persistence() { :; }; setup_tmux_persistence() { :; }; dx_activate_herdr() { :; }; setup_keyring_service() { :; }
+    setup_gh_persistence() { :; }; setup_tmux_persistence() { :; }; dx_activate_herdr() { :; }
     run_home_manager_activation() { :; }; usermod() { :; }; grep() { return 1; }
     configure_guest
 )
 
-# ai_tools_enabled=false branch: setup_keyring_service must never be called
-# when the AI-tools guard is false (the flag has to stay false all the way to
-# the moved call site after run_home_manager_activation).
-rm -rf /persist/home/dx /home/dx; mkdir -p /home/dx/.nix-profile/bin
-: > /home/dx/.nix-profile/bin/nu
-(
-    ensure_nix_ownership() { :; }; chown() { :; }; run_as_dx() { :; }
-    setup_gh_persistence() { :; }; setup_tmux_persistence() { :; }
-    keyring_called=0
-    setup_keyring_service() { keyring_called=1; }
-    run_home_manager_activation() { :; }; usermod() { :; }; grep() { return 1; }
-    configure_guest
-    [ "$keyring_called" -eq 0 ]
-)
-
-# Recreate-time regression, at the configure_guest level (not just
-# setup_keyring_service in isolation): a fresh dx-recreate's /home/dx is
-# ephemeral, but /persist survives, so an AI-opted-in guest's published
-# generation profile is exactly what dx_resolve_keyring_bin now checks
-# first. This is no longer an *ordering* defect (the old
-# `dbus_bin="$(run_as_dx 'command -v dbus-daemon')"` lookup depended on
-# Home Manager activation having already run so dx's login-shell PATH
-# reflected the generation profile; dx_resolve_keyring_bin checks fixed
-# absolute paths directly and does not depend on that PATH, or on
-# run_home_manager_activation's stub having run first, at all) -- run_home_manager_activation
-# is still stubbed and tracked below only to confirm configure_guest's call
-# order is otherwise unchanged, not because setup_keyring_service's
-# correctness depends on it any more.
+# Branch 16: configure_guest no longer calls any keyring function at all
+# (with the AI-tools guard true or false) -- the two probes this used to
+# need (an "ai_tools_enabled=false must never call setup_keyring_service"
+# guard, and a dedicated recreate-time-resolution/ordering regression test
+# run as a separate bash process) no longer apply to anything configure_guest
+# itself does. See tests/test_sourceable_coverage.sh's own dx_keyring_start/
+# dx_keyring_status probes above, and tests/test_section17_dx_ai_runtime.sh's
+# live dx-keyring checks, for the equivalent behavioral coverage now that
+# ownership moved to dx-ai/dx-keyring.
 #
-# This has to run as a genuinely separate bash process (not sourced/stubbed
-# in-place in this already-running script): bash's `errexit` does not
-# reliably propagate out of a failing bare-assignment command substitution
-# that occurs inside a function which is itself being captured by another
-# `$(...)` in the same interpreter -- verified empirically, execution quietly
-# continues past the failure instead of aborting, which would mask exactly
-# the defect this test exists to catch. The real bootstrap runs
-# `configure_guest` as the top-level script of its own bash process, so a
-# fresh `bash` subprocess is what actually reproduces the silent-death
-# signature.
-rm -rf /persist/home/dx /home/dx
-mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin \
-    /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1
-: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex
-: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
-: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon
-chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex \
-    /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon \
-    /persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon
-: > /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1/session.conf
-order_script="$(mktemp "$fixture/dxe-configure-guest-order.XXXXXX")"
-cat > "$order_script" <<'INNER'
-set -euo pipefail
-source "$DXE_TEST_GUEST/scripts/lib/dx-keyring.sh"
-source "$DXE_TEST_GUEST/bootstrap/common.sh"
-source "$DXE_TEST_GUEST/bootstrap/base-and-storage.sh"
-source "$DXE_TEST_GUEST/bootstrap/system.sh"
-source "$DXE_TEST_GUEST/bootstrap/persistence.sh"
-source "$DXE_TEST_GUEST/bootstrap/activation.sh"
-ensure_nix_ownership() { :; }
-chown() { :; }
-setup_gh_persistence() { :; }
-setup_tmux_persistence() { :; }
-usermod() { :; }
-run_as_dx() { :; }
-run_home_manager_activation() { echo "STUB: Home Manager activation ran"; }
-setpriv() { case "$*" in (*--print-address*) printf '%s\n' unix:path=/tmp/dxe-coverage-order-bus ;; (*) return 0 ;; esac; }
-configure_guest
-echo "STUB: configure_guest returned normally"
-INNER
-rc=0
-output="$(DXE_TEST_GUEST="$GUEST" DX_BOOTSTRAP_ROOT="$GUEST" bash "$order_script" 2>&1)" || rc=$?
-rm -f "$order_script"
-if [ "$rc" -ne 0 ]; then
-    echo "Error: configure_guest did not complete (rc=$rc). Output:" >&2
-    printf '%s\n' "$output" >&2
-    exit 1
-fi
-if ! printf '%s\n' "$output" | stdin_matches -F 'STUB: Home Manager activation ran'; then
-    echo "Error: configure_guest no longer runs Home Manager activation. Output:" >&2
-    printf '%s\n' "$output" >&2
-    exit 1
-fi
-if printf '%s\n' "$output" | stdin_matches -iE 'Warning:.*(dbus-daemon|gnome-keyring-daemon)'; then
-    echo "Error: configure_guest warned about a missing keyring binary the generation profile actually provides. Output:" >&2
-    printf '%s\n' "$output" >&2
-    exit 1
-fi
-if ! printf '%s\n' "$output" | stdin_matches -F 'STUB: configure_guest returned normally'; then
-    echo "Error: configure_guest did not return normally after the keyring service ran. Output:" >&2
-    printf '%s\n' "$output" >&2
-    exit 1
-fi
-
-# Exercise configure_guest's fail-closed fallback when the helper was not
-# preloaded and the configured bootstrap root does not contain it.
+# The removed test also incidentally exercised configure_guest's *unrelated*
+# OpenCode-persistence-library fallback load (source
+# "$opencode_persistence_library", the branch taken only when
+# dx_ai_opencode_persistence was not already sourced by the caller) --
+# nothing else in this file unsets that function before calling
+# configure_guest, so losing that whole block silently dropped its coverage
+# too. Keep it covered directly, with a real (not missing) bootstrap root so
+# this exercises the successful source, not the fail-closed error message
+# the very next probe below already covers.
+rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin /home/dx/.nix-profile/bin
+: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex; chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex
+: > /home/dx/.nix-profile/bin/nu
 (
     unset -f dx_ai_opencode_persistence dx_ai_opencode_prepare_activation_ancestors
     ensure_nix_ownership() { :; }; chown() { :; }; run_as_dx() { :; }
-    setup_gh_persistence() { :; }; setup_tmux_persistence() { :; }; dx_activate_herdr() { :; }; setup_keyring_service() { :; }
+    setup_gh_persistence() { :; }; setup_tmux_persistence() { :; }; dx_activate_herdr() { :; }
+    run_home_manager_activation() { :; }; usermod() { :; }; grep() { return 1; }
+    DX_BOOTSTRAP_ROOT="$GUEST" configure_guest
+)
+rm -rf /persist/home/dx /home/dx
+
+# Exercise configure_guest's fail-closed fallback when the helper was not
+# preloaded and the configured bootstrap root does not contain it. Needs its
+# own ai_tools_opted_in fixture (the preceding probe cleans up
+# /persist/home/dx afterward, and this one stubs run_as_dx to a silent
+# no-op, so ai_tools_opted_in's own fallback -- `run_as_dx "nix profile
+# list" | grep ...` -- would otherwise never see the AI-tools guard as true
+# and this whole branch would go unreached).
+mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin
+: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex
+chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex
+(
+    unset -f dx_ai_opencode_persistence dx_ai_opencode_prepare_activation_ancestors
+    ensure_nix_ownership() { :; }; chown() { :; }; run_as_dx() { :; }
+    setup_gh_persistence() { :; }; setup_tmux_persistence() { :; }; dx_activate_herdr() { :; }
     run_home_manager_activation() { :; }; usermod() { :; }; grep() { return 1; }
     DX_BOOTSTRAP_ROOT="$fixture/missing-bootstrap" configure_guest >/dev/null 2>&1 || true
 )
-
 rm -rf /persist/home/dx /home/dx
 
 # Core Nix bootstrap negative/recovery branches.  These are sourceable-only

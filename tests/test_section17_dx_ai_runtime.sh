@@ -990,7 +990,7 @@ else
     exit_with_code
 fi
 
-if printf '%s\n' "$DX_AI_OUT" | stdin_matches -E "D-Bus keyring service (started|already available)"; then
+if printf '%s\n' "$DX_AI_OUT" | stdin_matches -E "D-Bus session bus (started|already running)"; then
     test_pass "dx-ai ensures D-Bus keyring service"
 else
     test_fail "dx-ai ensures D-Bus keyring service"
@@ -1038,6 +1038,64 @@ if run_guest 'address_file=/persist/home/dx/.local/state/dx/keyring-address; tes
     test_pass "dx-ai writes one validated raw D-Bus keyring address"
 else
     test_fail "dx-ai writes one validated raw D-Bus keyring address"
+fi
+
+# --- Branch 16: the guest keyring is owned by dx-ai and the explicit
+# dx-keyring command, not bootstrap. The dx-ai run above already brought up
+# a live bus with a live Secret Service via the exact same shared library
+# (scripts/lib/dx-keyring.sh) dx-keyring itself uses; exercise the command
+# directly against that same live state, then prove the real defect this
+# branch fixes (a stale socket file surviving the daemon's death) end to end
+# without needing a full container restart. ---
+if run_guest 'dx-keyring --help' 2>&1 | stdin_matches -F 'Usage: dx-keyring'; then
+    test_pass "dx-keyring --help prints usage"
+else
+    test_fail "dx-keyring --help prints usage"
+fi
+
+DX_KEYRING_STATUS_OUT="$(run_guest 'dx-keyring status' 2>&1)"
+if printf '%s\n' "$DX_KEYRING_STATUS_OUT" | stdin_matches -F live; then
+    test_pass "dx-keyring status reports live after dx-ai already started it"
+else
+    test_fail "dx-keyring status reports live after dx-ai already started it"
+    printf '%s\n' "$DX_KEYRING_STATUS_OUT" >&2
+fi
+
+# Idempotent restart: a second `dx-keyring start` against an already-live bus
+# with a running Secret Service must spawn no new dbus-daemon/
+# gnome-keyring-daemon processes (procps' pgrep is in dxPackages).
+BEFORE_KEYRING_PIDS="$(run_guest "pgrep -f 'dbus-daemon|gnome-keyring-daemon' | sort" 2>/dev/null || true)"
+run_guest 'dx-keyring start' >/dev/null 2>&1
+AFTER_KEYRING_PIDS="$(run_guest "pgrep -f 'dbus-daemon|gnome-keyring-daemon' | sort" 2>/dev/null || true)"
+if [ -n "$BEFORE_KEYRING_PIDS" ] && [ "$BEFORE_KEYRING_PIDS" = "$AFTER_KEYRING_PIDS" ]; then
+    test_pass "dx-keyring start is idempotent against an already-live bus (no new processes)"
+else
+    test_fail "dx-keyring start is idempotent against an already-live bus (no new processes) (before=[$BEFORE_KEYRING_PIDS] after=[$AFTER_KEYRING_PIDS])"
+fi
+
+# The actual reported defect: dx-stop-container/dx-start-container leaves the
+# previous boot's socket FILE behind while the process that owned it is gone.
+# Reproduced here without a full container cycle by killing the real
+# dbus-daemon process directly -- its socket file survives on disk exactly
+# the same way (see scripts/lib/dx-keyring.sh's dx_keyring_probe comment for
+# the live diagnosis this mirrors).
+run_guest 'pkill -9 -f "dbus-daemon --config-file" || true' >/dev/null 2>&1 || true
+sleep 1
+DX_KEYRING_STALE_OUT="$(run_guest 'dx-keyring status' 2>&1)"
+if printf '%s\n' "$DX_KEYRING_STALE_OUT" | stdin_matches -F stale; then
+    test_pass "dx-keyring status reports stale once the daemon dies but its socket file survives"
+else
+    test_fail "dx-keyring status reports stale once the daemon dies but its socket file survives"
+    printf '%s\n' "$DX_KEYRING_STALE_OUT" >&2
+fi
+
+DX_KEYRING_RECOVER_OUT="$(run_guest 'dx-keyring start' 2>&1)"
+DX_KEYRING_RECOVER_STATUS="$(run_guest 'dx-keyring status' 2>&1)"
+if printf '%s\n' "$DX_KEYRING_RECOVER_STATUS" | stdin_matches -F live; then
+    test_pass "dx-keyring start recovers a stale bus and keyring"
+else
+    test_fail "dx-keyring start recovers a stale bus and keyring"
+    printf '%s\n' "$DX_KEYRING_RECOVER_OUT" "$DX_KEYRING_RECOVER_STATUS" >&2
 fi
 
 print_summary

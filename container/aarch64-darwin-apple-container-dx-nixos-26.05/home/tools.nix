@@ -142,6 +142,20 @@
   home.file.".local/lib/dx/dx-opencode-persistence.sh".source =
     ../scripts/lib/dx-opencode-persistence.sh;
 
+  # Guest keyring ownership lives entirely in the AI-tools layer (Branch 16):
+  # dx-ai's dx_ai_ensure_keyring and the dx-keyring command below are both
+  # thin wrappers over this shared library (source-only, like
+  # dx-opencode-persistence.sh above), and home/shell.nix's profileExtra
+  # reads the recorded bus address through it too. Bootstrap keeps none of
+  # this.
+  home.file.".local/lib/dx/dx-keyring.sh".source =
+    ../scripts/lib/dx-keyring.sh;
+
+  home.file.".local/bin/dx-keyring" = {
+    executable = true;
+    source = ../scripts/dx-keyring.sh;
+  };
+
   home.file.".local/bin/dx-claude-statusline" = {
     executable = true;
     source = ../scripts/dx-claude-statusline.sh;

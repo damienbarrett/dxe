@@ -38,6 +38,28 @@ dx_ai_load_opencode_persistence() {
     return 1
 }
 
+# Same three-candidate shape as dx_ai_load_opencode_persistence, for the
+# same reason: scripts/lib/dx-keyring.sh is packaged both as a Home Manager
+# `home.file` and loadable straight off the bootstrap volume, so a fresh
+# guest's very first dx-ai run (before any AI generation exists to publish
+# it under ~/.local/lib/dx) can still resolve it.
+dx_ai_load_keyring() {
+    local script_directory candidate
+    declare -F dx_keyring_start >/dev/null && return 0
+    script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+    for candidate in \
+        "$script_directory/lib/dx-keyring.sh" \
+        "$HOME/.local/lib/dx/dx-keyring.sh" \
+        "${DX_AI_BOOTSTRAP_ROOT:-/guest-bootstrap}/scripts/lib/dx-keyring.sh"; do
+        [ -r "$candidate" ] || continue
+        # shellcheck source=/dev/null
+        source "$candidate" || return 1
+        declare -F dx_keyring_start >/dev/null && return 0
+    done
+    echo "Error: keyring library is unavailable." >&2
+    return 1
+}
+
 dx_ai_usage() {
     cat <<'EOF'
 Usage: dx-ai [--recover] [--supports <tool>]
@@ -441,21 +463,9 @@ dx_ai_setup_credentials() {
 }
 
 dx_ai_ensure_keyring() {
-    local library="$HOME/.local/lib/dx/dx-keyring.sh" address_file=/persist/home/dx/.local/state/dx/keyring-address address="" config started=false
-    [ -f "$library" ] || { echo "Error: packaged keyring library is missing: $library" >&2; return 1; }
-    # shellcheck source=lib/dx-keyring.sh
-    source "$library"
-    address="$(dx_keyring_read_address "$address_file" 2>/dev/null || true)"
-    if ! dx_keyring_address_is_live "$address"; then
-        command -v dbus-daemon >/dev/null && command -v gnome-keyring-daemon >/dev/null || { echo "Warning: keyring services are unavailable."; return 0; }
-        config="$(dx_keyring_session_config "$(command -v dbus-daemon)")"
-        address="$(dbus-daemon --config-file="$config" --fork --print-address)"
-        dx_keyring_write_address "$address_file" "$address" || return 1
-        started=true
-    fi
-    export DBUS_SESSION_BUS_ADDRESS=$address
-    printf '' | gnome-keyring-daemon --unlock --start --components=secrets >/dev/null 2>&1 || true
-    if [ "$started" = true ]; then echo "D-Bus keyring service started."; else echo "D-Bus keyring service already available."; fi
+    local address_file=/persist/home/dx/.local/state/dx/keyring-address
+    dx_ai_load_keyring || return 1
+    dx_keyring_start "$address_file"
 }
 
 # Decide whether `herdr integration install <target>` still has work to do.

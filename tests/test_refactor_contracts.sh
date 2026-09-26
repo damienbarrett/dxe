@@ -228,4 +228,14 @@ for pair in useradd:shadow groupadd:shadow usermod:shadow ssh-keygen:openssh \
     check bootstrap_invokes "${pair%%:*}"
 done
 
+# --- Branch 16: bootstrap keeps no keyring knowledge at all. The guest
+# keyring (D-Bus session bus + gnome-keyring Secret Service, used only by
+# agy) is owned entirely by dx-ai and the explicit dx-keyring command
+# (scripts/lib/dx-keyring.sh, scripts/dx-ai.sh, scripts/dx-keyring.sh).
+# A plain substring grep, not bootstrap_invokes's `-Fw` word-matching: the
+# retired identifiers (dx_resolve_keyring_bin, setup_keyring_service) embed
+# "keyring"/"dbus" inside one underscore-joined token, which word-boundary
+# matching would not catch as a substring.
+check test -z "$(grep -i 'keyring\|dbus' <<<"$bootstrap_source_text")"
+
 [ "$failures" -eq 0 ]

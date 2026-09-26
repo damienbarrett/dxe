@@ -798,7 +798,6 @@ if (
     run_as_dx() { :; }
     setup_gh_persistence() { :; }
     setup_tmux_persistence() { :; }
-    setup_keyring_service() { :; }
     run_home_manager_activation() { :; }
     usermod() { :; }
     grep() { return 1; }
@@ -831,7 +830,7 @@ if (
     set -euo pipefail
     dx_activate_herdr() { return 1; }
     run_as_dx() { :; }; chown() { :; }; mkdir() { :; }
-    setup_keyring_service() { :; }; run_home_manager_activation() { :; }
+    run_home_manager_activation() { :; }
     setup_tmux_persistence() { :; }; setup_gh_persistence() { :; }
     usermod() { :; }; touch() { :; }; grep() { return 1; }
     configure_guest >/dev/null 2>&1
