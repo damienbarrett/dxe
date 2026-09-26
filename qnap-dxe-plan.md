@@ -4,22 +4,37 @@ Plan created: 2026-09-21.
 
 ## Status
 
-Open. Implementation has not started. Accepted for implementation on
-2026-09-26 and sequenced after the start-generation fix and the `/persist`
-backup (see `checkout-consolidation-plan.md`, Branch 11).
+Open. Phase 0 is complete apart from its maintenance-window restarts;
+Phases 1-7 have not started. Accepted for implementation on 2026-09-26 and
+sequenced after the start-generation fix and the `/persist` backup (see
+`checkout-consolidation-plan.md`, Branch 11).
 
-**Phase 0 outcome (2026-09-26, inventory only).** The read-only inventory ran
-against the target over Tailscale. Its native architecture is x86_64, so
-Phase 4 (an architecture-neutral guest) is required. Docker Engine is
-reachable non-interactively over plain SSH by invoking the Container Station
-CLI at its qpkg path, discovered at run time, while the Docker CLI's own
-`ssh://` transport fails because the remote non-interactive `PATH` does not
-include `docker`; the runtime adapter must therefore invoke the discovered
-absolute path (DQ1). The inventory and spike reports are private and are not
-committed (`tests/qnap/README.md`); the disposable spike has not run yet.
+**Phase 0 outcome (2026-09-26).** The read-only inventory and the disposable
+spike have both run against the target over Tailscale. Inventory: the native
+architecture is x86_64, so Phase 4 (an architecture-neutral guest) is
+required. Docker Engine is reachable non-interactively over plain SSH by
+invoking the Container Station CLI at its qpkg path, discovered at run time,
+while the Docker CLI's own `ssh://` transport fails because the remote
+non-interactive `PATH` does not include `docker`; the runtime adapter must
+therefore invoke the discovered absolute path (DQ1). Spike (steps 1-7, 8a
+and 9, with `--with-container-restart`): passed end to end on its fourth run.
+The pinned base image was pulled by digest and tagged rather than built (the
+NAS refuses `docker build` for this account); three labelled volumes, an
+unprivileged container with the Nix volume mounted directly at `/nix`, a tar
+payload streamed through `docker exec -i` with its sha256 verified, guest
+port 2222 published on the NAS's Tailscale address only and reached directly
+from the controller (DQ5: the NAS's sshd forbids TCP forwarding, which ruled
+out the original jump-host route), a container restart with state intact,
+and labelled-only cleanup with an unchanged-resources check all passed. The
+defects the first three runs exposed (a local build path, ssh-hop quoting,
+the cleanup loop, the step-9 guard, and a listener that needs
+`nix shell nixpkgs#busybox` because the base image ships no `nc`) are fixed
+and covered by Section 27. Steps 8b (Container Station restart) and 8c (NAS
+reboot) wait for an agreed maintenance window. The inventory and spike
+reports are private and are not committed (`tests/qnap/README.md`).
 
-Revisit trigger: when the Phase 0 spike has run, or when work on the runtime
-abstraction is scheduled.
+Revisit trigger: when steps 8b and 8c have run in a maintenance window, or
+when work on the runtime abstraction (Phase 1) is scheduled.
 
 ## Outcome
 
