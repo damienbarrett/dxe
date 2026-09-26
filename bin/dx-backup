@@ -8,17 +8,26 @@ dx_require_container_cli
 source "$SCRIPT_DIR/lib/dx-backup.sh"
 
 DRY_RUN=false
+SUMMARY=false
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=true ;;
+        --summary) SUMMARY=true ;;
         --help)
-            echo "Usage: dx-backup [--dry-run]"
+            echo "Usage: dx-backup [--dry-run [--summary]]"
             echo "Capture the at-risk contents of /persist into DX_BACKUP_DIR (default: \$HOME/Backups/dxe-persist/\$DX_CONTAINER_NAME)."
+            echo "  --dry-run           show what would be transferred/removed, without changing anything."
+            echo "  --dry-run --summary show the at-risk selection's size, aggregated by top-level directory and by reason, instead of a full per-file listing."
             exit 0
             ;;
-        *) echo "Error: unrecognized argument '$arg'. Usage: dx-backup [--dry-run]" >&2; exit 64 ;;
+        *) echo "Error: unrecognized argument '$arg'. Usage: dx-backup [--dry-run [--summary]]" >&2; exit 64 ;;
     esac
 done
+
+if [ "$SUMMARY" = true ] && [ "$DRY_RUN" != true ]; then
+    echo "Error: --summary requires --dry-run. Usage: dx-backup [--dry-run [--summary]]" >&2
+    exit 64
+fi
 
 container_exists "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME does not exist. Run ./bin/dx-create-container first." >&2; exit 1; }
 container_is_running "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start-container first." >&2; exit 1; }
@@ -38,6 +47,14 @@ trap 'rm -rf "$WORK"' EXIT
 LISTING="$WORK/listing.tsv"
 FETCH="$WORK/fetch.tsv"
 REMOVE="$WORK/remove.txt"
+
+if [ "$SUMMARY" = true ]; then
+    echo "Selecting at-risk content from $DX_CONTAINER_NAME:/persist (summary)..."
+    LISTING_REASON="$WORK/listing-reason.tsv"
+    dx_backup_fetch_listing_with_reason "$DX_CONTAINER_NAME" "${DENY_PATTERNS[@]+"${DENY_PATTERNS[@]}"}" > "$LISTING_REASON"
+    dx_backup_summarize "$LISTING_REASON"
+    exit 0
+fi
 
 echo "Selecting at-risk content from $DX_CONTAINER_NAME:/persist..."
 dx_backup_fetch_listing "$DX_CONTAINER_NAME" "${DENY_PATTERNS[@]+"${DENY_PATTERNS[@]}"}" > "$LISTING"

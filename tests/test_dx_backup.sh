@@ -324,5 +324,73 @@ fi
 exit 1
 '
 
+# --- Branch 17: `--dry-run --summary` aggregates the at-risk selection by
+# top-level directory and by reason, instead of a full per-file listing --
+# added because the first real dx-backup dry-run on dx-host selected 51,262
+# files / 3.2 GB of a 6.3 GB /persist, which looked too large to review file
+# by file. ---
+
+# dx_backup_summarize: direct unit test against a hand-built --with-reason
+# listing (no container needed for the arithmetic itself).
+summary_fixture="$FIXTURE/summary-listing.tsv"
+printf '%s\n' \
+    "$(printf 'home/dx/a.txt\t100\t1700000000\tdeadbeef\tmodified-untracked')" \
+    "$(printf 'home/dx/b.txt\t200\t1700000000\tdeadbeef\tignored-kept')" \
+    "$(printf 'etc/config\t50\t1700000000\tdeadbeef\toutside-repo')" \
+    "$(printf 'git/repo/file\t300\t1700000000\tdeadbeef\twhole-repo')" \
+    "$(printf 'git/repo/other\t400\t1700000000\tdeadbeef\twhole-repo')" \
+    > "$summary_fixture"
+summary_out="$(dx_backup_summarize "$summary_fixture")"
+if printf '%s\n' "$summary_out" | stdin_matches -F 'Total at-risk under /persist: 5 files, 1050 bytes.'; then
+    test_pass "dx_backup_summarize prints the grand total"
+else
+    test_fail "dx_backup_summarize prints the grand total (got: $summary_out)"
+fi
+if printf '%s\n' "$summary_out" | stdin_matches -E 'git +2 files +700 bytes'; then
+    test_pass "dx_backup_summarize aggregates by top-level directory (git: 2 files, 700 bytes)"
+else
+    test_fail "dx_backup_summarize aggregates by top-level directory (git: 2 files, 700 bytes) (got: $summary_out)"
+fi
+if printf '%s\n' "$summary_out" | stdin_matches -E 'home +2 files +300 bytes'; then
+    test_pass "dx_backup_summarize aggregates by top-level directory (home: 2 files, 300 bytes)"
+else
+    test_fail "dx_backup_summarize aggregates by top-level directory (home: 2 files, 300 bytes) (got: $summary_out)"
+fi
+if printf '%s\n' "$summary_out" | stdin_matches -E 'whole-repo +2 files +700 bytes'; then
+    test_pass "dx_backup_summarize aggregates by reason (whole-repo: 2 files, 700 bytes)"
+else
+    test_fail "dx_backup_summarize aggregates by reason (whole-repo: 2 files, 700 bytes) (got: $summary_out)"
+fi
+if printf '%s\n' "$summary_out" | stdin_matches -E 'ignored-kept +1 files +200 bytes'; then
+    test_pass "dx_backup_summarize aggregates by reason (ignored-kept: 1 file, 200 bytes)"
+else
+    test_fail "dx_backup_summarize aggregates by reason (ignored-kept: 1 file, 200 bytes) (got: $summary_out)"
+fi
+
+# `bin/dx-backup --dry-run --summary` end to end: no backup dir is created,
+# no full per-file listing is printed, and the aggregate is present.
+printf 'summary-check\n' > "$FIXTURE/persist/home/dx/summary-check.txt"
+rm -rf "$FIXTURE/summary-backups"
+summary_cli_out="$(DX_BACKUP_DIR="$FIXTURE/summary-backups" "$BASE_DIR/bin/dx-backup" --dry-run --summary 2>&1)" || true
+if [ ! -e "$FIXTURE/summary-backups" ]; then test_pass "--dry-run --summary creates no backup directory"; else test_fail "--dry-run --summary creates no backup directory"; fi
+if printf '%s\n' "$summary_cli_out" | stdin_matches -F 'summary-check.txt'; then
+    test_fail "--dry-run --summary does not print the full per-file listing"
+else
+    test_pass "--dry-run --summary does not print the full per-file listing"
+fi
+if printf '%s\n' "$summary_cli_out" | stdin_matches -F 'Total at-risk under /persist:'; then
+    test_pass "--dry-run --summary prints the aggregate total"
+else
+    test_fail "--dry-run --summary prints the aggregate total (got: $summary_cli_out)"
+fi
+if printf '%s\n' "$summary_cli_out" | stdin_matches -F 'By top-level directory:' && printf '%s\n' "$summary_cli_out" | stdin_matches -F 'By reason:'; then
+    test_pass "--dry-run --summary prints both breakdowns"
+else
+    test_fail "--dry-run --summary prints both breakdowns (got: $summary_cli_out)"
+fi
+
+# --- CLI hygiene: --summary requires --dry-run. ---
+if "$BASE_DIR/bin/dx-backup" --summary >/dev/null 2>&1; then test_fail "--summary without --dry-run is a usage error"; else test_pass "--summary without --dry-run is a usage error"; fi
+
 print_summary
 exit_with_code

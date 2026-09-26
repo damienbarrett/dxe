@@ -68,6 +68,51 @@ dx_backup_fetch_listing() {
     dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" "$DX_BACKUP_GUEST_ROOT" "$@"
 }
 
+# Same as dx_backup_fetch_listing, but every line carries a 5th <TAB>reason
+# column (modified-untracked, whole-repo, outside-repo, ignored-kept -- see
+# the selector's own --with-reason comment). Used by
+# `bin/dx-backup --dry-run --summary` (Branch 17): reviewing the at-risk
+# selection's SIZE, not just transferring it, so the coordinating session
+# and the user can decide deny-list additions (found live on dx-host: a
+# first dry-run selected 51,262 files / 3.2 GB of a 6.3 GB /persist, which
+# looked too large for "not reproducible elsewhere").
+dx_backup_fetch_listing_with_reason() {
+    local container_name="$1"
+    shift
+    container exec -u dx "$container_name" "$(dx_backup_selector_path)" --with-reason "$DX_BACKUP_GUEST_ROOT" "$@"
+}
+
+# Print the `--dry-run --summary` breakdown of a --with-reason listing file
+# ($1): total files/bytes, then a breakdown by /persist's top-level
+# directory (the listing's path column, first "/"-separated component), then
+# a breakdown by selection reason. Pure host-side arithmetic (awk) over the
+# guest selector's own output -- no selection rule is re-derived here.
+dx_backup_summarize() {
+    local listing="$1" total_count total_bytes
+    total_count="$(wc -l < "$listing" | tr -d '[:space:]')"
+    total_bytes="$(awk -F'\t' '{sum += $2} END {print sum + 0}' "$listing")"
+    echo "Total at-risk under $DX_BACKUP_GUEST_ROOT: ${total_count:-0} files, ${total_bytes:-0} bytes."
+
+    echo "By top-level directory:"
+    awk -F'\t' '
+        { n = split($1, parts, "/"); top = (n > 1) ? parts[1] : $1
+          count[top]++; bytes[top] += $2 }
+        END { for (t in count) printf "%s\t%d\t%d\n", t, count[t], bytes[t] }
+    ' "$listing" | LC_ALL=C sort | while IFS="$(printf '\t')" read -r top top_count top_bytes; do
+        [ -n "$top" ] || continue
+        printf '  %-30s %8s files  %14s bytes\n' "$top" "$top_count" "$top_bytes"
+    done
+
+    echo "By reason:"
+    awk -F'\t' '
+        { count[$5]++; bytes[$5] += $2 }
+        END { for (r in count) printf "%s\t%d\t%d\n", r, count[r], bytes[r] }
+    ' "$listing" | LC_ALL=C sort | while IFS="$(printf '\t')" read -r reason reason_count reason_bytes; do
+        [ -n "$reason" ] || continue
+        printf '  %-20s %8s files  %14s bytes\n' "$reason" "$reason_count" "$reason_bytes"
+    done
+}
+
 # Diff a (possibly absent) old manifest against a fresh guest listing.
 # Writes full TSV lines that are new or changed to $3, and bare paths that
 # existed in the old manifest but not at all in the new listing to $4. Both
