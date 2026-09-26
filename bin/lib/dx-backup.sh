@@ -65,7 +65,7 @@ dx_backup_read_exclude_patterns() {
 dx_backup_fetch_listing() {
     local container_name="$1"
     shift
-    container exec -u dx "$container_name" "$(dx_backup_selector_path)" "$DX_BACKUP_GUEST_ROOT" "$@"
+    dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" "$DX_BACKUP_GUEST_ROOT" "$@"
 }
 
 # Diff a (possibly absent) old manifest against a fresh guest listing.
@@ -103,7 +103,7 @@ dx_backup_fetch_paths() {
     [ "${count:-0}" -gt 0 ] || return 0
     mkdir -p "$backup_dir/current"
     cut -f1 "$fetch_lines" | tr '\n' '\0' \
-        | container exec -i -u dx "$container_name" tar -C "$DX_BACKUP_GUEST_ROOT" --exclude '._*' --null -T - -cf - \
+        | dx_runtime_exec -i -u dx "$container_name" tar -C "$DX_BACKUP_GUEST_ROOT" --exclude '._*' --null -T - -cf - \
         | tar -xf - -C "$backup_dir/current"
 }
 
@@ -195,7 +195,7 @@ dx_backup_restore_status() {
     [ "${#target_list[@]}" -gt 0 ] || return 0
 
     hashes="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-hash.XXXXXX")"
-    container exec -u dx "$container_name" "$(dx_backup_selector_path)" --hash-paths "$DX_BACKUP_GUEST_ROOT" "${target_list[@]}" > "$hashes"
+    dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" --hash-paths "$DX_BACKUP_GUEST_ROOT" "${target_list[@]}" > "$hashes"
 
     for path in "${target_list[@]}"; do
         # Exact match on field 1, not a substring search: a target path that
@@ -251,7 +251,7 @@ dx_backup_restore_push() {
         # Single line: this codebase's convention for a guest sh -c body (see
         # bin/dx-put) -- a multi-line quoted argument only registers a
         # coverage hit on its first line, not each interior line.
-        container exec -u root "$container_name" sh -c 'root="$1"; shift; for d in "$@"; do mkdir -p "$root/$d" && chown dx:dx "$root/$d"; done' -- "$DX_BACKUP_GUEST_ROOT" "${dir_list[@]}"
+        dx_runtime_exec -u root "$container_name" sh -c 'root="$1"; shift; for d in "$@"; do mkdir -p "$root/$d" && chown dx:dx "$root/$d"; done' -- "$DX_BACKUP_GUEST_ROOT" "${dir_list[@]}"
     fi
 
     # COPYFILE_DISABLE=1: live-verified on dx-test (2026-09-27) that without
@@ -262,9 +262,9 @@ dx_backup_restore_push() {
     # host-to-guest tar-creation direction.
     printf '%s\n' "${target_list[@]}" | tr '\n' '\0' \
         | COPYFILE_DISABLE=1 tar -C "$backup_dir/current" --exclude '._*' --null -T - -cf - \
-        | container exec -i -u dx "$container_name" tar -xf - -C "$DX_BACKUP_GUEST_ROOT"
+        | dx_runtime_exec -i -u dx "$container_name" tar -xf - -C "$DX_BACKUP_GUEST_ROOT"
 
     for path in "${target_list[@]}"; do
-        container exec -u root "$container_name" chown dx:dx "$DX_BACKUP_GUEST_ROOT/$path"
+        dx_runtime_exec -u root "$container_name" chown dx:dx "$DX_BACKUP_GUEST_ROOT/$path"
     done
 }
