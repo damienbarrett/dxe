@@ -16,7 +16,7 @@ This file is the summary layer. The detail lives in [`docs/refactor/`](docs/refa
 
 Phases 0, 0.5, 1a, 1b, 2, 3, 4, and 5 are complete, and checked off in
 [`docs/refactor/checklists/`](docs/refactor/checklists). Of Phase 6's six
-items, 2, 3, 4, and 6 are also complete; items 1 and 5 remain open, with the
+items, 2, 3, 4, 5, and 6 are also complete; only item 1 remains open, with the
 reason recorded in the checklist itself.
 
 ## Open work
@@ -27,11 +27,8 @@ reason recorded in the checklist itself.
   old base. Open by design until the
   [old-base guard gate](docs/refactor/migration-gates.md#old-base-guards) is
   signed off; the primary guest's changeover is done, so the remaining
-  inventory is side containers and named profiles only.
-- **[Phase 6, item 5](docs/refactor/checklists/phase-6.md#items) — archive
-  completed upgrade material from [`plan.md`](plan.md)**, only after its
-  remaining status items (P7, P10, B1) are confirmed complete. Open; that
-  precondition is not yet met.
+  inventory is side containers and named profiles only. This is Branch 8 of
+  the consolidation plan.
 
 ## Definition of done
 

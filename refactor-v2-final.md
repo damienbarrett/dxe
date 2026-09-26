@@ -223,13 +223,12 @@ no production callers — `bootstrap.sh:15,18` calls `prepare_nix_volume` and
 `tests/test_section3_bootstrap.sh:25`, plus two descriptive comments. Delete both
 functions and their tests alongside the globals.
 
-**Recorded conflict — `plan.md` P7.** P7 (Low) separately targets an
-unanchored FSTYPE match in `prepare_nix_volume_impl` (`base-and-storage.sh:629`)
-— the function this phase rewrites into the mode-tagged record above, not
-the wrapper being deleted. Land P7's exact-match fix as part of the
-preparation record this phase builds, not as a standalone patch to the
-current function beforehand; otherwise the rewrite risks reproducing the
-substring-grep bug it wasn't told about.
+**P7 already landed.** `plan.md` P7's exact-match `FSTYPE` fix in
+`prepare_nix_volume_impl` (`base-and-storage.sh:629`) landed directly as
+`9ab640b`, ahead of this phase and as a standalone patch rather than as part
+of the preparation record below. When Phase 2 rewrites that function into the
+mode-tagged record above, preserve `9ab640b`'s exact-match comparison rather
+than reintroducing the substring-grep bug it fixed.
 
 Exit: no `export` of preparation outputs; cleanup covered under success, mount
 failure, import failure, and interrupted-process simulation.

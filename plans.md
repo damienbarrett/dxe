@@ -1,6 +1,6 @@
 # Active plans
 
-Status checked against the repository on 2026-09-19. Completed plan documents
+Status checked against the repository on 2026-09-26. Completed plan documents
 for the lock refresh, Herdr integration, Herdr theming, and bootstrap
 performance have been removed, along with the completed Herdr implementation
 review and the lock-refresh disposition tracking log; their implementation
@@ -34,9 +34,11 @@ Every plan document below is listed under exactly one of these.
   It preserves the Apple runtime as the default, adds an explicit remote-Docker
   adapter and direct `/nix` volume mode, handles native ARM64/x86_64 selection,
   and defines isolated live, reboot, backup/restore, and destructive gates. No
-  implementation has landed. Revisit trigger: when the target QNAP is
-  available for the Phase 0 preflight, or when the runtime abstraction is
-  scheduled.
+  implementation has landed. Accepted for implementation on 2026-09-26 (see
+  `checkout-consolidation-plan.md`, Branch 11), and sequenced after the
+  start-generation fix and the `/persist` backup land. Revisit trigger: when
+  the target QNAP is available for the Phase 0 preflight, or when the
+  runtime abstraction is scheduled.
 - [`declarative-nix-plan-a.md`](declarative-nix-plan-a.md) — Audit proposing
   incremental Bash-to-Nix/Home Manager conversions. It puts Nix evaluation and
   coverage gates first, followed by smaller configuration conversions and the
@@ -67,9 +69,6 @@ Every plan document below is listed under exactly one of these.
   possible production-module split are also not complete. The current source
   still uses the environment variables this plan proposes to remove.
 
-  **Recorded conflict (resolved).** Phase 2 vs. `plan.md` P7 is moot: P7
-  landed directly in `prepare_nix_volume_impl`, which Phase 2 does not touch.
-
   **Recorded conflict.** Phase 4's coverage-ratchet gate vs.
   `declarative-nix-plan-a.md` #12 remains live — see that entry above.
 - [`store-trust-plan.md`](store-trust-plan.md) — Folds the two former
@@ -92,4 +91,6 @@ Every plan document below is listed under exactly one of these.
   snapshot recovery path and the deletion half of pane-history cleanup remain
   unautomated acceptance cases. Neither reopens the review's verdict that
   remediation and the isolated live gate passed. No owner; pick up
-  opportunistically.
+  opportunistically. The two acceptance cases are tracked as Branch 7,
+  `test/herdr-acceptance`, of `checkout-consolidation-plan.md`; that branch
+  is gated on decision Q3 (pending).
