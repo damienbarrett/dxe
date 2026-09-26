@@ -1373,17 +1373,19 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /home/dx/.nix-profile/bin
     [ "$keyring_called" -eq 0 ]
 )
 
-# Bootstrap ordering defect: configure_guest must not start the D-Bus keyring
-# service until Home Manager activation has installed dbus-daemon into dx's
-# profile. On a fresh dx-recreate /home/dx is ephemeral, so
-# setup_keyring_service's `dbus_bin="$(run_as_dx 'command -v dbus-daemon')"`
-# lookup only succeeds once Home Manager activation has run. The custom
-# run_as_dx below prints a PROBE line recording whether Home Manager's stub
-# has already run at the moment the lookup is attempted -- that is the direct
-# signal for the *ordering*, since there is still no error string tied to the
-# old defect itself (a bare failed command substitution under
-# `set -euo pipefail` used to kill the whole bootstrap in total silence), so
-# the assertions below are on outcome and ordering, never on error text.
+# Recreate-time regression, at the configure_guest level (not just
+# setup_keyring_service in isolation): a fresh dx-recreate's /home/dx is
+# ephemeral, but /persist survives, so an AI-opted-in guest's published
+# generation profile is exactly what dx_resolve_keyring_bin now checks
+# first. This is no longer an *ordering* defect (the old
+# `dbus_bin="$(run_as_dx 'command -v dbus-daemon')"` lookup depended on
+# Home Manager activation having already run so dx's login-shell PATH
+# reflected the generation profile; dx_resolve_keyring_bin checks fixed
+# absolute paths directly and does not depend on that PATH, or on
+# run_home_manager_activation's stub having run first, at all) -- run_home_manager_activation
+# is still stubbed and tracked below only to confirm configure_guest's call
+# order is otherwise unchanged, not because setup_keyring_service's
+# correctness depends on it any more.
 #
 # This has to run as a genuinely separate bash process (not sourced/stubbed
 # in-place in this already-running script): bash's `errexit` does not
@@ -1396,12 +1398,15 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /home/dx/.nix-profile/bin
 # fresh `bash` subprocess is what actually reproduces the silent-death
 # signature.
 rm -rf /persist/home/dx /home/dx
-mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin
+mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin \
+    /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1
 : > /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex
-chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex
-mkdir -p "$fixture/dbus-order/bin" "$fixture/dbus-order/share/dbus-1"
-: > "$fixture/dbus-order/bin/dbus-daemon"
-: > "$fixture/dbus-order/share/dbus-1/session.conf"
+: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon
+: > /persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon
+chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex \
+    /persist/home/dx/.local/state/dx-ai/current/profile/bin/dbus-daemon \
+    /persist/home/dx/.local/state/dx-ai/current/profile/bin/gnome-keyring-daemon
+: > /persist/home/dx/.local/state/dx-ai/current/profile/share/dbus-1/session.conf
 order_script="$(mktemp "$fixture/dxe-configure-guest-order.XXXXXX")"
 cat > "$order_script" <<'INNER'
 set -euo pipefail
@@ -1416,42 +1421,27 @@ chown() { :; }
 setup_gh_persistence() { :; }
 setup_tmux_persistence() { :; }
 usermod() { :; }
-hm_ran=0
-run_as_dx() {
-    case "$1" in
-        (*'command -v dbus-daemon'*)
-            # Deliberately >&2: this call's stdout is captured into the
-            # `dbus_bin="$(run_as_dx ...)"` assignment in setup_keyring_service,
-            # so anything printed on stdout here would vanish into that
-            # variable rather than reach this test's output -- which is
-            # exactly the mechanism that makes the underlying defect silent.
-            echo "PROBE: dbus-daemon lookup attempted with hm_ran=$hm_ran" >&2
-            [ "$hm_ran" -eq 1 ] || return 1
-            printf '%s\n' "$DXE_TEST_DBUS_BIN"
-            ;;
-        (*) return 0 ;;
-    esac
-}
-run_home_manager_activation() { hm_ran=1; echo "STUB: Home Manager activation ran"; }
+run_as_dx() { :; }
+run_home_manager_activation() { echo "STUB: Home Manager activation ran"; }
 setpriv() { case "$*" in (*--print-address*) printf '%s\n' unix:path=/tmp/dxe-coverage-order-bus ;; (*) return 0 ;; esac; }
 configure_guest
 echo "STUB: configure_guest returned normally"
 INNER
 rc=0
-output="$(DXE_TEST_GUEST="$GUEST" DXE_TEST_DBUS_BIN="$fixture/dbus-order/bin/dbus-daemon" DX_BOOTSTRAP_ROOT="$GUEST" bash "$order_script" 2>&1)" || rc=$?
+output="$(DXE_TEST_GUEST="$GUEST" DX_BOOTSTRAP_ROOT="$GUEST" bash "$order_script" 2>&1)" || rc=$?
 rm -f "$order_script"
 if [ "$rc" -ne 0 ]; then
     echo "Error: configure_guest did not complete (rc=$rc). Output:" >&2
     printf '%s\n' "$output" >&2
     exit 1
 fi
-if ! printf '%s\n' "$output" | stdin_matches -F 'PROBE: dbus-daemon lookup attempted with hm_ran=1'; then
-    echo "Error: dbus-daemon was never looked up after Home Manager activation ran. Output:" >&2
+if ! printf '%s\n' "$output" | stdin_matches -F 'STUB: Home Manager activation ran'; then
+    echo "Error: configure_guest no longer runs Home Manager activation. Output:" >&2
     printf '%s\n' "$output" >&2
     exit 1
 fi
-if printf '%s\n' "$output" | stdin_matches -F 'hm_ran=0'; then
-    echo "Error: setup_keyring_service looked up dbus-daemon before Home Manager activation ran. Output:" >&2
+if printf '%s\n' "$output" | stdin_matches -iE 'Warning:.*(dbus-daemon|gnome-keyring-daemon)'; then
+    echo "Error: configure_guest warned about a missing keyring binary the generation profile actually provides. Output:" >&2
     printf '%s\n' "$output" >&2
     exit 1
 fi
