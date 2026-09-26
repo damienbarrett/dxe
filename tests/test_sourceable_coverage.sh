@@ -234,7 +234,7 @@ dx_bootstrap_content_digest "$digest_fixture/bootstrap.sh" >/dev/null 2>&1 || tr
     # `cat` is already symlinked into $digest_bin above.
     printf '#!/bin/sh\ncat >/dev/null\nprintf "%%s  -\\n" 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n' > "$digest_bin/shasum"
     chmod 0755 "$digest_bin/shasum"
-    PATH="$digest_bin" dx_bootstrap_content_digest "$digest_fixture" >/dev/null
+    PATH="$digest_bin" dx_bootstrap_content_digest "$digest_fixture" </dev/null >/dev/null
 )
 
 # SSH assembly and generated launcher are data-producing helpers.
