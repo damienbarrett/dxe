@@ -1,10 +1,33 @@
 # D7 — Which boot does a bootstrap edit take effect on?
 
-**Proposed (awaiting review).** Not implemented. Written for `dx-start-plan.md`
-(problem statement) and `checkout-consolidation-plan.md` Branch 9, Q4
-(**resolved: A** — an edited start whose fresh publication fails or times out
-must **fail**; a manual start or reboot with no host publisher must still
-boot, bounded).
+**Accepted (2026-09-26).** Implemented in Branch 9 Step 2 (commits `753322f`,
+`dcbe6b2`, `6f78d24`, `2257631` on `fix/bootstrap-start-generation`). Replaces
+`dx-start-plan.md` (removed; its lasting content — the six requirements, the
+mechanism, and the operator remedy — is folded in below) and closes
+`checkout-consolidation-plan.md` Branch 9, Q4 (**resolved: A** — an edited
+start whose fresh publication fails or times out must **fail**; a manual
+start or reboot with no host publisher must still boot, bounded).
+
+## Requirements (from `dx-start-plan.md`, now the durable record)
+
+A solution must satisfy all six, unchanged since the plan was drafted
+2026-08-05:
+
+1. A start that follows a bootstrap edit runs the edited code, without the
+   operator knowing to start twice.
+2. A start with **no** host sync — `container start` by hand, a host reboot,
+   the runtime restarting a container — must still boot. It must not hang
+   waiting for a publisher that will never arrive.
+3. No unbounded wait: any new handshake needs a timeout and a defined
+   fall-back (most plausibly "boot the existing `current`", which is today's
+   behaviour).
+4. The generation actually booted must be observable from the host, including
+   after the guest has died — the case where it matters most and where
+   `container exec` is unavailable.
+5. It must hold for a guest whose bootstrap volume is empty (first bring-up)
+   and for one carrying many retained generations.
+6. Existing guarantees preserved: atomic publication, the publication lock,
+   and predecessor retention for `dx-ai --recover`.
 
 ## Where this actually stands
 
@@ -18,13 +41,13 @@ volume recreate; in-place stop/start) show published, running and leased
 generation identical on the first start, every time. `tests/test_bootstrap_publication.sh`
 already pins both behaviours (24/24 passing, unmodified).
 
-What is **not** implemented is Q4 itself: today's bounded fallback boots
+What Step 1 left open was Q4 itself: the bounded fallback above boots
 whatever is `current` after `DX_BOOTSTRAP_PUBLISH_GRACE` (default 30s)
 regardless of *why* no fresh `ready` arrived — a genuine no-publisher start
-(must succeed) and an edited start whose publication is failing or unusually
-slow (must fail, per Q4) are indistinguishable to the guest. This document
-proposes closing that gap on top of the mechanism that already exists,
-rather than replacing it.
+(must succeed) and an edited start whose publication is failing, unusually
+slow, or simply never reaches a guest that was never restarted (must fail,
+per Q4) are indistinguishable to the guest itself. Step 2 (below) closes that
+gap on top of the mechanism that already exists, rather than replacing it.
 
 ## Candidate mechanisms
 
@@ -65,33 +88,60 @@ back to and must wait for a fresh publish, or fail outright. Rejected:
 - Would require reintroducing exactly the risk option 1 removed: a window
   where the guest has no valid `current` and no publisher.
 
-### 3. Option 1, plus a host-side confirmation deadline that turns the existing drift diagnostic into a start failure — **recommended**
+### 3. Option 1, plus a host-side confirmation deadline that turns the existing drift diagnostic into a start failure — **implemented**
 
 Change nothing about the guest launcher. In `bin/dx-start-container`, after
-`dx-sync-bootstrap` returns successfully (a real publish, not the unchanged-
-content skip), poll for the guest's execution lease to name the
-just-published generation, bounded by a short deadline (a few seconds — the
-guest only needs to notice an already-set `.dx-bootstrap-ready` on its next
-1-second poll tick and lease immediately; it does not wait out its own grace
-in this branch, since `ready` is already present). Reuse
-`dx_bootstrap_lease_generation` exactly as `dx-status` and the existing drift
-check already do.
+`dx-sync-bootstrap` returns successfully, `dx_bootstrap_sync_published_generation`
+(`bin/lib/dx-container.sh`) tells a real publish from the unchanged-content
+skip using only `dx-sync-bootstrap`'s own captured stdout — "Bootstrap
+generation `<id>` is ready." vs "... stays current." — since that is the
+only distinction available without re-deriving the content digest. For a
+real publish, `dx_bootstrap_confirm_publication` polls the guest's execution
+lease to name the just-published generation, bounded by
+`DX_BOOTSTRAP_CONFIRM_TIMEOUT` (config-registry field, default **5s**,
+following the `DX_BOOTSTRAP_WAIT_TIMEOUT` pattern exactly — a few seconds,
+since the guest only needs to notice an already-set `.dx-bootstrap-ready` on
+its next 1-second poll tick and lease immediately; it does not wait out its
+own `DX_BOOTSTRAP_PUBLISH_GRACE` in this branch, since `ready` is already
+present). Reuses `dx_bootstrap_lease_generation` exactly as `dx-status` and
+the pre-existing drift check already do; the pre-existing diagnostic read is
+also kept, so the confirm poll is skipped entirely when it already shows a
+match (no added delay on the common path).
 
 - **Match within the deadline:** proceed as today (success, no drift line).
 - **No match, or a lease naming an older generation, once the deadline
   elapses:** this is precisely Q4's case — the host published, but the guest
-  is provably not running it. Exit non-zero with a clear message ("published
-  `<X>` but the guest is running `<Y>`; the guest must be restarted to pick it
-  up") instead of a swallowed warning. The container itself is left running
-  (nothing can un-boot it); the *start invocation* — the thing Q4 asks to fail
-  — fails.
+  is provably not running it. `dx-start-container` exits non-zero with
+  `Error: <container> published bootstrap generation <X>, but after waiting
+  <N>s the guest is running <Y>.` plus the remedy (below), instead of a
+  swallowed warning. The container itself is left running (nothing can
+  un-boot it); the *start invocation* — the thing Q4 asks to fail — fails.
 - **The unchanged-content skip path never enters this check**, so a no-op
   restart is never delayed or failed by it (requirement 3, no unbounded
-  wait — the poll is itself short and bounded).
+  wait — the poll is itself short and bounded). `dx_bootstrap_report_drift`
+  still runs on exactly this path, unchanged.
 - **A start that never called `dx-sync-bootstrap`** (manual `container
   start`, reboot, runtime restart) never runs `dx-start-container` at all, so
   this check does not exist on that path — requirement 2 is untouched
   structurally, not by a special case.
+
+### Operator remedy
+
+When `dx-start-container` fails this way, the container is already running
+the *old* generation and will not pick the new publish up on its own — the
+guest only resolves `current` once, at boot. The fix is the same one
+`dx_bootstrap_report_drift`'s old warning already named: restart it —
+`./bin/dx-stop-container && ./bin/dx-start-container`. The second start's
+sync sees unchanged content (the previous start already published it) and
+takes the skip path, which sets `current` for the boot that's about to
+happen; the freshly-started guest then resolves it on its own first wait, no
+different from any other first-boot-after-edit start.
+
+Live-verified (`dx-test`, 2026-09-26, no test stub involved): a publish
+issued to an already-running, never-restarted guest failed the start exactly
+as above, naming both generations; running the remedy then succeeded via the
+unchanged-content skip, and `readlink current` / the execution lease matched
+afterward.
 
 ## Requirements / Q4 mapping
 
@@ -118,24 +168,36 @@ check already do.
 | Dead guest (bootstrap died after leasing) | Lease still names the generation it died running; `dx-status` (this step) and `container logs` both show it; not this proposal's concern |
 | Host crash mid-publication | Publication lock + atomic `current` swap (D5) guarantee no partial `current`; next start's guest sees either the old or the fully-new generation, never a torn one |
 
-## Tests to add (option 3)
+## Tests added (option 3)
 
-- `dx-start-container` fails (non-zero, message names both generations) when
-  the post-sync lease poll never matches, using a fake `container exec` that
-  never reports the new lease.
+All in `tests/test_bootstrap_publication.sh`, driving the real
+`bin/dx-start-container` end to end (against the file's existing
+fake-`container`-maps-`exec`-to-local-execution trick, which also exercises
+the real `bin/dx-sync-bootstrap`), plus parsing-level cases in
+`tests/test_section9_host_scripts.sh` and config-validation cases in
+`tests/test_refactor_state_machines.sh`:
+
+- `dx-start-container` fails (non-zero, message names both generations, no
+  partial side effects — the publication lock is not left held) when the
+  post-sync lease poll never matches (no lease writer at all).
 - Succeeds promptly when the lease matches within the first poll tick (no
   added delay on the common path).
-- The unchanged-content skip and the no-publisher path are unaffected
-  (extend the existing `test_bootstrap_publication.sh` fixtures rather than
-  duplicating them).
-- A genuinely transient one-tick delay (lease appears on the second poll, not
-  the first) still succeeds — guards against the deadline being too tight and
-  turning a healthy start into a false failure.
+- The unchanged-content skip is unaffected — no wait, even with a generously
+  large bound configured (proves the confirm loop never runs on that path).
+- A genuinely transient delay (the lease appears after one full 1-second
+  poll cycle, not the first check) still succeeds — guards against the
+  deadline being too tight, and against a poll loop that only checks once
+  instead of actually polling.
+- `DX_BOOTSTRAP_CONFIRM_TIMEOUT` is registered, defaults to 5, and rejects
+  zero/non-numeric/empty like every other bounded wait.
 
-## Recommendation
+## Recommendation — shipped
 
-Ship option 3. It adds a bounded host-side confirmation to the mechanism
-already on `main`, changes no guest behaviour, and is the smallest change
-that satisfies Q4 without weakening requirement 2. Implementing it is Step 2
-of this branch; this step lands only the characterisation and the
-observability increment.
+Option 3 shipped as Branch 9 Step 2. It adds a bounded host-side confirmation
+to the mechanism already on `main`, changes no guest behaviour, and is the
+smallest change that satisfies Q4 without weakening requirement 2. The
+`DX_BOOTSTRAP_CONFIRM_TIMEOUT` default (5s) comes from a live measurement on
+`dx-test`: three edited-start trials measured 0.22–0.36s between
+`dx-start-container`'s return and the guest's execution lease naming the
+just-published generation, so 5s gives roughly 15–25x headroom while staying
+"a few seconds," well under the guest's own 30s `DX_BOOTSTRAP_PUBLISH_GRACE`.

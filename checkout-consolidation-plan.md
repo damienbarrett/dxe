@@ -99,7 +99,7 @@ with an actual build-and-run check of `main`.
 | 4c | `fix/guest-sigpipe-pipelines` | Fix the same `\| grep -q` / `\| head -n1` under `pipefail` SIGPIPE shape as Branch 4a, in `bootstrap/activation.sh` and the guest scripts `scripts/dx-theme.sh:30` and `scripts/dx-theme-write-tool-themes.sh:374` | S | No | No | In progress |
 | **Priority 2 — fix the start-generation bug, then finish in-flight work (the duplicate clone was retired early)** | | | | | | |
 | 5 | `docs/plan-cleanup` | Remove stale plan text, delete the OpenCode handoff note, import August evidence, move this plan into the repo | S | No | No | **Done**: `main` = `9064bb9`, CI green |
-| 9 | `fix/bootstrap-start-generation` | Make a restarted guest run the bootstrap code that was just published, not the previous version | M | Yes | No (Q4 resolved: fail the start) | Not started |
+| 9 | `fix/bootstrap-start-generation` | Make a restarted guest run the bootstrap code that was just published, not the previous version | M | Yes | No (Q4 resolved: fail the start) | **Done** on `fix/bootstrap-start-generation` (tip `2257631`, rebased onto `main`), not yet merged. Step 1 found the core defect already fixed on `main`; Step 2 implemented D7 option 3 and closed `dx-start-plan.md` |
 | 6 | `feat/opencode` | Land OpenCode as one complete delivery: the original support plus safe migration, rollback and ownership repair | M | Yes | No (Q1 resolved: after Branch 9) | Code exists, preserved as this repository's own local branch `preserve/dxe-agent-opencode` |
 | **Priority 3 — backlog** | | | | | | |
 | 7 | `test/herdr-acceptance` | Two missing Herdr tests: bad-snapshot recovery and pane-history deletion | S | Possibly | No (Q3 resolved: do them) | Not started |
@@ -111,7 +111,7 @@ with an actual build-and-run check of `main`.
 
 ```text
 Priority 1:  0 ✓ ─► 1 ✓ ─► 2 ✓ ─► 3 ✓ ─► 4 ✓ ─► 4a ✓ ─► 4b ✓ ─► 4c   (main complete, green, buildable, proven on a guest)
-Priority 2:  5 ✓ ─► 9 ─► 6   (duplicate clone already retired; see "Where things stand")
+Priority 2:  5 ✓ ─► 9 ✓ ─► 6   (duplicate clone already retired; see "Where things stand")
 Priority 3:  7 ─► 8 ─► 10 ─► 11 ─► 12 ─► 13 (only accepted proposals)
              QNAP Phase 0 (no code) can run any time after item 4
 ```
@@ -124,11 +124,20 @@ Why this order:
   the `main` you intend to keep.
 - Branch 5 is docs-only, so it doesn't make `main` work. It can be written any
   time.
-- **Branch 9 (the start-generation fix) now comes before Branch 6.** Q1
-  (resolved 2026-09-26) chose to fix the "boots the previous version" bug
-  first rather than ship OpenCode behind a scripted workaround: OpenCode
-  changes bootstrap code, so it would otherwise hit the bug on the very next
-  restart of your primary guest.
+- **Branch 9 (the start-generation fix) now comes before Branch 6, and is
+  done.** Q1 (resolved 2026-09-26) chose to fix the "boots the previous
+  version" bug first rather than ship OpenCode behind a scripted workaround:
+  OpenCode changes bootstrap code, so it would otherwise hit the bug on the
+  very next restart of your primary guest. Step 1 characterised the defect
+  live and found its core symptom already fixed on `main` (two pre-existing
+  commits), landing only an observability increment (`dx-status` surfaces the
+  booted generation) and the D7 design proposal. Step 2 implemented D7's
+  accepted option 3 -- a bounded host-side confirmation in
+  `dx-start-container` that fails the start when a real publish's generation
+  never reaches the guest's execution lease (Q4) -- and closed
+  `dx-start-plan.md` into
+  [D7](docs/refactor/decisions/D7-start-generation.md) and
+  `docs/lifecycle.md`/`docs/troubleshooting.md`. Branch 6 (OpenCode) is next.
 - Branch 6's code already exists, preserved as this repository's own local
   branch `preserve/dxe-agent-opencode`. Merging it is now the only thing left
   of the duplicate-clone retirement (Priority 2's other items were carried
@@ -728,37 +737,46 @@ remove the old-base guards in `bootstrap.sh:11–29` and
 
 ---
 
-## Branch 9 — `fix/bootstrap-start-generation` (size M; Q4 resolved; now runs before Branch 6)
+## Branch 9 — `fix/bootstrap-start-generation` (size M; Q4 resolved; done, not yet merged)
 
 **Q4 -- resolved 2026-09-26: A, fail the start** if publishing the new
 bootstrap version fails or times out, with a manual start or reboot that has
 no publisher still just working. **Q1 -- resolved 2026-09-26:** this branch
-now lands before Branch 6, instead of OpenCode shipping behind a scripted
+landed before Branch 6, instead of OpenCode shipping behind a scripted
 restart-and-verify workaround (see the summary table and "Why this order").
 
-**Problem (`dx-start-plan.md`):** `dx-start-container` starts the guest
-*before* the host publishes the new bootstrap code. A guest with a retained
-bootstrap volume therefore runs the *previous* version, silently, after every
-bootstrap edit. The only current workaround is starting it a second time.
+**Problem (`dx-start-plan.md`, now closed):** `dx-start-container` starts the
+guest *before* the host publishes the new bootstrap code. A guest with a
+retained bootstrap volume therefore runs the *previous* version, silently,
+after every bootstrap edit. The only workaround was starting it a second
+time.
 
-1. **Observability (can merge alone):** record the bootstrap version that
-   actually booted somewhere the host can read. Today it is only visible
-   inside a lease file in a running guest. Red: a test that expects the
-   record and finds none.
-2. **The fix:** fail the start with a clear error if publishing the new
-   version fails or times out (Q4 = A) -- nothing boots that wasn't asked
-   for. Test these cases:
-   - an edited start;
-   - first boot;
-   - no-change start;
-   - manual start or reboot with no publisher (must still just work);
-   - timeout;
-   - a dead guest.
+**Step 1 finding (commits `91765b3`, `23a9d79`, `43896c9`):** live
+characterisation on `dx-test` found the core defect **already fixed on
+`main`** by two commits that predate `dx-start-plan.md`'s "Open questions"
+(`ba49f39`, launcher logs its resolved generation; `a3ee4e3`, launcher waits
+for *this* boot's publication with a bounded fallback) -- confirmed live,
+repeatedly, across both start paths (retained-volume recreate; in-place
+stop/start), not just read off the diff. What Step 1 landed: the
+observability increment alone (`dx-status` now surfaces the booted bootstrap
+generation, live or dead -- requirement 4), and
+[D7](docs/refactor/decisions/D7-start-generation.md) as a design proposal for
+the one remaining gap, Q4 itself (a publish that succeeds host-side but never
+reaches the guest was only ever a swallowed warning, not a failure).
 
-   Keep publication locking and retention of older versions.
-3. Close `dx-start-plan.md`: move the invariants to
-   `docs/refactor/decisions/` and the operator notes to `docs/lifecycle.md`,
-   then delete the plan and its `plans.md` entry.
+**Step 2 (commits `753322f`, `dcbe6b2`, `6f78d24`, `2257631`):** implemented
+D7's accepted option 3 -- a bounded host-side confirmation
+(`DX_BOOTSTRAP_CONFIRM_TIMEOUT`, default 5s, chosen from a live measurement)
+in `dx-start-container` that fails the start when a real publish's execution
+lease never reaches the guest, naming both generations and the remedy
+(restart the guest). Live-verified on `dx-test`, including a naturally-
+occurring (not injected) demonstration of the exact failure and its remedy.
+Closed `dx-start-plan.md`: its invariants moved into
+[D7](docs/refactor/decisions/D7-start-generation.md), its operator notes into
+`docs/lifecycle.md` and `docs/troubleshooting.md`, and the plan itself
+(plus its `plans.md` entry) deleted.
+
+Not yet merged into `main` -- the coordinating session merges after review.
 
 ---
 

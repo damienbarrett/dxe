@@ -58,6 +58,22 @@ Recovery, in order of cost:
 Do not reach for `./bin/dx-factory-reset` here. It also destroys `/persist`,
 which holds the home directory and persisted state; a store rebuild does not.
 
+### A start fails with "published bootstrap generation X, but ... is running Y"
+
+`./bin/dx-start-container` published a bootstrap edit, but the running guest
+provably isn't executing it — most commonly because the container was
+already running and was never restarted, so its launcher resolved `current`
+at some earlier boot and has no reason to look again. The container itself
+is left running; only the start command fails, on purpose (this is
+`dx-start-container` doing its job, not a new defect).
+
+Restart it: `./bin/dx-stop-container && ./bin/dx-start-container`. The
+second start's sync sees the content unchanged (the first start already
+published it) and takes the fast skip path, so the freshly-started guest
+picks up the edit on its own first boot. See
+[D7](refactor/decisions/D7-start-generation.md) for the full mechanism and
+`docs/configuration.md`'s `DX_BOOTSTRAP_CONFIRM_TIMEOUT` entry for the bound.
+
 ### A healthy boot reported as a failure
 
 `./bin/dx` can exit non-zero on a guest that is actually fine. Two causes, both

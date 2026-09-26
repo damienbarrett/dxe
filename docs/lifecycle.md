@@ -27,7 +27,18 @@ operations.
 7. **The bootstrap payload is part of every start.** `dx-start-container`
    always runs `dx-sync-bootstrap` after ensuring the container is running, so edits to
    `home/*.nix` or `bootstrap.sh` land on the next `dx` without an image
-   rebuild.
+   rebuild. When that sync actually publishes a new generation (not the
+   unchanged-content skip), `dx-start-container` also confirms, bounded by
+   `DX_BOOTSTRAP_CONFIRM_TIMEOUT` (default 5s), that the guest's execution
+   lease already names it before declaring the start a success. If the
+   container was already running and never restarted, the guest can't pick
+   the new publish up on its own — the start fails loudly, naming both the
+   published and running generation, instead of silently leaving the guest on
+   stale code. The remedy is always the same: restart it —
+   `./bin/dx-stop-container && ./bin/dx-start-container`. The second start's
+   sync sees the content unchanged (already published) and takes the skip
+   path, so the freshly-started guest picks it up on its own first boot. See
+   [D7](refactor/decisions/D7-start-generation.md) for the full mechanism.
 8. **Layer cost informs default behaviour.** Volumes (hours to rebuild) are
    never touched implicitly. Image (minutes) is rebuilt only by `dx-recreate`
    or explicit destroy. Container and runtime state (seconds) are freely

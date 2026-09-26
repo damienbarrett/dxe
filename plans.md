@@ -42,9 +42,17 @@ Every plan document below is listed under exactly one of these.
   already resolved), Q1, Q3, Q4, Q5 and Q6 are now resolved, and the QNAP part
   of Q7 was already accepted; only the rest of Q7 (the two large refactor
   proposals) remains open and is not urgent. Because Q1 resolved to "fix the
-  bug first," Branch 9 (`fix/bootstrap-start-generation`) now runs before
-  Branch 6 (`feat/opencode`). Branches 6 through 13 are otherwise not
-  started.
+  bug first," Branch 9 (`fix/bootstrap-start-generation`) ran before Branch 6
+  (`feat/opencode`) and is now done: Step 1 characterised the defect live and
+  found its core symptom already fixed on `main` by two pre-existing commits,
+  landing only an observability increment and the D7 design proposal; Step 2
+  implemented D7's accepted option 3 (a bounded host-side confirmation that
+  closes Q4's "fail the start" gap) and closed `dx-start-plan.md` into
+  [D7](docs/refactor/decisions/D7-start-generation.md) and `docs/lifecycle.md`/
+  `docs/troubleshooting.md`. QNAP's Phase 0 (inventory and disposable spike,
+  `feat/qnap-phase0-scripts`) has also landed, ahead of its Phases 1-7. Branch
+  6 (`feat/opencode`) is next; Branches 7, 8, and 10 through 13 are otherwise
+  not started.
 
 ## Open plans
 
@@ -71,10 +79,6 @@ Every plan document below is listed under exactly one of these.
   re-measures the same ratio. If #12 lands first, both are against a metric
   shape that no longer exists. Undecided which lands first; no owner named
   for either document.
-- [`dx-start-plan.md`](dx-start-plan.md) — Documents the stale-bootstrap
-  generation defect: a recreated guest can start the previous payload because
-  the host publishes the new one only after starting the container. It records
-  constraints and desired behavior; no solution is selected.
 - [`plan.md`](plan.md) — Backlog only: the NixOS 26.05 upgrade record and all
   eight code-review fixes (P3–P10) have landed and been removed from the
   document (see Git history; the upgrade procedure now lives in
