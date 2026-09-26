@@ -27,6 +27,17 @@ assert_file_exists "$FLAKE_NIX" "flake.nix exists"
 # source-shape regression guard only.
 assert_file_not_contains "$FLAKE_NIX" "avatars.githubusercontent.com" "guest flake does not fetch the mutable GitHub avatar URL"
 
+# Test: nixpkgs-unstable tracks the cached nixpkgs-unstable channel branch, not
+# master. Master is ahead of Hydra's binary cache, so an AI-tools refresh
+# staged from a master revision can land on packages that are not yet cached
+# for the guest's architecture, and Nix silently builds them from source
+# instead (found on Branch 6, 2026-09-26: codex-core/codex-tui OOM-killed at
+# the profile's default 12 GB). The nixpkgs-unstable branch only advances
+# after Hydra has built it, so it is cached on cache.nixos.org for both
+# aarch64-linux and x86_64-linux.
+assert_file_contains_literal "$FLAKE_NIX" 'nixpkgs-unstable.url = "github:nixos/nixpkgs/nixpkgs-unstable"' "nixpkgs-unstable input tracks the cached channel branch, not master"
+assert_file_not_contains "$FLAKE_NIX" 'nixpkgs-unstable.url = "github:nixos/nixpkgs/master"' "nixpkgs-unstable input no longer tracks nixpkgs master"
+
 DX_PACKAGES_BLOCK="$(awk '
     /dxPackages =/ { in_block = 1 }
     in_block { print }

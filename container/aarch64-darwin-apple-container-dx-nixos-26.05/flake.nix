@@ -3,8 +3,17 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
-    # Pinned to master (not the nixos-unstable channel) so the AI CLI bundle tracks the freshest packaged versions; feeds ONLY aiPackages/packages.ai-tools.
-    nixpkgs-unstable.url = "github:nixos/nixpkgs/master";
+    # Pinned to the nixpkgs-unstable channel branch (not master) so the AI CLI
+    # bundle still tracks freshly packaged versions, but only ones Hydra has
+    # already built -- this branch only advances once a revision is fully
+    # built, so it is cached on cache.nixos.org for both aarch64-linux and
+    # x86_64-linux. Tracking master instead let a refresh land on a revision
+    # not yet cached for the guest's architecture, and Nix silently built the
+    # miss from source inside the guest (found on Branch 6, 2026-09-26:
+    # codex-core/codex-tui OOM-killed at the profile's default 12 GB). Feeds
+    # ONLY aiPackages/packages.ai-tools; dx-ai.sh's dx_ai_check_cached is the
+    # remaining safety net for a channel-branch package that still misses.
+    nixpkgs-unstable.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     nixvim = {
       url = "github:nix-community/nixvim/nixos-26.05";
       inputs.nixpkgs.follows = "nixpkgs";
