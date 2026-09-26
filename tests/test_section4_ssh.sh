@@ -21,7 +21,18 @@ assert_file_contains_literal "$SYSTEM" '/persist/etc/ssh' "SSH host keys are per
 assert_file_contains_literal "$SYSTEM" 'dx_persist_host_keys' "configure_ssh restores or persists the host identity"
 
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then test_skip "SSH live behavior skipped by --skip-integration"; else
-    if requires_container && "$BASE_DIR/bin/dx-ssh" true; then test_pass "key-only SSH live probe succeeds"; else test_fail "key-only SSH live probe succeeds"; fi
+    # requires_container already records its own SKIP and returns 1 when no
+    # guest is running; short-circuiting `requires_container && dx-ssh` into
+    # the same pass/fail branch as a real command failure turned that skip
+    # into skip-plus-spurious-FAIL. Branch on requires_container first so the
+    # no-guest case is exactly one SKIP and nothing else.
+    if ! requires_container; then
+        :
+    elif "$BASE_DIR/bin/dx-ssh" true; then
+        test_pass "key-only SSH live probe succeeds"
+    else
+        test_fail "key-only SSH live probe succeeds"
+    fi
 fi
 print_summary
 exit_with_code
