@@ -192,6 +192,8 @@ dxe_spike_diff_snapshot() {
 
 dxe_spike_cleanup() {
     local before="" after="" containers="" volumes="" images="" name status=0
+    local spike_image_tag tag_present=""
+    spike_image_tag="$(dxe_spike_name image):phase0"
 
     if [ "$DXE_DRY_RUN" != 1 ]; then
         before="$(dxe_spike_snapshot)"
@@ -203,6 +205,7 @@ dxe_spike_cleanup() {
 
     if [ "$DXE_DRY_RUN" = 1 ]; then
         echo "(dry-run: removal targets are unknown without connecting; the queries above are what would run)"
+        dxe_qnap_docker_run rmi "$spike_image_tag"
         return 0
     fi
 
@@ -248,6 +251,23 @@ dxe_spike_cleanup() {
         echo "No labelled images to remove."
     fi
 
+    # docker tag (step 3) never attaches a label, so the spike's image
+    # reference never appears in the label-filtered listing above --
+    # remove it by its fixed, well-known name instead. Only the tag
+    # reference is removed; the base image step 2 pulled keeps its own
+    # reference and stays cached (intentional: re-running the spike should
+    # not have to re-pull the base image every time). Checked for presence
+    # first (by reference, not by label) so a --cleanup run with nothing
+    # to untag stays idempotent rather than reporting a spurious FAIL for
+    # "no such image".
+    tag_present="$(dxe_qnap_docker_capture image ls --filter "reference=$spike_image_tag" --format '{{.Repository}}:{{.Tag}}' || true)"
+    if [ -n "$tag_present" ]; then
+        status=0; dxe_qnap_docker_run rmi "$spike_image_tag" </dev/null || status=$?
+        step_verdict "cleanup-image-tag" "$status" "$spike_image_tag"
+    else
+        echo "No spike image tag ($spike_image_tag) to remove."
+    fi
+
     after="$(dxe_spike_snapshot)"
     dxe_spike_diff_snapshot "$before" "$after" || true
     return "$STEP_FAILED"
@@ -266,7 +286,7 @@ dxe_spike_run_steps() {
     step_verdict 1b "$status" "$(dxe_qnap_docker_bin) version via ssh"
 
     step_header 2 "Pull pinned base image for native architecture"
-    local base_ref tag_ref resolved tag_resolved
+    local base_ref tag_ref resolved tag_resolved base_id tag_id
     base_ref="$(dxe_spike_base_image_ref)"
     tag_ref="$(dxe_spike_base_image_tag_only)"
     status=0; dxe_qnap_docker_run pull "$base_ref" || status=$?
@@ -299,32 +319,29 @@ dxe_spike_run_steps() {
     # lost by starting the safety snapshot here instead of at step 1.
     [ "$DXE_DRY_RUN" = 1 ] || before="$(dxe_spike_snapshot)"
 
-    step_header 3 "Build the current minimal Containerfile remotely"
-    # The remote Docker daemon runs on the QNAP and cannot resolve a path
-    # that only exists on this Mac (confirmed by a real --dry-run against
-    # the actual host alias: the previous version passed $CONTAINER_DIR
-    # itself as the build context argument to a `docker build` executed
-    # over ssh). Docker accepts a tar build context on stdin instead, so
-    # the context is streamed there -- same tar idiom as bin/dx-put's
-    # directory copy (COPYFILE_DISABLE=1 + --exclude '._*' keeps macOS
-    # AppleDouble sidecar files out of the guest; this directory is small,
-    # ~356 KB, with no .dockerignore, so nothing else needs excluding).
-    # With a stdin tar context there is no on-disk directory for -f to be
-    # relative to, so -f names the file's path inside the tar instead
-    # (Containerfile sits at the root of this context directory).
-    if [ "$DXE_DRY_RUN" = 1 ]; then
-        dxe_maybe_run tar -C "$CONTAINER_DIR" --exclude '._*' -cf - .
-        dxe_qnap_docker_run build --label "$DXE_SPIKE_LABEL" -t "$(dxe_spike_name image):phase0" -f Containerfile -
-    else
-        local ssh_opts=() ssh_opt
-        while IFS= read -r ssh_opt; do ssh_opts+=("$ssh_opt"); done <<<"$(dxe_qnap_ssh_opts)"
-        printf '+ tar -C %s --exclude ._* -cf - . | ssh %s %s build --label %s -t %s -f Containerfile -\n' \
-            "$CONTAINER_DIR" "$(dxe_qnap_host)" "$(dxe_qnap_docker_bin)" "$DXE_SPIKE_LABEL" "$(dxe_spike_name image):phase0" >&2
-        status=0
-        COPYFILE_DISABLE=1 tar -C "$CONTAINER_DIR" --exclude '._*' -cf - . \
-            | ssh "${ssh_opts[@]}" "$(dxe_qnap_host)" "$(dxe_qnap_docker_bin)" build --label "$DXE_SPIKE_LABEL" -t "$(dxe_spike_name image):phase0" -f Containerfile - \
-            || status=$?
-        step_verdict 3 "$status" "built $(dxe_spike_name image):phase0 from a streamed tar context ($CONTAINER_DIR)"
+    step_header 3 "Tag the pulled base image as the spike image (no remote build needed)"
+    # QNAP's Docker wrapper creates a per-user build directory under
+    # Container Station's own data area and refuses it there for a
+    # non-default administrator -- confirmed against the real NAS:
+    # "mkdir .../container-station/homes/<user>: permission denied". The
+    # Containerfile is a single "FROM <pinned ref>" line (see
+    # dxe_spike_base_image_ref above -- the single source of truth for the
+    # pin; it is never re-parsed or hardcoded a second time here), so a
+    # remote `docker build` added nothing but a name. Step 2 already
+    # pulled base_ref; tag that same already-pulled image instead -- no
+    # additional pull, no build context to stream, no per-user build
+    # directory touched. `docker tag` is a plain-token docker invocation
+    # (unlike step 5's), so the usual dxe_qnap_docker_run/_capture path
+    # needs no special quoting.
+    status=0; dxe_qnap_docker_run tag "$base_ref" "$(dxe_spike_name image):phase0" || status=$?
+    base_id="$(dxe_qnap_docker_capture image inspect --format '{{.Id}}' "$base_ref" 2>/dev/null || echo UNKNOWN)"
+    tag_id="$(dxe_qnap_docker_capture image inspect --format '{{.Id}}' "$(dxe_spike_name image):phase0" 2>/dev/null || echo UNKNOWN)"
+    if [ "$DXE_DRY_RUN" != 1 ]; then
+        if [ "$status" -eq 0 ] && [ "$base_id" != UNKNOWN ] && [ "$tag_id" = "$base_id" ]; then
+            step_verdict 3 0 "tagged $(dxe_spike_name image):phase0 (image ID $tag_id matches the pulled reference)"
+        else
+            step_verdict 3 1 "tag failed or image ID mismatch (status=$status base=$base_id tag=$tag_id)"
+        fi
     fi
 
     step_header 4 "Create three disposable labelled volumes"

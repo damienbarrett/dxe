@@ -587,9 +587,10 @@ fi
 # --- so a remote build added nothing but a name).                        ---
 
 step3_block="$(printf '%s\n' "$spike_dry_out" | sed -n '/--- Step 3:/,/--- Step 4:/p')"
-step3_tag_line="$(printf '%s\n' "$step3_block" | grep -E -- ' tag ' | head -n1)"
+step3_commands="$(printf '%s\n' "$step3_block" | grep -E '^DRY-RUN:' || true)"
+step3_tag_line="$(printf '%s\n' "$step3_commands" | grep -E -- ' tag ' | head -n1)"
 
-if printf '%s' "$step3_block" | stdin_matches -F -- ' build '; then
+if printf '%s' "$step3_commands" | stdin_matches -F -- ' build '; then
     test_fail "step 3 never issues a remote docker build (replaced by pull+tag)"
 else
     test_pass "step 3 never issues a remote docker build (replaced by pull+tag)"
