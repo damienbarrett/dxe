@@ -59,7 +59,7 @@ print_probe_diagnosis() {
 
 print_container_logs() {
     local lines="$1"
-    if ! container logs -n "$lines" "$DX_CONTAINER_NAME" 2>&1 | sed 's/^/  /'; then
+    if ! dx_runtime_logs -n "$lines" "$DX_CONTAINER_NAME" 2>&1 | sed 's/^/  /'; then
         echo "  (container logs unavailable)"
     fi
 }

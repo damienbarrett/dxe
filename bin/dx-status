@@ -39,18 +39,18 @@ dx_require_container_cli
 echo "=== DX Status ==="
 echo "--- Image ($DX_IMAGE) ---"
 if container_image_exists "$DX_IMAGE"; then
-    container image list | grep "^${DX_IMAGE}[[:space:]]"
+    dx_runtime_image_list | grep "^${DX_IMAGE}[[:space:]]"
 else
     echo "Not found"
 fi
 
 echo -e "\n--- Container ($DX_CONTAINER_NAME) ---"
 if container_exists "$DX_CONTAINER_NAME"; then
-    container list -a | grep "^${DX_CONTAINER_NAME}[[:space:]]"
+    dx_runtime_container_list -a | grep "^${DX_CONTAINER_NAME}[[:space:]]"
     if ! container_is_running "$DX_CONTAINER_NAME"; then
         echo
         echo "Container is not running. Last 40 log lines:"
-        container logs -n 40 "$DX_CONTAINER_NAME" 2>&1 | sed 's/^/  /'
+        dx_runtime_logs -n 40 "$DX_CONTAINER_NAME" 2>&1 | sed 's/^/  /'
     fi
 else
     echo "Not found"
@@ -63,9 +63,9 @@ if container_exists "$DX_CONTAINER_NAME"; then
         # why each is allowed to fail silently): `container exec` is available
         # here because the guest is up, which is also the one case where the
         # guest itself already told the operator this in real time.
-        dx_published_generation="$(container exec "$DX_CONTAINER_NAME" readlink "$DX_BOOTSTRAP_PATH/current" 2>/dev/null || true)"
+        dx_published_generation="$(dx_runtime_exec "$DX_CONTAINER_NAME" readlink "$DX_BOOTSTRAP_PATH/current" 2>/dev/null || true)"
         dx_published_generation="${dx_published_generation#generations/}"
-        dx_lease_listing="$(container exec "$DX_CONTAINER_NAME" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$DX_BOOTSTRAP_PATH" 2>/dev/null || true)"
+        dx_lease_listing="$(dx_runtime_exec "$DX_CONTAINER_NAME" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$DX_BOOTSTRAP_PATH" 2>/dev/null || true)"
         dx_running_generation=""
         [ -z "$dx_lease_listing" ] || dx_running_generation="$(dx_bootstrap_lease_generation "$dx_lease_listing" || true)"
         echo "Running:   ${dx_running_generation:-unknown (no execution lease yet)}"
@@ -83,7 +83,7 @@ if container_exists "$DX_CONTAINER_NAME"; then
         # the last 40 log lines, which this boot line does not reliably
         # survive into (a noisy bootstrap or SSH session traffic pushes it
         # out), so this reads the full log rather than a tail.
-        dx_boot_log="$(container logs "$DX_CONTAINER_NAME" 2>/dev/null || true)"
+        dx_boot_log="$(dx_runtime_logs "$DX_CONTAINER_NAME" 2>/dev/null || true)"
         dx_last_boot_generation="$(printf '%s\n' "$dx_boot_log" | { grep 'Using bootstrap generation' || true; } | tail -1)"
         if [ -n "$dx_last_boot_generation" ]; then
             echo "Guest is not running. Last recorded boot: $dx_last_boot_generation"
@@ -104,10 +104,10 @@ fi
 
 echo -e "\n--- Guest Environment ---"
 if container_is_running "$DX_CONTAINER_NAME"; then
-    container exec -u dx "$DX_CONTAINER_NAME" bash -lc "echo -n 'Tools: ' && command -v nvim && command -v nix && command -v tmux && echo -n 'Persist: ' && df -h /persist | tail -1"
+    dx_runtime_exec -u dx "$DX_CONTAINER_NAME" bash -lc "echo -n 'Tools: ' && command -v nvim && command -v nix && command -v tmux && echo -n 'Persist: ' && df -h /persist | tail -1"
 
     echo -e "\ntmux sessions:"
-    container exec -u dx "$DX_CONTAINER_NAME" bash -lc "tmux ls 2>/dev/null" || echo "No active tmux sessions"
+    dx_runtime_exec -u dx "$DX_CONTAINER_NAME" bash -lc "tmux ls 2>/dev/null" || echo "No active tmux sessions"
 else
     echo "Container is not running or not found"
 fi
