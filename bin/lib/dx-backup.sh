@@ -367,7 +367,7 @@ DX_BACKUP_HASH_PATHS_ARG_THRESHOLD=1000
 #                refuses this target (and the whole run) without --force.
 dx_backup_restore_status() {
     local container_name="$1" backup_dir="$2" targets="$3"
-    local hashes local_hash guest_status guest_hash path line local_line
+    local hashes local_hashes path local_line
     local -a target_list=()
     while IFS= read -r path || [ -n "$path" ]; do
         [ -n "$path" ] || continue
@@ -388,28 +388,39 @@ dx_backup_restore_status() {
         dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" --hash-paths "$DX_BACKUP_GUEST_ROOT" "${target_list[@]}" > "$hashes"
     fi
 
+    # One local hash per target, in target_list order (unavoidable, O(n),
+    # unchanged from before: dx_pbs_hash_entry itself is not what was slow).
+    # An empty local_hash (dx_pbs_hash_entry failed -- could not read/hash
+    # the local mirror copy) means this target must classify "conflict"
+    # regardless of what the guest has, same as the old per-target failure
+    # branch below.
+    local_hashes="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-local.XXXXXX")"
     for path in "${target_list[@]}"; do
-        # Exact match on field 1, not a substring search: a target path that
-        # is a suffix of another target's path (e.g. repo/.gitignore vs.
-        # other/repo/.gitignore) would otherwise let `grep -F` match the
-        # OTHER target's line too, and `head -n1` could pick it -- silently
-        # misclassifying this path with someone else's guest status/hash.
-        line="$(awk -F'\t' -v p="$path" '$1 == p { print; exit }' "$hashes")"
-        guest_status="$(printf '%s\n' "$line" | cut -f2)"
-        if [ "$guest_status" != present ]; then
-            printf '%s\tcreate\n' "$path"
-            continue
-        fi
-        guest_hash="$(printf '%s\n' "$line" | cut -f5)"
-        local_line="$(dx_pbs_hash_entry "$backup_dir/current/$path")" || { printf '%s\tconflict\n' "$path"; continue; }
-        local_hash="$(printf '%s\n' "$local_line" | cut -f3)"
-        if [ "$guest_hash" = "$local_hash" ]; then
-            printf '%s\tidentical\n' "$path"
-        else
-            printf '%s\tconflict\n' "$path"
-        fi
-    done
-    rm -f "$hashes"
+        local_line="$(dx_pbs_hash_entry "$backup_dir/current/$path" 2>/dev/null)" || local_line=""
+        printf '%s\t%s\n' "$path" "$(printf '%s\n' "$local_line" | cut -f3)"
+    done > "$local_hashes"
+
+    # Single pass joining the two lists, replacing what used to be one awk
+    # scan of the WHOLE guest hash batch PER target (O(targets * guest
+    # lines) -- a 60,000-target full-mirror dry run had not finished after
+    # 13 minutes). awk's own associative arrays give this one linear pass
+    # over each file instead. Exact match on field 1 throughout, never a
+    # substring search (Branch 17's rule): a target path that is a suffix
+    # of another target's path (e.g. repo/.gitignore vs.
+    # other/repo/.gitignore) must never let the OTHER target's line answer
+    # for it.
+    awk -F'\t' '
+        NR == FNR { gstatus[$1] = $2; ghash[$1] = $5; next }
+        {
+            path = $1; lhash = $2
+            if (gstatus[path] != "present") { print path "\tcreate"; next }
+            if (lhash == "") { print path "\tconflict"; next }
+            if (ghash[path] == lhash) { print path "\tidentical"; next }
+            print path "\tconflict"
+        }
+    ' "$hashes" "$local_hashes"
+
+    rm -f "$hashes" "$local_hashes"
 }
 
 # Push $3 (relative paths, one per line) from $2/current/ into the guest at

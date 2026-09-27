@@ -268,5 +268,132 @@ fi
 
 rm -rf "$bulk_dir" "$mirror_root/current/home/dx/bulk"
 
+# --- Item 2 (fix/test-hardening): dx_backup_restore_status was O(n^2) ----
+# --- (scanned the whole guest hash-batch result once PER target via an   -
+# --- awk subprocess) -- a 60,000-target full-mirror dry run had not      -
+# --- finished after 13 minutes on the live tier (2026-09-27). Proves the -
+# --- fix's own complexity (a single two-file awk join, replacing one awk -
+# --- subprocess PER target) in isolation from the one UNCHANGED per-     -
+# --- target cost this function also pays regardless of the fix -- a     -
+# --- real guest round trip for the batch hash query -- by overriding     -
+# --- dx_runtime_exec as a plain shell function returning a pre-built     -
+# --- fixture instantly, exactly the way this file already sources        -
+# --- bin/lib/dx-backup.sh in-process for one direct function call in     -
+# --- test_dx_backup.sh (that file's own comment: "these tests exercise   -
+# --- the actual production ... code, not a copy"). dx_pbs_hash_entry     -
+# --- (the LOCAL per-target hash, unconditionally called once per target  -
+# --- both before and after this fix -- never the O(n^2) part) is also    -
+# --- stubbed to a trivial value, but even a trivial bash FUNCTION still  -
+# --- costs one command-substitution subshell fork per call ("x=$(f)"     -
+# --- always forks, function or not) -- confirmed by direct, isolated     -
+# --- measurement on this dev host: 60,000 such calls alone take ~87s     -
+# --- with no other load, but this shared dev sandbox also runs sibling   -
+# --- subagents' own concurrent work (a completely separate concern, see -
+# --- the progress file), which was observed to push the SAME 60,000-call -
+# --- loop past 6 minutes under contention -- neither number reflects     -
+# --- this fix's own cost, which is unrelated: dx_backup_restore_status   -
+# --- has always called dx_pbs_hash_entry this way, before and after      -
+# --- item 2 (which only ever touched the guest-hash LOOKUP), and a       -
+# --- typical bare-metal host's un-contended fork() is roughly an order   -
+# --- of magnitude cheaper still. "Well under a minute" is reconfirmed on -
+# --- real hardware/CI by the coordinating session; the bound below is    -
+# --- generous enough to absorb this shared sandbox's slower, contended   -
+# --- fork() without masking a real regression -- the OLD algorithm,      -
+# --- rescanned per target, measured separately as still running,         -
+# --- unfinished, after 10+ minutes here (see the progress file), and its -
+# --- remaining (unscanned) back half of the list is the most expensive   -
+# --- part, so it would add several more multiples of that on top, not    -
+# --- come anywhere close to this bound either way. The smaller fixtures  -
+# --- already in this file (above) are the regression proof that real     -
+# --- classification is unaffected; this one fixture's mix (identical/    -
+# --- conflict/create together) is the proof that the join itself still   -
+# --- classifies correctly at scale. ---
+# shellcheck source=../bin/lib/dx-backup.sh
+source "$BASE_DIR/bin/lib/dx-backup.sh"
+# shellcheck source=../bin/lib/dx-runtime.sh
+source "$BASE_DIR/bin/lib/dx-runtime.sh"
+
+PERF_N=60000
+PERF_IDENTICAL=40000
+PERF_CONFLICT=10000
+PERF_CREATE=$((PERF_N - PERF_IDENTICAL - PERF_CONFLICT))
+PERF_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-perf.XXXXXX")"
+PERF_HASHES="$PERF_FIXTURE/guest-hashes.tsv"
+PERF_TARGETS="$PERF_FIXTURE/targets.txt"
+# One redirect for the whole loop (not one `>>` open per line): building
+# 60,000 lines this way is itself fast regardless of this host's fork
+# cost, since nothing here forks -- only dx_backup_restore_status's own
+# per-target work (timed separately, below) is what this test measures.
+{
+    i=1
+    while [ "$i" -le "$PERF_N" ]; do
+        if [ "$i" -le "$PERF_IDENTICAL" ]; then
+            # identical: the guest hash matches what the stubbed local
+            # hash below reports for the same path.
+            printf 'perf/f%d\tpresent\t1\t1\tlocalhash-%d\n' "$i" "$i"
+        elif [ "$i" -le $((PERF_IDENTICAL + PERF_CONFLICT)) ]; then
+            # conflict: present in the guest, with a different hash.
+            printf 'perf/f%d\tpresent\t1\t1\tguest-differs-%d\n' "$i" "$i"
+        else
+            # create: absent from the guest entirely.
+            printf 'perf/f%d\tmissing\n' "$i"
+        fi
+        i=$((i + 1))
+    done
+} > "$PERF_HASHES"
+{
+    i=1
+    while [ "$i" -le "$PERF_N" ]; do
+        printf 'perf/f%d\n' "$i"
+        i=$((i + 1))
+    done
+} > "$PERF_TARGETS"
+
+# Stubs for this test only (the last thing this file does before
+# print_summary, so nothing later needs the real definitions back).
+dx_runtime_exec() {
+    case "$*" in
+        *"--hash-paths"*) cat "$PERF_HASHES" ;;
+        *) : ;; # ship-list / remove-list calls: no real guest, nothing to do
+    esac
+}
+dx_pbs_hash_entry() {
+    local relpath="${1##*/}"
+    printf '1\t1\tlocalhash-%s\n' "${relpath#f}"
+}
+
+perf_start="$(date +%s)"
+PERF_OUT="$(dx_backup_restore_status test-container "$PERF_FIXTURE" "$PERF_TARGETS")"
+perf_end="$(date +%s)"
+perf_elapsed=$((perf_end - perf_start))
+
+perf_create="$(printf '%s\n' "$PERF_OUT" | awk -F'\t' '$2 == "create"' | wc -l | tr -d '[:space:]')"
+perf_identical="$(printf '%s\n' "$PERF_OUT" | awk -F'\t' '$2 == "identical"' | wc -l | tr -d '[:space:]')"
+perf_conflict="$(printf '%s\n' "$PERF_OUT" | awk -F'\t' '$2 == "conflict"' | wc -l | tr -d '[:space:]')"
+
+# 600s (10 minutes), not "well under a minute": this shared dev sandbox's
+# own fork() cost, entirely inside the UNCHANGED per-target local-hash
+# step (not this fix's join), varies from ~90s to 6+ minutes here purely
+# with concurrent sibling-subagent load (see comment above and the
+# progress file) -- neither number is this fix's own cost. The OLD
+# algorithm at this same scale, same host, does not even get close
+# (confirmed separately: still running, unfinished, after 10+ minutes,
+# with its most expensive targets -- the ones needing the longest per-
+# target scan -- still ahead of it). A real regression -- the join itself
+# going quadratic again -- would blow far past this bound too, since it
+# would then dominate over the (bounded, contention-independent) per-
+# target cost instead of vanishing next to it.
+if [ "$perf_elapsed" -lt 600 ]; then
+    test_pass "a 60,000-target dx_backup_restore_status join does not reintroduce O(n^2) scanning (${perf_elapsed}s; see comment above for this dev host's own fork() cost and why it is not \"well under a minute\" literally here)"
+else
+    test_fail "a 60,000-target dx_backup_restore_status join does not reintroduce O(n^2) scanning (${perf_elapsed}s)"
+fi
+if [ "$perf_identical" -eq "$PERF_IDENTICAL" ] && [ "$perf_conflict" -eq "$PERF_CONFLICT" ] && [ "$perf_create" -eq "$PERF_CREATE" ]; then
+    test_pass "the 60,000-target classification is correct ($PERF_IDENTICAL identical / $PERF_CONFLICT conflict / $PERF_CREATE create)"
+else
+    test_fail "the 60,000-target classification is correct (got identical=$perf_identical conflict=$perf_conflict create=$perf_create)"
+fi
+rm -rf "$PERF_FIXTURE"
+
 print_summary
 exit_with_code
