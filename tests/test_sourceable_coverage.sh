@@ -516,7 +516,17 @@ DX_SSH_PORT=2222; dx_ssh_endpoint >/dev/null; dx_bootstrap_launch_command >/dev/
 # it -- this script requires the disposable coverage environment
 # (DXE_COVERAGE_ISOLATED=1, checked above) but the check costs nothing and
 # catches a regression here the same way it does in the unit-test files.
-known_hosts_coverage_real_state_before="$(find "${XDG_STATE_HOME:-$HOME/.local/state}/dxe" -mindepth 1 2>/dev/null | sort)"
+# An absent real state directory (the normal state in a fresh coverage
+# container) is a legitimate empty snapshot, not an error -- `find` on a
+# nonexistent path exits 1, which this script's own `set -Eeuo pipefail`
+# would otherwise turn into an aborting ERR trap, so both snapshots below
+# are guarded on the directory's existence rather than calling find blind.
+known_hosts_coverage_real_dir="${XDG_STATE_HOME:-$HOME/.local/state}/dxe"
+if [ -d "$known_hosts_coverage_real_dir" ]; then
+    known_hosts_coverage_real_state_before="$(find "$known_hosts_coverage_real_dir" -mindepth 1 2>/dev/null | sort)"
+else
+    known_hosts_coverage_real_state_before=""
+fi
 (
     home_dir="$fixture/known-hosts-home"
     mkdir -p "$home_dir"
@@ -533,7 +543,11 @@ known_hosts_coverage_real_state_before="$(find "${XDG_STATE_HOME:-$HOME/.local/s
     [ -d "$(dx_ssh_known_hosts_dir)" ]
     [ "$(dx_path_mode "$(dx_ssh_known_hosts_dir)")" = 700 ]
 )
-known_hosts_coverage_real_state_after="$(find "${XDG_STATE_HOME:-$HOME/.local/state}/dxe" -mindepth 1 2>/dev/null | sort)"
+if [ -d "$known_hosts_coverage_real_dir" ]; then
+    known_hosts_coverage_real_state_after="$(find "$known_hosts_coverage_real_dir" -mindepth 1 2>/dev/null | sort)"
+else
+    known_hosts_coverage_real_state_after=""
+fi
 [ "$known_hosts_coverage_real_state_before" = "$known_hosts_coverage_real_state_after" ]
 
 # Remaining mount codec error and escape paths.

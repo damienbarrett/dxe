@@ -567,6 +567,30 @@ else
     test_fail "dx_ssh_run_guest_command (docker-ssh) dials dx@<discovered Tailscale address>, never dx@127.0.0.1, and never writes under the real SSH known-hosts state directory"
 fi
 
+# Regression guard (found by the coordinating session's Linux gates,
+# 2026-09-28): dx_real_ssh_known_hosts_snapshot itself must never abort
+# when the real state directory doesn't exist yet -- the normal state on a
+# fresh runner/container/CI, before anything has ever pinned a known-hosts
+# file there. `find` on an absent path exits 1; a naive snapshot function
+# propagates that as the "$(...)" assignment's exit status, which this
+# file's own `set -euo pipefail` (line 2) then turns into an abort right
+# after the endpoint-proof block above -- exactly what broke this file's
+# own unit-test run on a fresh Linux runner before the fix. Run inside a
+# subshell so a regression here aborts only the subshell (reported as a
+# normal test_fail), never this whole file the same way again.
+(
+    absent_state_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts-absent-guard.XXXXXX")/does-not-exist"
+    XDG_STATE_HOME="$absent_state_home"
+    export XDG_STATE_HOME
+    out="$(dx_real_ssh_known_hosts_snapshot)"
+    [ -z "$out" ]
+)
+if [ "$?" -eq 0 ]; then
+    test_pass "dx_real_ssh_known_hosts_snapshot returns 0 and prints nothing when the real state directory does not exist"
+else
+    test_fail "dx_real_ssh_known_hosts_snapshot returns 0 and prints nothing when the real state directory does not exist"
+fi
+
 # --- SIGPIPE contract: a match must survive `set -o pipefail` ---
 #
 # `writer | grep -q PATTERN` reports a *successful* match as a failure under

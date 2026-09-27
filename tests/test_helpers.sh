@@ -46,7 +46,18 @@ file_mode() {
 # without this check it silently lands in the real directory instead of
 # failing the test (exactly the incident this helper exists to catch).
 dx_real_ssh_known_hosts_snapshot() {
-    find "${XDG_STATE_HOME:-$HOME/.local/state}/dxe" -mindepth 1 2>/dev/null | sort
+    local dir="${XDG_STATE_HOME:-$HOME/.local/state}/dxe"
+    # An absent directory is a legitimate, empty snapshot (the normal state
+    # on a fresh runner/container/CI, before anything has ever pinned a
+    # known-hosts file there) -- not an error. Without this guard, `find` on
+    # a nonexistent path exits 1, and under a caller's `set -e` (several of
+    # this function's callers have their own), the "$(...)" assignment
+    # aborts the whole script instead of yielding an empty listing. Guarding
+    # on the directory's existence, rather than swallowing find's own exit
+    # status with `|| true`, still lets a real find error (e.g. a
+    # permission problem on a directory that DOES exist) propagate.
+    [ -d "$dir" ] || return 0
+    find "$dir" -mindepth 1 2>/dev/null | sort
 }
 
 # Colors for output
