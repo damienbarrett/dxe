@@ -201,7 +201,20 @@ dx_ai_tools_for_system() {
 }
 
 dx_ai_refresh_pin() {
-    local root="$1" system="$2" manifest_url manifest version url sha512_hex hash tmp
+    local root="$1" system="$2" manifest_url manifest version url sha512_hex hash tmp is_null
+    # DQ7: a null pin is a deliberate, sticky "no native artifact for this
+    # system" declaration -- not a placeholder waiting to be filled in.
+    # Refresh must never resurrect it, and must decide that BEFORE ever
+    # reaching the network, since whatever upstream's manifest happens to
+    # publish today is irrelevant to that declaration (docs/refactor/
+    # arch-neutral-guest.md section 7.1; same jq shape as
+    # dx_ai_tools_for_system's own null check, so both agree on what "null"
+    # means).
+    is_null="$(jq -r --arg system "$system" '(.[$system] // null) == null' "$root/pins/agy.json" 2>/dev/null)" || is_null=true
+    if [ "$is_null" = true ]; then
+        echo "agy: pin for $system is null; refresh will not resurrect it (DQ7)" >&2
+        return 0
+    fi
     manifest_url="$(dx_ai_agy_manifest_url "$system")" || { echo "Warning: agy has no known manifest URL for $system; skipping pin refresh." >&2; return 0; }
     echo "Refreshing Antigravity CLI manifest for $system..."
     manifest="$(curl -fsSL "$manifest_url")" || { echo "Warning: could not fetch agy manifest. Keeping current pin." >&2; return 0; }

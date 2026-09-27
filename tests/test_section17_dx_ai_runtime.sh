@@ -474,15 +474,20 @@ printf '%s\n' '{"aarch64-linux":{"version":"1.0.5","url":"https://example.invali
 if (
     curl() { printf '%s\n' '{"version":"9.9.9","url":"https://example.invalid/new-amd","sha512":"'"$(printf 'a%.0s' $(seq 1 128))"'"}'; }
     nix() { [ "$1" = hash ] && printf 'sha512-newamdhash\n' || command nix "$@"; }
-    # Narrow jq stand-in for this call's two shapes (manifest-field
-    # extraction from stdin, and the single-key merge into pins/agy.json) --
-    # the pinned-ShellCheck/coverage container deliberately has no real jq
-    # (see dx-ai.sh's own dx_ai_nixpkgs_unstable_rev comment for the same
-    # accepted gap), unlike the real guest, which always does via
-    # dxPackages. Generic string-splice merge, not a hardcoded answer: it
-    # reads the file's OTHER key(s) back out untouched, so this still
-    # proves dx_ai_refresh_pin's real behavior, not a tautology.
+    # Narrow jq stand-in for this call's three shapes (the leading null-pin
+    # guard's query, manifest-field extraction from stdin, and the
+    # single-key merge into pins/agy.json) -- the pinned-ShellCheck/coverage
+    # container deliberately has no real jq (see dx-ai.sh's own
+    # dx_ai_nixpkgs_unstable_rev comment for the same accepted gap), unlike
+    # the real guest, which always does via dxPackages. Generic string-splice
+    # merge, not a hardcoded answer: it reads the file's OTHER key(s) back
+    # out untouched, so this still proves dx_ai_refresh_pin's real behavior,
+    # not a tautology.
     jq() {
+        if [ "$1" = -r ] && [ "$2" = --arg ] && [ "$3" = system ] && [ "$5" = '(.[$system] // null) == null' ]; then
+            if grep -qF "\"$4\":null" "$6" 2>/dev/null; then printf 'true\n'; else printf 'false\n'; fi
+            return
+        fi
         case "$1 $2" in
             "-r .version // empty") sed -n 's/.*"version":"\([^"]*\)".*/\1/p' ;;
             "-r .url // empty") sed -n 's/.*"url":"\([^"]*\)".*/\1/p' ;;
@@ -520,6 +525,45 @@ if (
     test_pass "dx_ai_refresh_pin updates only the named system's key"
 else
     test_fail "dx_ai_refresh_pin updates only the named system's key"
+fi
+
+# Finding 2 (dx-test live tier): the live gate showed dx_ai_refresh_pin
+# re-fetching and overwriting a system's pin even though pins/agy.json
+# already recorded it as null ("Pinned agy 9.9.9 for x86_64-linux from
+# upstream manifest") -- for a system DQ7 says has no native artifact. A
+# null entry is a deliberate, sticky "unsupported" marker: refresh must
+# never resurrect it, and must never even reach the network to find out,
+# since the null declaration is what encodes "no native artifact" -- not
+# whatever upstream's manifest happens to publish today. curl is stubbed to
+# RETURN real-looking manifest data (the same shape the named-key test above
+# uses) specifically so a naive fix that merely reverted the write after
+# fetching would still fail this: the assertion also proves curl is never
+# even invoked.
+null_refresh_fixture="$ai_fixture/refresh-pin-null"
+mkdir -p "$null_refresh_fixture/pins"
+printf '%s\n' '{"aarch64-linux":{"version":"1.0.5","url":"https://example.invalid/old-arm","hash":"sha512-oldarm"},"x86_64-linux":null}' > "$null_refresh_fixture/pins/agy.json"
+null_pin_before="$(cat "$null_refresh_fixture/pins/agy.json")"
+null_refresh_curl_called="$ai_fixture/refresh-pin-null-curl-called.log"
+rm -f "$null_refresh_curl_called"
+if (
+    curl() { printf 'called\n' >> "$null_refresh_curl_called"; printf '%s\n' '{"version":"9.9.9","url":"https://example.invalid/new-amd","sha512":"'"$(printf 'a%.0s' $(seq 1 128))"'"}'; }
+    # Same narrow jq stand-in dx_ai_tools_for_system's own null-check test
+    # uses below (no real jq in the pinned-ShellCheck/coverage container):
+    # reads the fixture's real content, not a hardcoded answer.
+    jq() {
+        if [ "$1" = -r ] && [ "$2" = --arg ] && [ "$3" = system ]; then
+            if grep -qF "\"$4\":null" "$6" 2>/dev/null; then printf 'true\n'; else printf 'false\n'; fi
+        else
+            return 1
+        fi
+    }
+    null_refresh_out="$(dx_ai_refresh_pin "$null_refresh_fixture" x86_64-linux 2>&1)"
+    printf '%s\n' "$null_refresh_out" | stdin_matches -F "DQ7"
+) && [ ! -f "$null_refresh_curl_called" ] \
+    && [ "$(cat "$null_refresh_fixture/pins/agy.json")" = "$null_pin_before" ]; then
+    test_pass "dx_ai_refresh_pin never resurrects a null system's pin (Finding 2)"
+else
+    test_fail "dx_ai_refresh_pin never resurrects a null system's pin (Finding 2)"
 fi
 
 # Branch 11 / Phase 4, Increment 3 (docs/refactor/arch-neutral-guest.md
@@ -582,27 +626,77 @@ unset -f jq
 # End-to-end: a sourced dx_ai_main run on a system whose agy pin is null
 # stages a generation whose .tools-manifest and published executables
 # reflect the adjusted list -- proving the exclusion is actually wired into
-# the real generation lifecycle, not only callable in isolation.
+# the real generation lifecycle, not only callable in isolation. Finding 2
+# (dx-test live tier): dx_ai_update_flake is exercised for REAL here (not
+# stubbed to a no-op) -- the live gate caught the refresh-resurrection bug
+# specifically because it runs dx_ai_main unstubbed; a fast-tier test that
+# stubbed dx_ai_update_flake away could never have caught it.
 noagy_published="$ai_fixture/noagy-published"; noagy_state="$ai_fixture/noagy-state"
 mkdir -p "$noagy_published/pins"
 printf '%s\n' '{"aarch64-linux":{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"},"x86_64-linux":null}' > "$noagy_published/pins/agy.json"
 printf '%s\n' fixture > "$noagy_published/flake.nix"
 printf '%s\n' fixture > "$noagy_published/flake.lock"
+noagy_output_log="$ai_fixture/noagy-output.log"
 (
     uname() { [ "${1:-}" = -m ] && printf '%s\n' x86_64 || command uname "$@"; }
-    # Same narrow jq stand-in as the direct dx_ai_tools_for_system
-    # assertions above (no real jq in the pinned-ShellCheck/coverage
-    # container) -- proves dx_ai_main's real null-pin detection here too,
-    # not only its fail-closed default (which happens to agree for this
-    # specific x86_64-linux/null fixture).
+    # Full jq stand-in: the leading null-pin guard query (also
+    # dx_ai_tools_for_system's own null check, same shape), manifest-field
+    # extraction from stdin, and the single-key merge into pins/agy.json --
+    # same three shapes as the direct dx_ai_refresh_pin unit test's stand-in
+    # above (no real jq in the pinned-ShellCheck/coverage container). This
+    # is deliberately the FULL stand-in, not just the null-check branch: a
+    # narrower one that failed field-extraction closed would make refresh
+    # bail out via its own "malformed manifest" path regardless of the null
+    # guard, which would pass this test whether or not the guard exists.
     jq() {
-        if [ "$1" = -r ] && [ "$2" = --arg ] && [ "$3" = system ]; then
+        if [ "$1" = -r ] && [ "$2" = --arg ] && [ "$3" = system ] && [ "$5" = '(.[$system] // null) == null' ]; then
             if grep -qF "\"$4\":null" "$6" 2>/dev/null; then printf 'true\n'; else printf 'false\n'; fi
-        else
-            return 1
+            return
         fi
+        case "$1 $2" in
+            "-r .version // empty") sed -n 's/.*"version":"\([^"]*\)".*/\1/p' ;;
+            "-r .url // empty") sed -n 's/.*"url":"\([^"]*\)".*/\1/p' ;;
+            "-r .sha512 // empty") sed -n 's/.*"sha512":"\([^"]*\)".*/\1/p' ;;
+            *)
+                if [ "$1" = --arg ] && [ "$2" = system ]; then
+                    local args=("$@") sys version url hash file content new_value before after
+                    sys="${args[2]}"; version="${args[5]}"; url="${args[8]}"; hash="${args[11]}"
+                    file="${args[$(( ${#args[@]} - 1 ))]}"
+                    content="$(cat "$file")"
+                    new_value="{\"version\":\"$version\",\"url\":\"$url\",\"hash\":\"$hash\"}"
+                    case "$content" in
+                        *"\"$sys\":null"*)
+                            before="${content%%\"$sys\":null*}"
+                            after="${content#*\"$sys\":null}"
+                            printf '%s' "$before\"$sys\":$new_value$after"
+                            ;;
+                        *"\"$sys\":{"*)
+                            before="${content%%\"$sys\":{*}"
+                            after="${content#*\"$sys\":\{*\}}"
+                            printf '%s' "$before\"$sys\":$new_value$after"
+                            ;;
+                        *) return 1 ;;
+                    esac
+                else
+                    return 1
+                fi
+                ;;
+        esac
     }
-    dx_ai_update_flake() { :; }
+    # curl deliberately RETURNS real-looking manifest data for x86_64-linux
+    # (upstream genuinely publishes one) so this proves the null pin survives
+    # because dx_ai_refresh_pin's own guard declines to resurrect it, not
+    # because this fixture never gave refresh anything to resurrect with.
+    # nix's flake subcommands are no-ops (this fixture's flake.nix/
+    # flake.lock are not real flakes); its hash subcommand matches the
+    # existing dx_ai_refresh_pin unit test's own stand-in above.
+    curl() { printf '%s\n' '{"version":"9.9.9","url":"https://example.invalid/new-amd","sha512":"'"$(printf 'a%.0s' $(seq 1 128))"'"}'; }
+    nix() {
+        case "$1 $2" in
+            "flake update"|"flake metadata") return 0 ;;
+            *) [ "$1" = hash ] && printf 'sha512-newamdhash\n' || command nix "$@" ;;
+        esac
+    }
     dx_ai_ensure_cached() { :; }
     dx_ai_install_profile() {
         local stage="$1" tool
@@ -618,12 +712,14 @@ printf '%s\n' fixture > "$noagy_published/flake.lock"
     dx_ai_boot_id() { printf '%s\n' test-boot-id; }
     dx_ai_process_start() { printf '%s\n' 123; }
     DX_AI_BOOTSTRAP_ROOT="$noagy_published" DX_AI_STATE_ROOT="$noagy_state" dx_ai_main
-) >/dev/null 2>&1
+) >"$noagy_output_log" 2>&1
 noagy_manifest="$(readlink -f "$noagy_state/current" 2>/dev/null)"
 if [ -n "$noagy_manifest" ] && [ -f "$noagy_manifest/.tools-manifest" ] \
     && ! grep -qx agy "$noagy_manifest/.tools-manifest" \
     && [ ! -e "$noagy_manifest/profile/bin/agy" ] \
-    && [ -x "$noagy_manifest/profile/bin/codex" ]; then
+    && [ -x "$noagy_manifest/profile/bin/codex" ] \
+    && grep -qF '"x86_64-linux":null' "$noagy_manifest/pins/agy.json" \
+    && ! grep -qF "Pinned agy" "$noagy_output_log"; then
     test_pass "a real dx_ai_main run on a null-agy system publishes a generation without agy"
 else
     test_fail "a real dx_ai_main run on a null-agy system publishes a generation without agy"
