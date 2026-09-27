@@ -43,13 +43,12 @@ Updated 2026-09-27, after this trim.
   against fake `ssh`/`docker` boundaries (Phase 2), whose exit gate's one
   live step -- a read-only `dx-status` and preflight against a disposable
   profile -- ran on 2026-09-27 and passed (nothing on the NAS created or
-  changed). Phase 3 (direct storage mode) is done on `feat/qnap-direct-storage`,
-  developed and characterised entirely against fake `ssh`/`docker`
-  boundaries, not yet landed or live-gated. Phase 4 (the architecture-neutral
-  guest) is done on `feat/qnap-arch-neutral`, items 1-5, developed and
-  characterised entirely against Nix evaluation, fixtures, and fakes, not
-  yet landed or live-gated; item 6 (the context-tree rename) remains its
-  own pending standalone mechanical commit. Phases 5-7 (remote-aware
+  changed). Phase 3 (direct storage mode) landed 2026-09-27 and Phase 4 (the
+  architecture-neutral guest) landed 2026-09-28, both live-gated on the
+  NAS with disposable resources: the first native x86_64 DXE guest
+  bootstrapped on the QNAP in about two minutes (evidence:
+  `docs/evidence/20260927/direct-volume-storage.md`,
+  `docs/evidence/20260928/arch-neutral-guest.md`).
   SSH/workflows, lifecycle hardening, and promotion) are not
   started. Phase 0's own maintenance-window items, 8b/8c, are also still
   open.
@@ -159,24 +158,21 @@ characterised entirely against fake `ssh`/`docker` boundaries and
 guest-bootstrap fixtures, the NAS never touched; see `qnap-dxe-plan.md`'s
 own Phase 3 status paragraph and `docs/refactor/direct-volume-storage.md`
 for the full design. Its exit gate's "recreate preserves `/nix`,
-`/persist`..." check needs a real x86_64 QNAP guest and so moves to
-Phase 4's own exit gate; not yet run before this branch lands: the
-coordinating session's live disposable-volume check on the NAS and the
-Apple `dx-test` regression tier (the dual-target gate). **Phase 4
-(the architecture-neutral guest, `feat/qnap-arch-neutral`) is done on the
-branch** -- items 1-5, developed and characterised entirely against Nix
-evaluation, fixtures, and fakes, the real NAS never touched and the
-x86_64 closure never built anywhere; see `qnap-dxe-plan.md`'s own Phase 4
-status paragraph and `docs/refactor/arch-neutral-guest.md` for the full
-design. Item 6 (the context-tree rename) remains pending, deliberately
-left for its own standalone mechanical commit per DQ7. Not yet run before
-this branch lands: the exit gate's live x86_64 native build and
-CLI-inventory check on a disposable QNAP guest, and the Apple `dx-test`
-regression tier (the dual-target gate) -- both the coordinating session's
-job. **Phases 5-7 remain not started** (remote-aware
-SSH/workflows,
-lifecycle hardening, and promotion -- see `qnap-dxe-plan.md` for each
-phase's own detail, including Phase 5's Tailscale-in-guest work).
+`/persist`..." check needed a real x86_64 QNAP guest and was run as part of
+Phase 4's gate. **Phase 4 (the architecture-neutral guest,
+`feat/qnap-arch-neutral`) landed 2026-09-28** -- items 1-5 (the
+context-tree rename, item 6, stays a pending standalone mechanical commit),
+both live gates passed: `dx-test`'s full live tier under the profile
+environment, and on the NAS a disposable 8 GB / 4 CPU x86_64 guest that
+bootstrapped natively in ~120 s with all 21 required tools, `dx-status`
+and `dx-reclaim` under the QNAP profile, and a container-only recreate
+onto its existing volumes. The gates found five real defects before
+landing (see `docs/evidence/20260928/arch-neutral-guest.md`), the most
+important being that Docker injects `HOME=/root` where Apple leaves it
+unset, which had let the essentials install work on Apple by accident;
+the bootstrap now names its root profile explicitly. See
+`qnap-dxe-plan.md`'s own Phase 4 status and
+`docs/refactor/arch-neutral-guest.md` for the full
 
 **Target:** QNAP TVS-h674T. Its Intel Core 12th-gen CPU means **x86_64**
 (confirmed by Phase 0's `uname -m`). On `main` (before this branch lands)
@@ -372,7 +368,7 @@ For each proposal:
 | --- | --- | --- |
 | Bootstrap refactor v2 | **Park** until Branch 12 is done, then re-decide | Its phases assume today's code. The store-trust fix will change that code, so it would need rebaselining anyway. |
 | Declarative Nix audit | **Reject as a single programme; accept its items one at a time** as small branches, alongside other work | Each conversion (for example SSH or sudo config into Home Manager) is independently useful and small. A big-bang migration conflicts with limiting work in progress. |
-| QNAP runtime | **Resolved 2026-09-26: accepted** as Branch 11. Phases 0/1/2 landed; Phase 3 done on `feat/qnap-direct-storage` (not yet landed); Phase 4 done on `feat/qnap-arch-neutral` (not yet landed/live-gated); Phases 5-7 remain | The target is a TVS-h674T (x86_64, confirmed in Phase 0); Phase 4's per-system flake outputs and keyed Antigravity pin let the guest build natively there. |
+| QNAP runtime | **Resolved 2026-09-26: accepted** as Branch 11. Phases 0-4 landed (Phase 4 on 2026-09-28: the first native x86_64 guest bootstrapped on the QNAP); Phases 5-7 remain | The target is a TVS-h674T (x86_64, confirmed in Phase 0); Phase 4's per-system flake outputs and keyed Antigravity pin let the guest build natively there. |
 
 **Coverage metric conflict:** only relevant if you accept both v2 and the Nix
 audit's item #12. That item replaces the coverage ratio with a ceiling on

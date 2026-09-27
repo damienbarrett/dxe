@@ -758,12 +758,28 @@ would touch: every `DX_CONTEXT_DIR`/`DX_BOOTSTRAP_SOURCE` default in
 `tests/`, and `docs/`, and the directory move itself -- see
 `docs/refactor/arch-neutral-guest.md` section 9.
 
-Not yet run (the coordinating session's job, after this branch's own
-validation -- G1-G3, the ratchet, `tests/run-coverage-linux.sh` -- all
-passed): the exit gate's live x86_64 native build and CLI-inventory
-verification (`scripts/dx-verify-inventory.sh` via `dx_runtime_exec`) on a
-disposable QNAP guest, and the Apple `dx-test` regression tier (the
-dual-target gate).
+**Exit gate met (coordinating session, 2026-09-28; four attempts, five
+real defects fixed on the branch first):** `nix flake check --no-build
+--all-systems` evaluates both systems with `flake.lock` unchanged; the
+target closure built natively on the actual QNAP inside a disposable 8 GB /
+4 CPU guest (`dx-qnap-spike`, direct `/nix`), "Guest bootstrap complete"
+about 120 s after start; the Apple aarch64 build and live gates stayed
+green (`dx-test` recreated onto its existing volumes, full live tier under
+the profile environment, 1,777 passed, 0 failed); and the QNAP guest's
+required CLI inventory verified after bootstrap (all 21 present, checked as
+the `dx` user via `dx_runtime_exec` -- root's PATH does not include the
+Home Manager profile). `dx-status` and `dx-reclaim` work under the QNAP
+profile, and Phase 3's moved check -- a container-only recreate onto the
+existing volumes preserving `/nix`, `/persist`, tool state and the
+bootstrap generation -- passed on the same disposable guest. Every
+disposable resource was removed after each attempt. The defects the gates
+found: Docker injects `HOME=/root` (Apple leaves it unset), so the
+essentials install had been resolving the legacy default profile on the
+QNAP and colliding with it (now explicit); the agy manifest refresh
+resurrected a `null` pin; one Section 17 test was not isolated from the
+profile environment; the adapter's image listing joined repository and tag;
+and its `ps` format used `inspect`'s map-style label access. Evidence:
+`docs/evidence/20260928/arch-neutral-guest.md`. **Phase 4 is landed.**
 
 ## Phase 5 — Make SSH and user workflows remote-aware
 
