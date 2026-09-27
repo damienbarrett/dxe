@@ -108,15 +108,22 @@ dx_tunnel_metadata_write() {
 # dx_tunnel_start used to add inline, on top of this array, are already
 # part of the shared builder now and are no longer duplicated there.
 dx_tunnel_ssh_common() {
+    # Captured, then checked, before building the array: dx_ssh_common_options
+    # can now genuinely fail (Branch 11 / Phase 5, item 8's known-hosts
+    # pin directory safety checks), and "while read <<<\"$(cmd)\"" discards
+    # a failing cmd's exit status -- the loop's own status would otherwise
+    # become this function's return value instead, silently hiding it.
+    local opts_stream
+    opts_stream="$(dx_ssh_common_options)" || return 1
     DX_TUNNEL_SSH_OPTS=()
     local opt
-    while IFS= read -r opt; do DX_TUNNEL_SSH_OPTS+=("$opt"); done <<<"$(dx_ssh_common_options)"
+    while IFS= read -r opt; do DX_TUNNEL_SSH_OPTS+=("$opt"); done <<<"$opts_stream"
 }
 
 dx_tunnel_control_active() {
     local socket="$1"
     [ -e "$socket" ] || return 1
-    dx_tunnel_ssh_common
+    dx_tunnel_ssh_common || return 1
     ssh -S "$socket" -O check "${DX_TUNNEL_SSH_OPTS[@]}" "$(dx_ssh_endpoint)" >/dev/null 2>&1
 }
 
@@ -232,7 +239,7 @@ dx_tunnel_start() {
     fi
     [ ! -e "$socket" ] || { echo "Removing stale dx-$direction socket for port $key_port."; dx_tunnel_remove_state "$direction" "$key_port" "$socket"; }
     if [ "$direction" = forward ] && dx_port_in_use "$key_port"; then echo "Error: Host port 127.0.0.1:$key_port is already in use and is not managed by dx-forward." >&2; dx_lock_release "$lock"; return 1; fi
-    dx_tunnel_ssh_common
+    dx_tunnel_ssh_common || { dx_lock_release "$lock"; return 1; }
     # Both directions bind key_port and connect peer_port on the far side, so the
     # mapping text is identical; only the SSH option differs.
     mapping="127.0.0.1:${key_port}:127.0.0.1:${peer_port}"
@@ -280,7 +287,7 @@ dx_tunnel_discover() {
 dx_tunnel_stop_socket_locked() {
     local direction="$1" key_port="$2" socket="$3" metadata
     if dx_tunnel_control_active "$socket"; then
-        dx_tunnel_ssh_common
+        dx_tunnel_ssh_common || return 1
         if ! ssh -S "$socket" -O exit "${DX_TUNNEL_SSH_OPTS[@]}" "$(dx_ssh_endpoint)" >/dev/null 2>&1 && dx_tunnel_control_active "$socket"; then
             echo "Error: Could not stop dx-$direction port $key_port; its SSH master is still active. State retained at $socket." >&2; return 1
         fi

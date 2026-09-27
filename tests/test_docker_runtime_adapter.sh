@@ -19,6 +19,10 @@ source "$BASE_DIR/bin/lib/dx-config.sh"
 source "$BASE_DIR/bin/lib/dx-host-util.sh"
 source "$BASE_DIR/bin/lib/dx-runtime.sh"
 source "$BASE_DIR/bin/lib/dx-container.sh"
+# Branch 11 / Phase 5: needed directly by this file's own known-hosts
+# pinning tests (dx_ssh_common_options, dx_ssh_known_hosts_prepare), and by
+# bin/lib/dx-tunnel.sh's dial sites, exactly as bin/dx-lib.sh sources it.
+source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
 source "$BASE_DIR/bin/lib/dx-tunnel.sh"
 source "$BASE_DIR/bin/lib/dx-backup.sh"
 # Branch 11 / Phase 5's drift guard (below) needs Phase 0's own discovery
@@ -570,6 +574,60 @@ esac'
 )
 [ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): cached, never re-discovered in the same process" \
     || test_fail "guest_ssh_address (docker-ssh): cached, never re-discovered in the same process"
+
+# --- Known-hosts pinning for docker-ssh (Branch 11 / Phase 5, item 8;
+# coordinating session's decision 5) -- dx_ssh_common_options -------------
+#
+# First-contact/mismatch/remedy behaviour is native OpenSSH semantics, not
+# fakeable here (agreed explicitly, live-gate-only); what a fake CAN and
+# must prove is the rendered options themselves: accept-new plus the
+# per-profile file path for docker-ssh, today's exact options unchanged
+# for Apple, never /dev/null for docker-ssh, and that the pin directory is
+# created 0700 by the builder's own caller rather than left to ssh.
+
+# Apple: byte-for-byte unchanged from before this phase.
+(
+    out="$(DX_RUNTIME=apple DX_SSH_KEY=/tmp/dxe-fixture-key DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=15 dx_ssh_common_options)"
+    expected=$'-i\n/tmp/dxe-fixture-key\n-p\n2222\n-o\nStrictHostKeyChecking=no\n-o\nUserKnownHostsFile=/dev/null\n-o\nIdentitiesOnly=yes\n-o\nLogLevel=ERROR\n-o\nConnectTimeout=15'
+    [ "$out" = "$expected" ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_ssh_common_options (apple): today's exact options, byte for byte, unchanged" \
+    || test_fail "dx_ssh_common_options (apple): today's exact options, byte for byte, unchanged"
+
+# docker-ssh: accept-new, the per-profile known_hosts path, never /dev/null,
+# and the pin directory exists at 0700 afterward.
+(
+    home_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts.XXXXXX")"
+    unset XDG_STATE_HOME
+    export HOME="$home_dir"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    DX_SSH_KEY=/tmp/dxe-fixture-key DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=15
+    out="$(dx_ssh_common_options)"
+    expected_dir="$home_dir/.local/state/dxe/qnap-dxe__dx-qnap"
+    printf '%s\n' "$out" | stdin_matches -F -x "StrictHostKeyChecking=accept-new" \
+        && printf '%s\n' "$out" | stdin_matches -F -x "UserKnownHostsFile=$expected_dir/known_hosts" \
+        && ! printf '%s\n' "$out" | stdin_matches -F -x "UserKnownHostsFile=/dev/null" \
+        && [ -d "$expected_dir" ] \
+        && [ "$(dx_path_mode "$expected_dir")" = 700 ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_ssh_common_options (docker-ssh): accept-new, the per-profile known_hosts path, never /dev/null, directory 0700" \
+    || test_fail "dx_ssh_common_options (docker-ssh): accept-new, the per-profile known_hosts path, never /dev/null, directory 0700"
+
+# Refuses a symlinked pin directory rather than following it.
+(
+    home_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts-symlink.XXXXXX")"
+    unset XDG_STATE_HOME
+    export HOME="$home_dir"
+    mkdir -p "$home_dir/.local/state/dxe"
+    elsewhere="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts-elsewhere.XXXXXX")"
+    ln -s "$elsewhere" "$home_dir/.local/state/dxe/qnap-dxe__dx-qnap"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    DX_SSH_KEY=/tmp/dxe-fixture-key DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=15
+    out="$(dx_ssh_common_options 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "refusing symlinked SSH known-hosts directory"
+)
+[ "$?" -eq 0 ] && test_pass "dx_ssh_common_options (docker-ssh): refuses a symlinked known-hosts pin directory" \
+    || test_fail "dx_ssh_common_options (docker-ssh): refuses a symlinked known-hosts pin directory"
 
 # --- Runtime capability queries (DQ2/DQ3/DQ4/DQ8) --------------------------
 (

@@ -29,12 +29,14 @@ else
     # diagnostics off stdout so `dx-ssh <command>` remains safe to capture.
     trap 'printf "\033]110\033\\\\\033]111\033\\\\\033]104\033\\\\" >&2' EXIT
 
-    SSH_OPTS=() SSH_OPT=""
-    while IFS= read -r SSH_OPT; do SSH_OPTS+=("$SSH_OPT"); done <<<"$(dx_ssh_common_options)"
     # Resolved and checked explicitly (Branch 11 / Phase 5, DQ5) rather than
-    # inlined at the ssh call site below: this script's own "set -e" does
-    # not reliably catch a failing command substitution used as one
-    # argument among several in a larger command.
+    # inlined into the "while ... <<<\"$(...)\"" below or the ssh call
+    # site further down: this script's own "set -e" does not reliably
+    # catch a failing command substitution used as one argument among
+    # several, or embedded inside a larger compound command.
+    SSH_OPTS_STREAM="$(dx_ssh_common_options)"
+    SSH_OPTS=() SSH_OPT=""
+    while IFS= read -r SSH_OPT; do SSH_OPTS+=("$SSH_OPT"); done <<<"$SSH_OPTS_STREAM"
     ENDPOINT="$(dx_ssh_endpoint)"
 
     # The workdir snippet belongs on the *decoded* user command, applied by

@@ -25,8 +25,9 @@ echo "Bootstrap wait limit: ${WAIT_TIMEOUT}s (approximately ${WAIT_MINUTES} minu
 # BatchMode=yes, which the shared options do not set for every caller: a
 # polling readiness loop must never hang on a password/passphrase prompt,
 # which is specifically this probe's own concern, not every SSH caller's.
+SSH_CHECK_OPTS_STREAM="$(dx_ssh_common_options)"
 SSH_CHECK_OPTS=() SSH_CHECK_OPT=""
-while IFS= read -r SSH_CHECK_OPT; do SSH_CHECK_OPTS+=("$SSH_CHECK_OPT"); done <<<"$(dx_ssh_common_options)"
+while IFS= read -r SSH_CHECK_OPT; do SSH_CHECK_OPTS+=("$SSH_CHECK_OPT"); done <<<"$SSH_CHECK_OPTS_STREAM"
 SSH_CHECK_OPTS+=("-o" "BatchMode=yes")
 # Resolved and checked explicitly, not inlined into the probe loop below:
 # this script's own "set -e" does not reliably catch a failing command

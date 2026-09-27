@@ -10,23 +10,73 @@
 # automatically -- one seam, no per-caller branching on DX_RUNTIME.
 dx_ssh_endpoint() { printf '%s\n' "dx@$(dx_runtime_guest_ssh_address)"; }
 
+# Per-profile known-hosts pinning for docker-ssh (Branch 11 / Phase 5,
+# qnap-dxe-plan.md DQ5 item 8; docs/refactor/remote-aware-ssh.md section
+# 4): a real, persistent, per-profile file, never /dev/null -- so the
+# guest's own SSH host identity is verified normally after first contact,
+# unlike Apple's disposable, constantly-recreated local guest (pinning
+# that would be pure churn, not a real guarantee). Reuses
+# dx_runtime_docker_profile_id's existing <DX_REMOTE_HOST>__<DX_CONTAINER_NAME>
+# identity -- the same segment Phase 2 item 7 already uses to scope
+# tunnel/mount/backup local state -- rather than a new naming scheme. The
+# file itself is never created here: ssh's own accept-new behaviour
+# creates (and appends to) it on first contact; only the parent directory
+# is prepared, and only for docker-ssh (Apple never calls this).
+dx_ssh_known_hosts_dir() { printf '%s/dxe/%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}" "$(dx_runtime_docker_profile_id)"; }
+dx_ssh_known_hosts_path() { printf '%s/known_hosts\n' "$(dx_ssh_known_hosts_dir)"; }
+
+# Ensures the pin directory exists, is a real directory (never a symlink),
+# and is owned by the current user, 0700 -- the same safety shape
+# bin/lib/dx-tunnel.sh's own dx_tunnel_prepare_state already uses for "a
+# per-profile local state directory," reused here rather than a second,
+# parallel idiom.
+dx_ssh_known_hosts_prepare() {
+    local dir
+    dir="$(dx_ssh_known_hosts_dir)"
+    [ ! -L "$dir" ] || { echo "Error: refusing symlinked SSH known-hosts directory $dir." >&2; return 1; }
+    if [ ! -e "$dir" ]; then mkdir -p "$dir" 2>/dev/null || [ -d "$dir" ] || return 1; fi
+    [ ! -L "$dir" ] && [ -d "$dir" ] || { echo "Error: SSH known-hosts path is not a safe directory: $dir." >&2; return 1; }
+    [ "$(dx_path_uid "$dir")" = "$(id -u)" ] || { echo "Error: SSH known-hosts directory is not owned by the current user: $dir." >&2; return 1; }
+    chmod 0700 "$dir"
+}
+
 # Single source of truth for the SSH connection options shared by every DX SSH
-# entry point: dx-ssh's interactive branch, its argument branch, and dx-herdr
-# (F10). Bash 3.2 cannot return an array from a function, so callers build
-# their own indexed array from this newline-per-token stream -- one token per
-# line so a value containing whitespace (in principle, $DX_SSH_KEY) still
-# round-trips intact:
-#   local ssh_opts=() opt
-#   while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$(dx_ssh_common_options)"
+# entry point: dx-ssh's interactive branch, its argument branch, dx-herdr
+# (F10), dx-wait-ssh, and dx-tunnel.sh (Branch 11 / Phase 5). Bash 3.2
+# cannot return an array from a function, so callers build their own
+# indexed array from this newline-per-token stream -- one token per line so
+# a value containing whitespace (in principle, $DX_SSH_KEY) still
+# round-trips intact. THIS FUNCTION CAN NOW FAIL (docker-ssh's known-hosts
+# directory safety check) -- every caller must capture its output into a
+# variable and check the exit status BEFORE building an array from it:
+#   local opts_stream ssh_opts=() opt
+#   opts_stream="$(dx_ssh_common_options)" || return 1
+#   while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$opts_stream"
+# ("while ... <<<\"$(dx_ssh_common_options)\"" directly, with no capture in
+# between, silently discards a failure: the here-string only ever sees
+# dx_ssh_common_options's STDOUT, and the while loop's own exit status --
+# not the failing command's -- is what a caller would see.)
 dx_ssh_common_options() {
-    printf '%s\n' \
-        -i "$DX_SSH_KEY" \
-        -p "$DX_SSH_PORT" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        -o IdentitiesOnly=yes \
-        -o LogLevel=ERROR \
-        -o ConnectTimeout="$DX_SSH_CONNECT_TIMEOUT"
+    if [ "${DX_RUNTIME:-apple}" = docker-ssh ]; then
+        dx_ssh_known_hosts_prepare || return 1
+        printf '%s\n' \
+            -i "$DX_SSH_KEY" \
+            -p "$DX_SSH_PORT" \
+            -o StrictHostKeyChecking=accept-new \
+            -o UserKnownHostsFile="$(dx_ssh_known_hosts_path)" \
+            -o IdentitiesOnly=yes \
+            -o LogLevel=ERROR \
+            -o ConnectTimeout="$DX_SSH_CONNECT_TIMEOUT"
+    else
+        printf '%s\n' \
+            -i "$DX_SSH_KEY" \
+            -p "$DX_SSH_PORT" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o IdentitiesOnly=yes \
+            -o LogLevel=ERROR \
+            -o ConnectTimeout="$DX_SSH_CONNECT_TIMEOUT"
+    fi
 }
 
 # Guest PATH baseline so Nix-installed tools resolve regardless of the dx
@@ -123,8 +173,14 @@ dx_ssh_run_guest_command() {
     local host_tz
     host_tz="$(dx_get_host_timezone)"
 
+    # Captured, then checked, before building the array: dx_ssh_common_options
+    # can now genuinely fail (known-hosts pin directory safety checks under
+    # docker-ssh), and "while read <<<\"$(cmd)\"" discards a failing cmd's
+    # exit status -- same reasoning as the endpoint above.
+    local opts_stream
+    opts_stream="$(dx_ssh_common_options)" || return 255
     local ssh_opts=() opt
-    while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$(dx_ssh_common_options)"
+    while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$opts_stream"
 
     ssh "${ssh_opts[@]}" "$endpoint" "$(dx_guest_bash_command "$host_tz" "$remote_cmd_body")"
 }
@@ -178,8 +234,14 @@ dx_run_interactive_ssh() {
     }
     trap dx_ssh_cleanup_osc EXIT
 
+    # Captured, then checked, before building the array -- see
+    # dx_ssh_run_guest_command's own comment; the trap above is already
+    # armed, so a failure here still runs the terminal-colour cleanup
+    # before returning, exactly like the normal exit path below.
+    local opts_stream
+    opts_stream="$(dx_ssh_common_options)" || { dx_ssh_cleanup_osc; trap - EXIT; return 1; }
     local ssh_opts=() opt
-    while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$(dx_ssh_common_options)"
+    while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$opts_stream"
 
     local status=0
     ssh -t "${ssh_opts[@]}" "$endpoint" "$(dx_guest_bash_command "$host_tz" "$remote_cmd_body")" || status=$?
