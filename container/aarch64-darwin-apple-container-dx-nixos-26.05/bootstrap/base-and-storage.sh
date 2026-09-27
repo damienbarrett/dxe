@@ -543,6 +543,64 @@ nix_image_store_import_required() {
     return 0
 }
 
+# store-trust-plan.md Problem 1 (volume-reusing image-pin bump), Design
+# P1-A (docs/refactor/store-trust-design.md section 1.3, Reading 1):
+# formalises today's incidental, shape-dependent refusal into one
+# deliberate check over the same bounded root set
+# nix_image_bootstrap_store_paths already enumerates, run before
+# nix_store_import_registered ever attempts a real transfer -- i.e. still
+# pre-remount, still fully recoverable, the existing volume never touched.
+#
+# Two collision shapes were found characterising this (section 1.1),
+# neither caught uniformly by nix copy's own default behaviour:
+#
+#   Shape A -- the image's own database disagrees with its own on-disk
+#   bytes for one of these roots (exactly what produced the real, observed
+#   "hash mismatch importing path" incident in docs/release-maintenance.md).
+#   Caught here by verifying the image's own advertised content for the
+#   root BEFORE trusting its hash as an import source at all.
+#
+#   Shape B -- the destination volume already validly holds DIFFERENT,
+#   internally self-consistent content under this exact same path name
+#   (left by a prior image). nix copy silently skips an already-valid
+#   destination path without comparing hashes at all -- caught here by
+#   comparing the image's and the volume's own recorded hashes directly.
+#
+# Never attempts repair or quarantine (store-trust-plan.md's own "Not
+# collision quarantine" section): any collision refuses deterministically,
+# naming the offending path and the volume-scoped recovery path.
+nix_verify_no_bootstrap_path_collision() {
+    local source_root="$1"
+    local destination_root="$2"
+    local source_store target_store path image_hash volume_hash
+
+    # Both stores are addressed through the same explicit store-URI
+    # construction nix_target_store_uri already uses for the destination
+    # (an explicit argument, not a hidden default): for production's
+    # source_root=/nix this resolves to exactly the real store Nix would
+    # use anyway (store=/nix/store&real=/nix/store&...), so behaviour is
+    # unchanged; a test can point source_root at an isolated fixture root
+    # instead of the real mounted store.
+    source_store="$(nix_target_store_uri "$source_root")"
+    target_store="$(nix_target_store_uri "$destination_root")"
+    while IFS= read -r path; do
+        [ -n "$path" ] || continue
+
+        if ! nix --extra-experimental-features 'nix-command flakes' store verify --store "$source_store" --no-trust "$path" >/dev/null 2>&1; then
+            echo "Error: image path $path fails its own content verification (this image's registered hash does not match its own on-disk content); refusing to import a store this image cannot vouch for itself. Recovery: ./bin/dx-destroy-container (or ./bin/dx-destroy) if a container still exists, then ./bin/dx-reset-nix-volume, then ./bin/dx to rebuild /nix from the image." >&2
+            return 1
+        fi
+
+        image_hash="$(nix-store -q --hash "$path" --store "$source_store" 2>/dev/null)" || continue
+        volume_hash="$(run_as_dx "nix-store -q --hash '$path' --store '$target_store'" 2>/dev/null)" || continue
+        if [ "$image_hash" != "$volume_hash" ]; then
+            echo "Error: $path already exists on the reused Nix volume with different content than the current image (recorded ${volume_hash:0:19}... vs current ${image_hash:0:19}...); refusing to import mismatched content. Recovery: ./bin/dx-destroy-container (or ./bin/dx-destroy) if a container still exists, then ./bin/dx-reset-nix-volume, then ./bin/dx to rebuild /nix from the image." >&2
+            return 1
+        fi
+    done < <(nix_image_bootstrap_store_paths "$source_root")
+    return 0
+}
+
 # This marker is deliberately published only after ensure_essentials_valid has
 # verified the remounted target closure. Keep the old ownership sentinel
 # separate so a stale bootstrap generation remains compatible.
@@ -587,6 +645,7 @@ populate_prepared_nix_volume() {
         nix_seed_volume /nix "$volume_root" "$owner_uid" "$owner_gid"
         nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid"
     elif nix_image_store_import_required /nix "$volume_root"; then
+        nix_verify_no_bootstrap_path_collision /nix "$volume_root" || return 1
         nix_store_import_registered "$volume_root" "$owner_uid" "$owner_gid"
     else
         echo "Image Nix essentials identity is unchanged; skipping image-store import."

@@ -577,6 +577,153 @@ else
 fi
 unset -f nix
 
+# store-trust-plan.md Problem 1 (Design P1-A, docs/refactor/
+# store-trust-design.md section 1.3): nix_verify_no_bootstrap_path_collision
+# proven against the real primitive nix_store_import_registered itself uses
+# (nix copy / nix-store hash comparisons), over fully isolated store
+# instances of the exact store-URI shape nix_target_store_uri already
+# constructs -- never the container's own real /nix. nix-store --dump-db /
+# --load-db (Nix's own whole-database text export/import pair) builds each
+# fixture store's database directly, the same technique that reproduced the
+# real 2026-08-30 incident's exact error text in this branch's
+# characterisation (docs/refactor/store-trust-design.md section 1.1).
+# nix_image_bootstrap_store_paths is stubbed to one fixed fake root name so
+# the fixture controls exactly which path is being checked; run_as_dx is
+# stubbed to skip the dx-user privilege drop this throwaway runner has no
+# account for, while still running the real nix-store command it is given.
+#
+# This block needs real `nix`/`nix-store` on PATH, which the coverage/kcov
+# image (tests/coverage/Dockerfile) deliberately does not install -- that
+# image's whole point is line coverage via stubs, matching every other nix*
+# call in this file, and Section 3's fixture tests
+# (tests/test_section3_bootstrap.sh P11) already give
+# nix_verify_no_bootstrap_path_collision 100% line coverage that way. Skip
+# gracefully rather than aborting the file when neither binary is present;
+# this is the block validated for real in a throwaway nixos/nix:2.34.8
+# container per the standing brief (constitution.md's "a stub must be
+# validated against the real boundary at least once").
+if ! command -v nix-store >/dev/null 2>&1 || ! command -v nix >/dev/null 2>&1; then
+    test_skip "nix_verify_no_bootstrap_path_collision (real Nix): requires nix/nix-store on PATH, absent in this runner"
+else
+p1collide_fixture="$fixture/p1-collision"
+# Nix store path names are "<32-char restricted-base32-hash>-<free-form
+# name>"; the hash portion may use only Nix's own restricted base32
+# alphabet (no e/l/o/t/u, to avoid visual confusion), so an arbitrary test
+# string cannot stand in for it. "z" x32 is a valid, deliberately
+# recognisable placeholder within that alphabet.
+p1collide_name="zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-p1collide"
+p1collide_image_store="local?store=/nix/store&real=$p1collide_fixture/image/store&state=$p1collide_fixture/image/var/nix&log=$p1collide_fixture/image/var/log/nix"
+p1collide_vol_store="local?store=/nix/store&real=$p1collide_fixture/vol/store&state=$p1collide_fixture/vol/var/nix&log=$p1collide_fixture/vol/var/log/nix"
+nix_image_bootstrap_store_paths() { printf '%s\n' "/nix/store/$p1collide_name"; }
+run_as_dx() { eval "$1"; }
+
+p1collide_reset() {
+    rm -rf "$p1collide_fixture"
+    mkdir -p "$p1collide_fixture/image/store" "$p1collide_fixture/image/var/nix" "$p1collide_fixture/image/var/log/nix"
+    mkdir -p "$p1collide_fixture/vol/store" "$p1collide_fixture/vol/var/nix" "$p1collide_fixture/vol/var/log/nix"
+}
+
+# Register a real, self-consistent entry for $p1collide_name in the given
+# store instance: physically place $2 as the path's content, then load a
+# database record whose NAR hash/size are the REAL hash/size of that exact
+# content (computed via nix-store --dump, never guessed).
+p1collide_register_real() {
+    local store_uri="$1" content="$2" dir="$3" hash size
+    mkdir -p "$dir/store/$p1collide_name"
+    printf '%s' "$content" > "$dir/store/$p1collide_name/payload"
+    hash="$(nix-store --dump "$dir/store/$p1collide_name" | sha256sum | cut -d' ' -f1)"
+    size="$(nix-store --dump "$dir/store/$p1collide_name" | wc -c)"
+    printf '/nix/store/%s\n%s\n%s\n\n0\n' "$p1collide_name" "$hash" "$size" \
+        | nix-store --load-db --store "$store_uri"
+    # --dump-db/--load-db's own text format uses a plain hex sha256 (what
+    # sha256sum prints); nix_verify_no_bootstrap_path_collision instead
+    # embeds nix-store -q --hash's own "sha256:<base32>" rendering of the
+    # SAME content in its message, so return that form -- what the
+    # production error text will actually contain -- not the raw hex used
+    # only to construct the fixture's database record.
+    nix-store -q --hash "/nix/store/$p1collide_name" --store "$store_uri"
+}
+
+# Shape A: the image's own database disagrees with its own on-disk bytes --
+# the exact mechanism that reproduced the real, observed "hash mismatch
+# importing path" incident (docs/release-maintenance.md).
+p1collide_reset
+mkdir -p "$p1collide_fixture/image/store/$p1collide_name"
+printf 'content-A' > "$p1collide_fixture/image/store/$p1collide_name/payload"
+p1collide_bogus_hash="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+p1collide_bogus_size="$(nix-store --dump "$p1collide_fixture/image/store/$p1collide_name" | wc -c)"
+printf '/nix/store/%s\n%s\n%s\n\n0\n' "$p1collide_name" "$p1collide_bogus_hash" "$p1collide_bogus_size" \
+    | nix-store --load-db --store "$p1collide_image_store"
+if p1collide_shapea_out="$(nix_verify_no_bootstrap_path_collision "$p1collide_fixture/image" "$p1collide_fixture/vol" 2>&1)"; then
+    test_fail "nix_verify_no_bootstrap_path_collision (real Nix): Shape A -- a self-inconsistent image root refuses"
+else
+    if printf '%s\n' "$p1collide_shapea_out" | stdin_matches -F "$p1collide_name fails its own content verification" \
+        && printf '%s\n' "$p1collide_shapea_out" | stdin_matches -F 'dx-reset-nix-volume'; then
+        test_pass "nix_verify_no_bootstrap_path_collision (real Nix): Shape A -- a self-inconsistent image root refuses, naming it and the recovery path"
+    else
+        test_fail "nix_verify_no_bootstrap_path_collision (real Nix): Shape A -- a self-inconsistent image root refuses, naming it and the recovery path (out: $p1collide_shapea_out)"
+    fi
+fi
+
+# Shape B: the image is self-consistent, but the destination volume already
+# validly holds DIFFERENT, self-consistent content under this same path
+# name -- the collision docs/release-maintenance.md's own prose describes,
+# and the one shape real `nix copy`'s own "already valid, skip" behaviour
+# does NOT catch on its own (docs/refactor/store-trust-design.md section
+# 1.1's second reproduced shape, characterised before this fix existed).
+p1collide_reset
+p1collide_image_hash="$(p1collide_register_real "$p1collide_image_store" content-image "$p1collide_fixture/image")"
+p1collide_vol_hash="$(p1collide_register_real "$p1collide_vol_store" content-volume "$p1collide_fixture/vol")"
+if [ "$p1collide_image_hash" = "$p1collide_vol_hash" ]; then
+    test_fail "nix_verify_no_bootstrap_path_collision (real Nix): Shape B fixture produces genuinely different real hashes"
+else
+    test_pass "nix_verify_no_bootstrap_path_collision (real Nix): Shape B fixture produces genuinely different real hashes"
+fi
+if p1collide_shapeb_out="$(nix_verify_no_bootstrap_path_collision "$p1collide_fixture/image" "$p1collide_fixture/vol" 2>&1)"; then
+    test_fail "nix_verify_no_bootstrap_path_collision (real Nix): Shape B -- a differently-populated reused volume refuses"
+else
+    if printf '%s\n' "$p1collide_shapeb_out" | stdin_matches -F "$p1collide_name already exists on the reused Nix volume with different content" \
+        && printf '%s\n' "$p1collide_shapeb_out" | stdin_matches -F "${p1collide_image_hash:0:19}" \
+        && printf '%s\n' "$p1collide_shapeb_out" | stdin_matches -F "${p1collide_vol_hash:0:19}" \
+        && printf '%s\n' "$p1collide_shapeb_out" | stdin_matches -F 'dx-reset-nix-volume'; then
+        test_pass "nix_verify_no_bootstrap_path_collision (real Nix): Shape B -- a differently-populated reused volume refuses, naming both real hashes"
+    else
+        test_fail "nix_verify_no_bootstrap_path_collision (real Nix): Shape B -- a differently-populated reused volume refuses, naming both real hashes (out: $p1collide_shapeb_out)"
+    fi
+fi
+
+# No collision: the destination has never registered this root at all --
+# nothing to compare, no diagnostic, the ordinary "new path" case real
+# `nix copy` already handles correctly on its own.
+p1collide_reset
+p1collide_register_real "$p1collide_image_store" content-only-on-image "$p1collide_fixture/image" >/dev/null
+if p1collide_absent_out="$(nix_verify_no_bootstrap_path_collision "$p1collide_fixture/image" "$p1collide_fixture/vol" 2>&1)"; then
+    test_pass "nix_verify_no_bootstrap_path_collision (real Nix): the volume has never registered this root -> no diagnostic"
+else
+    test_fail "nix_verify_no_bootstrap_path_collision (real Nix): the volume has never registered this root -> no diagnostic (out: $p1collide_absent_out)"
+fi
+
+# Unchanged: image and volume already agree (the ordinary reused-volume,
+# no-op-import case) -- no collision, no diagnostic.
+p1collide_reset
+p1collide_image_hash="$(p1collide_register_real "$p1collide_image_store" content-unchanged "$p1collide_fixture/image")"
+p1collide_vol_hash="$(p1collide_register_real "$p1collide_vol_store" content-unchanged "$p1collide_fixture/vol")"
+if [ "$p1collide_image_hash" != "$p1collide_vol_hash" ]; then
+    test_fail "nix_verify_no_bootstrap_path_collision (real Nix): unchanged fixture produces matching real hashes"
+else
+    test_pass "nix_verify_no_bootstrap_path_collision (real Nix): unchanged fixture produces matching real hashes"
+fi
+if p1collide_unchanged_out="$(nix_verify_no_bootstrap_path_collision "$p1collide_fixture/image" "$p1collide_fixture/vol" 2>&1)"; then
+    test_pass "nix_verify_no_bootstrap_path_collision (real Nix): image and volume already agree -> no diagnostic"
+else
+    test_fail "nix_verify_no_bootstrap_path_collision (real Nix): image and volume already agree -> no diagnostic (out: $p1collide_unchanged_out)"
+fi
+
+unset -f nix_image_bootstrap_store_paths run_as_dx p1collide_reset p1collide_register_real
+rm -rf "$p1collide_fixture"
+fi
+source "$CONTAINER_DIR/bootstrap/common.sh"
+
 # A persisted home can outlive an absent/recreated Nix volume; it is still a
 # durable identity source.  Root and malformed identities are rejected.
 persist_only="$fixture/persist-only/home/dx"

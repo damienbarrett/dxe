@@ -21,7 +21,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -1209,6 +1209,108 @@ if printf '%s\n' "$p10_runasdx_output" | stdin_matches -F 'run_as_dx cannot exec
     test_pass "verify_remount_prerequisites: a broken run_as_dx boundary refuses, naming the recovery path"
 else
     test_fail "verify_remount_prerequisites: a broken run_as_dx boundary refuses, naming the recovery path (output: $p10_runasdx_output)"
+fi
+
+# P11 (Branch 12, store-trust-plan.md Problem 1, Design P1-A):
+# nix_verify_no_bootstrap_path_collision. Fakes `nix`, `nix-store`,
+# `run_as_dx`, and `nix_image_bootstrap_store_paths` so the decision logic
+# is exercised directly; the real-Nix behaviour these fakes stand in for
+# (a genuine hash-mismatch import refusal, and a genuine already-valid
+# silent skip) is proven once against the real boundary in Section 25
+# (tests/test_nix_store_import.sh), per constitution.md.
+
+# All clear: every bootstrap root verifies against itself, and either the
+# volume doesn't have it yet (nothing to compare) or has it with a matching
+# hash -- no collision, no diagnostic, returns 0.
+#
+# The leading "(" on every case pattern arm in this file's P11 block is not
+# decoration: the $(...) paren-matcher used below can misparse a bare
+# "*pattern)" case arm nested inside a command substitution, treating that
+# arm's own closing paren as the substitution's closing paren -- the
+# standard, POSIX-legal fix is the optional leading "(" before each
+# pattern. (No apostrophes in any comment inside one of these blocks
+# either -- the same simplified scanner does not understand "#" comments
+# well enough to treat an apostrophe there as inert.)
+p11_clear_output="$({
+    nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/aaaa-one /nix/store/bbbb-two; }
+    nix() { return 0; }
+    nix-store() { case "$*" in (*aaaa-one*) printf 'sha256:same0000000000000000000000000000000000000000000000000000\n' ;; (*) return 1 ;; esac; }
+    run_as_dx() {
+        case "$1" in
+            (*aaaa-one*) printf 'sha256:same0000000000000000000000000000000000000000000000000000\n' ;;
+            (*) return 1 ;;
+        esac
+    }
+    nix_verify_no_bootstrap_path_collision /nix /fixture-volume
+    echo "exit=$?"
+} 2>&1)"
+if printf '%s\n' "$p11_clear_output" | stdin_matches -x 'exit=0'; then
+    test_pass "nix_verify_no_bootstrap_path_collision: no collision on any root -> passes with no diagnostic"
+else
+    test_fail "nix_verify_no_bootstrap_path_collision: no collision on any root -> passes with no diagnostic (output: $p11_clear_output)"
+fi
+
+# Shape A: the image's own advertised content for a later root
+# (bbbb-two) fails ITS OWN content verification. The earlier root
+# (aaaa-one) passes cleanly first, proving the loop actually walks the
+# whole bounded root set rather than only ever checking the first entry.
+p11_shapea_output="$({
+    nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/aaaa-one /nix/store/bbbb-two; }
+    nix() { case "$*" in (*" /nix/store/aaaa-one") return 0 ;; (*" /nix/store/bbbb-two") return 1 ;; (*) return 1 ;; esac; }
+    nix-store() { printf 'sha256:same0000000000000000000000000000000000000000000000000000\n'; }
+    run_as_dx() { printf 'sha256:same0000000000000000000000000000000000000000000000000000\n'; }
+    nix_verify_no_bootstrap_path_collision /nix /fixture-volume
+    echo "exit=$?"
+} 2>&1)"
+if printf '%s\n' "$p11_shapea_output" | stdin_matches -F '/nix/store/bbbb-two fails its own content verification' \
+    && printf '%s\n' "$p11_shapea_output" | stdin_matches -F 'dx-reset-nix-volume' \
+    && ! printf '%s\n' "$p11_shapea_output" | stdin_matches -F 'aaaa-one fails' \
+    && printf '%s\n' "$p11_shapea_output" | stdin_matches -x 'exit=1'; then
+    test_pass "nix_verify_no_bootstrap_path_collision: Shape A (image self-inconsistency) refuses, naming the exact path and the recovery path"
+else
+    test_fail "nix_verify_no_bootstrap_path_collision: Shape A (image self-inconsistency) refuses, naming the exact path and the recovery path (output: $p11_shapea_output)"
+fi
+
+# Shape B: the volume already validly holds DIFFERENT, self-consistent
+# content under this same path name -- the collision docs/release-
+# maintenance.md's own prose describes, and the one nix copy's own
+# "already valid, skip" behaviour does NOT catch on its own
+# (docs/refactor/store-trust-design.md section 1.1's second reproduced
+# shape). Both hash prefixes must appear in the refusal.
+p11_shapeb_output="$({
+    nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/aaaa-one; }
+    nix() { return 0; }
+    nix-store() { printf 'sha256:imagehash000000000000000000000000000000000000000000000000\n'; }
+    run_as_dx() { printf 'sha256:volumehash00000000000000000000000000000000000000000000000\n'; }
+    nix_verify_no_bootstrap_path_collision /nix /fixture-volume
+    echo "exit=$?"
+} 2>&1)"
+if printf '%s\n' "$p11_shapeb_output" | stdin_matches -F '/nix/store/aaaa-one already exists on the reused Nix volume with different content' \
+    && printf '%s\n' "$p11_shapeb_output" | stdin_matches -F 'sha256:imagehash00' \
+    && printf '%s\n' "$p11_shapeb_output" | stdin_matches -F 'sha256:volumehash0' \
+    && printf '%s\n' "$p11_shapeb_output" | stdin_matches -F 'dx-reset-nix-volume' \
+    && printf '%s\n' "$p11_shapeb_output" | stdin_matches -x 'exit=1'; then
+    test_pass "nix_verify_no_bootstrap_path_collision: Shape B (destination already valid, different content) refuses, naming the path and both hashes"
+else
+    test_fail "nix_verify_no_bootstrap_path_collision: Shape B (destination already valid, different content) refuses, naming the path and both hashes (output: $p11_shapeb_output)"
+fi
+
+# The volume has never seen this root at all (the hash query against the
+# target store fails outright, e.g. ENOENT/not registered) -- nothing to
+# compare, no collision, no diagnostic. This is the ordinary "new path,
+# nothing to collide with" case nix copy already handles correctly.
+p11_absent_output="$({
+    nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/aaaa-one; }
+    nix() { return 0; }
+    nix-store() { printf 'sha256:imagehash000000000000000000000000000000000000000000000000\n'; }
+    run_as_dx() { return 1; }
+    nix_verify_no_bootstrap_path_collision /nix /fixture-volume
+    echo "exit=$?"
+} 2>&1)"
+if printf '%s\n' "$p11_absent_output" | stdin_matches -x 'exit=0'; then
+    test_pass "nix_verify_no_bootstrap_path_collision: the volume has never registered this root at all -> nothing to compare, no diagnostic"
+else
+    test_fail "nix_verify_no_bootstrap_path_collision: the volume has never registered this root at all -> nothing to compare, no diagnostic (output: $p11_absent_output)"
 fi
 
 print_summary
