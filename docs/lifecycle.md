@@ -86,7 +86,7 @@ or perform maintenance operations.
 | Script | Role |
 | --- | --- |
 | [`bin/dx-lib.sh`](../bin/dx-lib.sh) | Short compatibility facade that loads the source-only host libraries and resolves one complete configuration snapshot. |
-| [`bin/dx-profile`](../bin/dx-profile) | Parses a named data profile from `tests/profiles/<name>.env`, resolves the complete snapshot, then execs the command. |
+| [`bin/dx-profile`](../bin/dx-profile) | Parses a named data profile from `tests/profiles/<name>.env`, resolves the complete snapshot, then execs the command. A remote Docker-over-SSH profile (`DX_RUNTIME=docker-ssh`, `DX_REMOTE_HOST`, `DX_GUEST_SYSTEM`, `DX_NIX_STORAGE_MODE`, `DX_CONTAINER_RESTART_POLICY`) follows the placeholder-only shape in [`tests/profiles/qnap-example.env`](../tests/profiles/qnap-example.env); the real profile is a local, git-ignored copy (see that file's header and [`docs/configuration.md`](configuration.md)). |
 | [`bin/dx-mount`](../bin/dx-mount) | Launches an isolated side container, records a bounded v2 identity manifest, and exposes audit/migration/destroy-plan modes. |
 | [`bin/dx-wait-ssh`](../bin/dx-wait-ssh) | Blocks until guest SSH responds. Gates the SSH connection layer. |
 | [`bin/dx-status`](../bin/dx-status) | Reports image, container, SSH, tool, persist, tmux, and profile-aware tunnel migration state; for `DX_RUNTIME=docker-ssh`, also the remote per-profile lock's read-only state. |

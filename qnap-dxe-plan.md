@@ -667,7 +667,12 @@ Section 33, 100+ cases). Full design and as-built command mapping:
 6. Stream `dx-export` to an atomic controller-side temporary path, rename only
    after success, and clean partial output after interruption.
 7. Add capability checks and fail-closed messages for `dx-mount`, `dx-nix-disk`,
-   and unsupported reclaim operations.
+   and unsupported reclaim operations. **This item also closes the gap Phase 2
+   found and left open (2026-09-27):** `bin/dx-mount` does not yet ask
+   `dx_runtime_capability bind_mounts` before attempting a bind mount, so under
+   `DX_RUNTIME=docker-ssh` it fails late instead of refusing first; the fix
+   shape is `docs/refactor/docker-adapter-mapping.md`'s "Flagged for review"
+   item 4. Tracked here rather than as its own branch.
 8. Persist and pin the guest SSH host identity for the QNAP profile.
 
 9. **Design spike (decided 2026-09-26, after the current work completes):**

@@ -138,10 +138,12 @@ touched; evidence: `docs/evidence/20260927/docker-adapter.md`. One gap was
 found and flagged, not closed (outside that branch's allowed-file scope):
 `bin/dx-mount` does not yet refuse under `DX_RUNTIME=docker-ssh` even though
 DQ8's capability table already answers `bind_mounts: no` correctly -- see
-`docs/refactor/docker-adapter-mapping.md`'s "Flagged for review" item 4. The
-one live step remaining for Phase 2 -- a read-only `dx-status` against a
-disposable QNAP profile -- is the coordinating session's own job, separate
-from the branch that just landed. **Phases 3-7 are not started** (direct
+`docs/refactor/docker-adapter-mapping.md`'s "Flagged for review" item 4. It
+is tracked under `qnap-dxe-plan.md`'s Phase 5 item 7 (fail-closed capability
+checks), not as a branch of its own. The one live step remaining for Phase 2
+-- a read-only `dx-status` against a disposable QNAP profile -- is the
+coordinating session's own job, after the user's explicit go, separate from
+the branch that just landed. **Phases 3-7 are not started** (direct
 storage mode, the architecture-neutral guest, remote-aware SSH/workflows,
 lifecycle hardening, and promotion -- see `qnap-dxe-plan.md` for each
 phase's own detail, including Phase 5's Tailscale-in-guest work).

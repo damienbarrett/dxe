@@ -137,3 +137,32 @@ in `c439828`'s own commit message.
 - `run_ephemeral`'s neutral-parameter treatment (deferred to Phase 3/6, per
   the coordinating session's explicit instruction).
 - The `bin/dx-mount` gap above.
+
+## Landing (2026-09-27)
+
+Rebased onto `main` `217d57a` (Branch 18 had landed meanwhile). Four files
+overlapped (`bin/lib/dx-backup.sh`, `docs/lifecycle.md`,
+`checkout-consolidation-plan.md`, `tests/coverage/ratchet.env`); only the
+ratchet file conflicted, resolved by keeping both branches' history entries,
+and every other file's delta is identical before and after the rebase
+(verified by diffing the diffs), so the results above stand for the rebased
+commits. The ratchet was re-measured on a clean `git archive HEAD | tar -x`
+export of the rebased tip: 6,523 / 30,115 = 2166 bp, 5 bp above the 2161
+measured against the branch's own base (the union of both branches' scope
+growth), and the baseline was moved to the measured value.
+
+Re-checked by the coordinating session on the rebased tip, all green: the
+fast tier (`tests/run-tier.sh unit/static`: 22 sections, 1,162 passed, 0
+failed, 14 skipped -- the usual local skips), the bash-3.2 suite (8
+sections, 622 passed, 0 failed), Sections 1 (24), 10 (148) and 27 (99), the
+Phase 1 audit (8) and characterisation (28) tests, Section 33 (107), and
+both Phase 0 dry-runs with stdin from `/dev/null`. The private identifier
+scan of `main..feat/qnap-docker-adapter` was clean before the push.
+
+Landing also recorded the flagged `bin/dx-mount` gap under
+`qnap-dxe-plan.md`'s Phase 5 item 7 (fail-closed capability checks) rather
+than opening a branch for it, and added the QNAP profile shape to
+`docs/lifecycle.md`'s `dx-profile` entry, pointing at the example file. The
+read-only `dx-status` against a disposable QNAP profile -- the exit gate's
+one live step -- had not been run at landing time; it needs the user's
+explicit go and is recorded separately when it happens.
