@@ -539,8 +539,8 @@ echo "dx-qnap	dx-qnap-nixos	Up 2 hours"'
 
 # --- Lifecycle (item 4) -----------------------------------------------------
 
-# container_create: the CAP_SYS_ADMIN/-c/--volume translation
-# (docs/refactor's coupling to bin/dx-create-container's exact shape).
+# container_create: renders bin/lib/dx-runtime.sh's runtime-neutral
+# vocabulary into Docker's own create argv (qnap-dxe-plan.md DQ2/DQ4/DQ6).
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
@@ -551,19 +551,24 @@ shift
 printf '%s\n' \"\$@\" > '$argv_log'
 "
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_NIX_VOLUME=dx-qnap-nix
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_create \
-        --name dx-qnap --entrypoint sh --cap-add CAP_SYS_ADMIN \
-        --volume dx-qnap-nix:/var/lib/dx-nix-raw:rw \
-        --volume dx-qnap-persist:/persist:rw \
-        -e HOST_TZ=UTC -m 12G -c 4 -p 127.0.0.1:2222:2222 \
-        dx-qnap-nixos -c 'echo hi' -- /guest-bootstrap
+        --name dx-qnap --image dx-qnap-nixos \
+        --volume nix:dx-qnap-nix:rw \
+        --volume persist:dx-qnap-persist:/persist:rw \
+        --volume bootstrap:dx-qnap-bootstrap:/guest-bootstrap:rw \
+        --env HOST_TZ=UTC --memory 12G --cpus 4 --publish 127.0.0.1:2222:2222 \
+        --restart-policy unless-stopped \
+        --entrypoint-cmd 'echo hi' --entrypoint-arg /guest-bootstrap
     got="$(cat "$argv_log")"
-    printf '%s\n' "$got" | stdin_matches -F -- "CAP_SYS_ADMIN" && test_fail "container_create drops --cap-add CAP_SYS_ADMIN" || test_pass "container_create drops --cap-add CAP_SYS_ADMIN"
-    printf '%s\n' "$got" | stdin_matches -F -- "--cpus" && printf '%s\n' "$got" | stdin_matches -F -- "4" && test_pass "container_create rewrites -c N to --cpus N" || test_fail "container_create rewrites -c N to --cpus N"
-    printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-nix:/nix:rw" && test_pass "container_create rewrites the Nix volume's target to /nix" || test_fail "container_create rewrites the Nix volume's target to /nix"
-    printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-persist:/persist:rw" && test_pass "container_create leaves the persist volume mount unchanged" || test_fail "container_create leaves the persist volume mount unchanged"
+    printf '%s\n' "$got" | stdin_matches -F -- "CAP_SYS_ADMIN" && test_fail "container_create never grants CAP_SYS_ADMIN (DQ4)" || test_pass "container_create never grants CAP_SYS_ADMIN (DQ4)"
+    printf '%s\n' "$got" | stdin_matches -F -- "--cpus" && printf '%s\n' "$got" | stdin_matches -F -- "4" && test_pass "container_create renders --cpus N, never Docker's own -c (cpu-shares)" || test_fail "container_create renders --cpus N, never Docker's own -c (cpu-shares)"
+    printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-nix:/nix:rw" && test_pass "container_create mounts the Nix volume directly at /nix (DQ4)" || test_fail "container_create mounts the Nix volume directly at /nix (DQ4)"
+    printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-persist:/persist:rw" && test_pass "container_create mounts the persist volume at /persist" || test_fail "container_create mounts the persist volume at /persist"
+    printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-bootstrap:/guest-bootstrap:rw" && test_pass "container_create mounts the bootstrap volume at its configured path" || test_fail "container_create mounts the bootstrap volume at its configured path"
+    printf '%s\n' "$got" | stdin_matches -F -- "--restart" && printf '%s\n' "$got" | stdin_matches -F -- "unless-stopped" && test_pass "container_create renders --restart from DX_CONTAINER_RESTART_POLICY" || test_fail "container_create renders --restart from DX_CONTAINER_RESTART_POLICY"
+    printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.managed=true" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.role=container" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.profile=qnap-dxe__dx-qnap" && test_pass "container_create carries the DQ6 labels" || test_fail "container_create carries the DQ6 labels"
     printf '%s\n' "$got" | stdin_matches -F -- "--name" && test_pass "container_create keeps --name" || test_fail "container_create keeps --name"
     printf '%s\n' "$got" | stdin_matches -F -- "-c
 echo hi
@@ -571,8 +576,35 @@ echo hi
 /guest-bootstrap" && test_pass "container_create passes the post-image entrypoint argv through completely unexamined" || test_fail "container_create passes the post-image entrypoint argv through completely unexamined"
 )
 
-# container_create: an unrecognized flag before the image fails closed
-# rather than guessing.
+# container_create: an unrecognized parameter fails closed rather than
+# guessing (protects against a future bin/dx-create-container change that
+# forgets to update both adapters).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_container_create --totally-unknown-flag value --name dx-qnap --image dx-qnap-nixos 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "unknown parameter"
+)
+[ "$?" -eq 0 ] && test_pass "container_create fails closed on an unrecognized parameter rather than guessing" || test_fail "container_create fails closed on an unrecognized parameter rather than guessing"
+
+# container_create: an unrecognized --volume role also fails closed.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_container_create --name dx-qnap --image dx-qnap-nixos --volume bogus:vol:rw 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "unrecognized --volume spec"
+)
+[ "$?" -eq 0 ] && test_pass "container_create fails closed on an unrecognized --volume role" || test_fail "container_create fails closed on an unrecognized --volume role"
+
+# container_create: --name/--image are required.
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
@@ -580,10 +612,10 @@ echo hi
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
     export DXE_RUNTIME_DOCKER_BIN=docker
-    out="$(dx_runtime_container_create --totally-unknown-flag value dx-qnap-nixos 2>&1)"; rc=$?
-    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "does not recognize the create flag"
+    out="$(dx_runtime_container_create --image dx-qnap-nixos 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -- "--name is required"
 )
-[ "$?" -eq 0 ] && test_pass "container_create fails closed on an unrecognized flag rather than guessing" || test_fail "container_create fails closed on an unrecognized flag rather than guessing"
+[ "$?" -eq 0 ] && test_pass "container_create refuses when --name is missing" || test_fail "container_create refuses when --name is missing"
 
 (
     dir="$(new_tool_dir)"

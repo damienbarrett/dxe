@@ -71,6 +71,91 @@ dx_runtime_volume_delete() { dx_runtime_dispatch volume_delete "$@"; }
 dx_runtime_container_exists() { dx_runtime_dispatch container_exists "$@"; }
 dx_runtime_container_running() { dx_runtime_dispatch container_running "$@"; }
 dx_runtime_container_list() { dx_runtime_dispatch container_list "$@"; }
+
+# dx_runtime_container_create's parameter vocabulary is deliberately
+# runtime-NEUTRAL (qnap-dxe-plan.md DQ2: "runtime-specific CLI syntax ...
+# lives only in the adapter"). bin/dx-create-container (its one caller)
+# never spells a single Apple or Docker flag name; each adapter's own
+# dx_runtime_{apple,docker}_container_create renders its own real create
+# argv from this vocabulary, in the order it receives them (this is what
+# lets the Apple adapter reproduce today's exact `container create` argv,
+# order included -- see tests/test_runtime_boundary_characterisation.sh's
+# byte-for-byte proof). Recognized items, each exactly one "--flag value"
+# pair (never bundled), passed in the order they should be rendered:
+#   --name NAME                required, once
+#   --image IMAGE              required, once
+#   --volume nix:VOLNAME:MODE               the Nix store volume; no
+#                               target -- each adapter decides where to
+#                               mount it (Apple stages it for the guest to
+#                               reformat; docker-ssh mounts it directly at
+#                               /nix per DQ4, never CAP_SYS_ADMIN)
+#   --volume persist:VOLNAME:TARGET:MODE    today's target is always the
+#                               fixed guest path /persist
+#   --volume bootstrap:VOLNAME:TARGET:MODE  target is DX_BOOTSTRAP_PATH
+#   --volume git:SRC:TARGET:MODE            optional host bind mount
+#   --env KEY=VALUE             repeatable, rendered in the order given
+#   --memory MEM
+#   --cpus N                   a CPU *count* -- Apple's own -c flag means
+#                               this; Docker's own -c means --cpu-shares (a
+#                               relative weight, a different unit), so the
+#                               Docker adapter renders --cpus, never -c
+#   --publish SPEC              HOSTADDR:HOSTPORT:GUESTPORT, forwarded
+#                               as-is (both CLIs agree on this shape); left
+#                               at "127.0.0.1:..." for docker-ssh too --
+#                               making the guest SSH publish address
+#                               remote-aware is qnap-dxe-plan.md Phase 5's
+#                               job ("Make SSH and user workflows
+#                               remote-aware"), not Phase 2's
+#   --restart-policy POLICY    DX_CONTAINER_RESTART_POLICY's value; Apple
+#                               ignores it completely (it never sets a
+#                               restart flag at all, matching
+#                               dx_runtime_capability restart_policy=false
+#                               for apple); docker-ssh renders --restart
+#                               POLICY (Docker accepts "no"/"unless-stopped"
+#                               verbatim, no translation needed) plus the
+#                               DQ6 labels it computes itself
+#   --entrypoint-cmd CMD
+#   --entrypoint-arg ARG        repeatable, rendered in order -- the
+#                               trailing "-- ARGS" both CLIs agree is the
+#                               entrypoint's own argv, never re-parsed as
+#                               create's own options
+#
+# Splits one "--volume" spec into DXE_VOLSPEC_{ROLE,NAME,TARGET,MODE}.
+# Shared so the SPEC FORMAT itself cannot drift between the two adapters;
+# the per-runtime mount-target DECISION for role=nix stays in each adapter,
+# not here.
+dx_runtime_container_create_parse_volume_spec() {
+    local spec="$1" rest
+    case "$spec" in
+        nix:*)
+            DXE_VOLSPEC_ROLE=nix
+            rest="${spec#nix:}"
+            DXE_VOLSPEC_NAME="${rest%%:*}"
+            DXE_VOLSPEC_TARGET=""
+            DXE_VOLSPEC_MODE="${rest##*:}"
+            ;;
+        persist:*|bootstrap:*|git:*)
+            DXE_VOLSPEC_ROLE="${spec%%:*}"
+            rest="${spec#*:}"
+            DXE_VOLSPEC_NAME="${rest%%:*}"
+            rest="${rest#*:}"
+            DXE_VOLSPEC_TARGET="${rest%%:*}"
+            DXE_VOLSPEC_MODE="${rest##*:}"
+            ;;
+        *)
+            echo "Error: unrecognized --volume spec '$spec' (expected nix:NAME:MODE or {persist,bootstrap,git}:NAME:TARGET:MODE)." >&2
+            return 1
+            ;;
+    esac
+    # This function's real output: read by each adapter's own
+    # container_create renderer in a DIFFERENT file
+    # (bin/lib/dx-runtime-apple.sh, bin/lib/dx-runtime-docker.sh) --
+    # exported both because a child process may need them too and because
+    # ShellCheck's per-file analysis cannot otherwise see the cross-file use
+    # (SC2034).
+    export DXE_VOLSPEC_ROLE DXE_VOLSPEC_NAME DXE_VOLSPEC_TARGET DXE_VOLSPEC_MODE
+}
+
 dx_runtime_container_create() { dx_runtime_dispatch container_create "$@"; }
 dx_runtime_container_start() { dx_runtime_dispatch container_start "$@"; }
 dx_runtime_container_stop() { dx_runtime_dispatch container_stop "$@"; }

@@ -244,7 +244,7 @@ dx_get_host_timezone >/dev/null
             'volume inspect vol') return 0 ;;
             'volume create vol') return 0 ;;
             'volume rm vol') return 0 ;;
-            'create side') return 0 ;;
+            'create --name side --entrypoint sh --cap-add CAP_SYS_ADMIN --volume nixvol:/var/lib/dx-nix-raw:rw --volume persistvol:/persist:rw --volume bootvol:/guest-bootstrap:rw -e FOO=bar -m 1G -c 2 -p 127.0.0.1:2222:2222 img -c echo hi -- /guest-bootstrap') return 0 ;;
             'start side') return 0 ;;
             'stop side') return 0 ;;
             'kill side') return 0 ;;
@@ -267,7 +267,10 @@ dx_get_host_timezone >/dev/null
     dx_runtime_volume_exists vol >/dev/null
     dx_runtime_volume_create vol >/dev/null
     dx_runtime_volume_delete vol >/dev/null
-    dx_runtime_container_create side >/dev/null
+    dx_runtime_container_create --name side --image img \
+        --volume nix:nixvol:rw --volume persist:persistvol:/persist:rw --volume bootstrap:bootvol:/guest-bootstrap:rw \
+        --env FOO=bar --memory 1G --cpus 2 --publish 127.0.0.1:2222:2222 --restart-policy no \
+        --entrypoint-cmd 'echo hi' --entrypoint-arg /guest-bootstrap >/dev/null
     dx_runtime_container_start side >/dev/null
     dx_runtime_container_stop side >/dev/null
     dx_runtime_container_kill side >/dev/null

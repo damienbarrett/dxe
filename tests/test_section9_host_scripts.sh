@@ -269,7 +269,14 @@ if diag="$(
 else
     test_fail "a probe that never completes the banner exchange is named as such, with the load average that discriminates the two causes ($diag)"
 fi
-assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '-- "$DX_BOOTSTRAP_PATH"' "bootstrap path crosses the launcher boundary positionally"
+# Branch 11 / Phase 2: dx-create-container now calls dx_runtime_container_create
+# with a runtime-neutral vocabulary (qnap-dxe-plan.md DQ2) instead of a raw
+# Apple-flavoured argv; the bootstrap path still crosses as the entrypoint's
+# own positional argument (--entrypoint-arg), never reinterpreted as one of
+# create's own options -- each adapter renders its own "-- ARGS" shape from
+# this same value (proven end to end in
+# tests/test_runtime_boundary_characterisation.sh).
+assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '--entrypoint-arg "$DX_BOOTSTRAP_PATH"' "bootstrap path crosses the launcher boundary positionally"
 
 # --- P10: DX_NIX_DISK_SIZE reaches the guest via dx-create-container (plan.md) ---
 #

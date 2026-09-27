@@ -31,27 +31,35 @@ if [ -z "$HOST_TZ" ]; then
     HOST_TZ="UTC"
 fi
 
-# Volume mounts: DX_NIX_VOLUME -> /var/lib/dx-nix-raw (the bootstrap formats
-# and remounts this at /nix); dx-persist -> /persist; dx-bootstrap ->
-# /guest-bootstrap.
+# Runtime-neutral parameters (qnap-dxe-plan.md DQ2: "runtime-specific CLI
+# syntax ... lives only in the adapter"). Neither this script nor
+# dx_runtime_container_create's own dispatch names a single Apple or
+# Docker CLI flag; bin/lib/dx-runtime-apple.sh and
+# bin/lib/dx-runtime-docker.sh each render their own real create argv from
+# this vocabulary -- see bin/lib/dx-runtime.sh's own module comment for the
+# complete parameter list and what each adapter does with it (in
+# particular: the Nix volume's per-runtime mount target, and docker-ssh's
+# restart-policy/DQ6-label handling that Apple has no equivalent of).
 #
-# CAP_SYS_ADMIN is required so the guest bootstrap can umount the
-# runtime-provided mount at /var/lib/dx-nix-raw, mkfs it as btrfs/ext4, and
-# remount it at /nix. Without it, bootstrap exits before sshd starts.
-CREATE_FLAGS=(
+# Volume roles: nix -> the Nix store volume (each adapter decides its own
+# mount target: Apple stages it for the guest to reformat at boot; the
+# Docker adapter mounts it directly at /nix, per qnap-dxe-plan.md DQ4).
+# persist -> the fixed guest path /persist. bootstrap -> DX_BOOTSTRAP_PATH.
+CREATE_ARGS=(
     --name "$DX_CONTAINER_NAME"
-    --entrypoint sh
-    --cap-add CAP_SYS_ADMIN
-    --volume "$DX_NIX_VOLUME:/var/lib/dx-nix-raw:rw"
-    --volume "$DX_PERSIST_VOLUME:/persist:rw"
-    --volume "$DX_BOOTSTRAP_VOLUME:$DX_BOOTSTRAP_PATH:rw"
-    -e "HOST_TZ=$HOST_TZ"
-    -e "DX_GUEST_ACTIVATION_TIMEOUT=$DX_GUEST_ACTIVATION_TIMEOUT"
-    -e "DX_GUEST_ACTIVATION_ATTEMPTS=$DX_GUEST_ACTIVATION_ATTEMPTS"
-    -e "DX_GUEST_ACTIVATION_RETRY_DELAY=$DX_GUEST_ACTIVATION_RETRY_DELAY"
-    -e "DX_NIX_DISK_SIZE=$DX_NIX_DISK_SIZE"
-    -m "$DX_CONTAINER_MEMORY" -c "$DX_CONTAINER_CPUS"
-    -p "127.0.0.1:$DX_SSH_PORT:2222"
+    --image "$DX_IMAGE"
+    --volume "nix:$DX_NIX_VOLUME:rw"
+    --volume "persist:$DX_PERSIST_VOLUME:/persist:rw"
+    --volume "bootstrap:$DX_BOOTSTRAP_VOLUME:$DX_BOOTSTRAP_PATH:rw"
+    --env "HOST_TZ=$HOST_TZ"
+    --env "DX_GUEST_ACTIVATION_TIMEOUT=$DX_GUEST_ACTIVATION_TIMEOUT"
+    --env "DX_GUEST_ACTIVATION_ATTEMPTS=$DX_GUEST_ACTIVATION_ATTEMPTS"
+    --env "DX_GUEST_ACTIVATION_RETRY_DELAY=$DX_GUEST_ACTIVATION_RETRY_DELAY"
+    --env "DX_NIX_DISK_SIZE=$DX_NIX_DISK_SIZE"
+    --memory "$DX_CONTAINER_MEMORY"
+    --cpus "$DX_CONTAINER_CPUS"
+    --publish "127.0.0.1:$DX_SSH_PORT:2222"
+    --restart-policy "$DX_CONTAINER_RESTART_POLICY"
 )
 
 if [ -n "$DX_GIT_MOUNT_SOURCE" ]; then
@@ -63,15 +71,18 @@ if [ -n "$DX_GIT_MOUNT_SOURCE" ]; then
         echo "Error: DX_GIT_MOUNT_SOURCE is not a directory: $DX_GIT_MOUNT_SOURCE" >&2
         exit 1
     fi
-    CREATE_FLAGS+=(--volume "$DX_GIT_MOUNT_SOURCE:$DX_GIT_MOUNT_TARGET:rw")
+    CREATE_ARGS+=(--volume "git:$DX_GIT_MOUNT_SOURCE:$DX_GIT_MOUNT_TARGET:rw")
 fi
 
 if [ -f "$DX_SSH_KEY_PUB" ]; then
     DX_PUB_KEY=$(cat "$DX_SSH_KEY_PUB")
-    dx_runtime_container_create "${CREATE_FLAGS[@]}" -e "DX_PUB_KEY=$DX_PUB_KEY" "$DX_IMAGE" -c "$BOOTSTRAP_LAUNCH_CMD" -- "$DX_BOOTSTRAP_PATH"
+    CREATE_ARGS+=(--env "DX_PUB_KEY=$DX_PUB_KEY")
 else
     echo "Warning: $DX_SSH_KEY_PUB not found. SSH access may not be configured."
-    dx_runtime_container_create "${CREATE_FLAGS[@]}" "$DX_IMAGE" -c "$BOOTSTRAP_LAUNCH_CMD" -- "$DX_BOOTSTRAP_PATH"
 fi
+
+CREATE_ARGS+=(--entrypoint-cmd "$BOOTSTRAP_LAUNCH_CMD" --entrypoint-arg "$DX_BOOTSTRAP_PATH")
+
+dx_runtime_container_create "${CREATE_ARGS[@]}"
 claim_pending=false
 trap - EXIT HUP INT TERM

@@ -652,5 +652,115 @@ else
 fi
 rm -rf "$put_fixture"
 
+# =============================================================================
+# bin/dx-create-container's rendered Apple `container create` argv, byte for
+# byte, after Branch 11 / Phase 2 replaced its Apple-flavoured CREATE_FLAGS
+# array with bin/lib/dx-runtime.sh's runtime-neutral vocabulary (qnap-dxe-plan.md
+# DQ2: "runtime-specific CLI syntax ... lives only in the adapter"). Every
+# config value below is pinned explicitly so the expected argv can be built
+# independently and compared exactly, in order, against what
+# dx_runtime_apple_container_create actually renders -- proving the
+# refactor changed nothing observable for DX_RUNTIME=apple.
+# =============================================================================
+
+cc_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rtb-create-container.XXXXXX")"
+fake_tool_write "$cc_fixture/bin" container '
+case "$1" in
+    list) exit 1 ;;
+    image) [ "$2 $3" = "list --quiet" ] && printf "%s\n" "$DX_IMAGE"; exit 0 ;;
+    create)
+        shift
+        printf "%s\n" "$@" >> "$DX_FAKE_ARGV_LOG"
+        exit 0
+        ;;
+    *) exit 0 ;;
+esac
+'
+
+cc_home="$(fresh_home "$cc_fixture/home")"
+cc_log="$cc_fixture/argv.log"
+: > "$cc_log"
+env PATH="$cc_fixture/bin:/usr/bin:/bin" \
+    HOME="$cc_home" \
+    DX_CONTAINER_NAME=dxe-rtb-create \
+    DX_IMAGE=dxe-rtb-image \
+    DX_NIX_VOLUME=dxe-rtb-nix \
+    DX_PERSIST_VOLUME=dxe-rtb-persist \
+    DX_BOOTSTRAP_VOLUME=dxe-rtb-bootstrap \
+    DX_BOOTSTRAP_PATH=/guest-bootstrap \
+    DX_GUEST_ACTIVATION_TIMEOUT=1800 \
+    DX_GUEST_ACTIVATION_ATTEMPTS=2 \
+    DX_GUEST_ACTIVATION_RETRY_DELAY=5 \
+    DX_NIX_DISK_SIZE=64G \
+    DX_CONTAINER_MEMORY=12G \
+    DX_CONTAINER_CPUS=4 \
+    DX_SSH_PORT=2222 \
+    DX_CONTAINER_RESTART_POLICY=no \
+    DX_GIT_MOUNT_SOURCE='' \
+    DX_SSH_KEY_PUB="$cc_fixture/no-such-key.pub" \
+    DX_FAKE_ARGV_LOG="$cc_log" \
+    "$BASE_DIR/bin/dx-create-container" >/dev/null 2>&1
+
+# Independently reconstructed (not copy-pasted from the adapter): the exact
+# argv bin/dx-create-container built before Branch 11 / Phase 2, in the
+# same order -- name, entrypoint, cap-add, the three volumes, five env
+# vars, memory, cpus, publish, [no git volume, no pub-key env: neither was
+# configured above].
+(
+    source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
+    entrypoint_cmd="$(dx_bootstrap_launch_command)"
+    # HOST_TZ is host-detected (dx_get_host_timezone), not pinned above, so
+    # the comparison does not depend on this machine's own timezone.
+    host_tz="$(dx_get_host_timezone)"; [ -n "$host_tz" ] || host_tz=UTC
+    printf '%s\n' \
+        --name dxe-rtb-create --entrypoint sh --cap-add CAP_SYS_ADMIN \
+        --volume dxe-rtb-nix:/var/lib/dx-nix-raw:rw \
+        --volume dxe-rtb-persist:/persist:rw \
+        --volume dxe-rtb-bootstrap:/guest-bootstrap:rw \
+        -e "HOST_TZ=$host_tz" \
+        -e DX_GUEST_ACTIVATION_TIMEOUT=1800 \
+        -e DX_GUEST_ACTIVATION_ATTEMPTS=2 \
+        -e DX_GUEST_ACTIVATION_RETRY_DELAY=5 \
+        -e DX_NIX_DISK_SIZE=64G \
+        -m 12G -c 4 \
+        -p 127.0.0.1:2222:2222 \
+        dxe-rtb-image -c "$entrypoint_cmd" -- /guest-bootstrap \
+        > "$cc_fixture/expected.log"
+)
+if diff "$cc_fixture/expected.log" "$cc_log" >/dev/null 2>&1; then
+    test_pass "dx-create-container renders today's exact Apple container-create argv, byte for byte, in order"
+else
+    test_fail "dx-create-container renders today's exact Apple container-create argv, byte for byte, in order (diff: $(diff "$cc_fixture/expected.log" "$cc_log" 2>&1))"
+fi
+
+# The optional git-mount volume and pub-key env, when configured, land in
+# their documented positions (after the fixed flags, in the order
+# bin/dx-create-container adds them) -- a substring proof, not a second
+# full byte-for-byte log, since the first proof above already pins the
+# fixed portion exactly.
+cc_git_src="$cc_fixture/git-src"; mkdir -p "$cc_git_src"
+cc_key_pub="$cc_fixture/dx_key.pub"; printf 'FIXTURE-NOT-A-REAL-KEY-0123456789\n' > "$cc_key_pub"
+: > "$cc_log"
+env PATH="$cc_fixture/bin:/usr/bin:/bin" \
+    HOME="$(fresh_home "$cc_fixture/home2")" \
+    DX_CONTAINER_NAME=dxe-rtb-create2 \
+    DX_IMAGE=dxe-rtb-image \
+    DX_NIX_VOLUME=dxe-rtb-nix2 \
+    DX_PERSIST_VOLUME=dxe-rtb-persist2 \
+    DX_BOOTSTRAP_VOLUME=dxe-rtb-bootstrap2 \
+    DX_GIT_MOUNT_SOURCE="$cc_git_src" \
+    DX_GIT_MOUNT_TARGET=/workspace \
+    DX_SSH_KEY_PUB="$cc_key_pub" \
+    DX_FAKE_ARGV_LOG="$cc_log" \
+    "$BASE_DIR/bin/dx-create-container" >/dev/null 2>&1
+got="$(cat "$cc_log")"
+if printf '%s\n' "$got" | stdin_matches -F -- "$cc_git_src:/workspace:rw" \
+    && printf '%s\n' "$got" | stdin_matches -F -- "DX_PUB_KEY=FIXTURE-NOT-A-REAL-KEY-0123456789"; then
+    test_pass "dx-create-container's optional git-mount volume and pub-key env still reach the Apple create argv"
+else
+    test_fail "dx-create-container's optional git-mount volume and pub-key env still reach the Apple create argv (got: $got)"
+fi
+rm -rf "$cc_fixture"
+
 print_summary
 exit_with_code

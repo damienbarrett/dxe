@@ -70,7 +70,48 @@ dx_runtime_apple_volume_exists() { container volume inspect "$1" >/dev/null 2>&1
 dx_runtime_apple_volume_create() { container volume create "$@"; }
 dx_runtime_apple_volume_delete() { container volume rm "$@"; }
 
-dx_runtime_apple_container_create() { container create "$@"; }
+# Renders bin/lib/dx-runtime.sh's runtime-neutral container_create
+# vocabulary into Apple's own `container create` argv, in the exact order
+# bin/dx-create-container has always built it in (name, entrypoint,
+# cap-add, volumes, env vars, resource limits, publish, optional git
+# volume, optional pub-key env, then the image and its own entrypoint
+# argv) -- proven byte-for-byte in
+# tests/test_runtime_boundary_characterisation.sh. Apple behaviour is
+# otherwise unconditional and unchanged from before this vocabulary
+# existed: --cap-add CAP_SYS_ADMIN is always emitted (Apple only ever ran
+# in the equivalent of "apple-image" storage mode), the Nix volume always
+# stages at /var/lib/dx-nix-raw for the guest to reformat, and
+# --restart-policy is read and discarded -- Apple never sets a restart
+# flag at all (dx_runtime_apple_capability restart_policy below returns
+# false for exactly this reason).
+dx_runtime_apple_container_create() {
+    local name="" image="" entrypoint_cmd="" flags=() entrypoint_args=()
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --name) name="$2"; shift 2 ;;
+            --image) image="$2"; shift 2 ;;
+            --volume)
+                dx_runtime_container_create_parse_volume_spec "$2" || return 1
+                case "$DXE_VOLSPEC_ROLE" in
+                    nix) flags+=(--volume "$DXE_VOLSPEC_NAME:/var/lib/dx-nix-raw:$DXE_VOLSPEC_MODE") ;;
+                    *) flags+=(--volume "$DXE_VOLSPEC_NAME:$DXE_VOLSPEC_TARGET:$DXE_VOLSPEC_MODE") ;;
+                esac
+                shift 2
+                ;;
+            --env) flags+=(-e "$2"); shift 2 ;;
+            --memory) flags+=(-m "$2"); shift 2 ;;
+            --cpus) flags+=(-c "$2"); shift 2 ;;
+            --publish) flags+=(-p "$2"); shift 2 ;;
+            --restart-policy) shift 2 ;;
+            --entrypoint-cmd) entrypoint_cmd="$2"; shift 2 ;;
+            --entrypoint-arg) entrypoint_args+=("$2"); shift 2 ;;
+            *) echo "Error: dx_runtime_apple_container_create: unknown parameter '$1'." >&2; return 1 ;;
+        esac
+    done
+    [ -n "$name" ] || { echo "Error: dx_runtime_apple_container_create: --name is required." >&2; return 1; }
+    [ -n "$image" ] || { echo "Error: dx_runtime_apple_container_create: --image is required." >&2; return 1; }
+    container create --name "$name" --entrypoint sh --cap-add CAP_SYS_ADMIN "${flags[@]}" "$image" -c "$entrypoint_cmd" -- "${entrypoint_args[@]}"
+}
 dx_runtime_apple_container_start() { container start "$@"; }
 dx_runtime_apple_container_stop() { container stop "$@"; }
 dx_runtime_apple_container_kill() { container kill "$@"; }

@@ -328,115 +328,90 @@ dx_runtime_docker_container_list() {
 # Docker's CLI (confirmed against a real local Docker CLI, 27.x) agrees with
 # Apple's own flag names/shapes for almost everything bin/'s entrypoints
 # already send through the contract: -i/-t/-u for exec, --time for stop,
-# -n for logs --tail, -f/--force for rm, --name/--entrypoint/-e/-m/--volume
-# for create. So most operations below are a direct passthrough, exactly
-# like their Apple counterparts, with only the verb name changed where
-# Apple and Docker genuinely differ (`container delete` vs `docker rm`).
+# -n for logs --tail, -f/--force for rm. So most operations below are a
+# direct passthrough, with only the verb name changed where Apple and
+# Docker genuinely differ (`container delete` vs `docker rm`).
 #
-# `container_create` is the one real exception: bin/dx-create-container (a
-# shared entrypoint, not a bin/lib/ file, so out of this branch's allowed
-# scope to edit -- flagged below) builds ONE flag array in Apple's own
-# vocabulary for whichever runtime is active, and two of Apple's flags do
-# not merely rename under Docker, they mean something DIFFERENT or WRONG
-# for docker-ssh's direct-volume mode (DQ4):
-#   --cap-add CAP_SYS_ADMIN   Apple-only: lets the GUEST bootstrap reformat
-#                             and remount its staging volume. DQ4: direct-
-#                             volume mode skips that whole step and must
-#                             never grant this capability. Dropped entirely.
-#   -c <n> (before the image) Apple's --cpus shorthand. Docker's own -c
-#                             means --cpu-shares (a relative weight, a
-#                             completely different unit) -- passing Apple's
-#                             CPU-count value through unrewritten would
-#                             silently misconfigure the container instead
-#                             of failing loudly. Rewritten to --cpus <n>.
-#   --volume "$DX_NIX_VOLUME:<anything>:MODE"
-#                             Apple stages the Nix volume at
-#                             /var/lib/dx-nix-raw for the GUEST bootstrap to
-#                             reformat. DQ4: docker-ssh mounts it directly
-#                             at /nix. Target rewritten to /nix.
-# Everything after the IMAGE positional (the entrypoint's own command/argv)
-# passes through completely unexamined -- both CLIs agree that nothing
-# there is ever re-parsed as the create command's own options.
+# `container_create` renders bin/lib/dx-runtime.sh's runtime-neutral
+# vocabulary (qnap-dxe-plan.md DQ2: "runtime-specific CLI syntax ... lives
+# only in the adapter" -- see that file's own module comment for the full
+# parameter list) into Docker's own create argv:
+#   - the Nix volume mounts directly at /nix (DQ4's direct-volume mode);
+#     no --cap-add at all (Apple's CAP_SYS_ADMIN exists only for the
+#     GUEST bootstrap to reformat/remount its OWN staging volume, which
+#     this mode skips entirely -- there is nothing here to drop, docker-ssh
+#     simply never emits it);
+#   - --cpus, never Docker's own -c (which means --cpu-shares, a different
+#     unit entirely -- confirmed against a real local Docker CLI);
+#   - --restart from DX_CONTAINER_RESTART_POLICY's value (Docker accepts
+#     "no"/"unless-stopped" verbatim, no translation needed);
+#   - the DQ6 labels, computed here (not passed by the caller -- they
+#     depend on DX_REMOTE_HOST, which only this adapter interprets).
+# The shared --publish "127.0.0.1:PORT:2222" spec is forwarded as-is
+# (loopback, unreachable from a real remote NAS) -- making the guest SSH
+# publish address remote-aware is qnap-dxe-plan.md Phase 5's job ("Make
+# SSH and user workflows remote-aware"), not Phase 2's.
+
+# --- DQ6 labels -------------------------------------------------------
 #
-# FLAGGED for the coordinating session: this couples the adapter to
-# bin/dx-create-container's exact current flag-building shape. The
-# architecturally cleaner fix -- teaching bin/dx-create-container to build
-# per-runtime (or genuinely runtime-neutral) flags itself -- touches a file
-# outside bin/lib/ (not in this task's allowed-file list), so this
-# translator exists here instead. It fails closed (refuses with a clear
-# message) on any flag shape it does not specifically recognize, rather
-# than guessing, so a future change to CREATE_FLAGS cannot silently
-# misconfigure a container -- but it IS a real coupling worth confirming.
-# Also note: the shared --publish "127.0.0.1:PORT:2222" flag is left
-# untouched (loopback, unreachable from the controller for a real remote
-# NAS) -- making the guest SSH publish address remote-aware is
-# qnap-dxe-plan.md Phase 5's job ("Make SSH and user workflows
-# remote-aware"), not Phase 2's; bin/dx-create-container is not touched
-# here, so this is an intentional, pre-existing scope boundary, not a new
-# bug.
-dx_runtime_docker_translate_create_argv() {
-    local seen_image=0 tok mode
-    DXE_RUNTIME_DOCKER_CREATE_ARGV=()
-    while [ "$#" -gt 0 ]; do
-        tok="$1"
-        if [ "$seen_image" -eq 1 ]; then
-            DXE_RUNTIME_DOCKER_CREATE_ARGV+=("$tok")
-            shift
-            continue
-        fi
-        case "$tok" in
-            --cap-add)
-                [ "$#" -ge 2 ] || { echo "Error: --cap-add with no value in container_create argv." >&2; return 1; }
-                if [ "$2" = CAP_SYS_ADMIN ]; then shift 2; continue; fi
-                DXE_RUNTIME_DOCKER_CREATE_ARGV+=("$tok" "$2")
-                shift 2
-                continue
-                ;;
-            -c)
-                [ "$#" -ge 2 ] || { echo "Error: -c with no value in container_create argv." >&2; return 1; }
-                DXE_RUNTIME_DOCKER_CREATE_ARGV+=(--cpus "$2")
-                shift 2
-                continue
-                ;;
-            --volume)
-                [ "$#" -ge 2 ] || { echo "Error: --volume with no value in container_create argv." >&2; return 1; }
-                case "$2" in
-                    "${DX_NIX_VOLUME:-dx-nix}":*:*)
-                        mode="${2##*:}"
-                        DXE_RUNTIME_DOCKER_CREATE_ARGV+=(--volume "${DX_NIX_VOLUME:-dx-nix}:/nix:$mode")
-                        ;;
-                    *)
-                        DXE_RUNTIME_DOCKER_CREATE_ARGV+=(--volume "$2")
-                        ;;
-                esac
-                shift 2
-                continue
-                ;;
-            --name|--entrypoint|-e|-m|-p)
-                [ "$#" -ge 2 ] || { echo "Error: $tok with no value in container_create argv." >&2; return 1; }
-                DXE_RUNTIME_DOCKER_CREATE_ARGV+=("$tok" "$2")
-                shift 2
-                continue
-                ;;
-            -*)
-                echo "Error: dx_runtime_docker_container_create does not recognize the create flag '$tok' (bin/dx-create-container's CREATE_FLAGS shape may have changed; this translator needs updating to match)." >&2
-                return 1
-                ;;
-            *)
-                DXE_RUNTIME_DOCKER_CREATE_ARGV+=("$tok")
-                seen_image=1
-                shift
-                continue
-                ;;
-        esac
-    done
+# Schema version for the label set itself (bumped only if the label KEYS
+# or their meaning change, independent of DXE_CONFIG_SNAPSHOT_VERSION_CURRENT
+# which versions the unrelated configuration-snapshot shape).
+DXE_RUNTIME_DOCKER_LABEL_SCHEMA=1
+
+# A profile identifies "this docker-ssh profile" for collision detection
+# (qnap-dxe-plan.md DQ6's io.dxe.profile) -- computable from plain resolved
+# config fields, no remote call needed. Distinct from
+# dx_runtime_docker_host_identity's daemon-ID-based identity (item 7's
+# concern: telling two DIFFERENT remote daemons apart even if their alias
+# were reused); this is "which DXE profile," not "which physical NAS."
+dx_runtime_docker_profile_id() {
+    printf '%s__%s' "${DX_REMOTE_HOST:?}" "${DX_CONTAINER_NAME:?}"
+}
+
+# Populates DXE_RUNTIME_DOCKER_LABEL_ARGV with the four `--label k=v` pairs
+# every docker-ssh-created resource carries (qnap-dxe-plan.md DQ6).
+dx_runtime_docker_label_flags() {
+    DXE_RUNTIME_DOCKER_LABEL_ARGV=(
+        --label io.dxe.managed=true
+        --label "io.dxe.schema=$DXE_RUNTIME_DOCKER_LABEL_SCHEMA"
+        --label "io.dxe.profile=$(dx_runtime_docker_profile_id)"
+        --label "io.dxe.role=$1"
+    )
 }
 
 dx_runtime_docker_container_create() {
     local bin
     bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_translate_create_argv "$@" || return 1
-    dx_runtime_docker_ssh_exec "$bin" create "${DXE_RUNTIME_DOCKER_CREATE_ARGV[@]}"
+    local name="" image="" entrypoint_cmd="" flags=() entrypoint_args=()
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --name) name="$2"; shift 2 ;;
+            --image) image="$2"; shift 2 ;;
+            --volume)
+                dx_runtime_container_create_parse_volume_spec "$2" || return 1
+                case "$DXE_VOLSPEC_ROLE" in
+                    nix) flags+=(--volume "$DXE_VOLSPEC_NAME:/nix:$DXE_VOLSPEC_MODE") ;;
+                    *) flags+=(--volume "$DXE_VOLSPEC_NAME:$DXE_VOLSPEC_TARGET:$DXE_VOLSPEC_MODE") ;;
+                esac
+                shift 2
+                ;;
+            --env) flags+=(-e "$2"); shift 2 ;;
+            --memory) flags+=(-m "$2"); shift 2 ;;
+            --cpus) flags+=(--cpus "$2"); shift 2 ;;
+            --publish) flags+=(-p "$2"); shift 2 ;;
+            --restart-policy) flags+=(--restart "$2"); shift 2 ;;
+            --entrypoint-cmd) entrypoint_cmd="$2"; shift 2 ;;
+            --entrypoint-arg) entrypoint_args+=("$2"); shift 2 ;;
+            *) echo "Error: dx_runtime_docker_container_create: unknown parameter '$1'." >&2; return 1 ;;
+        esac
+    done
+    [ -n "$name" ] || { echo "Error: dx_runtime_docker_container_create: --name is required." >&2; return 1; }
+    [ -n "$image" ] || { echo "Error: dx_runtime_docker_container_create: --image is required." >&2; return 1; }
+    dx_runtime_docker_label_flags container
+    dx_runtime_docker_ssh_exec "$bin" create --name "$name" --entrypoint sh \
+        "${flags[@]}" "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}" \
+        "$image" -c "$entrypoint_cmd" -- "${entrypoint_args[@]}"
 }
 
 dx_runtime_docker_container_start() {
