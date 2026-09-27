@@ -638,6 +638,23 @@ printf '%s\n' fixture > "$noagy_published/flake.nix"
 printf '%s\n' fixture > "$noagy_published/flake.lock"
 noagy_output_log="$ai_fixture/noagy-output.log"
 (
+    # The live tier always runs every section under a resolved host profile
+    # (./bin/dx-profile <name> ...), which exports DX_GUEST_SYSTEM (Apple's
+    # default: aarch64-linux) into this process's environment before this
+    # test file ever starts -- unlike the fast/bare tier, where it is
+    # simply absent. dx_guest_resolve_system (scripts/lib/dx-guest-system.sh)
+    # deliberately refuses when DX_GUEST_SYSTEM disagrees with the guest's
+    # own native uname (docs/refactor/arch-neutral-guest.md section 4): a
+    # real x86_64 guest's own DX_GUEST_SYSTEM, forwarded by
+    # bin/dx-create-container, always agrees with its own native
+    # architecture, so that refusal never fires in production. Here it
+    # simulates a native x86_64 guest via the uname stub below while
+    # inheriting the test RUNNER's own resolved (aarch64-linux) profile --
+    # a combination that can only arise from the test host's environment,
+    # never from a real guest -- so this subshell isolates itself from that
+    # inherited token exactly like a real guest's own environment would
+    # never carry a mismatched one.
+    unset DX_GUEST_SYSTEM
     uname() { [ "${1:-}" = -m ] && printf '%s\n' x86_64 || command uname "$@"; }
     # Full jq stand-in: the leading null-pin guard query (also
     # dx_ai_tools_for_system's own null check, same shape), manifest-field
