@@ -521,6 +521,20 @@ esac'
 [ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): refuses with DQ5's exact wording when no address is discovered" \
     || test_fail "guest_ssh_address (docker-ssh): refuses with DQ5's exact wording when no address is discovered"
 
+# A distinct failure class: the ssh ROUND TRIP itself fails (connection
+# refused/dead host), not merely a NOTFOUND/out-of-range answer.
+(
+    dir="$(new_tool_dir)"
+    fake_tool_write "$dir" ssh 'case "$*" in *DXE_TAILSCALE_BIN*) exit 255 ;; *) exit 0 ;; esac'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    unset DXE_RUNTIME_GUEST_SSH_ADDRESS
+    out="$(dx_runtime_guest_ssh_address 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "could not reach qnap-dxe to discover its Tailscale address"
+)
+[ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): a failed ssh round trip during discovery is reported distinctly from NOTFOUND" \
+    || test_fail "guest_ssh_address (docker-ssh): a failed ssh round trip during discovery is reported distinctly from NOTFOUND"
+
 # Refuses a discovered value outside Tailscale's CGNAT range (DQ5: never the
 # LAN) even though something was, in fact, discovered -- proven two ways, so
 # this cannot pass merely because discovery silently failed and produced
@@ -602,15 +616,24 @@ esac'
     || test_fail "dx_ssh_common_options (apple): today's exact options, byte for byte, unchanged"
 
 # docker-ssh: accept-new, the per-profile known_hosts path, never /dev/null,
-# and the pin directory exists at 0700 afterward.
+# and the pin directory exists at 0700 afterward. DXE_RUNTIME_DOCKER_DAEMON_ID
+# is pre-seeded so dx_runtime_host_identity (the dispatch-level op
+# dx_ssh_known_hosts_dir scopes by -- never the docker adapter's own
+# dx_runtime_docker_profile_id directly, per Section 32's boundary audit)
+# resolves without any real ssh/docker round trip.
 (
     home_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts.XXXXXX")"
     unset XDG_STATE_HOME
     export HOME="$home_dir"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    # shellcheck disable=SC2034
+    # Read by dx_ssh_common_options (bin/lib/dx-ssh-common.sh), a function
+    # in a separately sourced file ShellCheck cannot trace into -- these
+    # are genuinely consumed, dynamically, by that call below.
     DX_SSH_KEY=/tmp/dxe-fixture-key DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=15
+    DXE_RUNTIME_DOCKER_DAEMON_ID=fixturedaemonid
     out="$(dx_ssh_common_options)"
-    expected_dir="$home_dir/.local/state/dxe/qnap-dxe__dx-qnap"
+    expected_dir="$home_dir/.local/state/dxe/dx-qnap/docker-ssh_qnap-dxe_fixturedaemonid"
     printf '%s\n' "$out" | stdin_matches -F -x "StrictHostKeyChecking=accept-new" \
         && printf '%s\n' "$out" | stdin_matches -F -x "UserKnownHostsFile=$expected_dir/known_hosts" \
         && ! printf '%s\n' "$out" | stdin_matches -F -x "UserKnownHostsFile=/dev/null" \
@@ -625,11 +648,16 @@ esac'
     home_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts-symlink.XXXXXX")"
     unset XDG_STATE_HOME
     export HOME="$home_dir"
-    mkdir -p "$home_dir/.local/state/dxe"
+    mkdir -p "$home_dir/.local/state/dxe/dx-qnap"
     elsewhere="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts-elsewhere.XXXXXX")"
-    ln -s "$elsewhere" "$home_dir/.local/state/dxe/qnap-dxe__dx-qnap"
+    ln -s "$elsewhere" "$home_dir/.local/state/dxe/dx-qnap/docker-ssh_qnap-dxe_fixturedaemonid"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    # shellcheck disable=SC2034
+    # Read by dx_ssh_common_options (bin/lib/dx-ssh-common.sh), a function
+    # in a separately sourced file ShellCheck cannot trace into -- these
+    # are genuinely consumed, dynamically, by that call below.
     DX_SSH_KEY=/tmp/dxe-fixture-key DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=15
+    DXE_RUNTIME_DOCKER_DAEMON_ID=fixturedaemonid
     out="$(dx_ssh_common_options 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "refusing symlinked SSH known-hosts directory"
 )
@@ -2496,6 +2524,36 @@ esac'
 )
 [ "$?" -eq 0 ] && test_pass "container_create (docker-ssh): refuses a git: (bind mount) volume spec before any docker call (decision 4)" \
     || test_fail "container_create (docker-ssh): refuses a git: (bind mount) volume spec before any docker call (decision 4)"
+
+# The success-rendering side of that same check: bind_mounts capability
+# stubbed to "yes" (unreachable in production -- docker-ssh always
+# answers no -- but the rendering line the check guards must still be
+# proven to work correctly if that answer ever changed).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/git-volume-success-argv.log"
+    fake_tool_write "$dir" docker "
+case \"\$1\" in
+    create) shift; printf '%s\n' \"\$@\" > '$argv_log'; exit 0 ;;
+    *) echo \"UNMATCHED: \$*\" >&2; exit 99 ;;
+esac"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
+    DXE_RUNTIME_DOCKER_BIN=docker
+    # shellcheck disable=SC2034
+    # Read by dx_runtime_docker_guest_ssh_address (bin/lib/dx-runtime-docker.sh)
+    # when it caches/returns the address -- genuinely consumed, dynamically,
+    # by the container_create call below.
+    DXE_RUNTIME_GUEST_SSH_ADDRESS="$(tailnet_fixture_addr 64 3 3)"
+    git_src="$(mktemp -d "${TMPDIR:-/tmp}/dxe-git-src-ok.XXXXXX")"
+    dx_runtime_docker_capability() { [ "$1" = bind_mounts ] && return 0 || return 1; }
+    dx_runtime_container_create --name dx-qnap --image dx-qnap-nixos \
+        --volume "git:$git_src:/workspace:rw" --publish 2222:2222 --entrypoint-cmd 'echo hi' >/dev/null 2>&1
+    grep -qF -- "$git_src:/workspace:rw" "$argv_log"
+)
+[ "$?" -eq 0 ] && test_pass "container_create (docker-ssh): renders a git: (bind mount) volume when bind_mounts capability IS supported" \
+    || test_fail "container_create (docker-ssh): renders a git: (bind mount) volume when bind_mounts capability IS supported"
 
 # --- bin/lib/dx-backup.sh's unidirectional exec discipline under
 # docker-ssh (Branch 11 / Phase 3, Increment 6, item 6): Branch 17 found

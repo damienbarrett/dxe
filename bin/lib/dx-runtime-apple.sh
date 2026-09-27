@@ -148,7 +148,16 @@ dx_runtime_apple_container_create() {
     done
     [ -n "$name" ] || { echo "Error: dx_runtime_apple_container_create: --name is required." >&2; return 1; }
     [ -n "$image" ] || { echo "Error: dx_runtime_apple_container_create: --image is required." >&2; return 1; }
-    container create --name "$name" --entrypoint sh --cap-add CAP_SYS_ADMIN "${flags[@]}" "$image" -c "$entrypoint_cmd" -- "${entrypoint_args[@]}"
+    # "${arr[@]+"${arr[@]}"}", not a bare "${arr[@]}": bash 3.2 treats a
+    # zero-element array as unset under "set -u" (fixed only in 4.4+),
+    # which every real caller avoids today (bin/dx-create-container
+    # always passes at least one --volume/--entrypoint-arg), but a direct
+    # test of this function with an empty flags or entrypoint_args -- or
+    # a future caller that omits them -- would otherwise abort. Same idiom
+    # bin/dx-backup/bin/dx-restore already use for their own possibly-
+    # empty arrays; see bin/lib/dx-runtime-docker.sh's dx_runtime_docker_exec
+    # for the same fix applied to a different array (Branch 11 / Phase 5).
+    container create --name "$name" --entrypoint sh --cap-add CAP_SYS_ADMIN "${flags[@]+"${flags[@]}"}" "$image" -c "$entrypoint_cmd" -- "${entrypoint_args[@]+"${entrypoint_args[@]}"}"
 }
 dx_runtime_apple_container_start() { container start "$@"; }
 dx_runtime_apple_container_stop() { container stop "$@"; }

@@ -587,9 +587,15 @@ dx_runtime_docker_container_create() {
     [ -n "$name" ] || { echo "Error: dx_runtime_docker_container_create: --name is required." >&2; return 1; }
     [ -n "$image" ] || { echo "Error: dx_runtime_docker_container_create: --image is required." >&2; return 1; }
     dx_runtime_docker_label_flags container
+    # "${arr[@]+"${arr[@]}"}" for flags/entrypoint_args (never DXE_RUNTIME_DOCKER_LABEL_ARGV,
+    # which dx_runtime_docker_label_flags always populates with 5 elements):
+    # bash 3.2 treats a zero-element array as unset under "set -u" -- see
+    # dx_runtime_docker_exec's own module comment above for the full
+    # reasoning and bin/lib/dx-runtime-apple.sh's container_create for the
+    # same fix on the Apple side.
     dx_runtime_docker_ssh_exec "$bin" create --name "$name" --entrypoint sh \
-        "${flags[@]}" "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}" \
-        "$image" -c "$entrypoint_cmd" -- "${entrypoint_args[@]}"
+        "${flags[@]+"${flags[@]}"}" "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}" \
+        "$image" -c "$entrypoint_cmd" -- "${entrypoint_args[@]+"${entrypoint_args[@]}"}"
 }
 
 dx_runtime_docker_container_start() {

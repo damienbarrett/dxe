@@ -11,7 +11,17 @@ done
 assert_file_contains_literal "$SYSTEM" 'mkdir -p /run /var/run/sshd' "bootstrap creates sshd runtime directories"
 assert_file_contains_literal "$SYSTEM" 'DX_PUB_KEY' "authorized keys are configurable"
 assert_file_contains_literal "$SYSTEM" 'dx ALL=(ALL) NOPASSWD:ALL' "passwordless sudo is preserved for dx"
-assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '127.0.0.1:$DX_SSH_PORT:2222' "host SSH forwarding is loopback-only"
+# Branch 11 / Phase 5 (qnap-dxe-plan.md DQ5): the guest SSH publish spec
+# itself carries no bind address any more -- each runtime adapter prepends
+# its own (Apple a fixed 127.0.0.1 literal, so host forwarding really is
+# still loopback-only there; docker-ssh the NAS's own discovered Tailscale
+# address, so it is emphatically NOT loopback-only for that runtime, which
+# is the entire point of this phase). The Apple-side byte-for-byte proof
+# lives in tests/test_runtime_boundary_characterisation.sh; this checks
+# only that bin/dx-create-container itself never hardcodes a bind address
+# in the --publish VALUE it passes (a prose comment nearby is allowed to
+# mention 127.0.0.1 -- it names what the Apple ADAPTER does elsewhere).
+assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '--publish "$DX_SSH_PORT:2222"' "guest SSH publish spec carries no bind address (each runtime adapter supplies its own)"
 
 # The guest's host identity is persisted on the dx-persist volume rather than
 # regenerated onto the ephemeral rootfs each boot. Behavior for restore, the

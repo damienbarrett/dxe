@@ -531,8 +531,17 @@ esac
         source "$BASE_DIR/bin/lib/dx-runtime.sh"
         source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
         export PATH="$fake_dir:$PATH"
-        DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+        DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dxe-fixture-endpoint-proof
+        # shellcheck disable=SC2034
+        # Read by dx_ssh_common_options (bin/lib/dx-ssh-common.sh), a
+        # function in a separately sourced file ShellCheck cannot trace
+        # into -- these are genuinely consumed, dynamically, by the call
+        # below (via dx_ssh_run_guest_command).
         DX_SSH_KEY="$fake_dir/ssh-key" DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=15
+        # shellcheck disable=SC2034
+        # Read by dx_runtime_docker_host_identity (bin/lib/dx-runtime-docker.sh)
+        # to skip a real ssh round trip -- genuinely consumed, dynamically.
+        DXE_RUNTIME_DOCKER_DAEMON_ID=fixturedaemonid
         unset DXE_RUNTIME_GUEST_SSH_ADDRESS
         dx_ssh_run_guest_command "true" >/dev/null 2>&1
     )

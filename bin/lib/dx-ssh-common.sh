@@ -15,14 +15,22 @@ dx_ssh_endpoint() { printf '%s\n' "dx@$(dx_runtime_guest_ssh_address)"; }
 # 4): a real, persistent, per-profile file, never /dev/null -- so the
 # guest's own SSH host identity is verified normally after first contact,
 # unlike Apple's disposable, constantly-recreated local guest (pinning
-# that would be pure churn, not a real guarantee). Reuses
-# dx_runtime_docker_profile_id's existing <DX_REMOTE_HOST>__<DX_CONTAINER_NAME>
-# identity -- the same segment Phase 2 item 7 already uses to scope
-# tunnel/mount/backup local state -- rather than a new naming scheme. The
-# file itself is never created here: ssh's own accept-new behaviour
-# creates (and appends to) it on first contact; only the parent directory
-# is prepared, and only for docker-ssh (Apple never calls this).
-dx_ssh_known_hosts_dir() { printf '%s/dxe/%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}" "$(dx_runtime_docker_profile_id)"; }
+# that would be pure churn, not a real guarantee). Scoped by
+# $DX_CONTAINER_NAME plus dx_runtime_host_identity's own value (colons
+# replaced, since a raw identity string is not a safe path segment) --
+# the SAME dispatch-level op and sanitisation bin/lib/dx-backup.sh's
+# dx_backup_resolve_dir already uses to scope its own per-profile
+# directory, not the docker-adapter's own dx_runtime_docker_profile_id:
+# this file is not one of the two adapters (Section 32's audit), so it
+# must never name an adapter-specific function directly. The file itself
+# is never created here: ssh's own accept-new behaviour creates (and
+# appends to) it on first contact; only the parent directory is prepared,
+# and only for docker-ssh (Apple never calls this).
+dx_ssh_known_hosts_dir() {
+    local identity
+    identity="$(dx_runtime_host_identity)"
+    printf '%s/dxe/%s/%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}" "${DX_CONTAINER_NAME:?}" "${identity//:/_}"
+}
 dx_ssh_known_hosts_path() { printf '%s/known_hosts\n' "$(dx_ssh_known_hosts_dir)"; }
 
 # Ensures the pin directory exists, is a real directory (never a symlink),

@@ -504,6 +504,29 @@ DX_SSH_PORT=2222; dx_ssh_endpoint >/dev/null; dx_bootstrap_launch_command >/dev/
     case "$err" in *"$osc"*) ;; *) exit 1 ;; esac
 )
 
+# Known-hosts pinning for docker-ssh (Branch 11 / Phase 5, item 8):
+# dx_ssh_common_options's docker-ssh branch, and the three pin-directory
+# helpers it calls (dx_ssh_known_hosts_dir/_path/_prepare), which nothing
+# above exercises -- that whole block runs under DX_RUNTIME=apple.
+# DXE_RUNTIME_DOCKER_DAEMON_ID is pre-seeded so dx_runtime_host_identity
+# resolves without any real ssh round trip.
+(
+    home_dir="$fixture/known-hosts-home"
+    mkdir -p "$home_dir"
+    HOME="$home_dir"
+    unset XDG_STATE_HOME
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dxe-coverage
+    DXE_RUNTIME_DOCKER_DAEMON_ID=coveragefixture
+    DX_SSH_KEY="$fixture/ssh-common-key2"; : > "$DX_SSH_KEY"
+    DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=1
+    out="$(dx_ssh_common_options)"
+    printf '%s\n' "$out" | stdin_matches -xF 'StrictHostKeyChecking=accept-new'
+    printf '%s\n' "$out" | stdin_matches -F -- '/known_hosts'
+    ! printf '%s\n' "$out" | stdin_matches -xF 'UserKnownHostsFile=/dev/null'
+    [ -d "$(dx_ssh_known_hosts_dir)" ]
+    [ "$(dx_path_mode "$(dx_ssh_known_hosts_dir)")" = 700 ]
+)
+
 # Remaining mount codec error and escape paths.
 for encoded in "\$'a\\ab'" "\$'a\\bb'" "\$'a\\nb'" "\$'a\\rb'" "\$'a\\tb'" "\$'a\\eb'" "\$'a\\Eb'" "\$'a\\fb'" "\$'a\\vb'" "\$'a\\\\b'" "\$'a\\\"b'" "\$'a\\'b'"; do dx_mount_legacy_decode_value "$encoded" >/dev/null; done
 (
