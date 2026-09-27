@@ -199,8 +199,31 @@ dx_pbs_stat_mtime() {
 # (keeps it) avoids duplicating the deny-list a third time, and keeps every
 # caller's `done < <(...)` a single line -- a multi-line quoted/command-
 # substitution argument only registers a coverage hit on its first line.
+#
+# $3, if given, is a file listing OTHER discovered repositories nested
+# inside $1 (one absolute path per line, from dx_pbs_nested_repos_for):
+# each is pruned as its own boundary too, in BOTH branches. Without this, a
+# repo containing another independent repo as a plain subdirectory (not a
+# submodule -- found live, 2026-09-27: git/shopping/scraper nested inside
+# git/shopping) would have its content walked twice: once here (as plain
+# files, or as .git contents in keep-git mode) and again by the nested
+# repo's own, separate dx_pbs_emit_repo pass -- producing a duplicate path
+# in the listing (which broke the guest's tar: a repeated path is
+# indistinguishable from a hardlink to itself). The nested repo's own pass
+# is the sole, correct source for its content either way (its own
+# safe/whole-repo status, evaluated independently).
 dx_pbs_walk_repo_files() {
-    local dir="$1" keep_git="${2:-}"
+    local dir="$1" keep_git="${2:-}" nested_file="${3:-}"
+    local -a nested_prune=()
+    if [ -n "$nested_file" ] && [ -s "$nested_file" ]; then
+        local nrepo
+        while IFS= read -r nrepo; do
+            [ -n "$nrepo" ] || continue
+            case "$nrepo" in
+                "$dir"/*) nested_prune+=(-o -path "./${nrepo#"$dir"/}") ;;
+            esac
+        done < "$nested_file"
+    fi
     ( cd "$dir" 2>/dev/null || exit 0
       if [ "$keep_git" = keep-git ]; then
           find . \( \
@@ -209,6 +232,7 @@ dx_pbs_walk_repo_files() {
                 -name .cache -o -name dist -o -name build -o -name .venv -o \
                 -name .tox -o -name .pytest_cache -o -name .mypy_cache -o \
                 -name .pnpm-store -o -name '.Trash-*' -o -name .tmp \
+                "${nested_prune[@]+"${nested_prune[@]}"}" \
             \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
       else
           find . \( -name .git -o \( \
@@ -217,9 +241,26 @@ dx_pbs_walk_repo_files() {
                 -name .cache -o -name dist -o -name build -o -name .venv -o \
                 -name .tox -o -name .pytest_cache -o -name .mypy_cache -o \
                 -name .pnpm-store -o -name '.Trash-*' -o -name .tmp \
+                "${nested_prune[@]+"${nested_prune[@]}"}" \
             \) \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
       fi | while IFS= read -r -d '' entry; do printf '%s\0' "${entry#./}"; done
     )
+}
+
+# Write (to $3), one absolute path per line, every OTHER repository in
+# REPOS_FILE $2 that is strictly nested inside repo $1 (a proper
+# descendant, never $1 itself). Used to make dx_pbs_walk_repo_files prune
+# at every nested repository's boundary, so its content is handled exactly
+# once, by its own pass.
+dx_pbs_nested_repos_for() {
+    local repo="$1" repos_file="$2" outfile="$3" other
+    : > "$outfile"
+    while IFS= read -r other; do
+        [ -n "$other" ] || continue
+        case "$other" in
+            "$repo"/*) printf '%s\n' "$other" >> "$outfile" ;;
+        esac
+    done < "$repos_file"
 }
 
 # Emit one TSV listing line per newline-delimited relative path in list-file
@@ -250,9 +291,9 @@ dx_pbs_emit_found_list() {
 # is always "whole-repo" here: the entire repo is at risk, not just a subset
 # of its files).
 dx_pbs_emit_repo_whole() {
-    local repo="$1" relroot="$2" reason_mode="${3:-}" list_file
+    local repo="$1" relroot="$2" reason_mode="${3:-}" nested_file="${4:-}" list_file
     list_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-whole.XXXXXX")" || return 1
-    dx_pbs_walk_repo_files "$repo" keep-git | while IFS= read -r -d '' entry; do printf '%s\n' "$entry"; done > "$list_file"
+    dx_pbs_walk_repo_files "$repo" keep-git "$nested_file" | while IFS= read -r -d '' entry; do printf '%s\n' "$entry"; done > "$list_file"
     if [ -n "$reason_mode" ]; then
         dx_pbs_emit_found_list "$repo" "$relroot" "$list_file" whole-repo
     else
@@ -277,12 +318,12 @@ dx_pbs_emit_repo_whole() {
 # dx_pbs_sha256_stdin's own comment), and a per-file subprocess for
 # classification would double this function's already-per-file hashing cost.
 dx_pbs_emit_repo_safe() {
-    local repo="$1" relroot="$2" reason_mode="${3:-}"
+    local repo="$1" relroot="$2" reason_mode="${3:-}" nested_file="${4:-}"
     local clean_set found_file delta_set ignored_set ik_set mu_set
     clean_set="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-clean.XXXXXX")" || return 1
     dx_pbs_repo_clean_set "$repo" "$clean_set"
     found_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-found.XXXXXX")" || { rm -f "$clean_set"; return 1; }
-    dx_pbs_walk_repo_files "$repo" | while IFS= read -r -d '' entry; do printf '%s\n' "$entry"; done | LC_ALL=C sort > "$found_file"
+    dx_pbs_walk_repo_files "$repo" "" "$nested_file" | while IFS= read -r -d '' entry; do printf '%s\n' "$entry"; done | LC_ALL=C sort > "$found_file"
     delta_set="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-delta.XXXXXX")" || { rm -f "$clean_set" "$found_file"; return 1; }
     comm -23 "$found_file" "$clean_set" > "$delta_set"
 
@@ -310,12 +351,17 @@ dx_pbs_emit_repo_safe() {
 # command) does not give kcov anything to register a hit against on the
 # line shared with `done`, the same class of issue as an empty case arm.
 dx_pbs_emit_repo() {
-    local repo="$1" relroot="$2" reason_mode="${3:-}"
-    if dx_pbs_repo_at_risk_whole "$repo"; then
-        dx_pbs_emit_repo_whole "$repo" "$relroot" "$reason_mode"
-    else
-        dx_pbs_emit_repo_safe "$repo" "$relroot" "$reason_mode"
+    local repo="$1" relroot="$2" reason_mode="${3:-}" repos_file="${4:-}" nested_file=""
+    if [ -n "$repos_file" ]; then
+        nested_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-nested.XXXXXX")" || return 1
+        dx_pbs_nested_repos_for "$repo" "$repos_file" "$nested_file"
     fi
+    if dx_pbs_repo_at_risk_whole "$repo"; then
+        dx_pbs_emit_repo_whole "$repo" "$relroot" "$reason_mode" "$nested_file"
+    else
+        dx_pbs_emit_repo_safe "$repo" "$relroot" "$reason_mode" "$nested_file"
+    fi
+    [ -z "$nested_file" ] || rm -f "$nested_file"
 }
 
 # ---------------------------------------------------------------------------
@@ -349,7 +395,7 @@ dx_pbs_list_driver() {
         [ -n "$repo" ] || continue
         relroot="${repo#"$root"/}"
         [ "$relroot" != "$repo" ] || relroot="."
-        dx_pbs_emit_repo "$repo" "$relroot" "$reason_mode"; done < "$repos_file"
+        dx_pbs_emit_repo "$repo" "$relroot" "$reason_mode" "$repos_file"; done < "$repos_file"
 
     rm -f "$repos_file"
     echo "Selector summary: ${special_count:-0} special file(s) (socket/fifo/device) skipped." >&2

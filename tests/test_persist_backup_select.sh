@@ -66,6 +66,42 @@ printf 'clean\n' > "$FIXTURE/persist/git/repo-c/clean.txt"
 git -C "$FIXTURE/persist/git/repo-c" add -A
 git -C "$FIXTURE/persist/git/repo-c" commit -q -m "only commit, no remote"
 
+# --- Mid-task addition: a NESTED git repository (a plain subdirectory
+# containing its own .git, not a submodule) inside an at-risk-whole outer
+# repo -- found live on the primary guest, 2026-09-27
+# (git/shopping/scraper nested inside git/shopping, both without a
+# remote): the outer whole-repo walk previously walked straight through
+# the nested repo's working tree AND its .git (keep-git mode only prunes
+# deny-listed cache names, not other repositories' boundaries), while
+# dx_pbs_find_repos ALSO discovers the nested repo independently and emits
+# it a second time via its own pass -- producing a DUPLICATE path in the
+# listing. The duplicate then made the guest's tar treat the second
+# occurrence as a hardlink to the first, which the host's tar refused
+# ("hardlink pointing to itself"). Every path must be listed exactly once,
+# whichever repo's own pass is responsible for it. ---
+git_repo "$FIXTURE/persist/git/repo-outer"
+printf 'outer file\n' > "$FIXTURE/persist/git/repo-outer/outer.txt"
+git -C "$FIXTURE/persist/git/repo-outer" add -A
+git -C "$FIXTURE/persist/git/repo-outer" commit -q -m "outer, no remote"
+git_repo "$FIXTURE/persist/git/repo-outer/nested"
+printf 'nested file\n' > "$FIXTURE/persist/git/repo-outer/nested/inner.txt"
+git -C "$FIXTURE/persist/git/repo-outer/nested" add -A
+git -C "$FIXTURE/persist/git/repo-outer/nested" commit -q -m "nested, no remote either"
+
+# --- A SECOND nested case: the nested repo is itself SAFE (pushed,
+# clean) -- proves the fix does not just avoid a duplicate, but also
+# stops the outer whole-repo walk from over-including a nested safe
+# repo's clean, already-pushed content (which it previously did, since
+# the outer walk has no way to know the nested repo's OWN git status;
+# only the nested repo's own independent pass does). ---
+git init -q --bare "$FIXTURE/remotes/repo-nested-safe.git"
+git_repo "$FIXTURE/persist/git/repo-outer/nested-safe"
+printf 'nested safe, clean\n' > "$FIXTURE/persist/git/repo-outer/nested-safe/clean.txt"
+git -C "$FIXTURE/persist/git/repo-outer/nested-safe" add -A
+git -C "$FIXTURE/persist/git/repo-outer/nested-safe" commit -q -m "nested, pushed and clean"
+git -C "$FIXTURE/persist/git/repo-outer/nested-safe" remote add origin "$FIXTURE/remotes/repo-nested-safe.git"
+git -C "$FIXTURE/persist/git/repo-outer/nested-safe" push -q origin main
+
 # --- Loose file outside any repository. ---
 mkdir -p "$FIXTURE/persist/home/dx"
 printf 'history\n' > "$FIXTURE/persist/home/dx/.bash_history"
@@ -225,6 +261,17 @@ DX_PBS_EXTRA_DENY=""
 if dx_pbs_repo_at_risk_whole "$FIXTURE/persist/git/repo-a"; then test_fail "repo-a (pushed, clean HEAD) is not at-risk as a whole"; else test_pass "repo-a (pushed, clean HEAD) is not at-risk as a whole"; fi
 if dx_pbs_repo_at_risk_whole "$FIXTURE/persist/git/repo-b"; then test_pass "repo-b (unpushed commit) is at-risk as a whole"; else test_fail "repo-b (unpushed commit) is at-risk as a whole"; fi
 if dx_pbs_repo_at_risk_whole "$FIXTURE/persist/git/repo-c"; then test_pass "repo-c (no remote) is at-risk as a whole"; else test_fail "repo-c (no remote) is at-risk as a whole"; fi
+
+# --- Nested repository (mid-task addition): every path is listed exactly
+# once, never duplicated between the outer's and the nested repo's own
+# passes. ---
+nested_inner_count="$(grep -c -F "$(printf 'git/repo-outer/nested/inner.txt\t')" "$listing_file")"
+if [ "$nested_inner_count" -eq 1 ]; then test_pass "a nested repository's file is listed exactly once (not duplicated by the outer whole-repo walk)"; else test_fail "a nested repository's file is listed exactly once (got $nested_inner_count occurrences)"; fi
+nested_git_count="$(grep -c -F "$(printf 'git/repo-outer/nested/.git/HEAD\t')" "$listing_file")"
+if [ "$nested_git_count" -eq 1 ]; then test_pass "a nested repository's own .git is captured exactly once (its own unpushed history survives)"; else test_fail "a nested repository's own .git is captured exactly once (got $nested_git_count occurrences)"; fi
+outer_own_count="$(grep -c -F "$(printf 'git/repo-outer/outer.txt\t')" "$listing_file")"
+if [ "$outer_own_count" -eq 1 ]; then test_pass "the outer repo's own file (outside the nested repo) is still listed exactly once"; else test_fail "the outer repo's own file is listed exactly once (got $outer_own_count occurrences)"; fi
+assert_not_listed "git/repo-outer/nested-safe/clean.txt" "a nested repo's own clean, pushed file is excluded (handled by its own pass, not swept in by the outer's blind whole-repo walk)"
 
 # --- --hash-paths mode (dx-restore's conflict-check probe). ---
 hash_out="$FIXTURE/hash-out.tsv"
