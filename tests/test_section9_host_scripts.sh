@@ -510,6 +510,15 @@ fi
 # dial, logged but never evaluated -- evaluating a real "bash -l -c" locally
 # would source this host's own shell profile, which is not what this test
 # is about) --------------------------------------------------------------
+#
+# This block drives dx_ssh_run_guest_command -> dx_ssh_common_options ->
+# dx_ssh_known_hosts_prepare under DX_RUNTIME=docker-ssh, which creates a
+# pin directory under "${XDG_STATE_HOME:-$HOME/.local/state}/dxe" -- so the
+# inner fixture subshell gets its OWN HOME (never the real one) before it
+# gets anywhere near that call, and the snapshot below (taken in THIS
+# outer, unisolated shell) proves nothing landed under the real directory
+# regardless.
+endpoint_proof_real_state_before="$(dx_real_ssh_known_hosts_snapshot)"
 (
     fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
     fake_tool_write "$fake_dir" tailscale 'case "$*" in "ip -4") printf "%s.%s.%s.%s\n" 100 64 4 4 ;; *) exit 99 ;; esac'
@@ -531,6 +540,9 @@ esac
         source "$BASE_DIR/bin/lib/dx-runtime.sh"
         source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
         export PATH="$fake_dir:$PATH"
+        endpoint_proof_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-endpoint-proof-home.XXXXXX")"
+        export HOME="$endpoint_proof_home"
+        unset XDG_STATE_HOME
         DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dxe-fixture-endpoint-proof
         # shellcheck disable=SC2034
         # Read by dx_ssh_common_options (bin/lib/dx-ssh-common.sh), a
@@ -547,10 +559,12 @@ esac
     )
     grep -qx "dx@$(printf '%s.%s.%s.%s' 100 64 4 4)" "$fake_dir/argv"
 )
-if [ "$?" -eq 0 ]; then
-    test_pass "dx_ssh_run_guest_command (docker-ssh) dials dx@<discovered Tailscale address>, never dx@127.0.0.1"
+endpoint_proof_rc=$?
+endpoint_proof_real_state_after="$(dx_real_ssh_known_hosts_snapshot)"
+if [ "$endpoint_proof_rc" -eq 0 ] && [ "$endpoint_proof_real_state_before" = "$endpoint_proof_real_state_after" ]; then
+    test_pass "dx_ssh_run_guest_command (docker-ssh) dials dx@<discovered Tailscale address>, never dx@127.0.0.1, and never writes under the real SSH known-hosts state directory"
 else
-    test_fail "dx_ssh_run_guest_command (docker-ssh) dials dx@<discovered Tailscale address>, never dx@127.0.0.1"
+    test_fail "dx_ssh_run_guest_command (docker-ssh) dials dx@<discovered Tailscale address>, never dx@127.0.0.1, and never writes under the real SSH known-hosts state directory"
 fi
 
 # --- SIGPIPE contract: a match must survive `set -o pipefail` ---

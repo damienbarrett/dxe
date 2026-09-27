@@ -509,7 +509,14 @@ DX_SSH_PORT=2222; dx_ssh_endpoint >/dev/null; dx_bootstrap_launch_command >/dev/
 # helpers it calls (dx_ssh_known_hosts_dir/_path/_prepare), which nothing
 # above exercises -- that whole block runs under DX_RUNTIME=apple.
 # DXE_RUNTIME_DOCKER_DAEMON_ID is pre-seeded so dx_runtime_host_identity
-# resolves without any real ssh round trip.
+# resolves without any real ssh round trip. HOME is isolated to a fixture
+# below before dx_ssh_common_options ever runs; the snapshot, taken with
+# this script's own ambient, unisolated HOME (this file never overrides
+# HOME at top level), proves that isolation held rather than just trusting
+# it -- this script requires the disposable coverage environment
+# (DXE_COVERAGE_ISOLATED=1, checked above) but the check costs nothing and
+# catches a regression here the same way it does in the unit-test files.
+known_hosts_coverage_real_state_before="$(find "${XDG_STATE_HOME:-$HOME/.local/state}/dxe" -mindepth 1 2>/dev/null | sort)"
 (
     home_dir="$fixture/known-hosts-home"
     mkdir -p "$home_dir"
@@ -526,6 +533,8 @@ DX_SSH_PORT=2222; dx_ssh_endpoint >/dev/null; dx_bootstrap_launch_command >/dev/
     [ -d "$(dx_ssh_known_hosts_dir)" ]
     [ "$(dx_path_mode "$(dx_ssh_known_hosts_dir)")" = 700 ]
 )
+known_hosts_coverage_real_state_after="$(find "${XDG_STATE_HOME:-$HOME/.local/state}/dxe" -mindepth 1 2>/dev/null | sort)"
+[ "$known_hosts_coverage_real_state_before" = "$known_hosts_coverage_real_state_after" ]
 
 # Remaining mount codec error and escape paths.
 for encoded in "\$'a\\ab'" "\$'a\\bb'" "\$'a\\nb'" "\$'a\\rb'" "\$'a\\tb'" "\$'a\\eb'" "\$'a\\Eb'" "\$'a\\fb'" "\$'a\\vb'" "\$'a\\\\b'" "\$'a\\\"b'" "\$'a\\'b'"; do dx_mount_legacy_decode_value "$encoded" >/dev/null; done

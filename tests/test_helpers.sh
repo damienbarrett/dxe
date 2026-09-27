@@ -31,6 +31,24 @@ file_mode() {
     stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
 }
 
+# A listing of every path under the REAL SSH known-hosts pin tree
+# (dx_ssh_known_hosts_dir in bin/lib/dx-ssh-common.sh writes under
+# "${XDG_STATE_HOME:-$HOME/.local/state}/dxe"), computed with THIS SHELL's
+# own ambient HOME/XDG_STATE_HOME -- never call this from inside a subshell
+# that has already overridden either variable to a fixture, or it silently
+# snapshots the fixture instead of the real directory it exists to protect.
+#
+# Any test that drives dx_ssh_common_options/dx_ssh_known_hosts_prepare
+# under DX_RUNTIME=docker-ssh MUST isolate HOME (or XDG_STATE_HOME) to its
+# own fixture before doing so, AND call this helper once in the outer,
+# unisolated shell before and once after, asserting the two listings are
+# identical -- a fixture that fails to isolate still writes somewhere, and
+# without this check it silently lands in the real directory instead of
+# failing the test (exactly the incident this helper exists to catch).
+dx_real_ssh_known_hosts_snapshot() {
+    find "${XDG_STATE_HOME:-$HOME/.local/state}/dxe" -mindepth 1 2>/dev/null | sort
+}
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

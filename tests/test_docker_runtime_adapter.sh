@@ -620,7 +620,11 @@ esac'
 # is pre-seeded so dx_runtime_host_identity (the dispatch-level op
 # dx_ssh_known_hosts_dir scopes by -- never the docker adapter's own
 # dx_runtime_docker_profile_id directly, per Section 32's boundary audit)
-# resolves without any real ssh/docker round trip.
+# resolves without any real ssh/docker round trip. HOME is isolated to a
+# fixture below before dx_ssh_common_options ever runs; the snapshot,
+# taken in THIS outer, unisolated shell, proves that isolation actually
+# held rather than just trusting it.
+known_hosts_render_real_state_before="$(dx_real_ssh_known_hosts_snapshot)"
 (
     home_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts.XXXXXX")"
     unset XDG_STATE_HOME
@@ -640,10 +644,16 @@ esac'
         && [ -d "$expected_dir" ] \
         && [ "$(dx_path_mode "$expected_dir")" = 700 ]
 )
-[ "$?" -eq 0 ] && test_pass "dx_ssh_common_options (docker-ssh): accept-new, the per-profile known_hosts path, never /dev/null, directory 0700" \
-    || test_fail "dx_ssh_common_options (docker-ssh): accept-new, the per-profile known_hosts path, never /dev/null, directory 0700"
+known_hosts_render_rc=$?
+known_hosts_render_real_state_after="$(dx_real_ssh_known_hosts_snapshot)"
+if [ "$known_hosts_render_rc" -eq 0 ] && [ "$known_hosts_render_real_state_before" = "$known_hosts_render_real_state_after" ]; then
+    test_pass "dx_ssh_common_options (docker-ssh): accept-new, the per-profile known_hosts path, never /dev/null, directory 0700, never the real state directory"
+else
+    test_fail "dx_ssh_common_options (docker-ssh): accept-new, the per-profile known_hosts path, never /dev/null, directory 0700, never the real state directory"
+fi
 
 # Refuses a symlinked pin directory rather than following it.
+known_hosts_symlink_real_state_before="$(dx_real_ssh_known_hosts_snapshot)"
 (
     home_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts-symlink.XXXXXX")"
     unset XDG_STATE_HOME
@@ -661,8 +671,13 @@ esac'
     out="$(dx_ssh_common_options 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "refusing symlinked SSH known-hosts directory"
 )
-[ "$?" -eq 0 ] && test_pass "dx_ssh_common_options (docker-ssh): refuses a symlinked known-hosts pin directory" \
-    || test_fail "dx_ssh_common_options (docker-ssh): refuses a symlinked known-hosts pin directory"
+known_hosts_symlink_rc=$?
+known_hosts_symlink_real_state_after="$(dx_real_ssh_known_hosts_snapshot)"
+if [ "$known_hosts_symlink_rc" -eq 0 ] && [ "$known_hosts_symlink_real_state_before" = "$known_hosts_symlink_real_state_after" ]; then
+    test_pass "dx_ssh_common_options (docker-ssh): refuses a symlinked known-hosts pin directory, never touching the real state directory"
+else
+    test_fail "dx_ssh_common_options (docker-ssh): refuses a symlinked known-hosts pin directory, never touching the real state directory"
+fi
 
 # --- Runtime capability queries (DQ2/DQ3/DQ4/DQ8) --------------------------
 (
