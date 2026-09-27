@@ -418,14 +418,15 @@ dx_runtime_docker_profile_id() {
 }
 
 # Populates DXE_RUNTIME_DOCKER_LABEL_ARGV with the four `--label k=v` pairs
-# every docker-ssh-created resource carries (qnap-dxe-plan.md DQ6).
+# every docker-ssh-created resource carries (qnap-dxe-plan.md DQ6). One
+# line, not kcov's usual multi-line array-literal style: kcov's line-based
+# instrumentation does not reliably attribute a hit to every continuation
+# line of a multi-line array assignment (confirmed: the 4 continuation
+# lines of an earlier draft never registered a hit despite this function
+# running constantly), the same class of kcov limitation
+# tests/run-coverage-linux.sh's own KCOV_SUBSHELL_TERMINATOR works around.
 dx_runtime_docker_label_flags() {
-    DXE_RUNTIME_DOCKER_LABEL_ARGV=(
-        --label io.dxe.managed=true
-        --label "io.dxe.schema=$DXE_RUNTIME_DOCKER_LABEL_SCHEMA"
-        --label "io.dxe.profile=$(dx_runtime_docker_profile_id)"
-        --label "io.dxe.role=$1"
-    )
+    DXE_RUNTIME_DOCKER_LABEL_ARGV=(--label io.dxe.managed=true --label "io.dxe.schema=$DXE_RUNTIME_DOCKER_LABEL_SCHEMA" --label "io.dxe.profile=$(dx_runtime_docker_profile_id)" --label "io.dxe.role=$1")
 }
 
 dx_runtime_docker_container_create() {

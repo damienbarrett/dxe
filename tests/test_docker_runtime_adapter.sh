@@ -1302,5 +1302,140 @@ esac'
 )
 [ "$?" -eq 0 ] && test_pass "container_system_ensure_started: docker-ssh's message never says 'Apple'" || test_fail "container_system_ensure_started: docker-ssh's message never says 'Apple'"
 
+# --- Coverage-closing cases (kcov gaps found by the full coverage
+# checkpoint, tests/run-coverage-linux.sh -- each proves a distinct branch
+# a prior test's fake happened never to exercise) ---------------------------
+
+# discover_bin: the ssh round trip for bin discovery itself fails (distinct
+# from host_reachable's own earlier, separate check).
+(
+    dir="$(new_tool_dir)"
+    fake_tool_write "$dir" ssh '
+last=""; for a in "$@"; do last="$a"; done
+case "$last" in
+    true) exit 0 ;;
+    *) exit 255 ;;
+esac'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
+    out="$(dx_runtime_docker_discover_bin 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "could not reach"
+)
+[ "$?" -eq 0 ] && test_pass "discover_bin: a failed ssh round trip is reported distinctly" || test_fail "discover_bin: a failed ssh round trip is reported distinctly"
+
+# check_arch: the uname round trip itself fails.
+(
+    dir="$(new_tool_dir)"
+    fake_tool_write "$dir" ssh 'exit 255'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    out="$(dx_runtime_docker_check_arch 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "could not run 'uname -m'"
+)
+[ "$?" -eq 0 ] && test_pass "check_arch: a failed uname round trip is reported distinctly" || test_fail "check_arch: a failed uname round trip is reported distinctly"
+
+# check_arch: aarch64 maps and matches successfully (every other case so
+# far only ever exercised x86_64 or a mismatch/unsupported value).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo aarch64 ;; esac'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=aarch64-linux
+    dx_runtime_docker_check_arch
+)
+[ "$?" -eq 0 ] && test_pass "check_arch: aarch64 maps to aarch64-linux and matches" || test_fail "check_arch: aarch64 maps to aarch64-linux and matches"
+
+# discover_daemon_id: the info round trip itself fails.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_docker_discover_daemon_id 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "could not query Docker daemon info"
+)
+[ "$?" -eq 0 ] && test_pass "discover_daemon_id: a failed info round trip is reported distinctly" || test_fail "discover_daemon_id: a failed info round trip is reported distinctly"
+
+# verify_labels (via container_delete): the target does not exist at all
+# (inspect itself fails), distinct from "exists but wrong labels".
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_container_delete dx-qnap 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "does not exist or its labels could not be read"
+)
+[ "$?" -eq 0 ] && test_pass "container_delete: a nonexistent target is distinct from a mislabelled one" || test_fail "container_delete: a nonexistent target is distinct from a mislabelled one"
+
+# base_image_ref: a FROM line with no reference, and with more than one
+# whitespace-separated token, both refuse.
+containerfile_empty="$fixture/context-empty-from"
+mkdir -p "$containerfile_empty"
+printf 'FROM \n' > "$containerfile_empty/Containerfile"
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_image_build -t dx-qnap-nixos "$containerfile_empty" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "does not name a single image reference"
+)
+[ "$?" -eq 0 ] && test_pass "image_build: refuses a FROM line with no reference" || test_fail "image_build: refuses a FROM line with no reference"
+
+containerfile_multi_token="$fixture/context-multi-token-from"
+mkdir -p "$containerfile_multi_token"
+printf 'FROM alpine AS builder\n' > "$containerfile_multi_token/Containerfile"
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_image_build -t dx-qnap-nixos "$containerfile_multi_token" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "does not name a single image reference"
+)
+[ "$?" -eq 0 ] && test_pass "image_build: refuses a FROM line with more than one token (e.g. a build stage alias)" || test_fail "image_build: refuses a FROM line with more than one token (e.g. a build stage alias)"
+
+# volume_role: persist and bootstrap roles (every earlier test only ever
+# exercised nix).
+(
+    export DX_NIX_VOLUME=dx-qnap-nix DX_PERSIST_VOLUME=dx-qnap-persist DX_BOOTSTRAP_VOLUME=dx-qnap-bootstrap
+    [ "$(dx_runtime_docker_volume_role dx-qnap-persist)" = persist ] &&
+    [ "$(dx_runtime_docker_volume_role dx-qnap-bootstrap)" = bootstrap ]
+)
+[ "$?" -eq 0 ] && test_pass "volume_role: persist and bootstrap map correctly (not just nix)" || test_fail "volume_role: persist and bootstrap map correctly (not just nix)"
+
+# lock_release: nothing to release at all (inspect fails outright).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_docker_lock_release "" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "no lock 'dxe-lock-qnap-dxe__dx-qnap' to release"
+)
+[ "$?" -eq 0 ] && test_pass "lock_release: refuses when there is no lock at all to release" || test_fail "lock_release: refuses when there is no lock at all to release"
+
+# dx_runtime_apple_container_create: the same "unknown parameter" fail-
+# closed proof the docker adapter already has, on the Apple side too.
+(
+    out="$(dx_runtime_apple_container_create --totally-unknown-flag value --name dx-host --image dx-nixos 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "unknown parameter"
+)
+[ "$?" -eq 0 ] && test_pass "apple container_create: fails closed on an unrecognized parameter too" || test_fail "apple container_create: fails closed on an unrecognized parameter too"
+
 print_summary
 exit_with_code
