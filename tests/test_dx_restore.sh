@@ -31,7 +31,9 @@ if [ "${1:-}" = exec ]; then
     shift
     args=()
     for a in "$@"; do
-        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :; # a real guest'"'"'s tar is always GNU tar, which supports this; this test host'"'"'s own bsdtar (standing in for it here, used to seed a mirror via a real dx-backup run) does not, so it is stripped before the real local exec.
+        else args+=("$a"); fi
     done
     exec "${args[@]}"
 fi
@@ -184,7 +186,9 @@ if [ "${1:-}" = exec ]; then
     } >> "$LOG"
     args=()
     for a in "$@"; do
-        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :; # a real guest'"'"'s tar is always GNU tar, which supports this; this test host'"'"'s own bsdtar (standing in for it here, used to seed a mirror via a real dx-backup run) does not, so it is stripped before the real local exec.
+        else args+=("$a"); fi
     done
     exec "${args[@]}"
 fi
@@ -243,7 +247,9 @@ if [ "${1:-}" = exec ]; then
     if [ "${1:-}" = sh ]; then exit 42; fi
     args=()
     for a in "$@"; do
-        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :; # a real guest'"'"'s tar is always GNU tar, which supports this; this test host'"'"'s own bsdtar (standing in for it here, used to seed a mirror via a real dx-backup run) does not, so it is stripped before the real local exec.
+        else args+=("$a"); fi
     done
     exec "${args[@]}"
 fi

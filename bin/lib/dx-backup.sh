@@ -225,7 +225,19 @@ dx_backup_fetch_paths() {
     cut -f1 "$fetch_lines" | tr '\n' '\0' > "$host_list"
 
     if guest_list="$(dx_backup_ship_list_to_guest "$container_name" "$host_list")"; then
-        if dx_runtime_exec -u dx "$container_name" tar -C "$DX_BACKUP_GUEST_ROOT" --exclude '._*' --null -T "$guest_list" -cf - </dev/null \
+        # --hard-dereference: a duplicate path in $fetch_lines (found live on
+        # the primary guest, 2026-09-27: a nested git repository selected
+        # twice, once by its own pass and once by an outer whole-repo walk
+        # that did not yet prune at its boundary -- fixed at the selector
+        # level too, see dx-persist-backup-select.sh) is otherwise the same
+        # (device, inode) archived twice, which GNU tar treats exactly like a
+        # real hardlink: it emits the second occurrence as a hardlink record
+        # pointing at the first, which is indistinguishable from "a hardlink
+        # to itself" once the path is identical -- and the host's tar refuses
+        # to extract that. --hard-dereference makes every occurrence a full,
+        # independent regular-file copy instead, so a duplicate can never
+        # produce a self-referential hardlink record.
+        if dx_runtime_exec -u dx "$container_name" tar -C "$DX_BACKUP_GUEST_ROOT" --exclude '._*' --hard-dereference --null -T "$guest_list" -cf - </dev/null \
             | tar -xf - -C "$backup_dir/current"; then
             rc=0
         else

@@ -14,6 +14,14 @@ source "$SCRIPT_DIR/test_helpers.sh"
 source "$SCRIPT_DIR/lib/fake-tools.sh"
 # shellcheck source=../bin/lib/dx-backup.sh
 source "$BASE_DIR/bin/lib/dx-backup.sh"
+# dx_runtime_exec (mid-task addition): needed only for this file's own
+# direct, in-process call to dx_backup_fetch_paths (the duplicate-path
+# regression test below) -- every other test here drives dx-backup as an
+# external process, which sources this itself via dx-lib.sh. Safe to
+# source here too: dx-runtime.sh's own header says it defines functions
+# only, no I/O at import time.
+# shellcheck source=../bin/lib/dx-runtime.sh
+source "$BASE_DIR/bin/lib/dx-runtime.sh"
 GUEST="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
 test_section "Persist backup: dx-backup capture (fake-container boundary)"
 
@@ -40,7 +48,9 @@ if [ "${1:-}" = exec ]; then
     shift
     args=()
     for a in "$@"; do
-        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :; # a real guest'"'"'s tar is always GNU tar, which supports this; this test host'"'"'s own bsdtar (standing in for it here) does not, so it is stripped before the real local exec -- any ARG log this fake keeps is written before this filtering, so it still records that dx-backup passed it.
+        else args+=("$a"); fi
     done
     exec "${args[@]}"
 fi
@@ -143,7 +153,9 @@ if [ "${1:-}" = exec ]; then
     shift
     args=()
     for a in "$@"; do
-        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :; # a real guest'"'"'s tar is always GNU tar, which supports this; this test host'"'"'s own bsdtar (standing in for it here) does not, so it is stripped before the real local exec -- any ARG log this fake keeps is written before this filtering, so it still records that dx-backup passed it.
+        else args+=("$a"); fi
     done
     exec "${args[@]}"
 fi
@@ -207,7 +219,9 @@ if [ "${1:-}" = exec ]; then
     } >> "$LOG"
     args=()
     for a in "$@"; do
-        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :; # a real guest'"'"'s tar is always GNU tar, which supports this; this test host'"'"'s own bsdtar (standing in for it here) does not, so it is stripped before the real local exec -- any ARG log this fake keeps is written before this filtering, so it still records that dx-backup passed it.
+        else args+=("$a"); fi
     done
     exec "${args[@]}"
 fi
@@ -247,6 +261,23 @@ else
     test_fail "the archive exec has no -i and reads the list from the guest temp file, not stdin (prefix: $archive_prefix; after -T: $after_dash_t)"
 fi
 
+# --- Mid-task addition: the guest-side archive create gets
+# --hard-dereference, so a duplicate path (e.g. from a nested-repo
+# selection edge case -- see the selector-level fix) is archived as a
+# second REGULAR file, never as a hardlink record pointing at itself
+# (which crashed the host's tar live on the primary guest, 2026-09-27).
+# This only needs to prove the flag reaches the exec -- the fake container
+# strips it before really invoking this test host's own tar (a stand-in
+# for the guest's; see fake_tool_write's container definitions), because
+# this is a GNU-tar-only long option this host's bsdtar does not
+# recognize; the real guest's tar is always GNU tar (a NixOS Linux guest),
+# so no such translation happens in production. ---
+if grep -Fxq 'ARG:--hard-dereference' "$EXEC_LOG"; then
+    test_pass "the archive exec passes --hard-dereference to the guest's tar"
+else
+    test_fail "the archive exec passes --hard-dereference to the guest's tar"
+fi
+
 # The guest temp file is really removed (not just "an rm exec ran"): its
 # path, real on this test host because the fake execs for real (see this
 # file's header), no longer exists once dx-backup has finished.
@@ -255,6 +286,50 @@ if [ -n "$guest_list_path" ] && [ ! -e "$guest_list_path" ]; then
 else
     test_fail "the guest temp file is removed after a successful fetch"
 fi
+
+# --- Item 3 (mid-task addition): a duplicate path in the fetch list (e.g.
+# from a nested-repo selection edge case, before the selector-level fix
+# above) must not break the transfer, and the mirror must still end up
+# with exactly one correct entry for that path. Calls dx_backup_fetch_paths
+# directly with a hand-built fetch-lines file naming the same relpath
+# twice: a defense-in-depth regression guard, independent of whether the
+# selector itself ever produces a duplicate again.
+#
+# CHARACTERIZATION, not red->green: this already passes without
+# --hard-dereference on this test host, because bsdtar (standing in here
+# for the guest's tar -- see this file's header) only treats a repeated
+# path as a hardlink when the source's real link count is already > 1;
+# GNU tar (the actual guest's tar, always, since it is a NixOS Linux
+# guest) tracks (device, inode) pairs regardless of link count, so it DOES
+# treat the exact same regular file (nlink 1) added twice as "a second
+# hardlink" and emits a self-referential record the host's tar refuses --
+# reproduced live on the primary guest, 2026-09-27 (see this file's
+# --hard-dereference test above). That specific crash cannot be
+# reproduced under this test host's tar; this test instead pins the
+# invariant this host CAN verify (no crash, correct single mirror entry)
+# as a permanent guard, alongside the flag-presence test above which is
+# the part that is genuinely red->green here. Live re-verification on the
+# real guest is the coordinating session's, after landing. ---
+printf 'dup-content\n' > "$FIXTURE/persist/home/dx/dup-me.txt"
+dup_fetch="$FIXTURE/dup-fetch.tsv"
+printf 'home/dx/dup-me.txt\t11\t0\tdeadbeef\nhome/dx/dup-me.txt\t11\t0\tdeadbeef\n' > "$dup_fetch"
+dup_backup_dir="$FIXTURE/dup-backups/$DX_CONTAINER_NAME"
+rm -rf "$FIXTURE/dup-backups"
+set +e
+dx_backup_fetch_paths "$DX_CONTAINER_NAME" "$dup_backup_dir" "$dup_fetch"
+dup_rc=$?
+set -e
+if [ "$dup_rc" -eq 0 ]; then
+    test_pass "a duplicate path in the fetch list does not crash the archive transfer"
+else
+    test_fail "a duplicate path in the fetch list does not crash the archive transfer (rc=$dup_rc)"
+fi
+if [ "$(cat "$dup_backup_dir/current/home/dx/dup-me.txt" 2>/dev/null)" = dup-content ]; then
+    test_pass "a duplicate path in the fetch list still produces a correct single mirror entry"
+else
+    test_fail "a duplicate path in the fetch list still produces a correct single mirror entry"
+fi
+rm -f "$FIXTURE/persist/home/dx/dup-me.txt"
 
 # --- Same shape, but the archive exec fails: the guest temp file is still
 # removed (cleanup on failure, not just on success). ---
@@ -282,7 +357,9 @@ if [ "${1:-}" = exec ]; then
     esac
     args=()
     for a in "$@"; do
-        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :; # a real guest'"'"'s tar is always GNU tar, which supports this; this test host'"'"'s own bsdtar (standing in for it here) does not, so it is stripped before the real local exec -- any ARG log this fake keeps is written before this filtering, so it still records that dx-backup passed it.
+        else args+=("$a"); fi
     done
     exec "${args[@]}"
 fi
@@ -326,7 +403,9 @@ if [ "${1:-}" = exec ]; then
     if [ "${1:-}" = sh ]; then exit 42; fi
     args=()
     for a in "$@"; do
-        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :; # a real guest'"'"'s tar is always GNU tar, which supports this; this test host'"'"'s own bsdtar (standing in for it here) does not, so it is stripped before the real local exec -- any ARG log this fake keeps is written before this filtering, so it still records that dx-backup passed it.
+        else args+=("$a"); fi
     done
     exec "${args[@]}"
 fi
@@ -359,7 +438,9 @@ if [ "${1:-}" = exec ]; then
     shift
     args=()
     for a in "$@"; do
-        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :; # a real guest'"'"'s tar is always GNU tar, which supports this; this test host'"'"'s own bsdtar (standing in for it here) does not, so it is stripped before the real local exec -- any ARG log this fake keeps is written before this filtering, so it still records that dx-backup passed it.
+        else args+=("$a"); fi
     done
     exec "${args[@]}"
 fi
