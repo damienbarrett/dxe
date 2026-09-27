@@ -135,7 +135,11 @@ dx_runtime_apple_container_create() {
             --env) flags+=(-e "$2"); shift 2 ;;
             --memory) flags+=(-m "$2"); shift 2 ;;
             --cpus) flags+=(-c "$2"); shift 2 ;;
-            --publish) flags+=(-p "$2"); shift 2 ;;
+            # bin/dx-create-container passes a neutral "PORT:2222" spec, no
+            # bind address (Branch 11 / Phase 5, DQ5); Apple always prepends
+            # the fixed loopback literal itself, so today's rendered argv
+            # (-p 127.0.0.1:PORT:2222) is unaffected byte for byte.
+            --publish) flags+=(-p "127.0.0.1:$2"); shift 2 ;;
             --restart-policy) shift 2 ;;
             --entrypoint-cmd) entrypoint_cmd="$2"; shift 2 ;;
             --entrypoint-arg) entrypoint_args+=("$2"); shift 2 ;;
@@ -208,6 +212,12 @@ dx_runtime_apple_run_ephemeral() {
 # this in Phase 1 (added now, per the coordinating session's decision
 # 2026-09-27, so Phase 2's Docker-SSH adapter has a shape to fill in).
 dx_runtime_apple_host_identity() { printf '%s\n' local; }
+
+# The guest's own SSH address (Branch 11 / Phase 5, qnap-dxe-plan.md DQ5;
+# docs/refactor/remote-aware-ssh.md section 1). Apple's guest is always
+# reached over the controller's own loopback -- a fixed constant, no
+# discovery, no ssh call, mirroring dx_runtime_apple_host_identity above.
+dx_runtime_apple_guest_ssh_address() { printf '%s\n' 127.0.0.1; }
 
 # Runtime capability queries (qnap-dxe-plan.md DQ2/DQ8). No entrypoint reads
 # these in Phase 1 either (same reason as host_identity above); Apple's

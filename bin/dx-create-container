@@ -82,7 +82,12 @@ CREATE_ARGS=(
     --env "DX_GUEST_SYSTEM=$DX_GUEST_SYSTEM"
     --memory "$DX_CONTAINER_MEMORY"
     --cpus "$DX_CONTAINER_CPUS"
-    --publish "127.0.0.1:$DX_SSH_PORT:2222"
+    # No bind address: each adapter prepends its own guest SSH address
+    # (Branch 11 / Phase 5, qnap-dxe-plan.md DQ5; docs/refactor/
+    # remote-aware-ssh.md section 2) -- Apple a fixed 127.0.0.1 literal
+    # (byte-identical rendered argv), docker-ssh the NAS's discovered
+    # Tailscale address, never the LAN or 0.0.0.0.
+    --publish "$DX_SSH_PORT:2222"
     --restart-policy "$DX_CONTAINER_RESTART_POLICY"
 )
 

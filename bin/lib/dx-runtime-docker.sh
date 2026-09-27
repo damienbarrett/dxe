@@ -149,6 +149,81 @@ dx_runtime_docker_require_bin() {
     printf '%s' "$DXE_RUNTIME_DOCKER_BIN"
 }
 
+# --- Guest SSH address discovery (Branch 11 / Phase 5, DQ5) -----------------
+#
+# The address the guest's own SSH server publishes on AND is reached at:
+# the NAS's Tailscale IPv4 address, discovered over the existing management
+# connection, never loopback/LAN/0.0.0.0, never persisted to any tracked
+# file. Reuses tests/qnap/lib/phase0-common.sh's proven discovery shape
+# (dxe_qnap_tailnet_addr_discovery_remote_script: the Tailscale qpkg CLI's
+# own "ip -4" first, falling back to reading the "tailscale0" interface
+# directly) as a FRESH production copy, not a `source` of that file -- the
+# same reason DX_RUNTIME_DOCKER_BIN_GLOB/dx_runtime_docker_bin_discovery_script
+# above are already a fresh copy of that file's own Docker-path discovery,
+# not a source of it: that file lives under tests/, this one under bin/lib/,
+# so bin/ code cannot depend on it without inverting the test/production
+# dependency direction. tests/test_docker_runtime_adapter.sh's own drift
+# guard sources BOTH files and asserts this function renders byte-identical
+# output to tests/qnap/lib/phase0-common.sh's own function for the same
+# glob input, so a future edit to either shape cannot silently diverge from
+# the other unnoticed.
+DX_RUNTIME_DOCKER_TAILSCALE_BIN_GLOB='/share/*/.qpkg/Tailscale/tailscale /share/*/.qpkg/Tailscale/bin/tailscale'
+
+dx_runtime_docker_guest_ssh_address_discovery_script() {
+    printf 'DXE_TAILSCALE_BIN=""\nif command -v tailscale >/dev/null 2>&1; then DXE_TAILSCALE_BIN="$(command -v tailscale)"; else for dxe_cand in %s; do if [ -x "$dxe_cand" ]; then DXE_TAILSCALE_BIN="$dxe_cand"; break; fi; done; fi\n' \
+        "$DX_RUNTIME_DOCKER_TAILSCALE_BIN_GLOB"
+    cat <<'REMOTE'
+DXE_TAILNET_ADDR=""
+if [ -n "$DXE_TAILSCALE_BIN" ]; then
+    DXE_TAILNET_ADDR="$("$DXE_TAILSCALE_BIN" ip -4 2>/dev/null | head -n1)"
+fi
+if [ -z "$DXE_TAILNET_ADDR" ]; then
+    DXE_TAILNET_ADDR="$(ip -4 addr show tailscale0 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | head -n1)"
+fi
+echo "${DXE_TAILNET_ADDR:-NOTFOUND}"
+REMOTE
+}
+
+# Reused, not duplicated, from tests/test_section1_secrets.sh's own
+# Tailscale CGNAT-range pattern (100.64.0.0/10) -- that file's own leak-scan
+# regex is unanchored (it scans free text for an occurrence anywhere this
+# repository must never contain); this validator anchors the SAME pattern
+# to require the WHOLE discovered value to match it, nothing more or less.
+# tests/test_docker_runtime_adapter.sh's drift guard extracts that file's
+# own pattern text and asserts it is identical to this one.
+DX_RUNTIME_DOCKER_TAILNET_ADDR_PATTERN='100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}'
+
+dx_runtime_docker_guest_ssh_address_valid() {
+    printf '%s' "$1" | grep -Eq "^(${DX_RUNTIME_DOCKER_TAILNET_ADDR_PATTERN})\$"
+}
+
+# Discovers the NAS's Tailscale address (one ssh round trip) and caches it
+# in DXE_RUNTIME_GUEST_SSH_ADDRESS, exported like DXE_RUNTIME_DOCKER_BIN so a
+# child process inherits it and never re-discovers it. Idempotent. Never
+# loopback/LAN/0.0.0.0 (DQ5): an empty, NOTFOUND, or out-of-range answer
+# refuses rather than publishing/dialling somewhere DQ5 forbids.
+dx_runtime_docker_discover_guest_ssh_address() {
+    [ -z "${DXE_RUNTIME_GUEST_SSH_ADDRESS:-}" ] || return 0
+    local discovered
+    discovered="$(dx_runtime_docker_ssh_raw "$(dx_runtime_docker_guest_ssh_address_discovery_script)")" || {
+        echo "Error: could not reach $DX_REMOTE_HOST to discover its Tailscale address (connection failed or refused)." >&2
+        return 1
+    }
+    discovered="$(printf '%s\n' "$discovered" | tail -n1 | tr -d '\r')"
+    if [ -z "$discovered" ] || [ "$discovered" = NOTFOUND ] || ! dx_runtime_docker_guest_ssh_address_valid "$discovered"; then
+        echo "Error: the NAS has no Tailscale address; DQ5 forbids publishing on the LAN or 0.0.0.0." >&2
+        return 1
+    fi
+    DXE_RUNTIME_GUEST_SSH_ADDRESS="$discovered"
+    export DXE_RUNTIME_GUEST_SSH_ADDRESS
+}
+
+# dx_runtime_guest_ssh_address's docker-ssh implementation.
+dx_runtime_docker_guest_ssh_address() {
+    dx_runtime_docker_discover_guest_ssh_address || return 1
+    printf '%s' "$DXE_RUNTIME_GUEST_SSH_ADDRESS"
+}
+
 # --- Diagnostics (item 8) ---------------------------------------------------
 #
 # Distinct failure classes, not a single generic "command failed": each
@@ -413,10 +488,12 @@ dx_runtime_docker_container_list() {
 #     "no"/"unless-stopped" verbatim, no translation needed);
 #   - the DQ6 labels, computed here (not passed by the caller -- they
 #     depend on DX_REMOTE_HOST, which only this adapter interprets).
-# The shared --publish "127.0.0.1:PORT:2222" spec is forwarded as-is
-# (loopback, unreachable from a real remote NAS) -- making the guest SSH
-# publish address remote-aware is qnap-dxe-plan.md Phase 5's job ("Make
-# SSH and user workflows remote-aware"), not Phase 2's.
+# The shared --publish "PORT:2222" spec (no bind address, Branch 11 /
+# Phase 5) is prepended with dx_runtime_docker_guest_ssh_address's own
+# discovered Tailscale address before rendering it as Docker's -p flag --
+# never loopback, never the LAN, never 0.0.0.0 (DQ5). A discovery/
+# validation failure refuses before any remote mutation: no container is
+# created with a malformed or missing publish spec.
 
 # --- DQ6 labels -------------------------------------------------------
 #
@@ -452,7 +529,7 @@ dx_runtime_docker_label_flags() {
 dx_runtime_docker_container_create() {
     local bin
     bin="$(dx_runtime_docker_require_bin)" || return 1
-    local name="" image="" entrypoint_cmd="" flags=() entrypoint_args=()
+    local name="" image="" entrypoint_cmd="" flags=() entrypoint_args=() guest_addr=""
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --name) name="$2"; shift 2 ;;
@@ -468,7 +545,17 @@ dx_runtime_docker_container_create() {
             --env) flags+=(-e "$2"); shift 2 ;;
             --memory) flags+=(-m "$2"); shift 2 ;;
             --cpus) flags+=(--cpus "$2"); shift 2 ;;
-            --publish) flags+=(-p "$2"); shift 2 ;;
+            --publish)
+                # bin/dx-create-container passes a neutral "PORT:2222" spec,
+                # no bind address (Branch 11 / Phase 5, DQ5); this is the one
+                # place a docker-ssh profile's guest address is actually
+                # rendered into a real Docker flag. A discovery/validation
+                # failure here refuses the whole create -- never a container
+                # published on the wrong address.
+                guest_addr="$(dx_runtime_docker_guest_ssh_address)" || return 1
+                flags+=(-p "$guest_addr:$2")
+                shift 2
+                ;;
             --restart-policy) flags+=(--restart "$2"); shift 2 ;;
             --entrypoint-cmd) entrypoint_cmd="$2"; shift 2 ;;
             --entrypoint-arg) entrypoint_args+=("$2"); shift 2 ;;

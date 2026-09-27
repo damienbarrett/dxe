@@ -281,7 +281,7 @@ dx_get_host_timezone >/dev/null
     dx_runtime_volume_delete vol >/dev/null
     dx_runtime_container_create --name side --image img \
         --volume nix:nixvol:rw --volume persist:persistvol:/persist:rw --volume bootstrap:bootvol:/guest-bootstrap:rw \
-        --env FOO=bar --memory 1G --cpus 2 --publish 127.0.0.1:2222:2222 --restart-policy no \
+        --env FOO=bar --memory 1G --cpus 2 --publish 2222:2222 --restart-policy no \
         --entrypoint-cmd 'echo hi' --entrypoint-arg /guest-bootstrap >/dev/null
     dx_runtime_container_start side >/dev/null
     dx_runtime_container_stop side >/dev/null
@@ -291,6 +291,7 @@ dx_get_host_timezone >/dev/null
     dx_runtime_logs side >/dev/null
     dx_runtime_export side >/dev/null
     dx_runtime_host_identity >/dev/null
+    dx_runtime_guest_ssh_address >/dev/null
     dx_runtime_capability direct_named_volume_mounts
     dx_runtime_capability bind_mounts
     dx_runtime_capability restart_policy || true

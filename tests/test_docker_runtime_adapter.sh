@@ -21,6 +21,11 @@ source "$BASE_DIR/bin/lib/dx-runtime.sh"
 source "$BASE_DIR/bin/lib/dx-container.sh"
 source "$BASE_DIR/bin/lib/dx-tunnel.sh"
 source "$BASE_DIR/bin/lib/dx-backup.sh"
+# Branch 11 / Phase 5's drift guard (below) needs Phase 0's own discovery
+# functions available for direct comparison against bin/lib/dx-runtime-docker.sh's
+# fresh production copies of them; this is the only place in tests/ that
+# needs both a production adapter and this file loaded together.
+source "$SCRIPT_DIR/qnap/lib/phase0-common.sh"
 test_section "Docker-ssh runtime adapter (Branch 11 / Phase 2)"
 
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-docker-adapter.XXXXXX")"
@@ -44,6 +49,23 @@ new_tool_dir() {
     dir="$(fake_tool_dir_create "$fixture")"
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
     printf '%s' "$dir"
+}
+
+# Symlinks the REAL system awk/cut/head (resolved once via `command -v` on
+# THIS host, never guessed at) into a fixture directory, so a test whose
+# DXE_FAKE_SSH_REMOTE_PATH is pinned to that directory alone (excluding
+# every real system PATH entry, per the standing "never let a real docker
+# leak in from /usr/bin" incident) still has the plain, side-effect-free
+# text tools bin/lib/dx-runtime-docker.sh's Tailscale-address discovery
+# pipes through, without ever widening the remote PATH enough for a real
+# `tailscale` (or `docker`) to be found instead of the fixture's own fake.
+link_coreutils_into() {
+    local dir="$1" tool real
+    shift
+    for tool in "$@"; do
+        real="$(command -v "$tool")" || { echo "test setup: no real '$tool' found on this host" >&2; return 1; }
+        ln -sf "$real" "$dir/$tool"
+    done
 }
 
 # --- dx_runtime_docker_quote_argv: the single-remote-command-string quoting
@@ -371,6 +393,184 @@ esac'
 )
 [ "$?" -eq 0 ] && test_pass "host_identity: two different remote hosts never collide" || test_fail "host_identity: two different remote hosts never collide"
 
+# --- Drift guard (Branch 11 / Phase 5, condition (a)): the "fresh production
+# copy" of Phase 0's discovery snippets, and of test_section1_secrets.sh's
+# Tailscale CGNAT-range pattern, must never silently diverge from what they
+# were copied from. Both files are already sourced by this file's own top
+# (dx-runtime-docker.sh via dx-runtime.sh, tests/qnap/lib/phase0-common.sh
+# directly), so this proves behavioural equivalence by calling both
+# generators with the SAME glob input and comparing their rendered output
+# byte for byte -- not merely eyeballing the two source files.
+(
+    a="$(dxe_qnap_docker_discovery_remote_script)"
+    b="$(dx_runtime_docker_bin_discovery_script)"
+    [ "$a" = "$b" ]
+)
+[ "$?" -eq 0 ] && test_pass "drift guard: the Docker-path discovery script matches tests/qnap/lib/phase0-common.sh's own shape byte for byte" \
+    || test_fail "drift guard: the Docker-path discovery script has drifted from tests/qnap/lib/phase0-common.sh"
+
+(
+    a="$(dxe_qnap_tailnet_addr_discovery_remote_script)"
+    b="$(dx_runtime_docker_guest_ssh_address_discovery_script)"
+    [ "$a" = "$b" ]
+)
+[ "$?" -eq 0 ] && test_pass "drift guard: the Tailscale-address discovery script matches tests/qnap/lib/phase0-common.sh's own shape byte for byte" \
+    || test_fail "drift guard: the Tailscale-address discovery script has drifted from tests/qnap/lib/phase0-common.sh"
+
+(
+    secrets_pattern="$(sed -n "s/^TAILNET_IP_PATTERN='\(.*\)'\$/\1/p" "$BASE_DIR/tests/test_section1_secrets.sh")"
+    [ -n "$secrets_pattern" ] && [ "$secrets_pattern" = "$DX_RUNTIME_DOCKER_TAILNET_ADDR_PATTERN" ]
+)
+[ "$?" -eq 0 ] && test_pass "drift guard: the guest-ssh-address validator's Tailscale-range regex matches tests/test_section1_secrets.sh's own pattern byte for byte" \
+    || test_fail "drift guard: the guest-ssh-address validator's Tailscale-range regex has drifted from tests/test_section1_secrets.sh"
+
+# --- dx_runtime_guest_ssh_address (Branch 11 / Phase 5, DQ5) ---------------
+
+# Apple: a fixed constant, no ssh call at all.
+(
+    dir="$(new_tool_dir)"
+    fake_tool_write "$dir" ssh 'echo "ssh should never be called" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=apple
+    [ "$(dx_runtime_guest_ssh_address)" = 127.0.0.1 ]
+)
+[ "$?" -eq 0 ] && test_pass "guest_ssh_address (apple): fixed 127.0.0.1, no ssh call at all" || test_fail "guest_ssh_address (apple): fixed 127.0.0.1, no ssh call at all"
+
+# docker-ssh: discovers via the Tailscale qpkg CLI's own "ip -4" when it is
+# on the remote's bare PATH.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" tailscale 'case "$*" in
+    "ip -4") echo "100.64.1.2" ;;
+    *) echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    unset DXE_RUNTIME_GUEST_SSH_ADDRESS
+    [ "$(dx_runtime_guest_ssh_address)" = 100.64.1.2 ]
+)
+[ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): discovers via the Tailscale CLI's 'ip -4' on the bare remote PATH" \
+    || test_fail "guest_ssh_address (docker-ssh): discovers via the Tailscale CLI's 'ip -4' on the bare remote PATH"
+
+# Falls back to the qpkg glob when tailscale is not on the bare PATH (same
+# discipline as the Docker-path glob fallback test above): the fake
+# tailscale executable lives ONLY at the glob path.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    qpkg_dir="$dir/share/fixturepool/.qpkg/Tailscale"
+    mkdir -p "$qpkg_dir"
+    fake_tool_write "$qpkg_dir" tailscale 'case "$*" in
+    "ip -4") echo "100.64.9.9" ;;
+    *) echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
+    link_coreutils_into "$dir" head
+    PATH="$dir:/usr/bin:/bin"
+    export DXE_FAKE_SSH_REMOTE_PATH="$dir"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    unset DXE_RUNTIME_GUEST_SSH_ADDRESS
+    DX_RUNTIME_DOCKER_TAILSCALE_BIN_GLOB="$qpkg_dir/tailscale" dx_runtime_guest_ssh_address 2>/dev/null | grep -qx 100.64.9.9
+)
+[ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): falls back to the qpkg glob when tailscale is not on the bare PATH" \
+    || test_fail "guest_ssh_address (docker-ssh): falls back to the qpkg glob when tailscale is not on the bare PATH"
+
+# Falls back to reading the tailscale0 interface directly when the
+# Tailscale CLI cannot be found at all (neither bare PATH nor the glob).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    export DXE_FAKE_SSH_REMOTE_PATH="$dir"
+    fake_tool_write "$dir" ip 'case "$*" in
+    "-4 addr show tailscale0") printf "    inet 100.64.5.5/32 scope global tailscale0\n" ;;
+    *) exit 1 ;;
+esac'
+    link_coreutils_into "$dir" awk cut head
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    unset DXE_RUNTIME_GUEST_SSH_ADDRESS
+    [ "$(dx_runtime_guest_ssh_address)" = 100.64.5.5 ]
+)
+[ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): falls back to reading the tailscale0 interface when the Tailscale CLI cannot be found" \
+    || test_fail "guest_ssh_address (docker-ssh): falls back to reading the tailscale0 interface when the Tailscale CLI cannot be found"
+
+# Refuses (DQ5's exact wording) when neither path yields an address at all.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    export DXE_FAKE_SSH_REMOTE_PATH="$dir"
+    fake_tool_write "$dir" ip 'exit 1'
+    link_coreutils_into "$dir" awk cut head
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    unset DXE_RUNTIME_GUEST_SSH_ADDRESS
+    out="$(dx_runtime_guest_ssh_address 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "the NAS has no Tailscale address; DQ5 forbids publishing on the LAN or 0.0.0.0."
+)
+[ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): refuses with DQ5's exact wording when no address is discovered" \
+    || test_fail "guest_ssh_address (docker-ssh): refuses with DQ5's exact wording when no address is discovered"
+
+# Refuses a discovered value outside Tailscale's CGNAT range (DQ5: never the
+# LAN) even though something was, in fact, discovered -- proven two ways, so
+# this cannot pass merely because discovery silently failed and produced
+# NOTFOUND instead (which refuses with the same wording, for a different
+# reason): first, that the raw discovery round trip really did yield the
+# planted LAN address; second, that the validated op still refuses it.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    export DXE_FAKE_SSH_REMOTE_PATH="$dir"
+    fake_tool_write "$dir" tailscale 'case "$*" in
+    "ip -4") echo "192.168.1.5" ;;
+    *) exit 99 ;;
+esac'
+    link_coreutils_into "$dir" head
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    unset DXE_RUNTIME_GUEST_SSH_ADDRESS
+    raw="$(dx_runtime_docker_ssh_raw "$(dx_runtime_docker_guest_ssh_address_discovery_script)" | tail -n1 | tr -d '\r')"
+    out="$(dx_runtime_guest_ssh_address 2>&1)"; rc=$?
+    [ "$raw" = 192.168.1.5 ] && [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "DQ5 forbids publishing on the LAN or 0.0.0.0."
+)
+[ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): refuses a discovered LAN address outside the Tailscale range" \
+    || test_fail "guest_ssh_address (docker-ssh): refuses a discovered LAN address outside the Tailscale range"
+
+# Cached, never re-discovered in the same process (same call-counting idiom
+# as the Docker-bin/daemon-ID caching proof above).
+(
+    dir="$(new_tool_dir)"
+    call_log="$fixture/guest-ssh-address-calls.log"
+    rm -f "$call_log"
+    fake_tool_write "$dir" ssh "
+echo called >> '$call_log'
+if [ -n \"\${DXE_FAKE_SSH_REMOTE_PATH:-}\" ]; then PATH=\"\$DXE_FAKE_SSH_REMOTE_PATH\"; export PATH; fi
+last=\"\"; for a in \"\$@\"; do last=\"\$a\"; done
+eval \"\$last\"
+"
+    export DXE_FAKE_SSH_REMOTE_PATH="$dir"
+    fake_tool_write "$dir" tailscale 'case "$*" in
+    "ip -4") echo "100.64.2.3" ;;
+    *) exit 99 ;;
+esac'
+    link_coreutils_into "$dir" head
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    unset DXE_RUNTIME_GUEST_SSH_ADDRESS
+    # The first call is a direct statement, never a "$(...)" substitution:
+    # a command substitution forks a subshell, and the cache this proves is
+    # an *exported variable* the function sets -- a change a subshell makes
+    # can never propagate back to this parent shell, so reading the value
+    # back through "$(...)" only works correctly once the cache already
+    # lives here, in the same shell the two calls below both run in.
+    dx_runtime_guest_ssh_address >/dev/null
+    first_calls="$(wc -l < "$call_log" | tr -d ' ')"
+    second_value="$(dx_runtime_guest_ssh_address)"
+    second_calls="$(wc -l < "$call_log" | tr -d ' ')"
+    [ "$second_value" = 100.64.2.3 ] && [ "$first_calls" = "$second_calls" ]
+)
+[ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): cached, never re-discovered in the same process" \
+    || test_fail "guest_ssh_address (docker-ssh): cached, never re-discovered in the same process"
+
 # --- Runtime capability queries (DQ2/DQ3/DQ4/DQ8) --------------------------
 (
     DX_RUNTIME=docker-ssh
@@ -571,41 +771,66 @@ echo "dx-qnap	dx-qnap-nixos	Up 2 hours"'
 
 # container_create: renders bin/lib/dx-runtime.sh's runtime-neutral
 # vocabulary into Docker's own create argv (qnap-dxe-plan.md DQ2/DQ4/DQ6).
+#
+# The rendering runs inside the subshell below, but every test_pass/
+# test_fail call for it is deliberately OUTSIDE that subshell (F6's own
+# lesson, tests/test_refactor_contracts.sh: a counter incremented inside a
+# "( … )" subshell dies with it, so a real failure in one of these many
+# assertions would print its red line but never flip the suite's own exit
+# code) -- $got is read back from the argv log file, which does survive
+# the subshell exiting, precisely so these ~10 assertions all count.
+cc_argv_log="$fixture/create-argv.log"
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
-    argv_log="$fixture/create-argv.log"
+    fake_tool_write "$dir" tailscale 'case "$*" in
+    "ip -4") echo "100.64.1.2" ;;
+    *) echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
     fake_tool_write "$dir" docker "
 [ \"\$1\" = create ] || { echo UNMATCHED >&2; exit 99; }
 shift
-printf '%s\n' \"\$@\" > '$argv_log'
+printf '%s\n' \"\$@\" > '$cc_argv_log'
 "
     PATH="$dir:/usr/bin:/bin"
     export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
+    unset DXE_RUNTIME_GUEST_SSH_ADDRESS
+    # --publish is the neutral "PORT:2222" spec (Branch 11 / Phase 5, DQ5):
+    # no bind address at all -- the adapter itself prepends the discovered
+    # guest SSH address (below) before rendering Docker's real -p flag.
     dx_runtime_container_create \
         --name dx-qnap --image dx-qnap-nixos \
         --volume nix:dx-qnap-nix:rw \
         --volume persist:dx-qnap-persist:/persist:rw \
         --volume bootstrap:dx-qnap-bootstrap:/guest-bootstrap:rw \
-        --env HOST_TZ=UTC --memory 12G --cpus 4 --publish 127.0.0.1:2222:2222 \
+        --env HOST_TZ=UTC --memory 12G --cpus 4 --publish 2222:2222 \
         --restart-policy unless-stopped \
         --entrypoint-cmd 'echo hi' --entrypoint-arg /guest-bootstrap
-    got="$(cat "$argv_log")"
-    printf '%s\n' "$got" | stdin_matches -F -- "CAP_SYS_ADMIN" && test_fail "container_create never grants CAP_SYS_ADMIN (DQ4)" || test_pass "container_create never grants CAP_SYS_ADMIN (DQ4)"
-    printf '%s\n' "$got" | stdin_matches -F -- "--cpus" && printf '%s\n' "$got" | stdin_matches -F -- "4" && test_pass "container_create renders --cpus N, never Docker's own -c (cpu-shares)" || test_fail "container_create renders --cpus N, never Docker's own -c (cpu-shares)"
-    printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-nix:/nix:rw" && test_pass "container_create mounts the Nix volume directly at /nix (DQ4)" || test_fail "container_create mounts the Nix volume directly at /nix (DQ4)"
-    printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-persist:/persist:rw" && test_pass "container_create mounts the persist volume at /persist" || test_fail "container_create mounts the persist volume at /persist"
-    printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-bootstrap:/guest-bootstrap:rw" && test_pass "container_create mounts the bootstrap volume at its configured path" || test_fail "container_create mounts the bootstrap volume at its configured path"
-    printf '%s\n' "$got" | stdin_matches -F -- "--restart" && printf '%s\n' "$got" | stdin_matches -F -- "unless-stopped" && test_pass "container_create renders --restart from DX_CONTAINER_RESTART_POLICY" || test_fail "container_create renders --restart from DX_CONTAINER_RESTART_POLICY"
-    printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.managed=true" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.role=container" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.profile=qnap-dxe__dx-qnap" && test_pass "container_create carries the DQ6 labels" || test_fail "container_create carries the DQ6 labels"
-    printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.system=x86_64-linux" && test_pass "container_create carries the io.dxe.system label (Branch 11 / Phase 4)" || test_fail "container_create carries the io.dxe.system label (Branch 11 / Phase 4)"
-    printf '%s\n' "$got" | stdin_matches -F -- "--name" && test_pass "container_create keeps --name" || test_fail "container_create keeps --name"
-    printf '%s\n' "$got" | stdin_matches -F -- "-c
+)
+got="$(cat "$cc_argv_log" 2>/dev/null)"
+# A single fixed string, not a two-line "-p"/"<value>" pair: grep treats a
+# pattern argument containing an embedded newline as MULTIPLE patterns
+# (one per line), matching if EITHER one is found anywhere -- a bare "-p"
+# line alone would already satisfy that, even rendered with no address at
+# all, so it would not actually distinguish old and new behaviour. The
+# composed value below is distinctive enough alone: nothing else in this
+# argv could render "100.64.1.2:2222:2222" except -p's own value.
+printf '%s\n' "$got" | stdin_matches -F -- "100.64.1.2:2222:2222" && test_pass "container_create (docker-ssh) renders --publish with the discovered guest SSH address, never loopback (DQ5)" \
+    || test_fail "container_create (docker-ssh) renders --publish with the discovered guest SSH address (got: $got)"
+printf '%s\n' "$got" | stdin_matches -F -- "CAP_SYS_ADMIN" && test_fail "container_create never grants CAP_SYS_ADMIN (DQ4)" || test_pass "container_create never grants CAP_SYS_ADMIN (DQ4)"
+printf '%s\n' "$got" | stdin_matches -F -- "--cpus" && printf '%s\n' "$got" | stdin_matches -F -- "4" && test_pass "container_create renders --cpus N, never Docker's own -c (cpu-shares)" || test_fail "container_create renders --cpus N, never Docker's own -c (cpu-shares)"
+printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-nix:/nix:rw" && test_pass "container_create mounts the Nix volume directly at /nix (DQ4)" || test_fail "container_create mounts the Nix volume directly at /nix (DQ4)"
+printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-persist:/persist:rw" && test_pass "container_create mounts the persist volume at /persist" || test_fail "container_create mounts the persist volume at /persist"
+printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-bootstrap:/guest-bootstrap:rw" && test_pass "container_create mounts the bootstrap volume at its configured path" || test_fail "container_create mounts the bootstrap volume at its configured path"
+printf '%s\n' "$got" | stdin_matches -F -- "--restart" && printf '%s\n' "$got" | stdin_matches -F -- "unless-stopped" && test_pass "container_create renders --restart from DX_CONTAINER_RESTART_POLICY" || test_fail "container_create renders --restart from DX_CONTAINER_RESTART_POLICY"
+printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.managed=true" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.role=container" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.profile=qnap-dxe__dx-qnap" && test_pass "container_create carries the DQ6 labels" || test_fail "container_create carries the DQ6 labels"
+printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.system=x86_64-linux" && test_pass "container_create carries the io.dxe.system label (Branch 11 / Phase 4)" || test_fail "container_create carries the io.dxe.system label (Branch 11 / Phase 4)"
+printf '%s\n' "$got" | stdin_matches -F -- "--name" && test_pass "container_create keeps --name" || test_fail "container_create keeps --name"
+printf '%s\n' "$got" | stdin_matches -F -- "-c
 echo hi
 --
 /guest-bootstrap" && test_pass "container_create passes the post-image entrypoint argv through completely unexamined" || test_fail "container_create passes the post-image entrypoint argv through completely unexamined"
-)
 
 # container_create: an unrecognized parameter fails closed rather than
 # guessing (protects against a future bin/dx-create-container change that
@@ -621,6 +846,35 @@ echo hi
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "unknown parameter"
 )
 [ "$?" -eq 0 ] && test_pass "container_create fails closed on an unrecognized parameter rather than guessing" || test_fail "container_create fails closed on an unrecognized parameter rather than guessing"
+
+# container_create: --publish refuses (DQ5) BEFORE any docker call at all
+# when the guest SSH address cannot be discovered -- never a container
+# created with a malformed or missing publish spec. The management ssh
+# itself must keep working here (a hard-failing fake ssh would make the
+# LATER "docker create" round trip fail too, passing this test for the
+# wrong reason -- an unrelated transport failure, not specifically DQ5's
+# refusal): no tailscale binary anywhere, no working "ip" either, so
+# discovery genuinely runs and comes back NOTFOUND, and a real, working
+# fake `docker create` sits ready to prove it was never reached.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    export DXE_FAKE_SSH_REMOTE_PATH="$dir"
+    create_reached_log="$fixture/refuse-create-reached.log"
+    rm -f "$create_reached_log"
+    fake_tool_write "$dir" docker "
+[ \"\$1\" = create ] && echo reached >> '$create_reached_log'
+exit 0
+"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
+    DXE_RUNTIME_DOCKER_BIN=docker
+    unset DXE_RUNTIME_GUEST_SSH_ADDRESS
+    out="$(dx_runtime_container_create --name dx-qnap --image dx-qnap-nixos --publish 2222:2222 --entrypoint-cmd 'echo hi' 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && [ ! -f "$create_reached_log" ] && printf '%s\n' "$out" | stdin_matches -F -- "DQ5 forbids publishing on the LAN or 0.0.0.0."
+)
+[ "$?" -eq 0 ] && test_pass "container_create (docker-ssh) refuses --publish before any docker call when the guest SSH address cannot be discovered (DQ5)" \
+    || test_fail "container_create (docker-ssh) refuses --publish before any docker call when the guest SSH address cannot be discovered (DQ5)"
 
 # container_create: an unrecognized --volume role also fails closed.
 (

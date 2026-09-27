@@ -56,6 +56,15 @@ dx_runtime_system_running() { dx_runtime_dispatch system_running "$@"; }
 dx_runtime_system_start() { dx_runtime_dispatch system_start "$@"; }
 dx_runtime_host_identity() { dx_runtime_dispatch host_identity "$@"; }
 
+# dx_runtime_guest_ssh_address -- the address the GUEST's own SSH server is
+# published on AND reached at (Branch 11 / Phase 5, qnap-dxe-plan.md DQ5;
+# docs/refactor/remote-aware-ssh.md section 1). Apple: the fixed loopback
+# constant it always used implicitly. Docker-ssh: the NAS's Tailscale IPv4
+# address, discovered over the management connection, validated, and cached
+# per process -- never the management alias/host identity above, and never
+# persisted to any tracked file.
+dx_runtime_guest_ssh_address() { dx_runtime_dispatch guest_ssh_address "$@"; }
+
 # Image: exists, build, list, delete, identity.
 dx_runtime_image_exists() { dx_runtime_dispatch image_exists "$@"; }
 dx_runtime_image_list() { dx_runtime_dispatch image_list "$@"; }
@@ -118,13 +127,15 @@ dx_runtime_container_list() { dx_runtime_dispatch container_list "$@"; }
 #                               this; Docker's own -c means --cpu-shares (a
 #                               relative weight, a different unit), so the
 #                               Docker adapter renders --cpus, never -c
-#   --publish SPEC              HOSTADDR:HOSTPORT:GUESTPORT, forwarded
-#                               as-is (both CLIs agree on this shape); left
-#                               at "127.0.0.1:..." for docker-ssh too --
-#                               making the guest SSH publish address
-#                               remote-aware is qnap-dxe-plan.md Phase 5's
-#                               job ("Make SSH and user workflows
-#                               remote-aware"), not Phase 2's
+#   --publish SPEC              HOSTPORT:GUESTPORT, no bind address (Branch
+#                               11 / Phase 5, qnap-dxe-plan.md DQ5): each
+#                               adapter prepends its own guest SSH address
+#                               (dx_runtime_guest_ssh_address) before
+#                               rendering its real -p flag -- Apple a fixed
+#                               "127.0.0.1:" literal (today's rendered argv
+#                               is unaffected byte for byte), docker-ssh the
+#                               NAS's discovered Tailscale address, never
+#                               the LAN or 0.0.0.0
 #   --restart-policy POLICY    DX_CONTAINER_RESTART_POLICY's value; Apple
 #                               ignores it completely (it never sets a
 #                               restart flag at all, matching
