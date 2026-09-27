@@ -59,10 +59,19 @@ esac' "$body")"
 # itself was invoked with (the management connection options, or the raw
 # quoted command string before it is parsed) should read $DXE_FAKE_SSH_ARGV_LOG
 # if it set DXE_FAKE_SSH_ARGV_LOG to a writable file path first.
+#
+# The eval below runs the "remote" command on the controller itself, so the
+# controller's PATH stands in for the NAS's non-interactive PATH. A fixture
+# whose remote must NOT have a bare `docker` (the discovery refusal, the
+# qpkg-glob fallback) sets DXE_FAKE_SSH_REMOTE_PATH to a directory it
+# controls; otherwise a host that really has one -- GitHub's ubuntu runners
+# ship /usr/bin/docker -- leaks into the fake remote and the test proves
+# nothing (CI run 36296075448, 2026-09-27). Unset, the PATH is left alone.
 fake_qnap_ssh_write() {
     local directory="$1"
     fake_tool_write "$directory" ssh '
 if [ -n "${DXE_FAKE_SSH_ARGV_LOG:-}" ]; then printf "%s\n" "$@" > "$DXE_FAKE_SSH_ARGV_LOG"; fi
+if [ -n "${DXE_FAKE_SSH_REMOTE_PATH:-}" ]; then PATH="$DXE_FAKE_SSH_REMOTE_PATH"; export PATH; fi
 dx_fake_last=""
 for dx_fake_arg in "$@"; do dx_fake_last="$dx_fake_arg"; done
 eval "$dx_fake_last"

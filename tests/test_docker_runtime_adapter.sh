@@ -127,6 +127,11 @@ esac'
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
     PATH="$dir:/usr/bin:/bin"
+    # The fake remote's PATH is the fixture directory alone (fake uname, no
+    # docker): the controller's own PATH must not stand in for it here, or a
+    # host that really has /usr/bin/docker (GitHub's ubuntu runners) makes
+    # discovery succeed and this refusal never happens.
+    export DXE_FAKE_SSH_REMOTE_PATH="$dir"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     out="$(dx_runtime_available 2>&1)"; rc=$?
@@ -160,9 +165,15 @@ esac'
     # not a subshell-scoped no-op), so dx_runtime_docker_discover_bin's own
     # read of $DX_RUNTIME_DOCKER_BIN_GLOB sees this override.
     PATH="$dir:/usr/bin:/bin"
+    # Same remote-PATH discipline as the refusal test above, and the
+    # discovered path is asserted outright: with a real docker on the
+    # controller's PATH this used to pass for the wrong reason (discovery
+    # took /usr/bin/docker and the glob was never exercised).
+    export DXE_FAKE_SSH_REMOTE_PATH="$dir"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
-    DX_RUNTIME_DOCKER_BIN_GLOB="$dir/share/*/.qpkg/container-station/bin/docker" dx_runtime_available
+    DX_RUNTIME_DOCKER_BIN_GLOB="$dir/share/*/.qpkg/container-station/bin/docker" dx_runtime_available &&
+        [ "$DXE_RUNTIME_DOCKER_BIN" = "$qpkg_dir/docker" ]
 )
 [ "$?" -eq 0 ] && test_pass "available: falls back to the qpkg glob when docker is not on the bare PATH" || test_fail "available: falls back to the qpkg glob when docker is not on the bare PATH"
 

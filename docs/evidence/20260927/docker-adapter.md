@@ -171,6 +171,26 @@ re-linted the whole CI file set with apt ShellCheck 0.9.0 in a throwaway
 Ubuntu 24.04 container (clean) and re-ran Section 33 under bash 3.2 (107
 passed) before pushing again.
 
+The second CI run (`36296075448`) was green on `bash-3-2` and red on `linux`
+in one Section 33 case: "available: refuses with a clear message when the
+Docker CLI cannot be discovered". Root cause: the fake management-plane
+`ssh` evaluates the "remote" command on the controller, so the controller's
+PATH stood in for the NAS's non-interactive PATH, and GitHub's ubuntu
+runners ship a real `/usr/bin/docker` -- discovery succeeded and the
+refusal never happened. The neighbouring qpkg-glob fallback test had been
+passing on the runner for the same wrong reason (discovery took
+`/usr/bin/docker`; the glob was never exercised) because it asserted only
+the exit status. Fix, test-only: `fake_qnap_ssh_write` gains an opt-in
+`DXE_FAKE_SSH_REMOTE_PATH` override, both tests pin the fake remote's PATH
+to the fixture directory, and the glob test now asserts the discovered path
+is the fixture's qpkg path. Reproduced faithfully in a throwaway Ubuntu
+24.04 container with a stub `/usr/bin/docker`: red before (1 failure, the
+CI failure exactly), 2 failures with the pins removed (both tests now
+bite), 107/0 with the fix; also 107/0 under bash 3.2 on the host, ShellCheck
+0.9.0 clean on both files, and the fast tier re-run. The ratchet fell 2 bp
+to 2164 from 20 added test lines (test dilution, recorded in
+`tests/coverage/ratchet.env`).
+
 Landing also recorded the flagged `bin/dx-mount` gap under
 `qnap-dxe-plan.md`'s Phase 5 item 7 (fail-closed capability checks) rather
 than opening a branch for it, and added the QNAP profile shape to
