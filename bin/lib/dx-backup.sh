@@ -397,8 +397,11 @@ dx_backup_restore_status() {
     local_hashes="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-local.XXXXXX")"
     for path in "${target_list[@]}"; do
         local_line="$(dx_pbs_hash_entry "$backup_dir/current/$path" 2>/dev/null)" || local_line=""
-        printf '%s\t%s\n' "$path" "$(printf '%s\n' "$local_line" | cut -f3)"
-    done > "$local_hashes"
+        # Single line (this file's own convention, see dx_backup_restore_push's
+        # sh -c body below): a bare `done` starts no traceable command of its
+        # own, so kcov never registers a hit on a "done > FILE" line by itself
+        # -- it must share a line with a real command to be measured as covered.
+        printf '%s\t%s\n' "$path" "$(printf '%s\n' "$local_line" | cut -f3)"; done > "$local_hashes"
 
     # Single pass joining the two lists, replacing what used to be one awk
     # scan of the WHOLE guest hash batch PER target (O(targets * guest
@@ -408,17 +411,10 @@ dx_backup_restore_status() {
     # substring search (Branch 17's rule): a target path that is a suffix
     # of another target's path (e.g. repo/.gitignore vs.
     # other/repo/.gitignore) must never let the OTHER target's line answer
-    # for it.
-    awk -F'\t' '
-        NR == FNR { gstatus[$1] = $2; ghash[$1] = $5; next }
-        {
-            path = $1; lhash = $2
-            if (gstatus[path] != "present") { print path "\tcreate"; next }
-            if (lhash == "") { print path "\tconflict"; next }
-            if (ghash[path] == lhash) { print path "\tidentical"; next }
-            print path "\tconflict"
-        }
-    ' "$hashes" "$local_hashes"
+    # for it. Single line (this file's own convention, see dx-put's sh -c
+    # body): a multi-line quoted argument only registers a coverage hit on
+    # its first line, not each interior line.
+    awk -F'\t' 'NR == FNR { gstatus[$1] = $2; ghash[$1] = $5; next } { path = $1; lhash = $2; if (gstatus[path] != "present") { print path "\tcreate"; next }; if (lhash == "") { print path "\tconflict"; next }; if (ghash[path] == lhash) { print path "\tidentical"; next }; print path "\tconflict" }' "$hashes" "$local_hashes"
 
     rm -f "$hashes" "$local_hashes"
 }
