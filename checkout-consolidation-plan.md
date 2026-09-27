@@ -80,6 +80,7 @@ the next one may start.
 | 15 | `fix/keyring-bootstrap-recreate` | Make `dx-recreate` of an AI-opted-in guest work again | S | Yes (`dx-test`) | Policy B chosen 2026-09-27 | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/keyring-recreate.md`; superseded by Branch 16 |
 | 16 | `refactor/keyring-owned-by-dx-ai` | Move the guest keyring out of bootstrap: `dx-ai`/`dx-keyring` own it with a real liveness probe | S | Yes (`dx-test`) | Option 4 chosen 2026-09-27 | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/keyring-owned-by-dx-ai.md`; `dx-host` gets it at its next promotion |
 | 17 | `fix/dx-backup-transfer-stall` | Make `dx-backup`'s transfer unidirectional (it deadlocked on large selections) and add `--dry-run --summary` for the at-risk breakdown | S–M | Yes (`dx-test`) | No | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/dx-backup-transfer-stall.md`; `dx-host` gets it at its next promotion |
+| 18 | `fix/dx-backup-deny-list` | Add user-approved entries to `dx-backup`'s deny-list (`.pnpm-store`, `.Trash-*`, `.tmp`, the `agy` binary bundle), a default location for the exclude file, and fix a nested-repository duplicate-path crash found live along the way | S | Yes (`dx-test`; unit fixtures only) | No (option 1a chosen 2026-09-27) | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/dx-backup-deny-list.md`; `dx-host` gets it at its next promotion |
 
 **Remaining order:** Branch 11 Phases 2-7 and Branch 12 have no outstanding
 prerequisites -- both branches they waited on (9 and 10) are done. Store
@@ -216,15 +217,24 @@ as a whole phase stack.
   subsets, including a deliberate conflict). Backlog: join the local and
   guest hash lists in one pass (sort + join, or a single awk over both
   files) and prove the full 60k dry-run completes in well under a minute.
-- **`dx-backup` deny-list additions are undecided.** A first real
-  `dx-backup --dry-run` on `dx-host` selected 51,262 files / 3.2 GB of a 6.3
-  GB `/persist` -- larger than expected. Branch 17 added
-  `dx-backup --dry-run --summary`, which breaks the selection down by
-  `/persist`'s top-level directory and by selection reason
-  (`modified-untracked`, `whole-repo`, `outside-repo`, `ignored-kept`), so
-  you can review it and decide whether to add entries to the deny-list in
-  `container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib/dx-persist-backup-select.sh`.
-  No decision yet.
+- **`dx-backup --dry-run --summary`'s "denied by the deny-list" line is
+  undecided.** Branch 18 (option 1a) added the deny-list entries the first
+  real summary called for, but did not add a line reporting how much the
+  deny-list itself removed: the at-risk walk prunes every component-denied
+  directory (`node_modules`, `.cache`, `.pnpm-store`, etc.) with `find
+  -prune` before it is ever visited, so no per-file loop in the selector
+  ever sees what is inside one to count or size it -- only PATH-shaped
+  denies (the Nix-profile generations pattern, `.gemini/antigravity-cli`,
+  and exclude-file patterns) are ever visible to count that way, and those
+  are typically a small fraction of what the deny-list actually removes.
+  Making the count complete would mean walking into every pruned directory
+  to size it (for example `du -s` per pruned directory), which is exactly
+  the walk the pruning exists to avoid, and would slow every dry-run
+  summary on a real `/persist`. Options: (a) a partial counter, clearly
+  labeled as counting only path-based denies, not the total; (b) a slower
+  summary that also sizes pruned component directories; (c) drop the idea
+  and keep relying on the existing by-directory/by-reason breakdown
+  (Branch 17) for review. No decision yet.
 
 
 ## Standing rules (from the user, 2026-09-26/27; still in force)

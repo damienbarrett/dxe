@@ -184,6 +184,11 @@ the warning it prints if it encounters one):
   that is unmodified and already reachable through the remote is **not**
   copied — that is the bulk of the bytes this backup deliberately skips.
 
+A git work tree nested inside another one (a plain subdirectory containing
+its own `.git`, not a submodule) is its own repository, evaluated and
+mirrored entirely by its own pass — the outer repository's walk prunes at
+every nested repository's boundary, so nothing is ever selected twice.
+
 Files outside any repository are always at-risk. **Ignored files are
 included by default** — a `.gitignore`d secret must never be dropped
 silently — except for a deny-list of rebuildable caches:
@@ -191,18 +196,36 @@ silently — except for a deny-list of rebuildable caches:
 ```
 node_modules/  target/  .direnv/  result  result-*  __pycache__/
 .cache/  dist/  build/  .venv/  .tox/  .pytest_cache/  .mypy_cache/
+.pnpm-store/  .Trash-*/  .tmp/
 ```
 
-plus the guest's own Nix-profile generation trees
-(`home/dx/.local/state/dx-ai/generations/*/profile`). This deny-list applies
-everywhere (inside an at-risk-whole repository too, and outside any
-repository), not only to the "ignored by default" case: it exists purely to
-keep rebuildable bulk out of the backup. Extend it with
-`DX_BACKUP_EXCLUDE_FILE=/path/to/file`, one glob pattern per line (matched
-against the full path relative to `/persist`; blank lines and `#` comments
-are skipped). Symlinks are mirrored as symlinks (a changed target is a
-detected change). Sockets, fifos, and device files are skipped and counted,
-never mirrored.
+plus two anchored, path-shaped entries: the guest's own Nix-profile
+generation trees (`home/dx/.local/state/dx-ai/generations/*/profile`) and
+the `agy` (Antigravity CLI) binary/state bundle `dx-ai` reinstalls
+(`home/dx/.gemini/antigravity-cli`) — its sibling config and credentials
+elsewhere under `.gemini` are not rebuildable and stay in. `.pnpm-store` is
+pnpm's content-addressable package store; `.Trash-*` is a trash directory;
+`.tmp` is transient scratch wherever it turns up (for example under
+`~/.codex`) — the rest of a persisted tool directory like `.codex` (its
+config, its session history) is unaffected, since the deny only matches
+the literal `.tmp` path component, nothing else nearby.
+
+This deny-list applies everywhere (inside an at-risk-whole repository too,
+and outside any repository), not only to the "ignored by default" case: it
+exists purely to keep rebuildable bulk out of the backup. Extend it with
+your own patterns, one glob per line (matched against the full path
+relative to `/persist`; blank lines and `#` comments are skipped), from
+either source, in priority order:
+
+1. `DX_BACKUP_EXCLUDE_FILE=/path/to/file`, if set.
+2. Otherwise, `${XDG_CONFIG_HOME:-$HOME/.config}/dxe/dx-backup-exclude` on
+   the host, if that file exists — a default location so an extra pattern
+   doesn't need an env var set on every invocation. A missing default file
+   is not an error; a `DX_BACKUP_EXCLUDE_FILE` that is set but does not
+   exist is.
+
+Symlinks are mirrored as symlinks (a changed target is a detected change).
+Sockets, fifos, and device files are skipped and counted, never mirrored.
 
 **Incremental transfer.** The guest selector emits a listing
 (`path size mtime sha256`) for the current at-risk set; the host diffs it
@@ -220,7 +243,13 @@ version pushed the name list through one exec's stdin while reading the
 archive back from that same exec's stdout, which deadlocked in production
 on a large selection (tens of thousands of files) even though it worked
 fine on a small one — every exec here is unidirectional by construction
-instead, so that size-dependent failure mode cannot recur.
+instead, so that size-dependent failure mode cannot recur. The guest-side
+archive create also passes `--hard-dereference`, so a repeated path (which
+the nested-repository handling above already prevents, but which the
+archive step defends against independently) is always shipped as an
+independent regular-file copy rather than a hardlink record — the guest's
+tar otherwise treats the exact same path added twice as if it were a
+second hardlink, which the host's tar refuses to extract.
 
 **Reviewing a large selection.** `dx-backup --dry-run --summary` prints the
 at-risk set's total files and bytes, aggregated by `/persist`'s top-level
