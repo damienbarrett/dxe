@@ -323,6 +323,271 @@ dx_runtime_docker_container_list() {
     dx_runtime_docker_ssh_exec "$bin" ps "$@" --format 'table {{.Names}}	{{.Image}}	{{.Status}}'
 }
 
+# --- Lifecycle (item 4) -----------------------------------------------------
+#
+# Docker's CLI (confirmed against a real local Docker CLI, 27.x) agrees with
+# Apple's own flag names/shapes for almost everything bin/'s entrypoints
+# already send through the contract: -i/-t/-u for exec, --time for stop,
+# -n for logs --tail, -f/--force for rm, --name/--entrypoint/-e/-m/--volume
+# for create. So most operations below are a direct passthrough, exactly
+# like their Apple counterparts, with only the verb name changed where
+# Apple and Docker genuinely differ (`container delete` vs `docker rm`).
+#
+# `container_create` is the one real exception: bin/dx-create-container (a
+# shared entrypoint, not a bin/lib/ file, so out of this branch's allowed
+# scope to edit -- flagged below) builds ONE flag array in Apple's own
+# vocabulary for whichever runtime is active, and two of Apple's flags do
+# not merely rename under Docker, they mean something DIFFERENT or WRONG
+# for docker-ssh's direct-volume mode (DQ4):
+#   --cap-add CAP_SYS_ADMIN   Apple-only: lets the GUEST bootstrap reformat
+#                             and remount its staging volume. DQ4: direct-
+#                             volume mode skips that whole step and must
+#                             never grant this capability. Dropped entirely.
+#   -c <n> (before the image) Apple's --cpus shorthand. Docker's own -c
+#                             means --cpu-shares (a relative weight, a
+#                             completely different unit) -- passing Apple's
+#                             CPU-count value through unrewritten would
+#                             silently misconfigure the container instead
+#                             of failing loudly. Rewritten to --cpus <n>.
+#   --volume "$DX_NIX_VOLUME:<anything>:MODE"
+#                             Apple stages the Nix volume at
+#                             /var/lib/dx-nix-raw for the GUEST bootstrap to
+#                             reformat. DQ4: docker-ssh mounts it directly
+#                             at /nix. Target rewritten to /nix.
+# Everything after the IMAGE positional (the entrypoint's own command/argv)
+# passes through completely unexamined -- both CLIs agree that nothing
+# there is ever re-parsed as the create command's own options.
+#
+# FLAGGED for the coordinating session: this couples the adapter to
+# bin/dx-create-container's exact current flag-building shape. The
+# architecturally cleaner fix -- teaching bin/dx-create-container to build
+# per-runtime (or genuinely runtime-neutral) flags itself -- touches a file
+# outside bin/lib/ (not in this task's allowed-file list), so this
+# translator exists here instead. It fails closed (refuses with a clear
+# message) on any flag shape it does not specifically recognize, rather
+# than guessing, so a future change to CREATE_FLAGS cannot silently
+# misconfigure a container -- but it IS a real coupling worth confirming.
+# Also note: the shared --publish "127.0.0.1:PORT:2222" flag is left
+# untouched (loopback, unreachable from the controller for a real remote
+# NAS) -- making the guest SSH publish address remote-aware is
+# qnap-dxe-plan.md Phase 5's job ("Make SSH and user workflows
+# remote-aware"), not Phase 2's; bin/dx-create-container is not touched
+# here, so this is an intentional, pre-existing scope boundary, not a new
+# bug.
+dx_runtime_docker_translate_create_argv() {
+    local seen_image=0 tok mode
+    DXE_RUNTIME_DOCKER_CREATE_ARGV=()
+    while [ "$#" -gt 0 ]; do
+        tok="$1"
+        if [ "$seen_image" -eq 1 ]; then
+            DXE_RUNTIME_DOCKER_CREATE_ARGV+=("$tok")
+            shift
+            continue
+        fi
+        case "$tok" in
+            --cap-add)
+                [ "$#" -ge 2 ] || { echo "Error: --cap-add with no value in container_create argv." >&2; return 1; }
+                if [ "$2" = CAP_SYS_ADMIN ]; then shift 2; continue; fi
+                DXE_RUNTIME_DOCKER_CREATE_ARGV+=("$tok" "$2")
+                shift 2
+                continue
+                ;;
+            -c)
+                [ "$#" -ge 2 ] || { echo "Error: -c with no value in container_create argv." >&2; return 1; }
+                DXE_RUNTIME_DOCKER_CREATE_ARGV+=(--cpus "$2")
+                shift 2
+                continue
+                ;;
+            --volume)
+                [ "$#" -ge 2 ] || { echo "Error: --volume with no value in container_create argv." >&2; return 1; }
+                case "$2" in
+                    "${DX_NIX_VOLUME:-dx-nix}":*:*)
+                        mode="${2##*:}"
+                        DXE_RUNTIME_DOCKER_CREATE_ARGV+=(--volume "${DX_NIX_VOLUME:-dx-nix}:/nix:$mode")
+                        ;;
+                    *)
+                        DXE_RUNTIME_DOCKER_CREATE_ARGV+=(--volume "$2")
+                        ;;
+                esac
+                shift 2
+                continue
+                ;;
+            --name|--entrypoint|-e|-m|-p)
+                [ "$#" -ge 2 ] || { echo "Error: $tok with no value in container_create argv." >&2; return 1; }
+                DXE_RUNTIME_DOCKER_CREATE_ARGV+=("$tok" "$2")
+                shift 2
+                continue
+                ;;
+            -*)
+                echo "Error: dx_runtime_docker_container_create does not recognize the create flag '$tok' (bin/dx-create-container's CREATE_FLAGS shape may have changed; this translator needs updating to match)." >&2
+                return 1
+                ;;
+            *)
+                DXE_RUNTIME_DOCKER_CREATE_ARGV+=("$tok")
+                seen_image=1
+                shift
+                continue
+                ;;
+        esac
+    done
+}
+
+dx_runtime_docker_container_create() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_translate_create_argv "$@" || return 1
+    dx_runtime_docker_ssh_exec "$bin" create "${DXE_RUNTIME_DOCKER_CREATE_ARGV[@]}"
+}
+
+dx_runtime_docker_container_start() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" start "$@"
+}
+
+dx_runtime_docker_container_stop() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" stop "$@"
+}
+
+dx_runtime_docker_container_kill() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" kill "$@"
+}
+
+# Apple's verb is "delete"; Docker's is "rm" -- otherwise identical flags
+# (Apple --force, Docker -f/--force).
+dx_runtime_docker_container_delete() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" rm "$@"
+}
+
+# The Containerfile's pinned base image reference. qnap-dxe-plan.md's
+# Phase 0 outcome: the real NAS refuses `docker build` outright for its
+# account ("QNAP's Docker wrapper creates a per-user build directory ...
+# and refuses it there for a non-default administrator"). Confirmed by the
+# coordinating session (2026-09-27): the Containerfile in this repository
+# is, and is meant to stay, a single "FROM <pinned-ref>@sha256:..." line --
+# the guest's actual content comes from the bootstrap volume, not image
+# layers -- so docker-ssh's "build" is exactly Phase 0's spike's proven
+# steps 2+3: pull the pinned reference, then tag it as the configured
+# image name. No remote build, no local build + save/load: never touches a
+# remote build context directory at all. Fails closed with a clear message
+# if the Containerfile ever contains anything beyond that one FROM line
+# (a second stage, a RUN/COPY instruction, ...) rather than silently
+# building only part of it or ignoring the rest.
+dx_runtime_docker_base_image_ref() {
+    local context_dir="$1" containerfile significant_lines from_line
+    containerfile="$context_dir/Containerfile"
+    [ -f "$containerfile" ] || { echo "Error: no Containerfile in $context_dir." >&2; return 1; }
+    significant_lines="$(grep -vcE '^[[:space:]]*(#.*)?$' "$containerfile")"
+    if [ "$significant_lines" != 1 ]; then
+        echo "Error: $containerfile has $significant_lines significant line(s); the docker-ssh adapter only supports a Containerfile that is a single 'FROM <pinned-ref>' line (qnap-dxe-plan.md Phase 0: the NAS refuses a remote docker build, so this adapter pulls and tags the pinned base image instead of building one)." >&2
+        return 1
+    fi
+    from_line="$(grep -vE '^[[:space:]]*(#.*)?$' "$containerfile")"
+    case "$from_line" in
+        FROM\ *)
+            from_line="${from_line#FROM }"
+            case "$from_line" in
+                ''|*[[:space:]]*)
+                    echo "Error: $containerfile's FROM line does not name a single image reference." >&2
+                    return 1
+                    ;;
+            esac
+            printf '%s' "$from_line"
+            ;;
+        *)
+            echo "Error: $containerfile's only significant line is not a FROM instruction." >&2
+            return 1
+            ;;
+    esac
+}
+
+# Parses the same "-t IMAGE CONTEXT_DIR" argv bin/dx-create-image already
+# sends through the contract (dx_runtime_image_build -t "$DX_IMAGE"
+# "$DX_CONTEXT_DIR") -- not a docker-ssh-specific shape, but the one
+# existing caller's shape, which this adapter must accept unchanged.
+dx_runtime_docker_image_build() {
+    local image="" context_dir="" bin ref
+    case "$1" in
+        -t)
+            [ "$#" -ge 3 ] || { echo "Error: dx_runtime_docker_image_build expected '-t IMAGE CONTEXT_DIR'." >&2; return 1; }
+            image="$2"; context_dir="$3"
+            ;;
+        *)
+            echo "Error: dx_runtime_docker_image_build only supports bin/dx-create-image's '-t IMAGE CONTEXT_DIR' shape (got: $*)." >&2
+            return 1
+            ;;
+    esac
+    ref="$(dx_runtime_docker_base_image_ref "$context_dir")" || return 1
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" pull "$ref" || return 1
+    dx_runtime_docker_ssh_exec "$bin" tag "$ref" "$image"
+}
+
+dx_runtime_docker_image_delete() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" image rm "$@"
+}
+
+dx_runtime_docker_volume_create() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" volume create "$@"
+}
+
+dx_runtime_docker_volume_delete() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" volume rm "$@"
+}
+
+# Exec with optional stdin/user/TTY, logs, export: a plain function call
+# with no intermediate subshell or pipe of its own (dx_runtime_docker_ssh_exec
+# -> dx_runtime_docker_ssh_raw -> a bare `ssh` invocation), so stdin and
+# exit status pass through to the real remote `docker exec`/`logs`/`export`
+# unchanged, exactly like the Apple adapter's own passthrough -- proven
+# directly in tests/test_docker_runtime_adapter.sh the same way
+# tests/test_sourceable_coverage.sh proves it for Apple. Docker's flag names
+# agree with Apple's (-i/-t/-u for exec, -n for logs' --tail); no
+# translation needed.
+dx_runtime_docker_exec() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" exec "$@"
+}
+
+dx_runtime_docker_logs() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" logs "$@"
+}
+
+dx_runtime_docker_export() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" export "$@"
+}
+
+# Ephemeral, no-persistent-container run. Apple's own retry loop
+# (dx_runtime_apple_run_ephemeral) exists solely for Apple Container's own
+# "no runtime client exists: container is stopped" race
+# (docs/refactor/runtime-boundary.md); Docker over SSH has no documented
+# equivalent, so no retry is carried over here -- if Increment 8's live
+# gate or later characterisation work surfaces a distinct Docker-side race,
+# that is new evidence for a scoped retry then, not something to guess at
+# now (docs/refactor/docker-adapter-mapping.md section 5).
+dx_runtime_docker_run_ephemeral() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" run "$@"
+}
+
 # --- Runtime capability queries (qnap-dxe-plan.md DQ2/DQ3/DQ4/DQ8) --------
 #
 # See docs/refactor/docker-adapter-mapping.md's capability table for why

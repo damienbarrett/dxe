@@ -537,5 +537,302 @@ echo "dx-qnap	dx-qnap-nixos	Up 2 hours"'
 )
 [ "$?" -eq 0 ] && test_pass "container_list: -a passes through, name-anchored first column" || test_fail "container_list: -a passes through, name-anchored first column"
 
+# --- Lifecycle (item 4) -----------------------------------------------------
+
+# container_create: the CAP_SYS_ADMIN/-c/--volume translation
+# (docs/refactor's coupling to bin/dx-create-container's exact shape).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/create-argv.log"
+    fake_tool_write "$dir" docker "
+[ \"\$1\" = create ] || { echo UNMATCHED >&2; exit 99; }
+shift
+printf '%s\n' \"\$@\" > '$argv_log'
+"
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_NIX_VOLUME=dx-qnap-nix
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_container_create \
+        --name dx-qnap --entrypoint sh --cap-add CAP_SYS_ADMIN \
+        --volume dx-qnap-nix:/var/lib/dx-nix-raw:rw \
+        --volume dx-qnap-persist:/persist:rw \
+        -e HOST_TZ=UTC -m 12G -c 4 -p 127.0.0.1:2222:2222 \
+        dx-qnap-nixos -c 'echo hi' -- /guest-bootstrap
+    got="$(cat "$argv_log")"
+    printf '%s\n' "$got" | stdin_matches -F -- "CAP_SYS_ADMIN" && test_fail "container_create drops --cap-add CAP_SYS_ADMIN" || test_pass "container_create drops --cap-add CAP_SYS_ADMIN"
+    printf '%s\n' "$got" | stdin_matches -F -- "--cpus" && printf '%s\n' "$got" | stdin_matches -F -- "4" && test_pass "container_create rewrites -c N to --cpus N" || test_fail "container_create rewrites -c N to --cpus N"
+    printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-nix:/nix:rw" && test_pass "container_create rewrites the Nix volume's target to /nix" || test_fail "container_create rewrites the Nix volume's target to /nix"
+    printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-persist:/persist:rw" && test_pass "container_create leaves the persist volume mount unchanged" || test_fail "container_create leaves the persist volume mount unchanged"
+    printf '%s\n' "$got" | stdin_matches -F -- "--name" && test_pass "container_create keeps --name" || test_fail "container_create keeps --name"
+    printf '%s\n' "$got" | stdin_matches -F -- "-c
+echo hi
+--
+/guest-bootstrap" && test_pass "container_create passes the post-image entrypoint argv through completely unexamined" || test_fail "container_create passes the post-image entrypoint argv through completely unexamined"
+)
+
+# container_create: an unrecognized flag before the image fails closed
+# rather than guessing.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_container_create --totally-unknown-flag value dx-qnap-nixos 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "does not recognize the create flag"
+)
+[ "$?" -eq 0 ] && test_pass "container_create fails closed on an unrecognized flag rather than guessing" || test_fail "container_create fails closed on an unrecognized flag rather than guessing"
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1" = start ] && [ "$2" = dx-qnap ] && exit 0; exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_container_start dx-qnap
+)
+[ "$?" -eq 0 ] && test_pass "container_start: passthrough" || test_fail "container_start: passthrough"
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1" = stop ] && [ "$2" = --time ] && [ "$3" = 5 ] && [ "$4" = dx-qnap ] && exit 0; exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_container_stop --time 5 dx-qnap
+)
+[ "$?" -eq 0 ] && test_pass "container_stop: --time N NAME passthrough (Docker and Apple agree)" || test_fail "container_stop: --time N NAME passthrough (Docker and Apple agree)"
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1" = kill ] && [ "$2" = dx-qnap ] && exit 0; exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_container_kill dx-qnap
+)
+[ "$?" -eq 0 ] && test_pass "container_kill: passthrough" || test_fail "container_kill: passthrough"
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1" = rm ] && [ "$2" = --force ] && [ "$3" = dx-qnap ] && exit 0; exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_container_delete --force dx-qnap
+)
+[ "$?" -eq 0 ] && test_pass "container_delete: Apple's 'delete' verb maps to Docker's 'rm', --force passes through" || test_fail "container_delete: Apple's 'delete' verb maps to Docker's 'rm', --force passes through"
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1" = image ] && [ "$2" = rm ] && [ "$3" = dx-qnap-nixos ] && exit 0; exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_image_delete dx-qnap-nixos
+)
+[ "$?" -eq 0 ] && test_pass "image_delete: passthrough" || test_fail "image_delete: passthrough"
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1" = volume ] && [ "$2" = create ] && [ "$3" = dx-qnap-nix ] && exit 0; exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_volume_create dx-qnap-nix
+)
+[ "$?" -eq 0 ] && test_pass "volume_create: passthrough" || test_fail "volume_create: passthrough"
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1" = volume ] && [ "$2" = rm ] && [ "$3" = dx-qnap-nix ] && exit 0; exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_volume_delete dx-qnap-nix
+)
+[ "$?" -eq 0 ] && test_pass "volume_delete: passthrough" || test_fail "volume_delete: passthrough"
+
+# exec: argv-verbatim AND stdin passthrough (piped and file-redirected),
+# exit status unchanged under `set -o pipefail`, no intermediate cat/subshell
+# -- the same explicit proof shape test_sourceable_coverage.sh uses for Apple.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/exec-argv.log"
+    fake_tool_write "$dir" docker "
+printf '%s\n' \"\$@\" > '$argv_log'
+if [ \"\${1:-}\" = exec ]; then cat; fi
+"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    set -o pipefail
+    out="$(printf 'piped-stdin' | dx_runtime_exec -i dx-qnap cat)"
+    rc=$?
+    [ "$rc" -eq 0 ] && [ "$out" = piped-stdin ]
+)
+[ "$?" -eq 0 ] && test_pass "exec: piped stdin passes through unchanged" || test_fail "exec: piped stdin passes through unchanged"
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "${1:-}" = exec ] && cat'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    src="$fixture/exec-src.txt"
+    printf 'file-redirected-stdin' > "$src"
+    out="$(dx_runtime_exec -i dx-qnap cat < "$src")"
+    [ "$out" = file-redirected-stdin ]
+)
+[ "$?" -eq 0 ] && test_pass "exec: file-redirected stdin passes through unchanged" || test_fail "exec: file-redirected stdin passes through unchanged"
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'exit 17'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    set -o pipefail
+    printf 'x' | dx_runtime_exec -i dx-qnap false >/dev/null
+    [ "$?" -eq 17 ]
+)
+[ "$?" -eq 0 ] && test_pass "exec: exit status is preserved unchanged even under set -o pipefail" || test_fail "exec: exit status is preserved unchanged even under set -o pipefail"
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/exec-argv2.log"
+    fake_tool_write "$dir" docker "printf '%s\n' \"\$@\" > '$argv_log'"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_exec -i -u dx dx-qnap bash -lc 'echo hi'
+    diff <(printf '%s\n' exec -i -u dx dx-qnap bash -lc 'echo hi') "$argv_log" >/dev/null
+)
+[ "$?" -eq 0 ] && test_pass "exec: argv is passed verbatim (-i -u dx NAME CMD...)" || test_fail "exec: argv is passed verbatim (-i -u dx NAME CMD...)"
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1" = logs ] && [ "$2" = -n ] && [ "$3" = 40 ] && [ "$4" = dx-qnap ] && printf "line1\nline2\n"'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    [ "$(dx_runtime_logs -n 40 dx-qnap)" = "$(printf 'line1\nline2')" ]
+)
+[ "$?" -eq 0 ] && test_pass "logs: -n N NAME passthrough (Docker and Apple agree)" || test_fail "logs: -n N NAME passthrough (Docker and Apple agree)"
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1" = export ] && [ "$2" = dx-qnap ] && printf "tarbytes"'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    [ "$(dx_runtime_export dx-qnap)" = tarbytes ]
+)
+[ "$?" -eq 0 ] && test_pass "export: passthrough stream" || test_fail "export: passthrough stream"
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1" = run ] && [ "$2" = --rm ] && [ "$3" = dx-qnap-nixos ] && printf "ran"'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    [ "$(dx_runtime_run_ephemeral --rm dx-qnap-nixos)" = ran ]
+)
+[ "$?" -eq 0 ] && test_pass "run_ephemeral: passthrough, no Apple-specific retry loop" || test_fail "run_ephemeral: passthrough, no Apple-specific retry loop"
+
+# --- image_build: Containerfile FROM-line parsing + pull/tag (no remote
+# build; qnap-dxe-plan.md Phase 0 outcome + the coordinating session's
+# 2026-09-27 decision).
+containerfile_root="$fixture/context-single"
+mkdir -p "$containerfile_root"
+printf 'FROM docker.io/library/debian@sha256:%040d\n' 1 > "$containerfile_root/Containerfile"
+pinned_ref="$(sed -n 's/^FROM //p' "$containerfile_root/Containerfile")"
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker "
+case \"\$1 \$2\" in
+    'pull $pinned_ref') exit 0 ;;
+    'tag $pinned_ref') [ \"\$3\" = dx-qnap-nixos ] && exit 0 ;;
+esac
+echo UNMATCHED: \"\$*\" >&2
+exit 99
+"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_image_build -t dx-qnap-nixos "$containerfile_root"
+)
+[ "$?" -eq 0 ] && test_pass "image_build: single-FROM Containerfile pulls the pinned ref then tags it" || test_fail "image_build: single-FROM Containerfile pulls the pinned ref then tags it"
+
+containerfile_multi="$fixture/context-multi"
+mkdir -p "$containerfile_multi"
+printf 'FROM docker.io/library/debian@sha256:%040d\nRUN echo hi\n' 2 > "$containerfile_multi/Containerfile"
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_image_build -t dx-qnap-nixos "$containerfile_multi" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "significant line"
+)
+[ "$?" -eq 0 ] && test_pass "image_build: fails closed on a Containerfile with more than one significant line" || test_fail "image_build: fails closed on a Containerfile with more than one significant line"
+
+containerfile_norun="$fixture/context-norun"
+mkdir -p "$containerfile_norun"
+printf 'RUN echo hi\n' > "$containerfile_norun/Containerfile"
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_image_build -t dx-qnap-nixos "$containerfile_norun" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "not a FROM instruction"
+)
+[ "$?" -eq 0 ] && test_pass "image_build: fails closed when the only significant line is not FROM" || test_fail "image_build: fails closed when the only significant line is not FROM"
+
+containerfile_comments="$fixture/context-comments"
+mkdir -p "$containerfile_comments"
+printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$containerfile_comments/Containerfile"
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1" = pull ] || [ "$1" = tag ] || { echo UNMATCHED >&2; exit 99; }; exit 0'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_image_build -t dx-qnap-nixos "$containerfile_comments"
+)
+[ "$?" -eq 0 ] && test_pass "image_build: comments and blank lines around the one FROM line are not significant" || test_fail "image_build: comments and blank lines around the one FROM line are not significant"
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_image_build --bogus-shape 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "only supports"
+)
+[ "$?" -eq 0 ] && test_pass "image_build: refuses an argv shape other than bin/dx-create-image's own" || test_fail "image_build: refuses an argv shape other than bin/dx-create-image's own"
+
 print_summary
 exit_with_code
