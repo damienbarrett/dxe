@@ -24,20 +24,15 @@ Updated 2026-09-27, after this trim.
   bootstrap-recreate), 16 (keyring owned by `dx-ai`) and 17 (`dx-backup`
   transfer stall) are all landed, CI green, live-verified on `dx-test`. See
   the table below for each branch's evidence record.
-- **`dx-host` (the primary guest) runs `main` `122258c`**, promoted
-  2026-09-27 per Appendix D. It has Branches 1-15, including OpenCode and the
-  persist-backup tooling. It does **not** yet have:
-  - **Branch 16's keyring liveness fix** -- after a restart, the previous
-    boot's D-Bus socket file can still be read as live, so the bus and
-    Secret Service don't restart. Cosmetic: only `agy`'s Secret-Service
-    token persistence is affected, until the bus is restarted by hand
-    (`dx-keyring start`).
-  - **Branch 17's `dx-backup` transfer fix** -- the current `dx-backup` on
-    `dx-host` can stall moving a large selection (see the deny-list
-    follow-up below).
-
-  Both fixes are live-verified on `dx-test` and land on `dx-host` at its next
-  promotion (Appendix D).
+- **`dx-host` (the primary guest) runs current `main`** (promoted 2026-09-27
+  to `abd4d2d`'s bootstrap payload per Appendix D, after the `122258c`
+  promotion earlier that day). It has every landed branch, including
+  Branch 16 (the keyring is started by `dx-ai`/`dx-keyring`, not bootstrap;
+  verified live after the promotion: `dx-keyring status` was `stale` after
+  the restart and `live` with one `dbus-daemon` and one
+  `gnome-keyring-daemon` after a cold `dx-ai`) and Branch 17's transfer
+  fix. Its first real `dx-backup` exposed a nested-repository duplicate-path
+  defect (fixed by Branch 18); the promotion's backup was a full tar copy.
 - **`dx-test` is the disposable guest** used for every live gate. Wipe and
   recreate it freely.
 - **No QNAP guest exists yet.** The QNAP (TVS-h674T, confirmed **x86_64** in
@@ -398,11 +393,11 @@ runs. No subagent promotes to `dx-host` on its own; the coordinating
 session runs this appendix with the user, after they have seen the
 rehearsed dry run on `dx-test`.
 
-**Status 2026-09-27:** see "Where things stand" above for what `dx-host`
-currently runs and lacks. Promotions so far: `main` `08700a8` (2026-09-26,
-the start-generation fix), then `main` `122258c` (2026-09-27, adding
-Branches 6-15 including OpenCode and persist-backup). The next promotion
-should include Branches 16 and 17.
+**Status 2026-09-27:** see "Where things stand" above. Promotions so far:
+`main` `08700a8` (2026-09-26, the start-generation fix), `main` `122258c`
+(2026-09-27, Branches 6-15 including OpenCode and persist-backup), and
+`main` `abd4d2d` (2026-09-27, Branches 16 and 17 and Phase 1). `dx-host` is
+current; the next promotion follows the next runtime-affecting landing.
 
 **Before promoting:**
 
