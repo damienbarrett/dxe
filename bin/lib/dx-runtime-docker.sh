@@ -538,6 +538,25 @@ dx_runtime_docker_container_create() {
                 dx_runtime_container_create_parse_volume_spec "$2" || return 1
                 case "$DXE_VOLSPEC_ROLE" in
                     nix) flags+=(--volume "$DXE_VOLSPEC_NAME:/nix:$DXE_VOLSPEC_MODE") ;;
+                    git)
+                        # Branch 11 / Phase 5 (qnap-dxe-plan.md DQ8;
+                        # coordinating session's decision 4): a "git:"
+                        # volume's own NAME field is a controller-local
+                        # directory path (a bind mount), never a valid
+                        # remote bind source over SSH -- refuse here,
+                        # before any remote mutation, regardless of how
+                        # the caller reached this vocabulary (bin/dx-mount's
+                        # own guard is the fail-fast path for the common
+                        # case; this is the adapter-level backstop for any
+                        # other caller, e.g. DX_GIT_MOUNT_SOURCE set
+                        # directly and bin/dx-create-container run without
+                        # going through bin/dx-mount at all).
+                        dx_runtime_docker_capability bind_mounts || {
+                            echo "Error: dx_runtime_docker_container_create: a git: (bind mount) volume is not supported: DX_RUNTIME=docker-ssh has no bind_mounts capability (qnap-dxe-plan.md DQ8)." >&2
+                            return 1
+                        }
+                        flags+=(--volume "$DXE_VOLSPEC_NAME:$DXE_VOLSPEC_TARGET:$DXE_VOLSPEC_MODE")
+                        ;;
                     *) flags+=(--volume "$DXE_VOLSPEC_NAME:$DXE_VOLSPEC_TARGET:$DXE_VOLSPEC_MODE") ;;
                 esac
                 shift 2
@@ -988,13 +1007,17 @@ dx_runtime_docker_lock_release() {
 # --- Runtime capability queries (qnap-dxe-plan.md DQ2/DQ3/DQ4/DQ8) --------
 #
 # See docs/refactor/docker-adapter-mapping.md's capability table for why
-# each answer is what it is.
+# each answer is what it is. raw_nix_disk (Branch 11 / Phase 5): no --
+# bin/dx-nix-disk's sparse Apple raw-disk-image mechanism has no Docker
+# equivalent at all (DQ8: "Apple-only; fail immediately with a clear
+# capability message").
 dx_runtime_docker_capability() {
     case "$1" in
         direct_named_volume_mounts) return 0 ;;
         bind_mounts) return 1 ;;
         restart_policy) return 0 ;;
         host_filesystem_reclamation) return 1 ;;
+        raw_nix_disk) return 1 ;;
         *) echo "Error: unknown runtime capability '$1'." >&2; return 2 ;;
     esac
 }

@@ -235,9 +235,15 @@ dx_runtime_apple_guest_ssh_address() { printf '%s\n' 127.0.0.1; }
 #     sizing and bin/dx-nix-disk both operate directly on the host
 #     filesystem today (outside this contract entirely, per DQ8; this
 #     capability answer just records that the capability exists on Apple).
+#   raw_nix_disk -- yes (Branch 11 / Phase 5, qnap-dxe-plan.md DQ8):
+#     bin/dx-nix-disk's sparse Nix disk image preparation is an
+#     Apple-only host mechanic with no Docker equivalent at all -- distinct
+#     from host_filesystem_reclamation (which also covers dx-reclaim's
+#     trim/sizing) because a future runtime could plausibly reclaim host
+#     space without ever supporting this specific raw-disk-image mechanism.
 dx_runtime_apple_capability() {
     case "$1" in
-        direct_named_volume_mounts|bind_mounts|host_filesystem_reclamation) return 0 ;;
+        direct_named_volume_mounts|bind_mounts|host_filesystem_reclamation|raw_nix_disk) return 0 ;;
         restart_policy) return 1 ;;
         *) echo "Error: unknown runtime capability '$1'." >&2; return 2 ;;
     esac

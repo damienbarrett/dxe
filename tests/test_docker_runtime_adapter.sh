@@ -2410,6 +2410,83 @@ esac'
 [ "$?" -eq 0 ] && test_pass "dx-put and dx-get (docker-ssh): every ssh call dials the management alias, never the guest SSH endpoint directly" \
     || test_fail "dx-put and dx-get (docker-ssh): every ssh call dials the management alias, never the guest SSH endpoint directly"
 
+# --- Fail-closed capability checks (Branch 11 / Phase 5, item 7) ----------
+
+# capability: raw_nix_disk is yes for apple, no for docker-ssh (DQ8).
+(
+    DX_RUNTIME=apple dx_runtime_capability raw_nix_disk
+)
+[ "$?" -eq 0 ] && test_pass "capability: raw_nix_disk is yes for apple" || test_fail "capability: raw_nix_disk is yes for apple"
+(
+    DX_RUNTIME=docker-ssh dx_runtime_capability raw_nix_disk
+)
+[ "$?" -ne 0 ] && test_pass "capability: raw_nix_disk is no for docker-ssh (DQ8: dx-nix-disk is Apple-only)" \
+    || test_fail "capability: raw_nix_disk is no for docker-ssh (DQ8: dx-nix-disk is Apple-only)"
+
+# bin/dx-nix-disk (apple): unaffected, still prepares the sparse image.
+(
+    nix_disk_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-nix-disk-apple.XXXXXX")"
+    nix_disk_path="$nix_disk_home/nix-store.img"
+    env HOME="$nix_disk_home" DX_RUNTIME=apple DX_NIX_DISK="$nix_disk_path" DX_NIX_DISK_SIZE=1M \
+        "$BASE_DIR/bin/dx-nix-disk" >/dev/null 2>&1
+    [ -f "$nix_disk_path" ]
+)
+[ "$?" -eq 0 ] && test_pass "bin/dx-nix-disk (apple): unaffected by the new capability check, still prepares the sparse image" \
+    || test_fail "bin/dx-nix-disk (apple): unaffected by the new capability check, still prepares the sparse image"
+
+# bin/dx-nix-disk (docker-ssh): refuses immediately, before any mutation --
+# no directory created, no file written, not even the "already exists"
+# check reached.
+(
+    nix_disk_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-nix-disk-docker.XXXXXX")"
+    nix_disk_path="$nix_disk_home/does-not-exist-yet/nix-store.img"
+    out="$(env HOME="$nix_disk_home" DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_NIX_DISK="$nix_disk_path" DX_NIX_DISK_SIZE=1M \
+        "$BASE_DIR/bin/dx-nix-disk" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && [ ! -e "$nix_disk_path" ] && [ ! -d "$(dirname "$nix_disk_path")" ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "dx-nix-disk is Apple-only"
+)
+[ "$?" -eq 0 ] && test_pass "bin/dx-nix-disk (docker-ssh): refuses before any mutation (DQ8: raw_nix_disk unsupported)" \
+    || test_fail "bin/dx-nix-disk (docker-ssh): refuses before any mutation (DQ8: raw_nix_disk unsupported)"
+
+# bin/dx-mount (docker-ssh): refuses before dx_require_container_cli even
+# runs -- a hard-failing fake ssh/docker would be reached if the guard
+# were not first, proving the refusal really does come first.
+(
+    dir="$(new_tool_dir)"
+    fake_tool_write "$dir" ssh 'echo "ssh should never be called" >&2; exit 99'
+    fake_tool_write "$dir" docker 'echo "docker should never be called" >&2; exit 99'
+    mount_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-mount-docker.XXXXXX")"
+    PATH="$dir:/usr/bin:/bin"
+    out="$(env HOME="$mount_home" DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap-mount PATH="$PATH" \
+        "$BASE_DIR/bin/dx-mount" "$mount_home" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "dx-mount is not supported under DX_RUNTIME=docker-ssh" \
+        && ! printf '%s\n' "$out" | stdin_matches -F -- "should never be called"
+)
+[ "$?" -eq 0 ] && test_pass "bin/dx-mount (docker-ssh): refuses before dx_require_container_cli, never reaching ssh or docker (DQ8: bind_mounts unsupported)" \
+    || test_fail "bin/dx-mount (docker-ssh): refuses before dx_require_container_cli, never reaching ssh or docker (DQ8: bind_mounts unsupported)"
+
+# dx_runtime_docker_container_create: refuses a git: (bind mount) volume
+# spec before any docker call, regardless of caller (decision 4 -- closes
+# the DX_GIT_MOUNT_SOURCE-set-directly gap the design note flagged: this
+# is the adapter-level backstop, not only bin/dx-mount's own guard above).
+(
+    dir="$(new_tool_dir)"
+    fake_tool_write "$dir" ssh 'echo "ssh should never be called" >&2; exit 99'
+    fake_tool_write "$dir" docker 'echo "docker should never be called" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
+    DXE_RUNTIME_DOCKER_BIN=docker
+    git_src="$(mktemp -d "${TMPDIR:-/tmp}/dxe-git-src.XXXXXX")"
+    out="$(dx_runtime_container_create --name dx-qnap --image dx-qnap-nixos \
+        --volume "git:$git_src:/workspace:rw" --publish 2222:2222 --entrypoint-cmd 'echo hi' 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "bind_mounts capability" \
+        && ! printf '%s\n' "$out" | stdin_matches -F -- "should never be called"
+)
+[ "$?" -eq 0 ] && test_pass "container_create (docker-ssh): refuses a git: (bind mount) volume spec before any docker call (decision 4)" \
+    || test_fail "container_create (docker-ssh): refuses a git: (bind mount) volume spec before any docker call (decision 4)"
+
 # --- bin/lib/dx-backup.sh's unidirectional exec discipline under
 # docker-ssh (Branch 11 / Phase 3, Increment 6, item 6): Branch 17 found
 # that an exec carrying both stdin and bulk stdout over one multiplexed

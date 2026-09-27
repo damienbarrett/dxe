@@ -213,6 +213,14 @@ if [ "$destroy" = true ] || [ "$print_plan" = true ]; then
     "$SCRIPT_DIR/dx-destroy-container"; "$SCRIPT_DIR/dx-destroy-volumes" --force; "$SCRIPT_DIR/dx-destroy-keys"; rm -f "$identity_file"; exit 0
 fi
 
+# Branch 11 / Phase 5 (qnap-dxe-plan.md DQ8; docs/refactor/remote-aware-ssh.md
+# section 7): fails before any runtime mutation (before even
+# dx_require_container_cli) rather than a bind mount failing late -- a
+# controller-local directory is never a valid remote bind source over
+# SSH. The destroy/print-plan branch above never creates a bind mount, so
+# it is unaffected; only this create/attach path needs the guard. A pure
+# local-table lookup, no round trip either way.
+dx_runtime_capability bind_mounts || fail "dx-mount is not supported under DX_RUNTIME=${DX_RUNTIME:-apple}: a controller-local directory is never a valid remote bind source (qnap-dxe-plan.md DQ8)."
 dx_require_container_cli
 if [ -n "$container_override" ] && container_exists "$container_name" && [ "$marker_present" = false ]; then fail "container $container_name exists without a mount identity marker; refusing attach."; fi
 if [ "$manifest_present" = true ]; then
