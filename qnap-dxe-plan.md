@@ -672,10 +672,21 @@ tool state, and the current bootstrap generation" check needs a real
 x86_64 QNAP guest to run against, which does not exist until Phase 4; it
 therefore **moves to Phase 4's own exit gate**. This phase's own scope --
 the direct-volume in-guest protocol and its fake-boundary proof -- is
-done. Not yet run: the coordinating session's live disposable-volume
-check on the NAS (confirming the Docker copy-on-first-mount dependency
-with the real guest image) and the Apple `dx-test` regression tier --
-both required, per the dual-target gate, before this branch lands.
+done. Both live checks then ran on 2026-09-27 (coordinating session; the
+NAS steps approved in advance) and passed: on the NAS, three disposable
+DQ6-labelled volumes were created and label-deleted, the digest-pinned base
+image was tagged and untagged, and Docker's copy-on-first-mount was
+confirmed (124 store entries appeared in the empty `/nix` volume and
+persisted across a second run); the one defect it exposed --
+`dx_runtime_volume_usage` used the API's `.UsageData.Size` instead of the
+CLI formatter's `.Size` -- was fixed before landing and re-verified live.
+On Apple, `dx-test` was recreated (container only) onto its existing
+volumes with the two new env tokens: the bootstrap took the unchanged
+apple-image path with no re-seed, `/persist` content and the SSH host
+identity were preserved, and the full live tier passed (35 sections, 1,687
+passed, 0 failed). Evidence: `docs/evidence/20260927/direct-volume-storage.md`.
+**Phase 3 is landed; its exit gate is met except the direct-volume
+recreate check, which moves to Phase 4 as stated above.**
 
 ## Phase 4 — Make the guest architecture-neutral
 

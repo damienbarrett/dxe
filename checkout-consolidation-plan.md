@@ -245,6 +245,15 @@ as a whole phase stack.
   subsets, including a deliberate conflict). Backlog: join the local and
   guest hash lists in one pass (sort + join, or a single awk over both
   files) and prove the full 60k dry-run completes in well under a minute.
+- **Section 27's fake `ssh` blocks forever when its stdin is an open
+  pipe or socket** (found 2026-09-27 when a live-gate script ran
+  `tests/run-tier.sh live` without `</dev/null`: the tier sat 22 minutes
+  inside `test_section27_qnap_scripts.sh`, and two stale copies of the same
+  test from an earlier run were found hung the same way). The standing
+  rule "stdin from /dev/null" masks it. Backlog: make the Phase 0 scripts'
+  fake `ssh` (and any other recording fake that may be reached with an
+  inherited stdin) redirect its own stdin from /dev/null, and add a
+  bounded-time test that runs Section 27 with stdin held open.
 - **`--dry-run --summary` shows no "denied by the deny-list" total — decided
   2026-09-27 (coordinating session, option c): the walk prunes component-
   denied directories before the selector sees them, so any cheap counter
