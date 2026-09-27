@@ -1788,5 +1788,66 @@ echo "UNMATCHED: $*" >&2; exit 99'
 )
 [ "$?" -eq 0 ] && test_pass "dx-reclaim (docker-ssh): skips fstrim entirely, never reaching the guest fstrim call" || test_fail "dx-reclaim (docker-ssh): skips fstrim entirely, never reaching the guest fstrim call"
 
+# --- bin/lib/dx-backup.sh's unidirectional exec discipline under
+# docker-ssh (Branch 11 / Phase 3, Increment 6, item 6): Branch 17 found
+# that an exec carrying both stdin and bulk stdout over one multiplexed
+# channel can stall; dx-backup.sh's stdin phase and stream phase are two
+# separate, unidirectional execs (this file's own module comment above
+# dx_backup_ship_list_to_guest). Proves the discipline survives the
+# adapter unchanged: the stdin phase renders `docker exec -i -u dx NAME
+# sh -c ...`, the stream phase renders `docker exec -u dx NAME tar ...`
+# with NO `-i` at all.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    bk_log="$dir/exec-argv.log"
+    fake_tool_write "$dir" docker '
+[ "$1" = exec ] || { echo "UNMATCHED: $*" >&2; exit 99; }
+shift
+printf "%s\n" "$@" >> "'"$bk_log"'"
+case "$*" in *"sh -c"*) cat > /dev/null ;; esac
+exit 0'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DXE_RUNTIME_DOCKER_BIN=docker
+    host_list="$(mktemp "${TMPDIR:-/tmp}/dxe-bk-hostlist.XXXXXX")"
+    printf 'persist/one\n' > "$host_list"
+    dx_backup_ship_list_to_guest dx-qnap "$host_list" >/dev/null
+    rm -f "$host_list"
+    argv="$(tr '\n' ' ' < "$bk_log")"
+    printf '%s\n' "$argv" | stdin_matches -F -- '-i -u dx dx-qnap sh -c'
+)
+[ "$?" -eq 0 ] && test_pass "dx-backup (docker-ssh): the stdin-shipping phase renders 'docker exec -i -u dx NAME sh -c ...'" || test_fail "dx-backup (docker-ssh): the stdin-shipping phase renders 'docker exec -i -u dx NAME sh -c ...'"
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    bk_log="$dir/exec-argv.log"
+    # dx_backup_fetch_paths issues THREE separate execs (ship, stream,
+    # cleanup-rm); a form-feed record separator after each one (the same
+    # convention tests/test_runtime_boundary_characterisation.sh's own
+    # module comment documents) lets the assertion below isolate just the
+    # tar-streaming invocation's own argv, not the whole call sequence.
+    fake_tool_write "$dir" docker '
+[ "$1" = exec ] || { echo "UNMATCHED: $*" >&2; exit 99; }
+shift
+printf "%s\n" "$@" >> "'"$bk_log"'"
+printf "\f\n" >> "'"$bk_log"'"
+tar -cf - -T /dev/null
+exit 0'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DXE_RUNTIME_DOCKER_BIN=docker
+    fetch_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bk-fetch.XXXXXX")"
+    fetch_lines="$fetch_dir/lines.tsv"
+    printf 'persist/one\tabc\n' > "$fetch_lines"
+    DX_BACKUP_GUEST_ROOT=/persist
+    dx_backup_fetch_paths dx-qnap "$fetch_dir" "$fetch_lines" >/dev/null 2>&1
+    rm -rf "$fetch_dir"
+    tar_block="$(awk -v RS='\f\n' '/(^|\n)tar(\n|$)/ { print; exit }' "$bk_log" | tr '\n' ' ')"
+    printf '%s\n' "$tar_block" | stdin_matches -F -- '-u dx dx-qnap tar' \
+        && ! printf '%s\n' " $tar_block " | stdin_matches -F -- ' -i '
+)
+[ "$?" -eq 0 ] && test_pass "dx-backup (docker-ssh): the tar-streaming phase renders 'docker exec -u dx NAME tar ...', no -i at all" || test_fail "dx-backup (docker-ssh): the tar-streaming phase renders 'docker exec -u dx NAME tar ...', no -i at all"
+
 print_summary
 exit_with_code
