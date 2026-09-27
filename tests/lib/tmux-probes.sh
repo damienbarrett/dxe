@@ -114,9 +114,36 @@ tmux_guest_resurrect_probe() {
             echo "__PROBE_FAILED__"; exit 1
         fi
         tmux -L "$sock" set -g @continuum-restore off >/dev/null 2>&1 || true
-        printf "resurrect-dir=%s\n" "$(tmux -L "$sock" show -gv @resurrect-dir 2>/dev/null)"
-        if tmux -L "$sock" list-keys -T prefix | grep -qE "prefix C-s "; then echo "save-bound=yes"; else echo "save-bound=no"; fi
-        if tmux -L "$sock" list-keys -T prefix | grep -qE "prefix C-r "; then echo "restore-bound=yes"; else echo "restore-bound=no"; fi
+        # tmux-resurrect/continuum'"'"'s own tmux.conf snippets (@resurrect-dir,
+        # the C-s/C-r bindings) are sourced via TPM as part of session
+        # start-up, but unlike every other probe in this file (which retries
+        # "new-session -d" itself up to 3 times), this one never re-checked
+        # the CONFIG-derived values afterward -- it read them exactly once,
+        # immediately, trusting "new-session -d" returned only once startup
+        # had fully settled. Found timing-flaky on the live tier (2026-09-27):
+        # occasionally an empty @resurrect-dir or a missing binding on an
+        # otherwise-healthy guest. Poll (bounded) for all three observable
+        # conditions together instead of a single immediate read, the same
+        # shape the other probes here use for their own bounded retries.
+        rdir_val=""
+        keys_blob=""
+        i=0
+        while [ "$i" -lt 10 ]; do
+            rdir_val="$(tmux -L "$sock" show -gv @resurrect-dir 2>/dev/null)"
+            keys_blob="$(tmux -L "$sock" list-keys -T prefix 2>/dev/null)"
+            save_ok=no
+            printf "%s" "$keys_blob" | grep -qE "prefix C-s " && save_ok=yes
+            restore_ok=no
+            printf "%s" "$keys_blob" | grep -qE "prefix C-r " && restore_ok=yes
+            if [ -n "$rdir_val" ] && [ "$save_ok" = yes ] && [ "$restore_ok" = yes ]; then
+                break
+            fi
+            i=$((i + 1))
+            sleep 1
+        done
+        printf "resurrect-dir=%s\n" "$rdir_val"
+        if [ "$save_ok" = yes ]; then echo "save-bound=yes"; else echo "save-bound=no"; fi
+        if [ "$restore_ok" = yes ]; then echo "restore-bound=yes"; else echo "restore-bound=no"; fi
         tmux -L "$sock" kill-server >/dev/null 2>&1 || true
     ' 2>/dev/null
 }

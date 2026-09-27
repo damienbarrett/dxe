@@ -263,6 +263,73 @@ assert_file_contains "$SHELL_NIX" "claude = \\\"claude --dangerously-skip-permis
 assert_file_contains "$SHELL_NIX" "codex = \\\"codex --dangerously-bypass-approvals-and-sandbox\\\"" "shell.nix configures codex with --dangerously-bypass-approvals-and-sandbox"
 assert_file_contains "$SHELL_NIX" "gemini = \\\"gemini --yolo\\\"" "shell.nix configures gemini with --yolo"
 
+# --- Item 3 (fix/test-hardening): tmux_guest_resurrect_probe's live tmux- --
+# --- resurrect check was timing-flaky (found on Branch 16's live tier,    -
+# --- 2026-09-27, file untouched by that branch): it read @resurrect-dir   -
+# --- and the C-s/C-r bindings exactly once, immediately after             -
+# --- "new-session -d" returned, trusting that return meant the CONFIG-    -
+# --- derived plugin state (tmux-resurrect/continuum, sourced via TPM as  -
+# --- part of session start-up) had already settled -- probing server      -
+# --- start-up timing rather than a settled state. Fixed in                -
+# --- tests/lib/tmux-probes.sh: a bounded poll for all three observable    -
+# --- conditions together, the same shape the OTHER probes in that file    -
+# --- already use for their own bounded session-start retries. This is a  -
+# --- live-tier probe with no real guest here, so the proof is the         -
+# --- probe's own unit-level structure: a fake "tmux" on PATH that         -
+# --- answers "not yet set/bound" for its first few calls and only the     -
+# --- real values from a later call onward (a counter file, the same      -
+# --- idiom Section 27's nc_retry uses -- see test_section27_qnap_scripts.sh),
+# --- with container_exec_dx_bash temporarily overridden (saved via        -
+# --- "declare -f" and restored immediately after, so nothing later in     -
+# --- this file or the live block below is affected) to run the probe's   -
+# --- own guest-side script body locally instead of through a real         -
+# --- container. The coordinating session proves stability across three   -
+# --- live dx-test runs afterward (this test cannot: there is no guest    -
+# --- here to be flaky against). ---
+RESURRECT_PROBE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dxe-resurrect-probe.XXXXXX")"
+RESURRECT_COUNTER="$RESURRECT_PROBE_DIR/counter"
+RESURRECT_SETTLE_AFTER=4
+cat > "$RESURRECT_PROBE_DIR/tmux" <<'FAKETMUX'
+#!/bin/bash
+shift 2 # drop "-L" "<sock>": every call this probe makes has that shape
+sub="$1"
+case "$sub" in
+    kill-server|new-session|set) exit 0 ;;
+    show)
+        n=0
+        [ -f "$DXE_TEST_RESURRECT_COUNTER" ] && n="$(cat "$DXE_TEST_RESURRECT_COUNTER")"
+        n=$((n + 1))
+        printf "%s" "$n" > "$DXE_TEST_RESURRECT_COUNTER"
+        [ "$n" -ge "$DXE_TEST_RESURRECT_SETTLE_AFTER" ] && echo "/persist/home/dx/.local/share/tmux/resurrect"
+        exit 0
+        ;;
+    list-keys)
+        n=0
+        [ -f "$DXE_TEST_RESURRECT_COUNTER" ] && n="$(cat "$DXE_TEST_RESURRECT_COUNTER")"
+        if [ "$n" -ge "$DXE_TEST_RESURRECT_SETTLE_AFTER" ]; then
+            printf 'bind-key -T prefix C-s run-shell "resurrect_save.sh"\n'
+            printf 'bind-key -T prefix C-r run-shell "resurrect_restore.sh"\n'
+        fi
+        exit 0
+        ;;
+esac
+exit 0
+FAKETMUX
+chmod +x "$RESURRECT_PROBE_DIR/tmux"
+
+RESURRECT_ORIG_CONTAINER_EXEC_DX_BASH="$(declare -f container_exec_dx_bash)"
+container_exec_dx_bash() {
+    DXE_TEST_RESURRECT_COUNTER="$RESURRECT_COUNTER" DXE_TEST_RESURRECT_SETTLE_AFTER="$RESURRECT_SETTLE_AFTER" \
+        PATH="$RESURRECT_PROBE_DIR:$PATH" bash -c "$1"
+}
+RESURRECT_PROBE_OUT="$(tmux_guest_resurrect_probe)"
+eval "$RESURRECT_ORIG_CONTAINER_EXEC_DX_BASH"
+rm -rf "$RESURRECT_PROBE_DIR"
+
+assert_tmux_runtime "$RESURRECT_PROBE_OUT" resurrect-dir /persist/home/dx/.local/share/tmux/resurrect "tmux resurrect probe polls until @resurrect-dir settles instead of reading it too early"
+assert_tmux_runtime "$RESURRECT_PROBE_OUT" save-bound yes "tmux resurrect probe polls until the save binding settles instead of reading it too early"
+assert_tmux_runtime "$RESURRECT_PROBE_OUT" restore-bound yes "tmux resurrect probe polls until the restore binding settles instead of reading it too early"
+
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
     test_skip "guest tool live checks skipped by --skip-integration"
 elif ! requires_container; then
