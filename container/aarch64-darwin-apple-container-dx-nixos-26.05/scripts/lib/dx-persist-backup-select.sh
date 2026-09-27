@@ -221,8 +221,7 @@ dx_pbs_walk_repo_files() {
             [ -n "$nrepo" ] || continue
             case "$nrepo" in
                 "$dir"/*) nested_prune+=(-o -path "./${nrepo#"$dir"/}") ;;
-            esac
-        done < "$nested_file"
+            esac; :; done < "$nested_file"
     fi
     ( cd "$dir" 2>/dev/null || exit 0
       if [ "$keep_git" = keep-git ]; then
@@ -244,7 +243,7 @@ dx_pbs_walk_repo_files() {
                 "${nested_prune[@]+"${nested_prune[@]}"}" \
             \) \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
       fi | while IFS= read -r -d '' entry; do printf '%s\0' "${entry#./}"; done
-    )
+    ) # KCOV_SUBSHELL_TERMINATOR
 }
 
 # Write (to $3), one absolute path per line, every OTHER repository in
@@ -259,8 +258,7 @@ dx_pbs_nested_repos_for() {
         [ -n "$other" ] || continue
         case "$other" in
             "$repo"/*) printf '%s\n' "$other" >> "$outfile" ;;
-        esac
-    done < "$repos_file"
+        esac; :; done < "$repos_file"
 }
 
 # Emit one TSV listing line per newline-delimited relative path in list-file
