@@ -46,6 +46,24 @@ dx_backup_selector_path() {
     printf '%s/current/scripts/lib/dx-persist-backup-select.sh\n' "${DX_BOOTSTRAP_PATH%/}"
 }
 
+# Resolve which exclude file (if any) to read (Branch 18): an explicit
+# DX_BACKUP_EXCLUDE_FILE always wins (including its "must exist" error,
+# still enforced by dx_backup_read_exclude_patterns, unchanged). Otherwise,
+# if a file exists at the default location
+# ${XDG_CONFIG_HOME:-$HOME/.config}/dxe/dx-backup-exclude, that one is used
+# instead -- silently, since it is optional (unlike a nonexistent EXPLICIT
+# override, which is still an error). Prints the resolved path, or nothing
+# if there is none to read.
+dx_backup_resolve_exclude_file() {
+    if [ -n "${DX_BACKUP_EXCLUDE_FILE:-}" ]; then
+        printf '%s\n' "$DX_BACKUP_EXCLUDE_FILE"
+        return 0
+    fi
+    local default_file="${XDG_CONFIG_HOME:-$HOME/.config}/dxe/dx-backup-exclude"
+    [ -f "$default_file" ] && printf '%s\n' "$default_file"
+    return 0
+}
+
 # Read DX_BACKUP_EXCLUDE_FILE-style extra deny patterns: one per line, blank
 # lines and full-line '#' comments skipped. Prints one pattern per line.
 dx_backup_read_exclude_patterns() {

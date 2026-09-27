@@ -36,10 +36,11 @@ BACKUP_DIR="$(dx_backup_resolve_dir)"
 MANIFEST="$BACKUP_DIR/manifest.tsv"
 
 DENY_PATTERNS=()
-if [ -n "${DX_BACKUP_EXCLUDE_FILE:-}" ]; then
+EXCLUDE_FILE="$(dx_backup_resolve_exclude_file)"
+if [ -n "$EXCLUDE_FILE" ]; then
     while IFS= read -r pattern; do
         DENY_PATTERNS+=("$pattern")
-    done < <(dx_backup_read_exclude_patterns "$DX_BACKUP_EXCLUDE_FILE")
+    done < <(dx_backup_read_exclude_patterns "$EXCLUDE_FILE")
 fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dx-backup.XXXXXX")"

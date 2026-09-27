@@ -434,5 +434,65 @@ fi
 # --- CLI hygiene: --summary requires --dry-run. ---
 if "$BASE_DIR/bin/dx-backup" --summary >/dev/null 2>&1; then test_fail "--summary without --dry-run is a usage error"; else test_pass "--summary without --dry-run is a usage error"; fi
 
+# --- Branch 18: a default location for the user's extra exclude file. When
+# DX_BACKUP_EXCLUDE_FILE is unset and
+# ${XDG_CONFIG_HOME:-$HOME/.config}/dxe/dx-backup-exclude exists on the
+# host, it is read the same way as an explicit DX_BACKUP_EXCLUDE_FILE (one
+# pattern per line, blank lines/'#' comments skipped). An explicit
+# DX_BACKUP_EXCLUDE_FILE still wins over the default. A missing default
+# file is silently ignored (not an error, unlike an explicit
+# DX_BACKUP_EXCLUDE_FILE naming a nonexistent file, which is already
+# covered by dx_backup_read_exclude_patterns's own existing error path).
+# A fresh DX_BACKUP_DIR isolates this block from every manifest state
+# built up by the tests above -- everything here is "new", so what
+# --dry-run reports as "would transfer" reflects only what this block's
+# own deny patterns include or exclude. ---
+unset DX_BACKUP_EXCLUDE_FILE 2>/dev/null || true
+export XDG_CONFIG_HOME="$FIXTURE/xdg-config"
+export DX_BACKUP_DIR="$FIXTURE/default-exclude-backups"
+mkdir -p "$XDG_CONFIG_HOME/dxe"
+printf 'default-drop-me\n' > "$FIXTURE/persist/home/dx/default-drop-me.marker"
+
+# No default file yet: silently ignored, at-risk set unaffected.
+no_default_out="$("$BASE_DIR/bin/dx-backup" --dry-run 2>&1)"
+no_default_rc=$?
+if [ "$no_default_rc" -eq 0 ] && printf '%s\n' "$no_default_out" | stdin_matches -F 'home/dx/default-drop-me.marker'; then
+    test_pass "a missing default exclude file is silently ignored"
+else
+    test_fail "a missing default exclude file is silently ignored (rc=$no_default_rc, out: $no_default_out)"
+fi
+
+# The default file now exists (blank line and '#' comment included, same
+# syntax as DX_BACKUP_EXCLUDE_FILE): its pattern applies with
+# DX_BACKUP_EXCLUDE_FILE unset.
+printf '%s\n' '# a comment line' '' 'home/dx/default-drop-me.marker' > "$XDG_CONFIG_HOME/dxe/dx-backup-exclude"
+default_out="$("$BASE_DIR/bin/dx-backup" --dry-run 2>&1)"
+if printf '%s\n' "$default_out" | stdin_matches -F 'home/dx/default-drop-me.marker'; then
+    test_fail "the default exclude file's pattern is honoured when DX_BACKUP_EXCLUDE_FILE is unset"
+else
+    test_pass "the default exclude file's pattern is honoured when DX_BACKUP_EXCLUDE_FILE is unset"
+fi
+
+# An explicit DX_BACKUP_EXCLUDE_FILE still wins: its own pattern applies,
+# and the default file's own (different) pattern no longer takes effect.
+printf 'explicit-drop-me\n' > "$FIXTURE/persist/home/dx/explicit-drop-me.marker"
+printf '%s\n' 'home/dx/explicit-drop-me.marker' > "$FIXTURE/explicit-excludes.txt"
+explicit_out="$(DX_BACKUP_EXCLUDE_FILE="$FIXTURE/explicit-excludes.txt" "$BASE_DIR/bin/dx-backup" --dry-run 2>&1)"
+if printf '%s\n' "$explicit_out" | stdin_matches -F 'home/dx/explicit-drop-me.marker'; then
+    test_fail "an explicit DX_BACKUP_EXCLUDE_FILE's pattern is honoured"
+else
+    test_pass "an explicit DX_BACKUP_EXCLUDE_FILE's pattern is honoured"
+fi
+if printf '%s\n' "$explicit_out" | stdin_matches -F 'home/dx/default-drop-me.marker'; then
+    test_pass "an explicit DX_BACKUP_EXCLUDE_FILE overrides the default location (the default's own pattern no longer applies)"
+else
+    test_fail "an explicit DX_BACKUP_EXCLUDE_FILE overrides the default location (the default's own pattern no longer applies)"
+fi
+
+rm -f "$FIXTURE/persist/home/dx/default-drop-me.marker" "$FIXTURE/persist/home/dx/explicit-drop-me.marker"
+rm -rf "$XDG_CONFIG_HOME" "$DX_BACKUP_DIR"
+unset XDG_CONFIG_HOME
+export DX_BACKUP_DIR="$FIXTURE/backups"
+
 print_summary
 exit_with_code
