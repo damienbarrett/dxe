@@ -192,7 +192,11 @@ mkdir -p "$example_root"
         [ "${!parsed_name+x}" = x ] && printf -v "$name" '%s' "${!parsed_name}"
     done
     dx_init_config "$example_root" >/dev/null 2>&1
-    [ "$DX_RUNTIME" = docker-ssh ] && [ "$DX_REMOTE_HOST" = qnap-dxe ] && [ "$DX_GUEST_SYSTEM" = x86_64-linux ] && [ "$DX_NIX_STORAGE_MODE" = direct-volume ]
+    # Branch 11 / Phase 4 user decision (2026-09-27): the QNAP guest is
+    # 8 GB / 4 CPU, smaller than Apple's 12G/4 default -- see
+    # docs/refactor/arch-neutral-guest.md section 8.
+    [ "$DX_RUNTIME" = docker-ssh ] && [ "$DX_REMOTE_HOST" = qnap-dxe ] && [ "$DX_GUEST_SYSTEM" = x86_64-linux ] && [ "$DX_NIX_STORAGE_MODE" = direct-volume ] \
+        && [ "$DX_CONTAINER_MEMORY" = 8G ] && [ "$DX_CONTAINER_CPUS" = 4 ]
 ) && test_pass "tests/profiles/qnap-example.env resolves a valid docker-ssh configuration" || test_fail "tests/profiles/qnap-example.env resolves a valid docker-ssh configuration"
 
 # Process identity and lock reclamation use PID plus process start, never PID alone.

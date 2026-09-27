@@ -44,9 +44,38 @@ if command -v nix >/dev/null 2>&1; then
     else
         test_fail "nix flake evaluation passes"
     fi
+
+    # Branch 11 / Phase 4 (docs/refactor/arch-neutral-guest.md section 2):
+    # the flake now evaluates packages for x86_64-linux too, and
+    # homeConfigurations.dx is kept as a real alias -- the SAME derivation,
+    # not a second definition that could drift -- of
+    # homeConfigurations."dx-aarch64-linux". Proven against real Nix
+    # evaluation (no build), not by matching the flake's source text.
+    if x86_64_default_name="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#packages.x86_64-linux.default.name" 2>/dev/null)" && [ -n "$x86_64_default_name" ]; then
+        test_pass "packages.x86_64-linux.default evaluates"
+    else
+        test_fail "packages.x86_64-linux.default evaluates"
+    fi
+
+    dx_alias_path="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#homeConfigurations.dx.activationPackage.outPath" 2>/dev/null || true)"
+    dx_system_path="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#homeConfigurations.dx-aarch64-linux.activationPackage.outPath" 2>/dev/null || true)"
+    if [ -n "$dx_alias_path" ] && [ "$dx_alias_path" = "$dx_system_path" ]; then
+        test_pass "homeConfigurations.dx is the same derivation as homeConfigurations.dx-aarch64-linux (a real alias)"
+    else
+        test_fail "homeConfigurations.dx is the same derivation as homeConfigurations.dx-aarch64-linux (a real alias)"
+    fi
 else
     test_skip "nix not available, skipping flake check"
+    test_skip "nix not available, skipping x86_64-linux packages evaluation"
+    test_skip "nix not available, skipping homeConfigurations.dx alias check"
 fi
+
+# Static/cheap companion to the nix-eval checks above -- exercised even on a
+# host with no nix installed (this repo's own dev loop), unlike the checks
+# above. Not the authoritative proof (nix eval is); catches an accidental
+# revert of the multi-system declaration itself.
+assert_file_contains_literal "$FLAKE_NIX" 'supportedSystems = [ "aarch64-linux" "x86_64-linux" ]' "flake.nix declares both supported systems"
+assert_file_contains_literal "$FLAKE_NIX" 'dx-${system}' "flake.nix names homeConfigurations per system as dx-<system>"
 
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
     test_skip "Nix release identity live checks skipped by --skip-integration"
