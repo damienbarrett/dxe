@@ -604,6 +604,25 @@ populate_prepared_nix_volume() {
     fi
 }
 
+# Branch 11 / Phase 3 (qnap-dxe-plan.md DQ4, docs/refactor/
+# direct-volume-storage.md section 2.1): a Docker named volume mounted
+# directly at /nix needs none of the format/stage/remount machinery below --
+# it is already the final mount point from container start. Never calls
+# mkfs*/mount/umount/truncate/blkid, and never touches /etc/fstab.
+prepare_nix_volume_direct_impl() {
+    echo "Using direct Docker volume storage for /nix (DX_NIX_STORAGE_MODE=direct-volume)..."
+    local mountpoint
+    mountpoint="$(findmnt -n -o TARGET /nix 2>/dev/null || true)"
+    if [ "$mountpoint" != /nix ]; then
+        echo "Error: direct-volume mode requires the Nix volume mounted at /nix" >&2
+        return 1
+    fi
+    DX_NIX_VOLUME_ROOT=/nix
+    DX_NIX_VOLUME_IN_PLACE=true
+    export DX_NIX_VOLUME_ROOT DX_NIX_VOLUME_IN_PLACE
+    record_durable_nix_identity /nix
+}
+
 # §2: Setup dedicated Nix volume.
 #
 # Apple Container mounts the dx-nix named volume at /var/lib/dx-nix-raw with
@@ -611,7 +630,21 @@ populate_prepared_nix_volume() {
 # block device with btrfs/ext4 and mount it at /nix so the Nix store has
 # room to grow and survives container rebuilds. This requires CAP_SYS_ADMIN
 # inside the guest, which dx-create-container grants via --cap-add.
+#
+# Explicit dispatch on DX_NIX_STORAGE_MODE (qnap-dxe-plan.md DQ4): an absent
+# variable (every container created before Branch 11 / Phase 3, including
+# the primary guest) falls straight through to the apple-image body below,
+# byte for byte unchanged. An unrecognized value fails closed before any
+# filesystem action.
 prepare_nix_volume_impl() {
+    case "${DX_NIX_STORAGE_MODE:-apple-image}" in
+        apple-image) : ;;
+        direct-volume) prepare_nix_volume_direct_impl; return ;;
+        *)
+            echo "Error: unknown DX_NIX_STORAGE_MODE '${DX_NIX_STORAGE_MODE:-}'; expected apple-image or direct-volume." >&2
+            return 1
+            ;;
+    esac
     echo "Setting up dedicated Nix volume..."
     local raw_path="/var/lib/dx-nix-raw"
     local dev=""

@@ -21,7 +21,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl populate_prepared_nix_volume setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -816,6 +816,114 @@ if printf '%s\n' "$p7_tp_output" | stdin_matches -F 'is already a btrfs mount' \
 else
     test_fail "prepare_nix_volume_impl still short-circuits when the mounted FSTYPE genuinely matches ($p7_tp_output)"
 fi
+
+# P8 (Branch 11 / Phase 3, Increment 2): the explicit DX_NIX_STORAGE_MODE
+# dispatch in prepare_nix_volume_impl (docs/refactor/direct-volume-storage.md
+# section 2.1). Every stub below is a RECORDING stub (logs its exact
+# invocation), not a no-op, so a case that should never call mkfs/mount/
+# umount/truncate/blkid actually proves it, the same discipline P7's findmnt
+# stub uses.
+p8_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p8-direct-volume.XXXXXX")"
+
+# An explicit DX_NIX_STORAGE_MODE=apple-image behaves exactly like the
+# absent-variable default (the P7 true-positive scenario, replayed with the
+# mode named explicitly instead of relying on the fallback).
+p8_explicit_apple_log="$p8_fixture/explicit-apple-findmnt.log"
+p8_explicit_apple_output="$({
+    DX_NIX_STORAGE_MODE=apple-image
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
+    findmnt() {
+        printf '%s\n' "$*" >> "$p8_explicit_apple_log"
+        if [ "$*" = '-n -o TARGET,FSTYPE /nix' ]; then printf '%s\n' '/nix btrfs'; else return 1; fi
+    }
+    prepare_nix_volume_impl
+    echo "already_mounted=$DX_NIX_VOLUME_ALREADY_MOUNTED root=$DX_NIX_VOLUME_ROOT"
+} 2>&1)"
+if printf '%s\n' "$p8_explicit_apple_output" | stdin_matches -F 'already_mounted=true root=/nix'; then
+    test_pass "prepare_nix_volume_impl: an explicit DX_NIX_STORAGE_MODE=apple-image behaves exactly like the default"
+else
+    test_fail "prepare_nix_volume_impl: an explicit DX_NIX_STORAGE_MODE=apple-image behaves exactly like the default ($p8_explicit_apple_output)"
+fi
+
+# An unrecognized DX_NIX_STORAGE_MODE value fails closed before any
+# filesystem action -- the record-stub log for every mutating tool stays
+# empty.
+p8_unknown_log="$p8_fixture/unknown-mode.log"
+if (
+    DX_NIX_STORAGE_MODE=bogus-mode
+    findmnt() { printf 'findmnt %s\n' "$*" >> "$p8_unknown_log"; }
+    mount() { printf 'mount %s\n' "$*" >> "$p8_unknown_log"; }
+    umount() { printf 'umount %s\n' "$*" >> "$p8_unknown_log"; }
+    truncate() { printf 'truncate %s\n' "$*" >> "$p8_unknown_log"; }
+    blkid() { printf 'blkid %s\n' "$*" >> "$p8_unknown_log"; }
+    mkfs.btrfs() { printf 'mkfs.btrfs %s\n' "$*" >> "$p8_unknown_log"; }
+    mkfs.ext4() { printf 'mkfs.ext4 %s\n' "$*" >> "$p8_unknown_log"; }
+    prepare_nix_volume_impl
+) >"$p8_fixture/unknown-mode.out" 2>&1; then
+    test_fail "prepare_nix_volume_impl: an unrecognized DX_NIX_STORAGE_MODE value fails closed"
+else
+    if stdin_matches -F "unknown DX_NIX_STORAGE_MODE 'bogus-mode'" < "$p8_fixture/unknown-mode.out" && [ ! -s "$p8_unknown_log" ]; then
+        test_pass "prepare_nix_volume_impl: an unrecognized DX_NIX_STORAGE_MODE value fails closed, naming the value, with no mutating call"
+    else
+        test_fail "prepare_nix_volume_impl: an unrecognized DX_NIX_STORAGE_MODE value fails closed, naming the value, with no mutating call (out: $(cat "$p8_fixture/unknown-mode.out"); mutating-log: $(cat "$p8_unknown_log" 2>/dev/null))"
+    fi
+fi
+
+# direct-volume mode: /nix is not (yet) a mountpoint -> refuse with the
+# task's exact message, before any mutating call.
+p8_notmount_log="$p8_fixture/notmount.log"
+if (
+    DX_NIX_STORAGE_MODE=direct-volume
+    findmnt() { printf 'findmnt %s\n' "$*" >> "$p8_notmount_log"; return 1; }
+    mount() { printf 'mount %s\n' "$*" >> "$p8_notmount_log"; }
+    umount() { printf 'umount %s\n' "$*" >> "$p8_notmount_log"; }
+    truncate() { printf 'truncate %s\n' "$*" >> "$p8_notmount_log"; }
+    blkid() { printf 'blkid %s\n' "$*" >> "$p8_notmount_log"; }
+    mkfs.btrfs() { printf 'mkfs.btrfs %s\n' "$*" >> "$p8_notmount_log"; }
+    mkfs.ext4() { printf 'mkfs.ext4 %s\n' "$*" >> "$p8_notmount_log"; }
+    prepare_nix_volume_impl
+) >"$p8_fixture/notmount.out" 2>&1; then
+    test_fail "prepare_nix_volume_direct_impl: refuses when /nix is not a mountpoint"
+else
+    if stdin_matches -F 'direct-volume mode requires the Nix volume mounted at /nix' < "$p8_fixture/notmount.out" \
+        && grep -qF -- '-n -o TARGET /nix' "$p8_notmount_log" \
+        && ! grep -qE '^(mount|umount|truncate|blkid|mkfs\.btrfs|mkfs\.ext4) ' "$p8_notmount_log"; then
+        test_pass "prepare_nix_volume_direct_impl: refuses when /nix is not a mountpoint, naming the task's exact message, with no mutating call"
+    else
+        test_fail "prepare_nix_volume_direct_impl: refuses when /nix is not a mountpoint, naming the task's exact message, with no mutating call (out: $(cat "$p8_fixture/notmount.out"); log: $(cat "$p8_notmount_log" 2>/dev/null))"
+    fi
+fi
+
+# direct-volume mode: /nix IS the mountpoint -> succeeds, sets the explicit
+# in-place state DQ4 requires (DX_NIX_VOLUME_ROOT=/nix,
+# DX_NIX_VOLUME_IN_PLACE=true -- NOT DX_NIX_VOLUME_ALREADY_MOUNTED, which
+# would bypass the identity/import protocol), and calls
+# record_durable_nix_identity /nix exactly as apple-image's own
+# already-mounted branch does. No mutating call happens either.
+p8_mounted_log="$p8_fixture/mounted.log"
+p8_identity_log="$p8_fixture/identity-calls.log"
+p8_mounted_output="$({
+    DX_NIX_STORAGE_MODE=direct-volume
+    findmnt() { printf 'findmnt %s\n' "$*" >> "$p8_mounted_log"; [ "$*" = '-n -o TARGET /nix' ] && printf '%s\n' /nix; }
+    mount() { printf 'mount %s\n' "$*" >> "$p8_mounted_log"; }
+    umount() { printf 'umount %s\n' "$*" >> "$p8_mounted_log"; }
+    truncate() { printf 'truncate %s\n' "$*" >> "$p8_mounted_log"; }
+    blkid() { printf 'blkid %s\n' "$*" >> "$p8_mounted_log"; }
+    mkfs.btrfs() { printf 'mkfs.btrfs %s\n' "$*" >> "$p8_mounted_log"; }
+    mkfs.ext4() { printf 'mkfs.ext4 %s\n' "$*" >> "$p8_mounted_log"; }
+    record_durable_nix_identity() { printf '%s\n' "$*" >> "$p8_identity_log"; }
+    prepare_nix_volume_impl
+    echo "root=$DX_NIX_VOLUME_ROOT in_place=$DX_NIX_VOLUME_IN_PLACE already_mounted=${DX_NIX_VOLUME_ALREADY_MOUNTED:-unset}"
+} 2>&1)"
+if printf '%s\n' "$p8_mounted_output" | stdin_matches -x 'root=/nix in_place=true already_mounted=unset' \
+    && [ "$(cat "$p8_identity_log")" = /nix ] \
+    && ! grep -qE '^(mount|umount|truncate|blkid|mkfs\.btrfs|mkfs\.ext4) ' "$p8_mounted_log"; then
+    test_pass "prepare_nix_volume_direct_impl: /nix already mounted -> sets DX_NIX_VOLUME_IN_PLACE (not ALREADY_MOUNTED), records durable identity, no mutating call"
+else
+    test_fail "prepare_nix_volume_direct_impl: /nix already mounted -> sets DX_NIX_VOLUME_IN_PLACE (not ALREADY_MOUNTED), records durable identity, no mutating call (output: $p8_mounted_output; identity-log: $(cat "$p8_identity_log" 2>/dev/null); mutating-log: $(cat "$p8_mounted_log" 2>/dev/null))"
+fi
+
+rm -rf "$p8_fixture"
 
 print_summary
 exit_with_code
