@@ -447,6 +447,54 @@ Per the task and brief, no part of this list is a subagent action:
   proves the one added env token and the guest-side system-agreement check
   do not regress Apple, which stays `aarch64-linux` end to end.
 
+### 7.1 Live-gate finding: root-level `nix profile install` and `$HOME` (addendum, 2026-09-28)
+
+The first x86_64 bootstrap on the NAS (section 7) failed in
+`install_essential_packages` with:
+
+```
+An existing package already provides ... dx-bootstrap-essentials/bin/gunzip
+... conflicting file from the new package ... gzip-1.14/bin/gunzip
+```
+
+Root cause, verified read-only on both runtimes: Docker injects `HOME=/root`
+into the container process at runtime (never baked into the image config),
+while Apple's `container` runtime leaves `HOME` unset for PID 1. An
+unqualified `nix profile install` resolves the *default* profile through
+`$HOME/.nix-profile`:
+
+- With `HOME` set (docker-ssh), that resolves to
+  `/nix/var/nix/profiles/default`, which the upstream `nixos/nix` base image
+  already populates with a legacy `manifest.nix` user environment (`gzip-1.14`,
+  `gnutar`, `coreutils-full`, and similar) -- so installing
+  `bootstrap-essentials` there conflicts on overlapping file names.
+- With `HOME` unset (Apple), the same command falls back to
+  `/nix/var/nix/profiles/per-user/root/profile`, a fresh `manifest.json` --
+  which is where dx-test's essentials actually live
+  (`packages.aarch64-linux.bootstrap-essentials`).
+
+So Apple's working behavior was accidental, not a property of the install
+itself: it depended on `$HOME` being unset for the calling process, which is
+a runtime accident, not a guarantee. The fix names the target profile
+explicitly -- `nix profile install --profile
+/nix/var/nix/profiles/per-user/root/profile ...` -- which is exactly the
+first candidate `essentials_profile_store_path` (section "Today's shape")
+already checks, so Apple's outcome is byte-identical and docker-ssh no
+longer depends on `$HOME` being absent. Every other root-level `nix profile`
+call site in `bootstrap/` and `scripts/` was audited for the same implicit-
+default dependency: `scripts/dx-ai.sh`'s `nix profile add` already names
+`--profile "$stage/profile"` explicitly; `bootstrap/activation.sh`'s
+`run_as_dx "nix profile list"` runs through `run_as_dx`, which already pins
+`HOME=/home/dx` before invoking `nix`, so it never depends on the ambiguous
+root-level default; and `bootstrap/base-and-storage.sh`'s
+`nix_image_default_profile_store_path` / `capture_nix_image_default_profile`
+/ `nix_restore_image_default_profile` read and relink
+`/nix/var/nix/profiles/default` directly at the filesystem level
+(`readlink`/`ln -s`/`mv`) as a deliberate image-provenance mechanism -- they
+never invoke `nix profile install`/`add`, so they are not exposed to this
+ambiguity either. `install_essential_packages` was the only call site that
+needed the fix.
+
 ## 8. Non-code file changes bundled with the nearest matching increment
 
 - `tests/profiles/qnap-example.env` gains, with a comment referencing this

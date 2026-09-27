@@ -74,7 +74,18 @@ essentials_profile_store_path() {
 
 install_essential_packages() {
     local bootstrap_root="${DX_BOOTSTRAP_ROOT:-/guest-bootstrap}"
-    nix profile install "$bootstrap_root#bootstrap-essentials" --no-update-lock-file "${DX_NIX_FEAT_OPTS[@]}" "${DX_NIX_NET_OPTS[@]}"
+    # Name the target profile explicitly. An unqualified `nix profile install`
+    # resolves the *default* profile via $HOME/.nix-profile, and whether that
+    # lands on /nix/var/nix/profiles/per-user/root/profile (a fresh
+    # manifest.json) or /nix/var/nix/profiles/default (the upstream
+    # nixos/nix image's legacy manifest.nix environment, already populated
+    # with gzip/gnutar/coreutils-full and the like) depends on whether HOME
+    # is set for the calling process -- which differs by runtime (Docker
+    # injects HOME=/root at the container-process level; Apple leaves HOME
+    # unset for PID 1) and is not a property of this install itself. Pointing
+    # at the per-user root profile -- exactly what essentials_profile_store_path
+    # already checks first -- makes the target the same on every runtime.
+    nix profile install --profile /nix/var/nix/profiles/per-user/root/profile "$bootstrap_root#bootstrap-essentials" --no-update-lock-file "${DX_NIX_FEAT_OPTS[@]}" "${DX_NIX_NET_OPTS[@]}"
 }
 
 # The bootstrap essentials closure is bounded, so verify its content as well

@@ -108,6 +108,33 @@ export DX_ESSENTIALS_ROOT=$fixture
 fixture_physical="$(cd "$fixture" && pwd -P)"
 if [ "$(essentials_profile_path)" = "$fixture_physical/nix/store/profile/bin" ]; then test_pass "essentials profile resolves before the Nix remount"; else test_fail "essentials profile resolves before the Nix remount"; fi
 
+# NAS live gate (first x86_64 bootstrap under the docker-ssh runtime): `nix
+# profile install "$bootstrap_root#bootstrap-essentials"` failed there with
+#   "An existing package already provides ... dx-bootstrap-essentials/bin/gunzip
+#    ... conflicting file from the new package ... gzip-1.14/bin/gunzip"
+# Docker injects HOME=/root into the container process at runtime (never in
+# the image config), so an unqualified `nix profile install` resolves the
+# *default* profile via /root/.nix-profile -> /nix/var/nix/profiles/default,
+# which the upstream nixos/nix image already populates with a legacy
+# manifest.nix environment (gzip-1.14, gnutar, coreutils-full, ...) that
+# conflicts with bootstrap-essentials. Apple's runtime leaves HOME unset for
+# PID 1, so the same unqualified install accidentally falls back to
+# /nix/var/nix/profiles/per-user/root/profile -- a fresh manifest.json, and
+# exactly the profile essentials_profile_store_path already checks first.
+# The install must name that profile explicitly so both runtimes agree,
+# independent of whatever HOME happens to be for the calling process.
+install_argv_fixture="$fixture/install-argv.log"
+if (
+    nix() { printf '%s\n' "$*" >> "$install_argv_fixture"; }
+    DX_BOOTSTRAP_ROOT=/guest-bootstrap
+    install_essential_packages
+    stdin_matches -F -- '--profile /nix/var/nix/profiles/per-user/root/profile' < "$install_argv_fixture"
+); then
+    test_pass "install_essential_packages names the per-user root profile explicitly, independent of HOME"
+else
+    test_fail "install_essential_packages names the per-user root profile explicitly, independent of HOME"
+fi
+
 # Ownership migrations must be one-time repairs, not recurring work. This
 # sourceable fixture records the recursive boundary and proves the marker
 # suppresses it on the next activation. The Linux behavior runner additionally
