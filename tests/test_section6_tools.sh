@@ -12,6 +12,7 @@ test_section "Section 6: Improve Guest Tooling"
 TOOLS_NIX="$CONTAINER_DIR/home/tools.nix"
 DX_AI_SCRIPT="$CONTAINER_DIR/scripts/dx-ai.sh"
 DX_HERDR_NAV_SCRIPT="$CONTAINER_DIR/scripts/dx-herdr-navigate.sh"
+DX_VERIFY_INVENTORY_SCRIPT="$CONTAINER_DIR/scripts/dx-verify-inventory.sh"
 
 # Test: flake.nix exists
 assert_file_exists "$FLAKE_NIX" "flake.nix exists"
@@ -255,6 +256,90 @@ fi
 # exercise the real behaviour once that logic lives in the shared helper
 # (scripts/lib/dx-opencode-persistence.sh) rather than inline in dx-ai.sh and
 # activation.sh, so it is intentionally not duplicated as a text check.
+
+# --- Branch 11 / Phase 4 (qnap-dxe-plan.md Phase 4 item 4, docs/refactor/
+# arch-neutral-guest.md section 5): scripts/dx-verify-inventory.sh prints
+# present/missing for the guest's required CLI inventory after bootstrap,
+# on either architecture -- the coordinating session runs it via
+# dx_runtime_exec at the exit gate (SSH into the QNAP guest is Phase 5's
+# job, so the gate uses exec). ---
+assert_file_exists "$DX_VERIFY_INVENTORY_SCRIPT" "guest inventory verifier script exists"
+if git -C "$BASE_DIR" ls-files --error-unmatch "${DX_VERIFY_INVENTORY_SCRIPT#$BASE_DIR/}" >/dev/null 2>&1; then
+    test_pass "guest inventory verifier script is tracked for flake source inclusion"
+else
+    test_fail "guest inventory verifier script is tracked for flake source inclusion"
+fi
+assert_file_contains "$TOOLS_NIX" ".local/bin/dx-verify-inventory" "guest inventory verifier command is installed by Home Manager"
+
+if bash -n "$DX_VERIFY_INVENTORY_SCRIPT" 2>/dev/null; then
+    test_pass "guest inventory verifier script passes bash syntax check"
+else
+    test_fail "guest inventory verifier script passes bash syntax check"
+fi
+
+# Behavioral: a crafted PATH with some, but not all, of the required tools
+# present as fake executables. Proves the real present/missing report and
+# exit code, not the specific inventory list (which may grow independently
+# of this test).
+inv_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-inventory-test.XXXXXX")"
+trap 'rm -rf "$inv_fixture"' EXIT
+inv_bin="$inv_fixture/bin"
+mkdir -p "$inv_bin"
+# Resolved once, before PATH is ever restricted below -- a bare `bash`
+# invocation under a fully-replaced PATH would try to resolve the
+# interpreter itself through that same restricted PATH and fail with
+# "command not found" (exit 127), which is nonzero and so would silently
+# pass the "exits non-zero when something is missing" assertion for the
+# wrong reason.
+inv_bash="$(command -v bash)"
+DX_REQUIRED_INVENTORY="$("$inv_bash" "$DX_VERIFY_INVENTORY_SCRIPT" --print-inventory 2>/dev/null || true)"
+inv_present=""
+inv_missing=""
+inv_index=0
+for inv_tool in $DX_REQUIRED_INVENTORY; do
+    inv_index=$((inv_index + 1))
+    if [ $((inv_index % 2)) -eq 0 ]; then
+        printf '#!/bin/sh\n' > "$inv_bin/$inv_tool"
+        chmod 0755 "$inv_bin/$inv_tool"
+        inv_present="$inv_present $inv_tool"
+    else
+        inv_missing="$inv_missing $inv_tool"
+    fi
+done
+inv_rc=0
+inv_out="$(PATH="$inv_bin" "$inv_bash" "$DX_VERIFY_INVENTORY_SCRIPT" 2>/dev/null)" || inv_rc=$?
+inv_ok=true
+for inv_tool in $inv_present; do
+    printf '%s\n' "$inv_out" | stdin_matches -F "present: $inv_tool" || inv_ok=false
+done
+for inv_tool in $inv_missing; do
+    printf '%s\n' "$inv_out" | stdin_matches -F "missing: $inv_tool" || inv_ok=false
+done
+if [ "$inv_ok" = true ] && [ -n "$inv_missing" ]; then
+    test_pass "guest inventory verifier reports present/missing correctly for a mixed PATH"
+else
+    test_fail "guest inventory verifier reports present/missing correctly for a mixed PATH"
+fi
+if [ -n "$inv_missing" ] && [ "$inv_rc" -ne 0 ]; then
+    test_pass "guest inventory verifier exits non-zero when any required tool is missing"
+else
+    test_fail "guest inventory verifier exits non-zero when any required tool is missing"
+fi
+
+# Every required tool present: exits 0.
+inv_all_bin="$inv_fixture/bin-all"
+mkdir -p "$inv_all_bin"
+for inv_tool in $DX_REQUIRED_INVENTORY; do
+    printf '#!/bin/sh\n' > "$inv_all_bin/$inv_tool"
+    chmod 0755 "$inv_all_bin/$inv_tool"
+done
+if PATH="$inv_all_bin" "$inv_bash" "$DX_VERIFY_INVENTORY_SCRIPT" >/dev/null 2>&1; then
+    test_pass "guest inventory verifier exits zero when every required tool is present"
+else
+    test_fail "guest inventory verifier exits zero when every required tool is present"
+fi
+rm -rf "$inv_fixture"
+trap - EXIT
 
 # Test: shell startup guards optional prompt/environment hooks
 assert_file_contains "$SHELL_NIX" "command -v direnv" "bash direnv hook is guarded"

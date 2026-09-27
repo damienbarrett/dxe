@@ -163,6 +163,14 @@
     source = ../scripts/dx-keyring.sh;
   };
 
+  # Branch 11 / Phase 4 (qnap-dxe-plan.md Phase 4 item 4): the guest CLI
+  # inventory verifier the coordinating session runs via dx_runtime_exec at
+  # the QNAP exit gate.
+  home.file.".local/bin/dx-verify-inventory" = {
+    executable = true;
+    source = ../scripts/dx-verify-inventory.sh;
+  };
+
   home.file.".local/bin/dx-claude-statusline" = {
     executable = true;
     source = ../scripts/dx-claude-statusline.sh;

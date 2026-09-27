@@ -57,6 +57,25 @@ if command -v nix >/dev/null 2>&1; then
         test_fail "packages.x86_64-linux.default evaluates"
     fi
 
+    # Branch 11 / Phase 4, Increment 4 (qnap-dxe-plan.md Phase 4 item 4,
+    # docs/refactor/arch-neutral-guest.md section 5): every package in
+    # dxPackages, bootstrapEssentials, and aiPackages must exist for BOTH
+    # supported systems. packages.x86_64-linux.default (above) already
+    # proves dxPackages; these two prove bootstrapEssentials and aiPackages
+    # the same way -- if either buildEnv referenced an attribute missing
+    # for x86_64-linux, evaluation itself would fail here, without needing
+    # to enumerate every package name individually.
+    if x86_64_essentials_name="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#packages.x86_64-linux.bootstrap-essentials.name" 2>/dev/null)" && [ -n "$x86_64_essentials_name" ]; then
+        test_pass "packages.x86_64-linux.bootstrap-essentials evaluates"
+    else
+        test_fail "packages.x86_64-linux.bootstrap-essentials evaluates"
+    fi
+    if x86_64_ai_tools_name="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#packages.x86_64-linux.ai-tools.name" 2>/dev/null)" && [ -n "$x86_64_ai_tools_name" ]; then
+        test_pass "packages.x86_64-linux.ai-tools evaluates"
+    else
+        test_fail "packages.x86_64-linux.ai-tools evaluates"
+    fi
+
     dx_alias_path="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#homeConfigurations.dx.activationPackage.outPath" 2>/dev/null || true)"
     dx_system_path="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#homeConfigurations.dx-aarch64-linux.activationPackage.outPath" 2>/dev/null || true)"
     if [ -n "$dx_alias_path" ] && [ "$dx_alias_path" = "$dx_system_path" ]; then
@@ -67,6 +86,8 @@ if command -v nix >/dev/null 2>&1; then
 else
     test_skip "nix not available, skipping flake check"
     test_skip "nix not available, skipping x86_64-linux packages evaluation"
+    test_skip "nix not available, skipping x86_64-linux bootstrap-essentials evaluation"
+    test_skip "nix not available, skipping x86_64-linux ai-tools evaluation"
     test_skip "nix not available, skipping homeConfigurations.dx alias check"
 fi
 
