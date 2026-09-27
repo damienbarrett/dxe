@@ -531,6 +531,78 @@ Develop with fake `docker` and `ssh` boundaries first.
 - Read-only `dx-status` against the disposable QNAP profile works before any
   production-named resource is allowed.
 
+**Status 2026-09-27: items 1-8 complete, developed and characterised
+entirely against fake `ssh`/`docker` boundaries (`feat/qnap-docker-adapter`,
+`bin/lib/dx-runtime-docker.sh`, `tests/test_docker_runtime_adapter.sh`
+Section 33, 100+ cases). Full design and as-built command mapping:
+`docs/refactor/docker-adapter-mapping.md`; narrative summary:
+`docs/refactor/runtime-boundary.md`'s "Phase 2" section.**
+
+- **Item 1** (SSH command discipline): every remote call is `ssh -o
+  BatchMode=yes ... <alias> <docker-abs-path> <verb> ...`, each token
+  independently `%q`-quoted and joined into ssh's one accepted remote-command
+  string (Phase 0's proven shape, reused not re-derived).
+- **Item 4's `container_create`** required a design change beyond the
+  original mapping: rather than the Docker adapter translating Apple-flavoured
+  flags, `dx_runtime_container_create` now takes a genuinely runtime-neutral
+  parameter vocabulary and each adapter renders its own real argv (DQ2).
+  Apple's adapter reproduces today's exact argv byte-for-byte
+  (`tests/test_runtime_boundary_characterisation.sh`); `run_ephemeral` was
+  deliberately left as the Apple pass-through it already was, with a neutral
+  version deferred to whichever of Phase 3/6 first needs it for docker-ssh.
+- **`image_build`** (item 4) never issues a remote `docker build` (Phase 0
+  found the real NAS refuses it): it parses the Containerfile's one `FROM
+  <ref>` line and does `docker pull` + `docker tag`, failing closed on
+  anything beyond that one line.
+- **`system_start`** (item 2/8) always refuses for docker-ssh; the operator
+  restarts Container Station from the NAS's own App Center UI.
+- **Item 6**'s remote per-profile lock is a labelled, never-started container
+  (`dxe-lock-<profile-id>`; container-name uniqueness is Docker's only atomic
+  "create, fail if already present" primitive). A new `bin/dx-lock`
+  entrypoint exposes `status`/`unlock --force`; `bin/dx-status` shows the
+  same state read-only. Never removed on elapsed time alone.
+- **Item 7**: `bin/lib/dx-tunnel.sh` and `bin/lib/dx-backup.sh`'s cache keys
+  gain an extra identity segment (`docker-ssh:<alias>:<daemon-id>`) so two
+  QNAP profiles can never collide; Apple's key shapes are byte-for-byte
+  unchanged.
+- **Item 8**'s five diagnostic classes (authentication failure, connection
+  loss, daemon restart or unreachable, missing Docker access, generic
+  fallback) are implemented in `dx_runtime_docker_classify_failure` and
+  quoted alongside the raw remote text in every failure message.
+
+**Exit gate mapping** (host-contract cases → named tests, all in
+`tests/test_docker_runtime_adapter.sh` unless noted):
+
+| Exit gate case | Covered by |
+| --- | --- |
+| Success | every "Queries"/"Lifecycle" case's happy path (e.g. `container_create`/`_start`/`_delete` success cases) |
+| Refusal | `system_start` always-refuses case; `bin/dx-lock unlock` without `--force` refusal; unknown-`DX_RUNTIME`/unknown-parameter fail-closed cases |
+| Timeout | preflight host-unreachable/`ConnectTimeout` cases (section "Preflight (item 2)") |
+| Broken SSH transport | the quoting-discipline section's tokens-with-spaces/quotes/`$`/globs/newlines cases; connection-loss classifier cases |
+| Remote command failure | diagnostics-taxonomy section's classifier cases (all 5 classes) |
+| Name collision | `container_create`/`volume_create`/lock-acquire name-conflict cases |
+| Label mismatch | "DQ6 labels + collision refusal (item 5)" section's "collision, not an adoption candidate" cases for image/volume/container delete |
+| Concurrent create | lock-acquire-while-held case in "Remote per-profile lock (item 6)" |
+| Stale lock | "bin/dx-lock end to end" section's audit/unlock-with-metadata cases |
+| Interrupted streaming | the unidirectional exec-split cases (Branch 17 shape) and `container_delete`/`image_build` partial-failure cases |
+
+- Coverage/ratchet: `tests/run-coverage-linux.sh` on the fully committed
+  tree: `covered=100% scope_share=21.61%` (`tests/coverage/ratchet.env`
+  raised `1997`→`2161` bp on a clean `git archive HEAD | tar -x` export,
+  per the standing "no unearned slack" rule).
+- Validation on the finished tree: fast suite green (100+ new cases, 0
+  failed), macOS Bash 3.2 gate green, ShellCheck (pinned, `--severity=warning`)
+  clean, public-repo secrets scan clean.
+- **The read-only `dx-status` gate against a disposable QNAP profile is the
+  coordinating session's own, separate step after this branch lands** — it
+  was never run from this branch (the NAS is production and off-limits to
+  the implementing session).
+- **One gap found, not closed by this phase**: `bin/dx-mount` does not
+  refuse under `DX_RUNTIME=docker-ssh` even though DQ8's capability table
+  (`dx_runtime_docker_capability`) correctly answers `bind_mounts: no`.
+  `bin/dx-mount` was outside this phase's allowed-file list. See
+  `docs/refactor/docker-adapter-mapping.md`'s "Flagged for review" item 4.
+
 ## Phase 3 — Add direct Docker storage mode
 
 1. Add the explicit `direct-volume` bootstrap branch from DQ4.

@@ -37,12 +37,14 @@ Updated 2026-09-27, after this trim.
   recreate it freely.
 - **No QNAP guest exists yet.** The QNAP (TVS-h674T, confirmed **x86_64** in
   Phase 0) has had only a throwaway inventory and disposable spike (Phase 0,
-  destroyed after) and the Apple-side runtime-boundary extraction Phase 1
-  needed. Phases 2-7 (the Docker adapter, direct storage mode, the x86_64
-  guest, remote-aware SSH/workflows, lifecycle hardening, and promotion) are
-  not started. Phase 0's own maintenance-window items, 8b/8c, are also still
+  destroyed after), the Apple-side runtime-boundary extraction (Phase 1), and
+  a remote Docker-over-SSH adapter developed and characterised entirely
+  against fake `ssh`/`docker` boundaries (Phase 2) -- no live command has
+  ever reached the NAS. Phases 3-7 (direct storage mode, the x86_64 guest,
+  remote-aware SSH/workflows, lifecycle hardening, and promotion) are not
+  started. Phase 0's own maintenance-window items, 8b/8c, are also still
   open.
-- **Remaining work:** Branch 11 Phases 2-7 (below), Branch 12
+- **Remaining work:** Branch 11 Phases 3-7 (below), Branch 12
   (`fix/store-trust`, Q6 resolved: fail fast), Branch 13 (the two large
   proposals, Q7 -- still open, not urgent), and four small follow-ups from
   Observations that are not yet branches (below).
@@ -73,7 +75,7 @@ the next one may start.
 | 7 | `test/herdr-acceptance` | Two missing Herdr tests: bad-snapshot recovery and pane-history deletion | S | Yes (`dx-test`) | No (Q3 resolved) | **Done** 2026-09-26 — evidence: `docs/evidence/20260926/herdr-acceptance.md` |
 | 8 | `refactor/legacy-migration-cleanup` | Check that every guest has left the old base image, then delete the old-base guards. This finishes `refactor-plan.md` | S–M | Yes (inventory) | No | **Done** 2026-09-27 — evidence: `docs/evidence/20260926/legacy-guard-removal.md`; `refactor-plan.md` closed |
 | 10 | `feat/persist-backup` | "B1": incremental host backup and restore of the guest's `/persist` data | M | Yes | No (Q5 resolved) | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/persist-backup.md` |
-| 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 done except 8b/8c; Phase 1 done 2026-09-27 — evidence: `docs/evidence/20260927/runtime-boundary.md`. **Phases 2-7 not started** — see below |
+| 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 done except 8b/8c; Phase 1 done 2026-09-27 — evidence: `docs/evidence/20260927/runtime-boundary.md`. Phase 2 (docker-ssh adapter) done 2026-09-27, against fakes only, NAS untouched — evidence: `docs/evidence/20260927/docker-adapter.md`. **Phases 3-7 not started** — see below |
 | 12 | `fix/store-trust` (may split in two) | Safe handling of the two Nix-store trust problems in `store-trust-plan.md` | L | Yes | No (Q6 resolved: fail fast) | Not started |
 | 13 | `refactor/bootstrap-v2`, `refactor/declarative-nix` | The two remaining large proposals. No branch until you accept one | L each | Yes | Q7 (still open) | Not started |
 | 14 | `fix/dx-ai-no-source-builds` | Stop `dx-ai` from silently compiling heavy AI tools from source when a `nixpkgs-unstable` refresh misses the binary cache | S–M | Yes (`dx-test`) | No | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/dx-ai-no-source-builds.md` |
@@ -82,7 +84,7 @@ the next one may start.
 | 17 | `fix/dx-backup-transfer-stall` | Make `dx-backup`'s transfer unidirectional (it deadlocked on large selections) and add `--dry-run --summary` for the at-risk breakdown | S–M | Yes (`dx-test`) | No | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/dx-backup-transfer-stall.md`; `dx-host` gets it at its next promotion |
 | 18 | `fix/dx-backup-deny-list` | Add user-approved entries to `dx-backup`'s deny-list (`.pnpm-store`, `.Trash-*`, `.tmp`, the `agy` binary bundle), a default location for the exclude file, and fix a nested-repository duplicate-path crash found live along the way | S | Yes (`dx-test`; unit fixtures only) | No (option 1a chosen 2026-09-27) | **Done** 2026-09-27 — landed on `main` (rebased onto `4b965d7`, CI green); evidence: `docs/evidence/20260927/dx-backup-deny-list.md`; the guest selector reaches `dx-host` through `dx-sync-bootstrap` (done at landing), the host side is on `main` immediately |
 
-**Remaining order:** Branch 11 Phases 2-7 and Branch 12 have no outstanding
+**Remaining order:** Branch 11 Phases 3-7 and Branch 12 have no outstanding
 prerequisites -- both branches they waited on (9 and 10) are done. Store
 trust (12) is not a prerequisite for QNAP (11): a QNAP guest starts with
 fresh volumes. Branch 13 stays parked behind Q7.
@@ -129,11 +131,20 @@ This section is short on purpose. The full rules are in Appendix C.
 **Status 2026-09-27:** Phase 0 is done except items 8b/8c (a reboot test
 during an agreed maintenance window; see `qnap-dxe-plan.md`'s Phase 0).
 Phase 1 (runtime-boundary extraction) is done -- evidence:
-`docs/evidence/20260927/runtime-boundary.md`. **Phases 2-7 are not started**
-(the Docker adapter, direct storage mode, the architecture-neutral guest,
-remote-aware SSH/workflows, lifecycle hardening, and promotion -- see
-`qnap-dxe-plan.md` for each phase's own detail, including Phase 5's
-Tailscale-in-guest work).
+`docs/evidence/20260927/runtime-boundary.md`. Phase 2 (the remote
+Docker-over-SSH adapter, `feat/qnap-docker-adapter`) is done -- developed and
+characterised entirely against fake `ssh`/`docker` boundaries, the NAS never
+touched; evidence: `docs/evidence/20260927/docker-adapter.md`. One gap was
+found and flagged, not closed (outside that branch's allowed-file scope):
+`bin/dx-mount` does not yet refuse under `DX_RUNTIME=docker-ssh` even though
+DQ8's capability table already answers `bind_mounts: no` correctly -- see
+`docs/refactor/docker-adapter-mapping.md`'s "Flagged for review" item 4. The
+one live step remaining for Phase 2 -- a read-only `dx-status` against a
+disposable QNAP profile -- is the coordinating session's own job, separate
+from the branch that just landed. **Phases 3-7 are not started** (direct
+storage mode, the architecture-neutral guest, remote-aware SSH/workflows,
+lifecycle hardening, and promotion -- see `qnap-dxe-plan.md` for each
+phase's own detail, including Phase 5's Tailscale-in-guest work).
 
 **Target:** QNAP TVS-h674T. Its Intel Core 12th-gen CPU means **x86_64**
 (confirmed by Phase 0's `uname -m`). The guest flake currently builds only
@@ -294,7 +305,7 @@ For each proposal:
 | --- | --- | --- |
 | Bootstrap refactor v2 | **Park** until Branch 12 is done, then re-decide | Its phases assume today's code. The store-trust fix will change that code, so it would need rebaselining anyway. |
 | Declarative Nix audit | **Reject as a single programme; accept its items one at a time** as small branches, alongside other work | Each conversion (for example SSH or sudo config into Home Manager) is independently useful and small. A big-bang migration conflicts with limiting work in progress. |
-| QNAP runtime | **Resolved 2026-09-26: accepted** as Branch 11. Phase 0/1 landed; Phases 2-7 remain | The target is a TVS-h674T (x86_64, confirmed in Phase 0), so the plan's Phase 4 architecture work is required. |
+| QNAP runtime | **Resolved 2026-09-26: accepted** as Branch 11. Phases 0/1/2 landed; Phases 3-7 remain | The target is a TVS-h674T (x86_64, confirmed in Phase 0), so the plan's Phase 4 architecture work is required. |
 
 **Coverage metric conflict:** only relevant if you accept both v2 and the Nix
 audit's item #12. That item replaces the coverage ratio with a ceiling on

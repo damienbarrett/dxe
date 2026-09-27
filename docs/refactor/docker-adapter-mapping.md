@@ -1,22 +1,27 @@
 # The Docker-over-SSH adapter: contract → command mapping
 
 Branch 11 / Phase 2 (`qnap-dxe-plan.md` "Phase 2 — Add the remote Docker
-adapter safely"), Increment 0. This is a design document only — no adapter
-code exists yet. It maps every `dx_runtime_<op>` of the Phase 1 contract
-(`bin/lib/dx-runtime.sh`, `docs/refactor/runtime-boundary.md`) to the exact
-remote command `bin/lib/dx-runtime-docker.sh` will issue for
-`DX_RUNTIME=docker-ssh`, the structured-output query it uses, its failure
-classes, and which Phase 2 item (1-8, `qnap-dxe-plan.md` "## Phase 2") it
-satisfies. Increments 1-9 implement this red→green→refactor, one item group
-at a time; nothing here is final adapter code and every command shape is
-still subject to the fake-`ssh`/fake-`docker` characterisation tests those
-increments write.
+adapter safely"). Written as a design document in Increment 0, before any
+adapter code existed; now (Increments 1-9 complete) it also serves as the
+as-built reference for `bin/lib/dx-runtime-docker.sh`'s command-by-command
+shape, kept current rather than superseded because the vast majority of
+what it originally proposed is exactly what was built. Maps every
+`dx_runtime_<op>` of the Phase 1 contract (`bin/lib/dx-runtime.sh`,
+`docs/refactor/runtime-boundary.md`) to the exact remote command
+`bin/lib/dx-runtime-docker.sh` issues for `DX_RUNTIME=docker-ssh`, the
+structured-output query it uses, its failure classes, and which Phase 2
+item (1-8, `qnap-dxe-plan.md` "## Phase 2") it satisfies.
 
-Three points below are flagged rather than silently decided (see
-"Flagged for review" at the end); everything else follows directly from
-`qnap-dxe-plan.md`'s decisions (DQ1-DQ8) and Phase 0's proven findings
-(`tests/qnap/lib/phase0-common.sh`, `tests/qnap/phase0-spike.sh`,
-`tests/qnap/phase0-inventory.sh`).
+Everything here follows directly from `qnap-dxe-plan.md`'s decisions
+(DQ1-DQ8) and Phase 0's proven findings (`tests/qnap/lib/phase0-common.sh`,
+`tests/qnap/phase0-spike.sh`, `tests/qnap/phase0-inventory.sh`), except
+`dx_runtime_container_create`'s parameter shape, which changed during
+Increment 4 for a reason this document did not originally anticipate: see
+`dx_runtime_container_create`'s row in section 4 and
+`docs/refactor/runtime-boundary.md`'s "Phase 2" section for what changed
+and why. The three points originally flagged for review are resolved (see
+"Flagged for review" at the end, now a decision log rather than an open
+list); one new item was flagged during implementation and remains open.
 
 ## 1. How every remote command is built (DQ1, Phase 2 item 1)
 
@@ -160,7 +165,7 @@ number(s) satisfied.
 | --- | --- | --- | --- | --- |
 | `dx_runtime_image_exists` | `<docker> image inspect <ref>` | exit status; `--format '{{json .}}'` if labels are also needed by the caller | connection-loss | 3 |
 | `dx_runtime_image_list` | `<docker> image ls --filter label=io.dxe.managed=true --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}\t{{.Size}}'` | raw text for human display only (matches the inventory's existing "raw text for human display" scoping of this op; nothing in `bin/` parses its output except `dx-status`'s pre-existing name-anchored `grep`, which this column order preserves) | connection-loss | 3 (display, not a query the adapter itself parses) |
-| `dx_runtime_image_build` | **flagged — see "Flagged for review"** | n/a | n/a | 4 |
+| `dx_runtime_image_build` | never a remote `docker build`: parses the Containerfile's single `FROM <ref>` line (fail-closed on anything beyond exactly one such line) then `<docker> pull <ref>` + `<docker> tag <ref> <image>` — see "Flagged for review" item 1 for why this differs from the load/save design first proposed here | n/a | connection-loss, malformed-containerfile | 4 |
 | `dx_runtime_image_delete` | label check (`image inspect --format '{{json .Config.Labels}}'`) then `<docker> image rm <ref>` | `{{json .Config.Labels}}` | connection-loss, label-mismatch | 4, 5 |
 
 ### Volume
@@ -168,7 +173,7 @@ number(s) satisfied.
 | Contract op | cmd | query | fails | item |
 | --- | --- | --- | --- | --- |
 | `dx_runtime_volume_exists` | `<docker> volume inspect <name>` | exit status; `--format '{{json .}}'` when labels are needed | connection-loss | 3 |
-| `dx_runtime_volume_create` | `<docker> volume create --label io.dxe.managed=true --label io.dxe.schema=<v> --label io.dxe.profile=<profile-id> --label io.dxe.role=<nix\|persist\|bootstrap> <name>` | n/a (create) | connection-loss, name-collision (pre-check via inspect first: an existing same-named, differently-labelled volume refuses instead of `volume create`'s own silent idempotent success) | 4, 5 |
+| `dx_runtime_volume_create` | `<docker> volume create --label io.dxe.managed=true --label io.dxe.schema=<v> --label io.dxe.profile=<profile-id> --label io.dxe.role=<nix\|persist\|bootstrap> <name>` (role resolved from which of `DX_NIX_VOLUME`/`DX_PERSIST_VOLUME`/`DX_BOOTSTRAP_VOLUME` the given name matches; refuses to create an unrecognised name unlabelled) | n/a (create) | connection-loss, name-collision (pre-check via inspect first: an existing same-named, differently-labelled volume refuses instead of `volume create`'s own silent idempotent success) | 4, 5 |
 | `dx_runtime_volume_delete` | label check then `<docker> volume rm <name>` | `{{json .Labels}}` from `volume inspect` | connection-loss, label-mismatch | 4, 5 |
 
 ### Container
@@ -178,7 +183,7 @@ number(s) satisfied.
 | `dx_runtime_container_exists` | `<docker> container inspect <name>` | exit status; `--format '{{json .}}'` | connection-loss | 3 |
 | `dx_runtime_container_running` | same inspect JSON, `.State.Running` | `.State.Running` from `container inspect --format '{{json .}}'` | connection-loss | 3 |
 | `dx_runtime_container_list` | `<docker> ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'` | raw text for human display only (same scoping as `image_list`) | connection-loss | 3 |
-| `dx_runtime_container_create` | `<docker> create --name <name> --label io.dxe.managed=true --label io.dxe.schema=<v> --label io.dxe.profile=<profile-id> --label io.dxe.role=container -v <nix-vol>:/nix -v <persist-vol>:/persist -v <bootstrap-vol>:<bootstrap-path> --restart <DX_CONTAINER_RESTART_POLICY> -e DX_PUB_KEY=<key> <image> -c <bootstrap-launch-cmd> -- <bootstrap-path>` (DQ4 direct-volume mode: no `--privileged`, no `--cap-add SYS_ADMIN`) | n/a (create) | connection-loss, name-collision | 4, 5 |
+| `dx_runtime_container_create` | rendered from the runtime-neutral vocabulary (see the note at the top of this document and `runtime-boundary.md`'s Phase 2 section), not hand-mapped per flag: `<docker> create --name <name> --entrypoint sh --volume <nix-vol>:/nix:<mode> --volume <persist-vol>:<target>:<mode> --volume <bootstrap-vol>:<target>:<mode> -e <K=V>... -m <memory> --cpus <cpus> -p <publish> --restart <policy> --label io.dxe.managed=true --label io.dxe.schema=<v> --label io.dxe.profile=<profile-id> --label io.dxe.role=container <image> -c <entrypoint-cmd> -- <entrypoint-args...>` (DQ4 direct-volume mode: no `--privileged`, no `--cap-add SYS_ADMIN`; `--cpus` is Docker's real fractional-CPU flag, never Apple's `-c`/CPU-count meaning) | n/a (create) | connection-loss, name-collision | 4, 5 |
 | `dx_runtime_container_start` | `<docker> start <name>` | n/a | connection-loss, daemon-restart | 4 |
 | `dx_runtime_container_stop` | `<docker> stop -t <DX_STOP_GRACE_SECONDS> <name>` (bounded the same way `container_stop_bounded` already bounds the Apple call) | n/a | connection-loss, daemon-restart | 4 |
 | `dx_runtime_container_kill` | `<docker> kill <name>` | n/a | connection-loss | 4 |
@@ -337,41 +342,61 @@ values only.
 
 ## Flagged for review
 
-Per the task's "decisions are not yours" list, these are recorded rather
-than silently resolved:
+Per the task's "decisions are not yours" list. The three items raised during
+design (Increment 0) are resolved below with the coordinating session's
+actual decisions; a fourth item was discovered during implementation
+(Increment 7) and remains open — it is outside this task's allowed-file
+list to fix.
 
-1. **`dx_runtime_image_build`.** Phase 0's spike found the real NAS refuses
-   `docker build` outright for its test account ("QNAP's Docker wrapper
-   creates a per-user build directory under Container Station's own data
-   area and refuses it there for a non-default administrator" —
-   `qnap-dxe-plan.md`'s Phase 0 outcome and `phase0-spike.sh`'s step-3
-   comment). Whether that is specific to the spike's disposable account or a
-   general Container Station restriction is unknown (the NAS is off-limits
-   to me; nothing here can be tested live). Proposed resolution: the
-   docker-ssh adapter never attempts a remote build at all — it cross-builds
-   the image locally (the existing Apple `container build` path, or a
-   future architecture-neutral equivalent once Phase 4 lands) and imports it
-   with `<docker-local-save> | ssh ... <docker> load`, a purely
-   stdin-streamed operation (same shape as any other bulk-stdin transfer in
-   this document, section 6's unidirectional-write case) that never touches
-   a remote build-context directory. This still satisfies DQ1's "without
-   copying the repository to QTS" (only the built image crosses, not the
-   source tree) but is a real design fork the task text does not spell out
-   explicitly, so it is flagged rather than assumed. **Needs confirmation
-   before Increment 4 implements it.**
-2. **`dx_runtime_system_start`'s refusal.** Recorded as settled, not
-   flagged: the standing brief's "any reboot or service restart... needs the
-   user's explicit approval each time" already decides this — the adapter
-   must not restart Container Station itself. Included here only so the
-   reviewer can confirm the reasoning, not because it is genuinely open.
-3. **Where stale-lock audit/unlock (item 6) is exposed to an operator.**
-   `bin/dx-status` is the one `bin/` entrypoint this task may touch, and it
-   is read-only display; audit fits there (a display-only addition), but
-   explicit unlock is a mutation and DQ6 requires it to print owner metadata
-   and ask for confirmation before removing anything — that shape does not
-   obviously fit a read-only status command, and no other new `bin/`
-   entrypoint is in the task's allowed-file list. **Needs a decision before
-   Increment 6**: extend `dx-status` for audit-only and expose unlock as a
-   library function callable only from tests/a future entrypoint (deferring
-   the operator-facing unlock command itself to a later, explicitly
-   reviewed change), or something else the coordinating session prefers.
+1. **`dx_runtime_image_build` — RESOLVED (decision received before
+   Increment 4).** Phase 0's spike found the real NAS refuses `docker build`
+   outright for its test account. This document originally proposed a
+   local-build-then-`docker load` design as the resolution. The coordinating
+   session decided differently: the docker-ssh adapter never builds an image
+   at all, remote or local. "Build" is `<docker> pull <ref>` + `<docker> tag
+   <ref> <DX_IMAGE>`, where `<ref>` is parsed from the Containerfile's own
+   single `FROM <ref>@sha256:...` line (Phase 0 spike's proven steps 2+3).
+   The adapter fails closed if the Containerfile contains anything beyond
+   exactly one such line. This is simpler than the load/save design (no local
+   build step, no stdin-streamed image transfer) and matches how the
+   Containerfile is actually used today: a pinned upstream reference, not a
+   Dockerfile with local build instructions. Implemented in
+   `dx_runtime_docker_image_build`/`dx_runtime_docker_base_image_ref`
+   (`bin/lib/dx-runtime-docker.sh`); characterised in
+   `tests/test_docker_runtime_adapter.sh` including the empty-FROM-reference
+   and multi-token-FROM rejection cases.
+2. **`dx_runtime_system_start`'s refusal — RESOLVED, as originally
+   recorded.** The coordinating session confirmed this reasoning explicitly:
+   restarting Container Station remotely is a service-restart-class action
+   that stays out of an unattended adapter's hands; the operator uses the
+   NAS's own App Center UI. Implemented as an unconditional refusal in
+   `dx_runtime_docker_system_start` with an operator-facing message naming
+   that UI.
+3. **Where stale-lock audit/unlock (item 6) is exposed to an operator —
+   RESOLVED (decision received before Increment 6).** The coordinating
+   session authorised a new `bin/dx-lock` entrypoint (added to the task's
+   allowed-file list for this reason), with `status` (read-only audit,
+   prints the lock's owner/profile/creation-time labels) and `unlock
+   [--force]` (prints that same owner metadata, then removes the lock
+   container) subcommands. `bin/dx-lock` refuses outright under
+   `DX_RUNTIME=apple` (the lock concept has no Apple equivalent). `bin/dx-status`
+   separately shows the same audit view read-only, for operators who do not
+   otherwise need `dx-lock`. Both go through
+   `dx_runtime_docker_lock_audit`/`dx_runtime_docker_lock_release` directly,
+   not through the `dx_runtime_<op>` dispatch contract, since locking is not
+   one of the Phase 1 contract's operations.
+4. **NEW — `bin/dx-mount` does not refuse under `DX_RUNTIME=docker-ssh`
+   (found during Increment 7; unresolved).** DQ8's capability table records
+   `bind_mounts: no` for docker-ssh (a controller-local directory is never a
+   valid remote bind source over SSH) and `dx_runtime_docker_capability` in
+   `bin/lib/dx-runtime-docker.sh` answers this correctly, but nothing in
+   `bin/dx-mount` itself queries that capability and refuses before
+   attempting a bind mount against a docker-ssh profile. `bin/dx-mount` is
+   not `bin/lib/`, `bin/dx-status`, or any of the other files this task is
+   authorised to touch, so this is a pre-existing gap the docker-ssh adapter
+   makes reachable rather than something Phase 2 introduced or can close
+   itself. Recorded in the progress file's Findings section at discovery;
+   flagged here for the coordinating session to decide who closes it and
+   when (a small, self-contained fix: an early `[ "${DX_RUNTIME:-apple}" =
+   docker-ssh ] && { echo ...; exit 1; }`-shaped guard, mirroring
+   `bin/dx-lock`'s own Apple-only-equivalent refusal shape).
