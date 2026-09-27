@@ -848,6 +848,87 @@ else
     test_fail "dx-status says \"keyring: not running\" when the keyring probe itself fails/is unavailable (got: $status_out)"
 fi
 
+# --- dx-status (docker-ssh): a real NAS live gate found this dead --
+# `image ls --format 'table {{.Repository}}:{{.Tag}}...'` joined the
+# repository and tag into ONE column with a colon and no whitespace between
+# them, so this script's own `dx_runtime_image_list | grep
+# "^${DX_IMAGE}[[:space:]]"` above matched nothing, exited 1, and `set -e`
+# killed the whole script silently right after the "=== DX Status ===" and
+# "--- Image (...) ---" header lines (Apple's `container image list` prints
+# NAME and TAG as separate columns, which is why the same grep already
+# worked there -- see the Apple fixture above). Drives the real dx-status
+# through the docker-ssh adapter with a fake `ssh`+`docker` on PATH, the
+# same fixture shape tests/test_docker_runtime_adapter.sh (Section 33) uses
+# for the adapter functions directly; this proves the fix at the actual
+# host-script level, not only inside the adapter function's own unit test.
+docker_status_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-status-docker-ssh.XXXXXX")"
+fake_qnap_ssh_write "$docker_status_fixture"
+# dx-status's docker-ssh path runs the full dx_runtime_docker_available
+# preflight (host reachability, uname -m/DX_GUEST_SYSTEM arch check, engine
+# compatibility, daemon identity) before its Image section ever queries
+# anything, so this fake must answer every one of those calls too, not only
+# image ls/inspect -- otherwise the preflight itself fails closed and the
+# Image section this test cares about never runs at all.
+fake_tool_write "$docker_status_fixture" uname 'case "$1" in -m) echo aarch64 ;; esac'
+fake_tool_write "$docker_status_fixture" docker '
+case "$1 $2" in
+    "version --format")     echo "27.0.0" ;;
+    "info --format")        echo "sha256:fake|qnap-dxe|aarch64|linux" ;;
+    "image inspect")         exit 0 ;;
+    "image ls")
+        # Faithful to dx_runtime_docker_image_list'"'"'s real --format
+        # string: if Repository and Tag are still joined by a colon (the
+        # regression this test exists to catch), render output the same
+        # (broken) way a real `docker image ls` would -- one combined
+        # column -- so this test only stays green when production truly
+        # emits separate columns, not merely because this fake ignores
+        # what format it was asked for.
+        case "$*" in
+            *"{{.Repository}}:{{.Tag}}"*)
+                printf "REPOSITORY:TAG\tIMAGE ID\tCREATED\tSIZE\n"
+                printf "dx-qnap-spike-nixos:latest\tabc123\t1 day ago\t500MB\n"
+                ;;
+            *)
+                printf "REPOSITORY\tTAG\tIMAGE ID\tCREATED\tSIZE\n"
+                printf "dx-qnap-spike-nixos\tlatest\tabc123\t1 day ago\t500MB\n"
+                ;;
+        esac
+        ;;
+    "container inspect")     exit 1 ;;
+    *) exit 1 ;;
+esac'
+run_docker_status() {
+    (
+        unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION DX_PROJECT_ROOT
+        for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+        export PATH="$docker_status_fixture:/usr/bin:/bin"
+        export HOME="$docker_status_fixture/home"
+        export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DXE_RUNTIME_DOCKER_BIN=docker
+        export DX_CONTAINER_NAME=dxe-status-fixture DX_IMAGE=dx-qnap-spike-nixos
+        "$BASE_DIR/bin/dx-status"
+    )
+}
+set +e
+docker_status_out="$(run_docker_status 2>&1)"
+docker_status_rc=$?
+set -e
+# "abc123" (the fake IMAGE ID) only appears in the actual rendered table
+# row, never in the "--- Image (...) ---" header itself -- the header
+# alone would satisfy a weaker "does it mention the image name" check even
+# while dx-status dies right after printing it, which is exactly the bug
+# this test exists to catch. "--- SSH" is the next section dx-status
+# always prints unconditionally, so its presence also proves the script
+# ran to completion (exit 0) rather than aborting under set -e partway
+# through the Image section.
+if [ "$docker_status_rc" -eq 0 ] \
+    && printf '%s\n' "$docker_status_out" | stdin_matches -F "abc123" \
+    && printf '%s\n' "$docker_status_out" | stdin_matches -F -- "--- SSH"; then
+    test_pass "dx-status (docker-ssh) renders the Image section instead of dying silently on the column-shape mismatch"
+else
+    test_fail "dx-status (docker-ssh) renders the Image section instead of dying silently on the column-shape mismatch (rc=$docker_status_rc, got: $docker_status_out)"
+fi
+rm -rf "$docker_status_fixture"
+
 # --- dx-reset-nix-volume (Branch 12, store-trust-plan.md): the real,
 # volume-scoped recovery path both store-trust refusals point at by name.
 # Drives the real entrypoint with a fake `container` on PATH, the same

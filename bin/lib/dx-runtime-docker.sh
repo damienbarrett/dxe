@@ -356,7 +356,7 @@ dx_runtime_docker_image_identity() {
 dx_runtime_docker_image_list() {
     local bin
     bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" image ls "$@" --format 'table {{.Repository}}:{{.Tag}}	{{.ID}}	{{.CreatedSince}}	{{.Size}}'
+    dx_runtime_docker_ssh_exec "$bin" image ls "$@" --format 'table {{.Repository}}	{{.Tag}}	{{.ID}}	{{.CreatedSince}}	{{.Size}}'
 }
 
 dx_runtime_docker_volume_exists() {

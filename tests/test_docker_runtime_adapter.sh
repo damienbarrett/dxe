@@ -452,16 +452,32 @@ esac'
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
+    # Repository and Tag must be SEPARATE columns, not joined by a colon:
+    # a real NAS live gate found dx-status's `grep "^${DX_IMAGE}[[:space:]]"`
+    # (bin/dx-status) silently matching nothing against
+    # "dx-qnap-spike-nixos:latest ..." -- the bare name is never followed
+    # by whitespace when Repository:Tag are one column -- which killed
+    # dx-status outright under its own `set -e` right after the header
+    # lines. Apple's `container image list` already prints NAME and TAG as
+    # separate columns, which is why the identical grep works there; this
+    # format string must give docker-ssh the same "bare name, then
+    # whitespace" first-column shape. This fake also refuses (exit 99) any
+    # other --format shape, so a regression back to a joined column, or any
+    # other unexpected shape, fails loudly here instead of silently in
+    # dx-status.
     fake_tool_write "$dir" docker '
 [ "$1 $2" = "image ls" ] || { echo "UNMATCHED: $*" >&2; exit 99; }
-echo "REPOSITORY:TAG	IMAGE ID	CREATED	SIZE"
-echo "dx-qnap-nixos:latest	abc123	1 day ago	500MB"'
+case "$*" in
+    *"{{.Repository}}:{{.Tag}}"*) echo "UNEXPECTED FORMAT (Repository:Tag joined): $*" >&2; exit 99 ;;
+esac
+echo "REPOSITORY	TAG	IMAGE ID	CREATED	SIZE"
+echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
     DXE_RUNTIME_DOCKER_BIN=docker
-    dx_runtime_image_list | grep -q "^dx-qnap-nixos:latest[[:space:]]"
+    dx_runtime_image_list | grep -q "^dx-qnap-nixos[[:space:]]"
 )
-[ "$?" -eq 0 ] && test_pass "image_list: name-anchored first column, name-prefixed grep still works" || test_fail "image_list: name-anchored first column, name-prefixed grep still works"
+[ "$?" -eq 0 ] && test_pass "image_list: name-anchored first column (Repository and Tag are separate columns), name-prefixed grep still works" || test_fail "image_list: name-anchored first column (Repository and Tag are separate columns), name-prefixed grep still works"
 
 (
     dir="$(new_tool_dir)"
