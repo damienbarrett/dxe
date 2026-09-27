@@ -20,10 +20,23 @@ run_home_manager_activation() {
         return "$status"
     fi
 
+    # Branch 11 / Phase 4 (qnap-dxe-plan.md DQ7, docs/refactor/
+    # arch-neutral-guest.md section 4): select this guest's own per-system
+    # Home Manager configuration directly, rather than the bare "dx" alias
+    # (kept only for anything else that still names it). A refusal here
+    # (wrong/unsupported architecture) must fail before ever invoking Nix.
+    local system
+    system="$(dx_guest_resolve_system)"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "Bootstrap phase: Home Manager activation failed after $((SECONDS - phase_started))s (guest system resolution refused)." >&2
+        return "$status"
+    fi
+
     local attempt=1
     status=0
     local activation_flake
-    activation_flake="$DX_BOOTSTRAP_ROOT#homeConfigurations.dx.activationPackage"
+    activation_flake="$DX_BOOTSTRAP_ROOT#homeConfigurations.dx-$system.activationPackage"
 
     while [ "$attempt" -le "$DX_GUEST_ACTIVATION_ATTEMPTS" ]; do
         echo "Running Home Manager activation (attempt $attempt/$DX_GUEST_ACTIVATION_ATTEMPTS, timeout ${DX_GUEST_ACTIVATION_TIMEOUT}s)..."

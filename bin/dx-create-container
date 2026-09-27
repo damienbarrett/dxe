@@ -44,6 +44,14 @@ DX_IMAGE_IDENTITY="$(dx_runtime_image_identity "$DX_IMAGE")" || {
     exit 1
 }
 
+# Branch 11 / Phase 4 (qnap-dxe-plan.md DQ7, docs/refactor/
+# arch-neutral-guest.md section 4): DX_GUEST_SYSTEM (already a validated
+# host config field, default aarch64-linux) is forwarded to the guest so
+# its own scripts/lib/dx-guest-system.sh can cross-check it against
+# uname -m and refuse on disagreement. Forwarded for DX_RUNTIME=apple too --
+# Apple's guest is always aarch64-linux, so this is a no-op confirmation,
+# not a behavior change.
+
 # Runtime-neutral parameters (qnap-dxe-plan.md DQ2: "runtime-specific CLI
 # syntax ... lives only in the adapter"). Neither this script nor
 # dx_runtime_container_create's own dispatch names a single Apple or
@@ -71,6 +79,7 @@ CREATE_ARGS=(
     --env "DX_NIX_DISK_SIZE=$DX_NIX_DISK_SIZE"
     --env "DX_NIX_STORAGE_MODE=$DX_NIX_STORAGE_MODE"
     --env "DX_IMAGE_IDENTITY=$DX_IMAGE_IDENTITY"
+    --env "DX_GUEST_SYSTEM=$DX_GUEST_SYSTEM"
     --memory "$DX_CONTAINER_MEMORY"
     --cpus "$DX_CONTAINER_CPUS"
     --publish "127.0.0.1:$DX_SSH_PORT:2222"

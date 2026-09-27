@@ -142,6 +142,13 @@
   home.file.".local/lib/dx/dx-opencode-persistence.sh".source =
     ../scripts/lib/dx-opencode-persistence.sh;
 
+  # Shared guest-system detection (Branch 11 / Phase 4, DQ7), used by both
+  # dx-ai (dx_ai_load_guest_system, same three-candidate shape as
+  # dx-opencode-persistence.sh above) and bootstrap.sh (which sources it
+  # directly from the bootstrap volume, since it never runs post-activation).
+  home.file.".local/lib/dx/dx-guest-system.sh".source =
+    ../scripts/lib/dx-guest-system.sh;
+
   # Guest keyring ownership lives entirely in the AI-tools layer (Branch 16):
   # dx-ai's dx_ai_ensure_keyring and the dx-keyring command below are both
   # thin wrappers over this shared library (source-only, like

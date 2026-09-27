@@ -39,6 +39,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     DX_BOOTSTRAP_ROOT="$(cd "$(dirname "$self")" && pwd)"
     export DX_BOOTSTRAP_ROOT
     source "$DX_BOOTSTRAP_ROOT/bootstrap/common.sh"
+    source "$DX_BOOTSTRAP_ROOT/scripts/lib/dx-guest-system.sh"
     source "$DX_BOOTSTRAP_ROOT/bootstrap/base-and-storage.sh"
     source "$DX_BOOTSTRAP_ROOT/bootstrap/system.sh"
     source "$DX_BOOTSTRAP_ROOT/bootstrap/persistence.sh"

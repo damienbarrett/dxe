@@ -156,17 +156,27 @@ dx_ai_agy_manifest_url() {
     esac
 }
 
-# Branch 11 / Phase 4, Increment 2: a small local uname -m -> Nix system
-# mapping so dx-ai can select its own agy pin/manifest and tool inventory.
-# Increment 3 replaces this with the shared scripts/lib/dx-guest-system.sh
-# helper (also used by bootstrap.sh), which additionally cross-checks
-# DX_GUEST_SYSTEM; deliberately the identical mapping in the meantime.
-dx_ai_native_system() {
-    case "$(uname -m)" in
-        aarch64) printf '%s\n' aarch64-linux ;;
-        x86_64)  printf '%s\n' x86_64-linux ;;
-        *) echo "Error: unsupported guest architecture: $(uname -m)" >&2; return 1 ;;
-    esac
+# Same three-candidate shape as dx_ai_load_opencode_persistence/
+# dx_ai_load_keyring, for the same reason: scripts/lib/dx-guest-system.sh
+# (dx_guest_native_system/dx_guest_resolve_system, shared with bootstrap.sh)
+# is packaged both as a Home Manager `home.file` and loadable straight off
+# the bootstrap volume, so a fresh guest's very first dx-ai run can still
+# resolve it.
+dx_ai_load_guest_system() {
+    local script_directory candidate
+    declare -F dx_guest_resolve_system >/dev/null && return 0
+    script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+    for candidate in \
+        "$script_directory/lib/dx-guest-system.sh" \
+        "$HOME/.local/lib/dx/dx-guest-system.sh" \
+        "${DX_AI_BOOTSTRAP_ROOT:-/guest-bootstrap}/scripts/lib/dx-guest-system.sh"; do
+        [ -r "$candidate" ] || continue
+        # shellcheck source=/dev/null
+        source "$candidate" || return 1
+        declare -F dx_guest_resolve_system >/dev/null && return 0
+    done
+    echo "Error: guest-system helper is unavailable." >&2
+    return 1
 }
 
 # The tool set to actually stage/publish/verify for $2 (a system), given
@@ -327,18 +337,6 @@ EOF
     [ -z "$misses" ] || { printf '%s' "$misses"; return 1; }
 }
 
-# This generation's own flake-level system string, read directly from its
-# flake.nix (no extra Nix evaluation needed) -- used only to name the system
-# in the fallback/refusal notices below.
-dx_ai_flake_system() {
-    local line
-    line="$(grep -m1 'system = "' "$1/flake.nix" 2>/dev/null)" || return 1
-    line="${line#*\"}"
-    line="${line%%\"*}"
-    [ -n "$line" ] || return 1
-    printf '%s\n' "$line"
-}
-
 # The nixpkgs-unstable input's locked revision, from a generation's own
 # flake.lock -- used only to name revisions in the fallback/refusal notices.
 dx_ai_nixpkgs_unstable_rev() {
@@ -357,12 +355,19 @@ dx_ai_nixpkgs_unstable_rev() {
 # touches $state/current -- only ever reads it and writes into $stage, which
 # the caller discards on any failure.
 dx_ai_ensure_cached() {
-    local stage="$1" state="$2" misses rc system new_rev old_rev
+    # Branch 11 / Phase 4 (docs/refactor/arch-neutral-guest.md section 4):
+    # $3 is this guest's own already-resolved system (dx_ai_main resolves it
+    # once via the shared scripts/lib/dx-guest-system.sh helper), used only
+    # to name the system in the fallback/refusal notice below -- replaces
+    # the earlier flake.nix-text-grepping dx_ai_flake_system, which stopped
+    # working once flake.nix became multi-system (no single "system = "
+    # line to find). Optional: direct unit tests below call this with two
+    # args and get the same "this system" fallback wording as before.
+    local stage="$1" state="$2" system="${3:-}" misses rc new_rev old_rev
     misses="$(dx_ai_check_cached "$stage")"; rc=$?
     [ "$rc" -ne 0 ] || return 0
     [ "$rc" -ne 2 ] || return 1
 
-    system="$(dx_ai_flake_system "$stage" 2>/dev/null || true)"
     new_rev="$(dx_ai_nixpkgs_unstable_rev "$stage" 2>/dev/null || true)"
 
     if [ -f "$state/current/flake.lock" ] && [ ! -L "$state/current/flake.lock" ]; then
@@ -616,16 +621,18 @@ dx_ai_main() {
         return
     fi
     published="$(dx_ai_published_root)"; [ -f "$published/flake.nix" ] || { echo "Error: published bootstrap flake is missing." >&2; dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return 1; }
-    # Branch 11 / Phase 4, Increment 2 (docs/refactor/arch-neutral-guest.md
-    # section 3.4): resolve this guest's own system once, and adjust
-    # DX_AI_TOOLS (a global the staging/validation/verify functions below
-    # already read) BEFORE staging, so a system with no native agy artifact
-    # stages, publishes, and verifies a generation that never claims agy.
-    system="$(dx_ai_native_system)" || { dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return 1; }
+    # Branch 11 / Phase 4 (docs/refactor/arch-neutral-guest.md section 4):
+    # resolve this guest's own system once, via the shared helper (also used
+    # by bootstrap.sh), and adjust DX_AI_TOOLS (a global the staging/
+    # validation/verify functions below already read) BEFORE staging, so a
+    # system with no native agy artifact stages, publishes, and verifies a
+    # generation that never claims agy.
+    dx_ai_load_guest_system || { dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return 1; }
+    system="$(dx_guest_resolve_system)" || { dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return 1; }
     DX_AI_TOOLS="$(dx_ai_tools_for_system "$published" "$system" | tr '\n' ' ')"; DX_AI_TOOLS="${DX_AI_TOOLS% }"
     if ! stage="$(dx_ai_stage_generation "$published" "$state" "$id")"; then dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return 1; fi
     dx_ai_update_flake "$stage" "$system" || result=$?
-    [ "$result" -ne 0 ] || dx_ai_ensure_cached "$stage" "$state" || result=$?
+    [ "$result" -ne 0 ] || dx_ai_ensure_cached "$stage" "$state" "$system" || result=$?
     [ "$result" -ne 0 ] || dx_ai_install_profile "$stage" || result=$?
     [ "$result" -ne 0 ] || dx_ai_publish_generation "$state" "$id" "$stage" || result=$?
     if [ "$result" -ne 0 ]; then rm -rf "$stage"; dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return "$result"; fi

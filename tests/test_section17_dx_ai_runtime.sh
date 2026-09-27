@@ -474,42 +474,69 @@ printf '%s\n' '{"aarch64-linux":{"version":"1.0.5","url":"https://example.invali
 if (
     curl() { printf '%s\n' '{"version":"9.9.9","url":"https://example.invalid/new-amd","sha512":"'"$(printf 'a%.0s' $(seq 1 128))"'"}'; }
     nix() { [ "$1" = hash ] && printf 'sha512-newamdhash\n' || command nix "$@"; }
+    # Narrow jq stand-in for this call's two shapes (manifest-field
+    # extraction from stdin, and the single-key merge into pins/agy.json) --
+    # the pinned-ShellCheck/coverage container deliberately has no real jq
+    # (see dx-ai.sh's own dx_ai_nixpkgs_unstable_rev comment for the same
+    # accepted gap), unlike the real guest, which always does via
+    # dxPackages. Generic string-splice merge, not a hardcoded answer: it
+    # reads the file's OTHER key(s) back out untouched, so this still
+    # proves dx_ai_refresh_pin's real behavior, not a tautology.
+    jq() {
+        case "$1 $2" in
+            "-r .version // empty") sed -n 's/.*"version":"\([^"]*\)".*/\1/p' ;;
+            "-r .url // empty") sed -n 's/.*"url":"\([^"]*\)".*/\1/p' ;;
+            "-r .sha512 // empty") sed -n 's/.*"sha512":"\([^"]*\)".*/\1/p' ;;
+            *)
+                if [ "$1" = --arg ] && [ "$2" = system ]; then
+                    local args=("$@") sys version url hash file content new_value before after
+                    sys="${args[2]}"; version="${args[5]}"; url="${args[8]}"; hash="${args[11]}"
+                    file="${args[$(( ${#args[@]} - 1 ))]}"
+                    content="$(cat "$file")"
+                    new_value="{\"version\":\"$version\",\"url\":\"$url\",\"hash\":\"$hash\"}"
+                    case "$content" in
+                        *"\"$sys\":null"*)
+                            before="${content%%\"$sys\":null*}"
+                            after="${content#*\"$sys\":null}"
+                            printf '%s' "$before\"$sys\":$new_value$after"
+                            ;;
+                        *"\"$sys\":{"*)
+                            before="${content%%\"$sys\":{*}"
+                            after="${content#*\"$sys\":\{*\}}"
+                            printf '%s' "$before\"$sys\":$new_value$after"
+                            ;;
+                        *) return 1 ;;
+                    esac
+                else
+                    return 1
+                fi
+                ;;
+        esac
+    }
     dx_ai_refresh_pin "$refresh_fixture" x86_64-linux
-) && refreshed_amd="$(jq -r '."x86_64-linux".version' "$refresh_fixture/pins/agy.json")" \
-    && refreshed_arm="$(jq -r '."aarch64-linux".url' "$refresh_fixture/pins/agy.json")" \
+) && refreshed_amd="$(sed -n 's/.*"x86_64-linux":{"version":"\([^"]*\)".*/\1/p' "$refresh_fixture/pins/agy.json")" \
+    && refreshed_arm="$(sed -n 's/.*"aarch64-linux":{[^}]*"url":"\([^"]*\)".*/\1/p' "$refresh_fixture/pins/agy.json")" \
     && [ "$refreshed_amd" = 9.9.9 ] && [ "$refreshed_arm" = "https://example.invalid/old-arm" ]; then
     test_pass "dx_ai_refresh_pin updates only the named system's key"
 else
     test_fail "dx_ai_refresh_pin updates only the named system's key"
 fi
 
-# dx_ai_native_system: a small uname -m -> Nix system mapping (Increment 3
-# replaces this with the shared scripts/lib/dx-guest-system.sh helper;
-# identical mapping in the meantime, per docs/refactor/arch-neutral-guest.md
-# section 3.4's note).
+# Branch 11 / Phase 4, Increment 3 (docs/refactor/arch-neutral-guest.md
+# section 4): dx-ai.sh now sources the shared scripts/lib/dx-guest-system.sh
+# helper (dx_guest_native_system/dx_guest_resolve_system) instead of its own
+# temporary dx_ai_native_system (Increment 2) -- that mapping is tested
+# directly in tests/test_section3_bootstrap.sh, alongside bootstrap.sh's own
+# use of the same shared helper. dx_ai_load_guest_system, the loader that
+# resolves it (same three-candidate shape as dx_ai_load_opencode_persistence/
+# dx_ai_load_keyring), is proven here.
 if (
-    uname() { [ "${1:-}" = -m ] && printf '%s\n' aarch64 || command uname "$@"; }
-    [ "$(dx_ai_native_system)" = aarch64-linux ]
+    unset -f dx_guest_resolve_system dx_guest_native_system 2>/dev/null
+    dx_ai_load_guest_system && declare -F dx_guest_resolve_system >/dev/null
 ); then
-    test_pass "dx_ai_native_system maps uname -m=aarch64 to aarch64-linux"
+    test_pass "dx_ai_load_guest_system resolves the shared guest-system helper"
 else
-    test_fail "dx_ai_native_system maps uname -m=aarch64 to aarch64-linux"
-fi
-if (
-    uname() { [ "${1:-}" = -m ] && printf '%s\n' x86_64 || command uname "$@"; }
-    [ "$(dx_ai_native_system)" = x86_64-linux ]
-); then
-    test_pass "dx_ai_native_system maps uname -m=x86_64 to x86_64-linux"
-else
-    test_fail "dx_ai_native_system maps uname -m=x86_64 to x86_64-linux"
-fi
-if (
-    uname() { [ "${1:-}" = -m ] && printf '%s\n' armv7l || command uname "$@"; }
-    dx_ai_native_system
-); then
-    test_fail "dx_ai_native_system refuses an unrecognized guest architecture"
-else
-    test_pass "dx_ai_native_system refuses an unrecognized guest architecture"
+    test_fail "dx_ai_load_guest_system resolves the shared guest-system helper"
 fi
 
 # dx_ai_tools_for_system: the full DX_AI_TOOLS list when the system's agy
@@ -520,6 +547,19 @@ fi
 tools_fixture="$ai_fixture/tools-for-system"
 mkdir -p "$tools_fixture/pins"
 printf '%s\n' '{"aarch64-linux":{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"},"x86_64-linux":null}' > "$tools_fixture/pins/agy.json"
+# Narrow jq stand-in for dx_ai_tools_for_system's one query -- same
+# accepted gap as dx_ai_refresh_pin's stand-in above (no real jq in the
+# pinned-ShellCheck/coverage container). Reads the fixture's real content
+# rather than a hardcoded answer, so the three assertions below still
+# prove the real null-vs-non-null branch, not a tautology. Scoped to this
+# block only; unset once done.
+jq() {
+    if [ "$1" = -r ] && [ "$2" = --arg ] && [ "$3" = system ]; then
+        if grep -qF "\"$4\":null" "$6" 2>/dev/null; then printf 'true\n'; else printf 'false\n'; fi
+    else
+        return 1
+    fi
+}
 supported_expected="$(printf '%s\n' $DX_AI_TOOLS)"
 if supported_out="$(dx_ai_tools_for_system "$tools_fixture" aarch64-linux 2>/dev/null)" && [ "$supported_out" = "$supported_expected" ]; then
     test_pass "dx_ai_tools_for_system returns the full tool list when agy is supported"
@@ -537,6 +577,7 @@ if dx_ai_tools_for_system "$tools_fixture" x86_64-linux 2>&1 >/dev/null | stdin_
 else
     test_fail "dx_ai_tools_for_system prints DQ7's exact unsupported-tool diagnostic"
 fi
+unset -f jq
 
 # End-to-end: a sourced dx_ai_main run on a system whose agy pin is null
 # stages a generation whose .tools-manifest and published executables
@@ -549,6 +590,18 @@ printf '%s\n' fixture > "$noagy_published/flake.nix"
 printf '%s\n' fixture > "$noagy_published/flake.lock"
 (
     uname() { [ "${1:-}" = -m ] && printf '%s\n' x86_64 || command uname "$@"; }
+    # Same narrow jq stand-in as the direct dx_ai_tools_for_system
+    # assertions above (no real jq in the pinned-ShellCheck/coverage
+    # container) -- proves dx_ai_main's real null-pin detection here too,
+    # not only its fail-closed default (which happens to agree for this
+    # specific x86_64-linux/null fixture).
+    jq() {
+        if [ "$1" = -r ] && [ "$2" = --arg ] && [ "$3" = system ]; then
+            if grep -qF "\"$4\":null" "$6" 2>/dev/null; then printf 'true\n'; else printf 'false\n'; fi
+        else
+            return 1
+        fi
+    }
     dx_ai_update_flake() { :; }
     dx_ai_ensure_cached() { :; }
     dx_ai_install_profile() {
@@ -662,10 +715,11 @@ id() { printf '%s\n' 1000; }
 dx_ai_boot_id() { printf '%s\n' test-boot-id; }
 dx_ai_process_start() { printf '%s\n' 123; }
 # The host running this unit test may report a Darwin-style uname -m (e.g.
-# "arm64") that dx_ai_native_system's Linux-only mapping does not recognize
-# -- production dx-ai.sh only ever runs inside the Linux guest. Stub it to
-# the identity a real guest supplies, same reasoning as the two stubs above.
-dx_ai_native_system() { printf '%s\n' aarch64-linux; }
+# "arm64") that the shared guest-system helper's Linux-only mapping does not
+# recognize -- production dx-ai.sh only ever runs inside the Linux guest.
+# Stub it to the identity a real guest supplies, same reasoning as the two
+# stubs above.
+dx_guest_resolve_system() { printf '%s\n' aarch64-linux; }
 
 f8_path_before="$PATH"
 DX_AI_BOOTSTRAP_ROOT="$f8_published" DX_AI_STATE_ROOT="$f8_state" dx_ai_main
@@ -715,7 +769,7 @@ dx_ai_verify() { :; }
 id() { printf '%s\n' 1000; }
 dx_ai_boot_id() { printf '%s\n' test-boot-id; }
 dx_ai_process_start() { printf '%s\n' 123; }
-dx_ai_native_system() { printf '%s\n' aarch64-linux; }
+dx_guest_resolve_system() { printf '%s\n' aarch64-linux; }
 nix() {
     case "$*" in
         "build --dry-run --extra-experimental-features "*"#ai-tools")

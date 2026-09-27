@@ -7,6 +7,8 @@ BOOTSTRAP_DIR="$CONTAINER_DIR/bootstrap"
 test_section "Section 3: Sourceable Guest Bootstrap"
 
 assert_file_exists "$BOOTSTRAP" "bootstrap orchestrator exists"
+assert_file_exists "$CONTAINER_DIR/scripts/lib/dx-guest-system.sh" "the shared guest-system helper exists"
+assert_file_contains_literal "$BOOTSTRAP" 'source "$DX_BOOTSTRAP_ROOT/scripts/lib/dx-guest-system.sh"' "bootstrap sources the shared guest-system helper"
 for module in common base-and-storage system persistence activation; do
     assert_file_exists "$BOOTSTRAP_DIR/$module.sh" "bootstrap $module phase exists"
     if output="$(bash -c 'before=$-; source "$1"; [ "$before" = "$-" ]' _ "$BOOTSTRAP_DIR/$module.sh" 2>&1)" && [ -z "$output" ]; then
@@ -17,13 +19,86 @@ for module in common base-and-storage system persistence activation; do
 done
 
 source "$BOOTSTRAP_DIR/common.sh"
+source "$CONTAINER_DIR/scripts/lib/dx-guest-system.sh"
 source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
+
+# Branch 11 / Phase 4 (qnap-dxe-plan.md DQ7, docs/refactor/
+# arch-neutral-guest.md section 4): the guest selects its own system from
+# uname -m, cross-checked against DX_GUEST_SYSTEM (the third
+# bin/dx-create-container env token) when the host provided one. Agree,
+# disagree, and unsupported-architecture cases, all with `uname` stubbed so
+# these are deterministic regardless of the real host/container running
+# this test.
+if (
+    uname() { [ "${1:-}" = -m ] && printf '%s\n' aarch64 || command uname "$@"; }
+    unset DX_GUEST_SYSTEM
+    [ "$(dx_guest_native_system)" = aarch64-linux ]
+); then
+    test_pass "dx_guest_native_system maps uname -m=aarch64 to aarch64-linux"
+else
+    test_fail "dx_guest_native_system maps uname -m=aarch64 to aarch64-linux"
+fi
+if (
+    uname() { [ "${1:-}" = -m ] && printf '%s\n' x86_64 || command uname "$@"; }
+    unset DX_GUEST_SYSTEM
+    [ "$(dx_guest_native_system)" = x86_64-linux ]
+); then
+    test_pass "dx_guest_native_system maps uname -m=x86_64 to x86_64-linux"
+else
+    test_fail "dx_guest_native_system maps uname -m=x86_64 to x86_64-linux"
+fi
+if (
+    uname() { [ "${1:-}" = -m ] && printf '%s\n' armv7l || command uname "$@"; }
+    dx_guest_native_system
+); then
+    test_fail "dx_guest_native_system refuses an unsupported guest architecture (32-bit ARM, DQ7)"
+else
+    test_pass "dx_guest_native_system refuses an unsupported guest architecture (32-bit ARM, DQ7)"
+fi
+
+if (
+    uname() { [ "${1:-}" = -m ] && printf '%s\n' aarch64 || command uname "$@"; }
+    unset DX_GUEST_SYSTEM
+    [ "$(dx_guest_resolve_system)" = aarch64-linux ]
+); then
+    test_pass "dx_guest_resolve_system: DX_GUEST_SYSTEM unset uses the native system (Apple's case today)"
+else
+    test_fail "dx_guest_resolve_system: DX_GUEST_SYSTEM unset uses the native system (Apple's case today)"
+fi
+if (
+    uname() { [ "${1:-}" = -m ] && printf '%s\n' x86_64 || command uname "$@"; }
+    export DX_GUEST_SYSTEM=x86_64-linux
+    [ "$(dx_guest_resolve_system)" = x86_64-linux ]
+); then
+    test_pass "dx_guest_resolve_system: matching DX_GUEST_SYSTEM agrees with the native system"
+else
+    test_fail "dx_guest_resolve_system: matching DX_GUEST_SYSTEM agrees with the native system"
+fi
+if (
+    uname() { [ "${1:-}" = -m ] && printf '%s\n' aarch64 || command uname "$@"; }
+    export DX_GUEST_SYSTEM=x86_64-linux
+    out="$(dx_guest_resolve_system 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -F "host profile says DX_GUEST_SYSTEM=x86_64-linux, but this guest is aarch64-linux"
+); then
+    test_pass "dx_guest_resolve_system refuses when DX_GUEST_SYSTEM disagrees with the native system"
+else
+    test_fail "dx_guest_resolve_system refuses when DX_GUEST_SYSTEM disagrees with the native system"
+fi
+if (
+    uname() { [ "${1:-}" = -m ] && printf '%s\n' armv7l || command uname "$@"; }
+    unset DX_GUEST_SYSTEM
+    dx_guest_resolve_system
+); then
+    test_fail "dx_guest_resolve_system refuses an unsupported guest architecture even with DX_GUEST_SYSTEM unset"
+else
+    test_pass "dx_guest_resolve_system refuses an unsupported guest architecture even with DX_GUEST_SYSTEM unset"
+fi
 
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bootstrap-test.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
@@ -412,6 +487,11 @@ assert_file_contains_literal "$BOOTSTRAP" 'exec "$(command -v sshd)" -D -e -p 22
 if (
     validate_positive_integer() { return 0; }
     run_as_dx_with_timeout() { return 17; }
+    # This host may not be a Linux guest (e.g. macOS reports uname -m as
+    # "arm64", which dx_guest_native_system does not recognize); stub the
+    # resolver so this probe exercises activation timing, not architecture
+    # detection.
+    dx_guest_resolve_system() { printf '%s\n' aarch64-linux; }
     # Exported: run_home_manager_activation (activation.sh) reads all four as
     # globals, several statements below, not as a same-line command prefix.
     export DX_BOOTSTRAP_ROOT="$fixture" DX_GUEST_ACTIVATION_TIMEOUT=1 DX_GUEST_ACTIVATION_ATTEMPTS=1 DX_GUEST_ACTIVATION_RETRY_DELAY=1
@@ -422,6 +502,51 @@ if (
     test_pass "Home Manager timing preserves activation failure status"
 else
     test_fail "Home Manager timing preserves activation failure status"
+fi
+
+# Branch 11 / Phase 4 (docs/refactor/arch-neutral-guest.md section 4):
+# run_home_manager_activation selects homeConfigurations."dx-<system>" for
+# its OWN resolved system, not the bare (aliased) "dx" attribute -- proven
+# by capturing the exact flake reference passed to nix run, for both
+# systems, and refusing when system resolution itself refuses.
+if (
+    validate_positive_integer() { return 0; }
+    captured=""
+    run_as_dx_with_timeout() { captured="$*"; return 0; }
+    dx_guest_resolve_system() { printf '%s\n' aarch64-linux; }
+    export DX_BOOTSTRAP_ROOT="$fixture" DX_GUEST_ACTIVATION_TIMEOUT=1 DX_GUEST_ACTIVATION_ATTEMPTS=1 DX_GUEST_ACTIVATION_RETRY_DELAY=1
+    run_home_manager_activation >/dev/null 2>&1
+    printf '%s\n' "$captured" | stdin_matches -F "$fixture#homeConfigurations.dx-aarch64-linux.activationPackage"
+); then
+    test_pass "Home Manager activation selects homeConfigurations.dx-aarch64-linux for an aarch64-linux guest"
+else
+    test_fail "Home Manager activation selects homeConfigurations.dx-aarch64-linux for an aarch64-linux guest"
+fi
+if (
+    validate_positive_integer() { return 0; }
+    captured=""
+    run_as_dx_with_timeout() { captured="$*"; return 0; }
+    dx_guest_resolve_system() { printf '%s\n' x86_64-linux; }
+    export DX_BOOTSTRAP_ROOT="$fixture" DX_GUEST_ACTIVATION_TIMEOUT=1 DX_GUEST_ACTIVATION_ATTEMPTS=1 DX_GUEST_ACTIVATION_RETRY_DELAY=1
+    run_home_manager_activation >/dev/null 2>&1
+    printf '%s\n' "$captured" | stdin_matches -F "$fixture#homeConfigurations.dx-x86_64-linux.activationPackage"
+); then
+    test_pass "Home Manager activation selects homeConfigurations.dx-x86_64-linux for an x86_64-linux guest"
+else
+    test_fail "Home Manager activation selects homeConfigurations.dx-x86_64-linux for an x86_64-linux guest"
+fi
+if (
+    validate_positive_integer() { return 0; }
+    run_as_dx_with_timeout() { test_fail "activation must not run Nix when system resolution refuses"; }
+    dx_guest_resolve_system() { echo "Error: host profile says DX_GUEST_SYSTEM=x86_64-linux, but this guest is aarch64-linux." >&2; return 1; }
+    export DX_BOOTSTRAP_ROOT="$fixture" DX_GUEST_ACTIVATION_TIMEOUT=1 DX_GUEST_ACTIVATION_ATTEMPTS=1 DX_GUEST_ACTIVATION_RETRY_DELAY=1
+    hm_status=0
+    run_home_manager_activation >/dev/null 2>&1 || hm_status=$?
+    [ "$hm_status" -ne 0 ]
+); then
+    test_pass "Home Manager activation refuses before running Nix when system resolution refuses"
+else
+    test_fail "Home Manager activation refuses before running Nix when system resolution refuses"
 fi
 
 if (
