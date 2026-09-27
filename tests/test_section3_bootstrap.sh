@@ -21,7 +21,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -1106,6 +1106,110 @@ else
 fi
 
 rm -rf "$p9_fixture"
+
+# P10 (Branch 12, store-trust-plan.md Problem 2, Design 2-3):
+# verify_remount_prerequisites. Every named tool is faked as a shell
+# function (readlink/mkdir/mktemp/rm/ln/chown/mv/setpriv/bash/nix do not
+# uniformly exist, or support --version identically, on both this file's
+# hosts -- macOS bash 3.2 and Linux), so the check's own decision logic is
+# what these fixtures exercise, not any one host's real toolchain.
+
+# Ordering: verify_remount_prerequisites must run strictly after
+# populate_prepared_nix_volume (the remount in apple-image mode; container
+# start in direct-volume mode -- bootstrap_main's own shared call site
+# either way) and strictly before nix_restore_image_default_profile, whose
+# own named tools it exists to check ahead of.
+bootstrap_sh="$CONTAINER_DIR/bootstrap.sh"
+p10_populate_line="$(grep -n '^\s*populate_prepared_nix_volume$' "$bootstrap_sh" | cut -d: -f1)"
+p10_verify_line="$(grep -n '^\s*verify_remount_prerequisites$' "$bootstrap_sh" | cut -d: -f1)"
+p10_restore_line="$(grep -n '^\s*nix_restore_image_default_profile$' "$bootstrap_sh" | cut -d: -f1)"
+if [ -n "$p10_populate_line" ] && [ -n "$p10_verify_line" ] && [ -n "$p10_restore_line" ] \
+    && [ "$p10_populate_line" -lt "$p10_verify_line" ] && [ "$p10_verify_line" -lt "$p10_restore_line" ]; then
+    test_pass "bootstrap_main calls verify_remount_prerequisites between populate_prepared_nix_volume and nix_restore_image_default_profile"
+else
+    test_fail "bootstrap_main calls verify_remount_prerequisites between populate_prepared_nix_volume and nix_restore_image_default_profile (populate=$p10_populate_line verify=$p10_verify_line restore=$p10_restore_line)"
+fi
+
+# All healthy: every named tool resolves and execs cleanly, and run_as_dx
+# succeeds -- the function returns 0 with no diagnostic at all (a healthy
+# reused volume boots without churn -- the outcome table's first row).
+p10_healthy_output="$({
+    readlink() { :; }; mkdir() { :; }; mktemp() { :; }; rm() { :; }; ln() { :; }
+    chown() { :; }; mv() { :; }; setpriv() { :; }; bash() { :; }; nix() { :; }
+    run_as_dx() { :; }
+    verify_remount_prerequisites
+    echo "exit=$?"
+} 2>&1)"
+if printf '%s\n' "$p10_healthy_output" | stdin_matches -x 'exit=0'; then
+    test_pass "verify_remount_prerequisites: a healthy remount passes with no diagnostic"
+else
+    test_fail "verify_remount_prerequisites: a healthy remount passes with no diagnostic (output: $p10_healthy_output)"
+fi
+
+# Each named tool missing from PATH entirely (command -v itself fails):
+# refuses, naming that exact tool and the dx-reset-nix-volume recovery
+# path, before any later tool in the list is even reached.
+for p10_tool in readlink mkdir mktemp rm ln chown mv setpriv bash nix; do
+    p10_missing_output="$({
+        command() {
+            if [ "$1" = -v ] && [ "$2" = "$p10_tool" ]; then return 1; fi
+            builtin command "$@"
+        }
+        readlink() { :; }; mkdir() { :; }; mktemp() { :; }; rm() { :; }; ln() { :; }
+        chown() { :; }; mv() { :; }; setpriv() { :; }; bash() { :; }; nix() { :; }
+        run_as_dx() { :; }
+        verify_remount_prerequisites
+        echo "exit=$?"
+    } 2>&1)"
+    if printf '%s\n' "$p10_missing_output" | stdin_matches -F "'$p10_tool' is missing from PATH" \
+        && printf '%s\n' "$p10_missing_output" | stdin_matches -F 'dx-reset-nix-volume' \
+        && printf '%s\n' "$p10_missing_output" | stdin_matches -x 'exit=1'; then
+        test_pass "verify_remount_prerequisites: $p10_tool missing from PATH refuses, naming it and the recovery path"
+    else
+        test_fail "verify_remount_prerequisites: $p10_tool missing from PATH refuses, naming it and the recovery path (output: $p10_missing_output)"
+    fi
+done
+
+# Each named tool present (resolves) but fails to execute (the SIGBUS-class
+# truncated-executable failure, simulated here by a function that always
+# returns non-zero): refuses, naming that exact tool.
+for p10_tool in readlink mkdir mktemp rm ln chown mv setpriv bash nix; do
+    p10_broken_output="$({
+        readlink() { :; }; mkdir() { :; }; mktemp() { :; }; rm() { :; }; ln() { :; }
+        chown() { :; }; mv() { :; }; setpriv() { :; }; bash() { :; }; nix() { :; }
+        run_as_dx() { :; }
+        eval "$p10_tool() { return 1; }"
+        verify_remount_prerequisites
+        echo "exit=$?"
+    } 2>&1)"
+    if printf '%s\n' "$p10_broken_output" | stdin_matches -F "'$p10_tool' (" \
+        && printf '%s\n' "$p10_broken_output" | stdin_matches -F 'is present but fails to execute' \
+        && printf '%s\n' "$p10_broken_output" | stdin_matches -F 'dx-reset-nix-volume' \
+        && printf '%s\n' "$p10_broken_output" | stdin_matches -x 'exit=1'; then
+        test_pass "verify_remount_prerequisites: $p10_tool present but failing to execute refuses, naming it and the recovery path"
+    else
+        test_fail "verify_remount_prerequisites: $p10_tool present but failing to execute refuses, naming it and the recovery path (output: $p10_broken_output)"
+    fi
+done
+
+# run_as_dx itself broken (the setpriv/env/bash -l boundary
+# ensure_essentials_valid depends on): refuses, naming run_as_dx and the
+# recovery path, even though every individual named tool above resolved and
+# executed fine on its own.
+p10_runasdx_output="$({
+    readlink() { :; }; mkdir() { :; }; mktemp() { :; }; rm() { :; }; ln() { :; }
+    chown() { :; }; mv() { :; }; setpriv() { :; }; bash() { :; }; nix() { :; }
+    run_as_dx() { return 1; }
+    verify_remount_prerequisites
+    echo "exit=$?"
+} 2>&1)"
+if printf '%s\n' "$p10_runasdx_output" | stdin_matches -F 'run_as_dx cannot execute a trivial command' \
+    && printf '%s\n' "$p10_runasdx_output" | stdin_matches -F 'dx-reset-nix-volume' \
+    && printf '%s\n' "$p10_runasdx_output" | stdin_matches -x 'exit=1'; then
+    test_pass "verify_remount_prerequisites: a broken run_as_dx boundary refuses, naming the recovery path"
+else
+    test_fail "verify_remount_prerequisites: a broken run_as_dx boundary refuses, naming the recovery path (output: $p10_runasdx_output)"
+fi
 
 print_summary
 exit_with_code

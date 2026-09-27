@@ -15,6 +15,7 @@ bootstrap_main() {
     materialize_auth_files
     create_user
     populate_prepared_nix_volume
+    verify_remount_prerequisites
     nix_restore_image_default_profile
     ensure_essentials_valid
     # The remounted essentials closure is content-verified before ownership
