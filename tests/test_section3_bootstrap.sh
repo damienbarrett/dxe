@@ -903,7 +903,7 @@ fi
 p8_mounted_log="$p8_fixture/mounted.log"
 p8_identity_log="$p8_fixture/identity-calls.log"
 p8_mounted_output="$({
-    DX_NIX_STORAGE_MODE=direct-volume
+    export DX_NIX_STORAGE_MODE=direct-volume
     findmnt() { printf 'findmnt %s\n' "$*" >> "$p8_mounted_log"; [ "$*" = '-n -o TARGET /nix' ] && printf '%s\n' /nix; }
     mount() { printf 'mount %s\n' "$*" >> "$p8_mounted_log"; }
     umount() { printf 'umount %s\n' "$*" >> "$p8_mounted_log"; }
@@ -1093,7 +1093,7 @@ p9_dispatch_output="$({
     mount() { echo "MUST-NOT-MOUNT"; }
     DX_NIX_VOLUME_ROOT="$p9_root_dispatch"
     DX_NIX_VOLUME_IN_PLACE=true
-    DX_IMAGE_IDENTITY=sha256:dispatchimage000000000000000000000000000000000000000000000000
+    export DX_IMAGE_IDENTITY=sha256:dispatchimage000000000000000000000000000000000000000000000000
     populate_prepared_nix_volume
 } 2>&1)"
 if printf '%s\n' "$p9_dispatch_output" | stdin_matches -F 'roots-published' \

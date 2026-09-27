@@ -1840,7 +1840,7 @@ exit 0'
     fetch_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bk-fetch.XXXXXX")"
     fetch_lines="$fetch_dir/lines.tsv"
     printf 'persist/one\tabc\n' > "$fetch_lines"
-    DX_BACKUP_GUEST_ROOT=/persist
+    export DX_BACKUP_GUEST_ROOT=/persist
     dx_backup_fetch_paths dx-qnap "$fetch_dir" "$fetch_lines" >/dev/null 2>&1
     rm -rf "$fetch_dir"
     tar_block="$(awk -v RS='\f\n' '/(^|\n)tar(\n|$)/ { print; exit }' "$bk_log" | tr '\n' ' ')"
