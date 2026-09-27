@@ -371,11 +371,39 @@ order, before any store-content execution the phase controls:
    value (`publish_nix_volume_image_identity`, reusing
    `dx_publish_atomic_marker`/`dx_validate_atomic_marker_path`), then
    continue to step 4.
-4. Marker present and equal to `DX_IMAGE_IDENTITY` -> continue: run the
-   *original* `nix_image_store_import_required` check unchanged. This is
-   now purely a self-consistency/corruption check ("this volume's own
-   content still matches what was last recorded on it"), not an
-   image-change detector -- that job now belongs to step 3/5 entirely.
+4. Marker present and equal to `DX_IMAGE_IDENTITY` -> continue: verify the
+   bounded bootstrap-root set directly (`nix store verify --recursive
+   --no-trust` over `nix_image_bootstrap_store_paths`' own roots, run as
+   dx against the volume's own store) as the self-consistency/corruption
+   check ("this volume's own content still matches what was last
+   confirmed on it"), not an image-change detector -- that job belongs to
+   step 3/5 entirely. **Corrected 2026-09-28 (Branch 11 / Phase 4,
+   Finding 6):** Increment 0b originally kept the pre-existing
+   `nix_image_store_import_required`/`nix_image_store_identity` check
+   here unchanged, reasoning it was already a self-contained
+   corruption-only signal once the marker matched. That was wrong in a way
+   the design review did not catch: `nix_image_store_identity`'s identity
+   is a sha256 of `nix path-info --all` against whatever store the
+   *calling process's* default store resolves to. In apple-image mode
+   that call happens before the `/nix` remount, against the image's own
+   pristine, read-only, never-changing store -- stable across boots by
+   construction (section 1's "critical asymmetry" again). In
+   direct-volume mode there is no remount at all: `/nix` *is* the volume
+   from container start, so that same call reads the volume's own LIVE
+   content, which legitimately grows on every boot that touches Nix at
+   all (Home Manager activation, dx-ai, ...). A real NAS recreate-check
+   confirmed this deterministically: the first boot published a marker
+   from a pre-activation snapshot, and the very next boot's populate
+   computed a different hash against the already-grown store, hitting the
+   "corruption" branch -- refusing every reboot of a used direct-volume
+   guest. The volume's own content cannot witness "which image" here (the
+   whole point of this section); it equally cannot witness "is my own
+   content still the content I last confirmed" via a whole-store hash,
+   for the identical reason -- that hash is never stable to begin with in
+   this mode. `populate_prepared_nix_volume_in_place` now never calls
+   `nix_image_store_import_required`/`nix_image_store_identity` at all;
+   `.dx-image-store-identity` (the marker that check reads and writes) is
+   an apple-image-only artefact from here on.
 5. Marker present and **not** equal to `DX_IMAGE_IDENTITY` -> refuse,
    naming both identities prefix-shortened (`${value:0:19}...`, matching a
    git-short-SHA-style abbreviation of `sha256:<hex>`) and the remedy:
@@ -387,12 +415,14 @@ This correctly detects a plain image bump on a reused volume (the marker
 written under the *old* image's identity will not equal the *new* image's
 identity, because the host recomputes `DX_IMAGE_IDENTITY` fresh at every
 `dx-create-container` from the runtime's own image inspection -- it does
-not depend on anything stored on the volume) while keeping
-`nix_image_store_import_required`'s existing check as the corruption/tamper
-safety net the original design already had. "Matching identity -> publish
+not depend on anything stored on the volume) while the bounded
+bootstrap-root content verification in step 4 is the corruption/tamper
+safety net for a matching, reused volume. "Matching identity -> publish
 roots as today" (design point D's own words) still holds: a matched marker
 falls through to exactly the same `nix_install_image_essentials_root` call
-as before.
+as before -- which now receives `DX_IMAGE_IDENTITY` itself (not a
+live-store hash) as its GC-roots versioning key, correctly publishing once
+per image rather than once per boot.
 
 One related, pre-existing gap this phase does not touch either way: by the
 time `populate_prepared_nix_volume` runs (in either mode),
@@ -418,9 +448,10 @@ volume from the container's very first instruction -- there is no point,
 ever, during this bootstrap at which the entrypoint shell, `bash`, `nix`,
 or any other early binary resolves against anything other than whatever is
 already on that volume. Every check this phase adds (the image-identity
-marker comparison in section 5, the pre-existing
-`nix_image_store_import_required` self-consistency check) is itself
-executed by tools drawn from the exact store it is checking. This is
+marker comparison in section 5, the bounded bootstrap-root content
+verification that replaced the original `nix_image_store_import_required`
+self-consistency check per Finding 6's correction) is itself executed by
+tools drawn from the exact store it is checking. This is
 `store-trust-plan.md` Problem 2 ("after the remount, no binary from the
 persistent store may be trusted to prove that same trust root sound") in a
 sharper form than apple-image ever presented it: apple-image at least has

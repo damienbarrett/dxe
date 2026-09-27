@@ -1130,10 +1130,12 @@ else
 fi
 
 # 3. Marker absent (first bootstrap-managed boot for this volume): writes
-# it atomically with the env value, then falls through to the existing
-# fresh-store-identity-marker branch (nix_image_store_import_required is
-# NOT consulted -- matches apple-image's own fresh-seed branch, which never
-# calls it either).
+# it atomically with the env value, then installs/publishes the essentials
+# roots keyed by DX_IMAGE_IDENTITY itself (Branch 11 / Phase 4, Finding 6:
+# never DX_IMAGE_IDENTITY's live-store-hash predecessor, and never
+# surviving past that one call -- see the function's own comment). Neither
+# nix_image_store_import_required NOR nix_image_store_identity (the real
+# `nix path-info --all` enumerator) may be consulted on this path.
 p9_root_fresh="$p9_fixture/vol-fresh"
 mkdir -p "$p9_root_fresh/store"
 p9_fresh_calls="$p9_fixture/fresh-calls.log"
@@ -1144,77 +1146,161 @@ p9_fresh_output="$({
     # exercised for real here, unstubbed) can still complete.
     chown() { printf 'chown %s\n' "$*" >> "$p9_fresh_calls"; }
     nix_image_store_import_required() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_fresh_calls"; return 1; }
-    nix_image_store_identity() { printf 'fresh-pending-identity\n'; }
-    nix_install_image_essentials_root() { printf 'install_root %s\n' "$*" >> "$p9_fresh_calls"; }
+    nix_image_store_identity() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_fresh_calls"; return 1; }
+    nix_install_image_essentials_root() { printf 'install_root %s pending=%s\n' "$*" "${DX_NIX_PENDING_IMAGE_STORE_IDENTITY:-<unset>}" >> "$p9_fresh_calls"; }
     DX_IMAGE_IDENTITY=sha256:freshimage000000000000000000000000000000000000000000000000000
     populate_prepared_nix_volume_in_place "$p9_root_fresh"
     echo "marker=$(cat "$p9_root_fresh/.dx-image-identity-v1" 2>/dev/null)"
-    echo "pending=$DX_NIX_PENDING_IMAGE_STORE_IDENTITY"
+    echo "pending-after-return=${DX_NIX_PENDING_IMAGE_STORE_IDENTITY:-<unset>}"
 } 2>&1)"
 if printf '%s\n' "$p9_fresh_output" | stdin_matches -F 'marker=sha256:freshimage000000000000000000000000000000000000000000000000000' \
-    && printf '%s\n' "$p9_fresh_output" | stdin_matches -F 'pending=fresh-pending-identity' \
+    && printf '%s\n' "$p9_fresh_output" | stdin_matches -F 'pending-after-return=<unset>' \
     && grep -qF -- 'install_root' "$p9_fresh_calls" \
+    && grep -qF -- 'pending=sha256:freshimage000000000000000000000000000000000000000000000000000' "$p9_fresh_calls" \
     && ! grep -qF -- 'MUST-NOT-BE-CALLED' "$p9_fresh_calls"; then
-    test_pass "populate_prepared_nix_volume_in_place: marker absent -> writes it, publishes roots, never consults the corruption check"
+    test_pass "populate_prepared_nix_volume_in_place: marker absent -> writes it, publishes roots keyed by DX_IMAGE_IDENTITY, never calls nix_image_store_identity, and the pending identity never survives the one call it steers"
 else
-    test_fail "populate_prepared_nix_volume_in_place: marker absent -> writes it, publishes roots, never consults the corruption check (output: $p9_fresh_output; calls: $(cat "$p9_fresh_calls" 2>/dev/null))"
+    test_fail "populate_prepared_nix_volume_in_place: marker absent -> writes it, publishes roots keyed by DX_IMAGE_IDENTITY, never calls nix_image_store_identity, and the pending identity never survives the one call it steers (output: $p9_fresh_output; calls: $(cat "$p9_fresh_calls" 2>/dev/null))"
 fi
 
-# 4. Marker present and matching DX_IMAGE_IDENTITY, corruption check says
-# "not required" (matching, verified) -> proceeds, republishes roots. This
-# is the common "recreate preserves /nix" path.
+# 4/reproducer (Branch 11 / Phase 4, Finding 6 -- a real, deterministic NAS
+# recreate-check failure): a reused volume (image-identity marker matches)
+# must be verified by DIRECT CONTENT of the bounded bootstrap-root set, not
+# by comparing a whole-store content hash. In direct-volume mode /nix IS
+# the volume from container start (no remount ever replaces it), so that
+# hash is of the LIVE store and legitimately changes on every boot that
+# touches Nix at all (Home Manager activation, dx-ai, ...) -- comparing it
+# against a marker published on an earlier, less-grown boot refused every
+# single reused-volume reboot, deterministically. This fixture's `nix`
+# stub answers `path-info --all` with a list that would never match
+# anything recorded earlier -- proving the fix no longer even asks the
+# question: RED before the fix (the old code refused here), GREEN after
+# (only the bounded `store verify --recursive --no-trust` over the actual
+# bootstrap roots decides this now, and it reports the store healthy).
 p9_root_match="$p9_fixture/vol-match"
 mkdir -p "$p9_root_match/store"
 printf 'sha256:matchimage00000000000000000000000000000000000000000000000000\n' > "$p9_root_match/.dx-image-identity-v1"
-printf 'unrelated-existing-marker\n' > "$p9_root_match/.dx-image-store-identity"
+# A stale marker from an older, pre-Finding-6 boot may still physically
+# exist on a real reused volume; the fixed code must never read it.
+printf 'unrelated-stale-marker-from-before-this-fix\n' > "$p9_root_match/.dx-image-store-identity"
 p9_match_calls="$p9_fixture/match-calls.log"
 p9_match_output="$({
-    nix_image_store_import_required() { printf 'import_required %s\n' "$*" >> "$p9_match_calls"; return 1; }
+    nix_image_store_import_required() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_match_calls"; return 1; }
+    nix_image_bootstrap_store_paths() { printf '%s\n' "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-essentials"; }
+    run_as_dx() { eval "$1"; }
+    # A case statement defined inline inside a command substitution's own
+    # captured text breaks this host's bash 3.2 parser outright -- the same
+    # narrow parser bug the P11 block far below in this file already works
+    # around (see its own comment, above p11_clear_output, for the
+    # unbalanced-paren-counting mechanics). Reduced here to its simplest
+    # form and confirmed separately: even a single bracketed case arm with
+    # no quoting at all is enough to trip it when it appears literally
+    # inside command-substitution syntax; calling a case-using function
+    # that is defined OUTSIDE the substitution is unaffected, and so is a
+    # case-using function defined inline inside a plain parenthesized
+    # subshell that is not itself command-substituted. Avoided here with
+    # if/double-bracket glob matching instead of the P11 block's own
+    # leading-paren-per-arm convention, specifically so this comment can
+    # describe the bug without embedding another unbalanced example for
+    # the same naive counter to trip over.
+    nix() {
+        printf 'CALL %s\n' "$*" >> "$p9_match_calls"
+        if [[ "$*" == *'path-info --all'* ]]; then
+            # A live store's registered set after real activation --
+            # deliberately unrelated to anything a marker could have
+            # recorded earlier. Reaching this stub at all is itself a
+            # test failure (see the "never invoked" assertion below);
+            # answering it plausibly just means a regression back to
+            # the old behaviour fails for the RIGHT reason (a mismatch)
+            # rather than a fixture wiring accident.
+            printf '/nix/store/grown-after-first-boot-activation\n'
+        elif [[ "$*" == *'store verify --store'*'--recursive --no-trust'* ]]; then
+            return 0
+        else
+            return 1
+        fi
+    }
     nix_install_image_essentials_root() { printf 'install_root %s\n' "$*" >> "$p9_match_calls"; }
     DX_IMAGE_IDENTITY=sha256:matchimage00000000000000000000000000000000000000000000000000
     populate_prepared_nix_volume_in_place "$p9_root_match"
 } 2>&1)"
-if grep -qF -- 'import_required /nix' "$p9_match_calls" \
+if printf '%s\n' "$p9_match_output" | stdin_matches -F 'Image Nix essentials verified; skipping image-store import.' \
+    && ! printf '%s\n' "$p9_match_output" | stdin_matches -F 'Error' \
     && grep -qF -- 'install_root' "$p9_match_calls" \
+    && grep -qF -- "store verify --store" "$p9_match_calls" \
+    && ! grep -qF -- 'MUST-NOT-BE-CALLED' "$p9_match_calls" \
     && [ "$(cat "$p9_root_match/.dx-image-identity-v1")" = 'sha256:matchimage00000000000000000000000000000000000000000000000000' ]; then
-    test_pass "populate_prepared_nix_volume_in_place: marker matches -> the original corruption check still runs, roots republished"
+    test_pass "populate_prepared_nix_volume_in_place: a reused volume (marker matches) is verified by the bounded bootstrap-root content, not a live whole-store hash -- does not refuse, roots republished (Finding 6 reproducer)"
 else
-    test_fail "populate_prepared_nix_volume_in_place: marker matches -> the original corruption check still runs, roots republished (output: $p9_match_output; calls: $(cat "$p9_match_calls" 2>/dev/null))"
+    test_fail "populate_prepared_nix_volume_in_place: a reused volume (marker matches) is verified by the bounded bootstrap-root content, not a live whole-store hash -- does not refuse, roots republished (Finding 6 reproducer) (output: $p9_match_output; calls: $(cat "$p9_match_calls" 2>/dev/null))"
+fi
+if ! grep -qF -- 'path-info --all' "$p9_match_calls"; then
+    test_pass "populate_prepared_nix_volume_in_place: nix path-info --all (nix_image_store_identity) is never invoked on the reused-volume path"
+else
+    test_fail "populate_prepared_nix_volume_in_place: nix path-info --all (nix_image_store_identity) is never invoked on the reused-volume path (calls: $(cat "$p9_match_calls" 2>/dev/null))"
 fi
 
-# 5. Marker present and matching, but the corruption check says "required"
-# (content diverged/verification failed since last confirmed) -> refuse,
-# citing store-trust-plan.md; nix_install_image_essentials_root must not run.
+# 5. Marker present and matching, but the bounded bootstrap-root content
+# verification fails (corruption, or an interrupted prior write, since this
+# volume was last confirmed) -> refuse, citing store-trust-plan.md;
+# nix_install_image_essentials_root must not run.
 p9_root_corrupt="$p9_fixture/vol-corrupt"
 mkdir -p "$p9_root_corrupt/store"
 printf 'sha256:corruptimage0000000000000000000000000000000000000000000000000\n' > "$p9_root_corrupt/.dx-image-identity-v1"
-printf 'unrelated-existing-marker\n' > "$p9_root_corrupt/.dx-image-store-identity"
 if (
-    nix_image_store_import_required() { return 0; }
+    nix_image_bootstrap_store_paths() { printf '%s\n' "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-essentials"; }
+    run_as_dx() { eval "$1"; }
+    nix() { return 1; }
     nix_install_image_essentials_root() { echo "MUST-NOT-RUN"; }
     DX_IMAGE_IDENTITY=sha256:corruptimage0000000000000000000000000000000000000000000000000
     populate_prepared_nix_volume_in_place "$p9_root_corrupt"
 ) >"$p9_fixture/corrupt.out" 2>&1; then
-    test_fail "populate_prepared_nix_volume_in_place: marker matches but the corruption check fails -> refuses"
+    test_fail "populate_prepared_nix_volume_in_place: marker matches but bootstrap-root content verification fails -> refuses"
 else
     if stdin_matches -F 'store-trust-plan.md' < "$p9_fixture/corrupt.out" \
         && ! stdin_matches -F 'MUST-NOT-RUN' < "$p9_fixture/corrupt.out"; then
-        test_pass "populate_prepared_nix_volume_in_place: marker matches but the corruption check fails -> refuses, citing store-trust-plan.md, before publishing roots"
+        test_pass "populate_prepared_nix_volume_in_place: marker matches but bootstrap-root content verification fails -> refuses, citing store-trust-plan.md, before publishing roots"
     else
-        test_fail "populate_prepared_nix_volume_in_place: marker matches but the corruption check fails -> refuses, citing store-trust-plan.md, before publishing roots (out: $(cat "$p9_fixture/corrupt.out"))"
+        test_fail "populate_prepared_nix_volume_in_place: marker matches but bootstrap-root content verification fails -> refuses, citing store-trust-plan.md, before publishing roots (out: $(cat "$p9_fixture/corrupt.out"))"
+    fi
+fi
+
+# 5b. Marker matches but nix_image_bootstrap_store_paths resolves no roots
+# at all -> fail closed with a clear message rather than trivially
+# "verifying" an empty set and calling the volume trustworthy.
+p9_root_noroots="$p9_fixture/vol-noroots"
+mkdir -p "$p9_root_noroots/store"
+printf 'sha256:norootsimage000000000000000000000000000000000000000000000000\n' > "$p9_root_noroots/.dx-image-identity-v1"
+if (
+    nix_image_bootstrap_store_paths() { :; }
+    nix_install_image_essentials_root() { echo "MUST-NOT-RUN"; }
+    run_as_dx() { echo "MUST-NOT-VERIFY"; }
+    DX_IMAGE_IDENTITY=sha256:norootsimage000000000000000000000000000000000000000000000000
+    populate_prepared_nix_volume_in_place "$p9_root_noroots"
+) >"$p9_fixture/noroots.out" 2>&1; then
+    test_fail "populate_prepared_nix_volume_in_place: no bootstrap roots resolved -> fails closed"
+else
+    if stdin_matches -F 'no bootstrap root paths resolved' < "$p9_fixture/noroots.out" \
+        && ! stdin_matches -F 'MUST-NOT-RUN' < "$p9_fixture/noroots.out" \
+        && ! stdin_matches -F 'MUST-NOT-VERIFY' < "$p9_fixture/noroots.out"; then
+        test_pass "populate_prepared_nix_volume_in_place: no bootstrap roots resolved -> fails closed with a clear message, before verification or republishing"
+    else
+        test_fail "populate_prepared_nix_volume_in_place: no bootstrap roots resolved -> fails closed with a clear message, before verification or republishing (out: $(cat "$p9_fixture/noroots.out"))"
     fi
 fi
 
 # 6. Marker present and MISMATCHED (a genuine image bump on a reused
 # volume): refuse, naming both identities prefix-shortened and
-# store-trust-plan.md, WITHOUT ever consulting the corruption check (the
-# marker mismatch is decisive on its own -- design point D's amendment).
+# store-trust-plan.md, WITHOUT ever consulting the bootstrap-root content
+# verification (the marker mismatch is decisive on its own -- design point
+# D's amendment).
 p9_root_bump="$p9_fixture/vol-bump"
 mkdir -p "$p9_root_bump/store"
 printf 'sha256:oldimage0000000000000000000000000000000000000000000000000000\n' > "$p9_root_bump/.dx-image-identity-v1"
 p9_bump_calls="$p9_fixture/bump-calls.log"
 if (
     nix_image_store_import_required() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_bump_calls"; return 1; }
+    nix_image_bootstrap_store_paths() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_bump_calls"; return 1; }
     DX_IMAGE_IDENTITY=sha256:newimage0000000000000000000000000000000000000000000000000000
     populate_prepared_nix_volume_in_place "$p9_root_bump"
 ) >"$p9_fixture/bump.out" 2>&1; then
@@ -1225,9 +1311,9 @@ else
         && stdin_matches -F 'store-trust-plan.md' < "$p9_fixture/bump.out" \
         && stdin_matches -F 'recreate the Nix volume' < "$p9_fixture/bump.out" \
         && [ ! -s "$p9_bump_calls" ]; then
-        test_pass "populate_prepared_nix_volume_in_place: a mismatched marker (image bump) refuses, naming both identities and store-trust-plan.md, without ever consulting the corruption check"
+        test_pass "populate_prepared_nix_volume_in_place: a mismatched marker (image bump) refuses, naming both identities and store-trust-plan.md, without ever consulting the bootstrap-root content verification"
     else
-        test_fail "populate_prepared_nix_volume_in_place: a mismatched marker (image bump) refuses, naming both identities and store-trust-plan.md, without ever consulting the corruption check (out: $(cat "$p9_fixture/bump.out"); calls: $(cat "$p9_bump_calls" 2>/dev/null))"
+        test_fail "populate_prepared_nix_volume_in_place: a mismatched marker (image bump) refuses, naming both identities and store-trust-plan.md, without ever consulting the bootstrap-root content verification (out: $(cat "$p9_fixture/bump.out"); calls: $(cat "$p9_bump_calls" 2>/dev/null))"
     fi
 fi
 
@@ -1237,9 +1323,19 @@ fi
 p9_root_dispatch="$p9_fixture/vol-dispatch"
 mkdir -p "$p9_root_dispatch/store"
 printf 'sha256:dispatchimage000000000000000000000000000000000000000000000000\n' > "$p9_root_dispatch/.dx-image-identity-v1"
-printf 'unrelated-existing-marker\n' > "$p9_root_dispatch/.dx-image-store-identity"
 p9_dispatch_output="$({
-    nix_image_store_import_required() { return 1; }
+    nix_image_bootstrap_store_paths() { printf '%s\n' "/nix/store/cccccccccccccccccccccccccccccccc-essentials"; }
+    run_as_dx() { eval "$1"; }
+    # A `case` statement defined inline inside this `$(...)` command
+    # substitution's own text breaks this host's bash 3.2 parser (see the
+    # longer comment on the same pattern above); `if`/`[[ ]]` avoids it.
+    nix() {
+        if [[ "$*" == *'store verify --store'*'--recursive --no-trust'* ]]; then
+            return 0
+        else
+            return 1
+        fi
+    }
     nix_install_image_essentials_root() { echo "roots-published"; }
     umount() { echo "MUST-NOT-UMOUNT"; }
     mount() { echo "MUST-NOT-MOUNT"; }

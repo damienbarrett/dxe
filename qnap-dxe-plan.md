@@ -660,8 +660,16 @@ never touches a non-empty volume -- the volume's own content is
 unaffected either way. Fixed with a new contract operation,
 `dx_runtime_image_identity`, and a host-provided `DX_IMAGE_IDENTITY` env
 token compared against a guest marker (`.dx-image-identity-v1`) written
-once per volume; the original check is kept, unchanged, as a
-corruption-only signal once the marker matches. **Direct-volume mode has
+once per volume. The original check was initially kept, unchanged, as a
+corruption-only signal once the marker matches; Phase 4's exit gate found
+this wrong (Finding 6) -- its identity is a hash of `nix path-info --all`
+against whichever store the calling process resolves by default, which in
+direct-volume mode is the volume's own live, ever-growing content (no
+remount ever replaces it), so it never stabilises and refused every reboot
+of a reused volume. Corrected to verify the bounded bootstrap-root set's
+own content directly instead (`docs/refactor/direct-volume-storage.md`
+section 5.3); `nix_image_store_import_required`/`nix_image_store_identity`
+are no longer called in direct-volume mode at all. **Direct-volume mode has
 no pre-remount window at all** -- every bootstrap binary, from the first
 instruction, comes from the volume's own store. This is
 `store-trust-plan.md` Problem 2 in a sharper form than apple-image ever

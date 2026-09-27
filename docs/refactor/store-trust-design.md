@@ -220,6 +220,21 @@ direct-volume counterpart because direct-volume mode's existing marker
 already fails closed earlier and by a different, already-designed route.
 Nothing here proposes changing that mechanism.
 
+**As landed (Branch 12), corrected by Branch 11 / Phase 4, Finding 6:** the
+matching-marker branch this section describes as falling through to
+"`nix_image_store_import_required` is even consulted" no longer consults
+that function at all. Its identity comes from `nix path-info --all`
+against whichever store the calling process's default store resolves to —
+stable pre-remount in apple-image mode, but in direct-volume mode `/nix`
+*is* the volume from container start, so that same call reads the volume's
+own live, ever-growing content and never stabilises across boots. A real
+NAS recreate-check hit exactly this: the reused-volume branch refused
+every reboot. `populate_prepared_nix_volume_in_place` now verifies the
+bounded bootstrap-root set's own content directly instead
+(`docs/refactor/direct-volume-storage.md` §5.3's corrected step 4); the
+`DX_IMAGE_IDENTITY`-vs-marker mechanism this section describes is
+unaffected and remains exactly as designed here.
+
 ## 2. Problem 2 — recovery blind spot for the post-remount trust root
 
 ### 2.1 Characterisation: the reproducer

@@ -714,14 +714,56 @@ publish_nix_volume_image_identity() {
 # env token, independent of the volume's own content, which Docker's
 # copy-on-first-mount never touches for a non-empty volume -- see the
 # design note for why the volume's own content cannot be an independent
-# witness here). The ORIGINAL nix_image_store_import_required check is
-# kept, unchanged, as a self-consistency/corruption-only signal once the
-# image-identity marker already matches; it is never reached when the
-# marker mismatches, since a mismatch is decisive on its own.
+# witness here).
+#
+# Branch 11 / Phase 4 (Finding 6, a real recreate-check failure on the NAS):
+# this used to ALSO reuse nix_image_store_import_required/
+# nix_image_store_identity as a self-consistency/corruption check once the
+# image-identity marker already matched. That check's identity is a sha256
+# of `nix path-info --all` against whatever store the CALLING PROCESS's
+# default store resolves to. In apple-image mode that call runs before the
+# /nix remount, against the image's own pristine, read-only, never-changing
+# store -- stable across boots by construction. In direct-volume mode there
+# is no remount at all: /nix IS the volume from container start, so that
+# same call reads the volume's own LIVE content, which legitimately grows
+# on every boot that touches Nix at all (Home Manager activation, dx-ai,
+# ...). The first boot published a marker from a pre-activation snapshot;
+# the second boot's populate computed a different hash against the
+# already-grown store and hit the "corruption" branch -- refusing every
+# reboot of a used direct-volume guest, deterministically. The volume's own
+# content cannot witness "which image" here (see the design note); do not
+# pretend it can. Never call nix_image_store_import_required/
+# nix_image_store_identity in this function, and never let
+# DX_NIX_PENDING_IMAGE_STORE_IDENTITY survive past it: the temporary-
+# environment prefix below (`VAR=value nix_install_image_essentials_root
+# ...`) scopes it to that one call only (verified: a plain assignment
+# would NOT do this -- bash has no per-function variable scope without
+# `local`, but a temporary-environment prefix on a simple command, function
+# call included, is POSIX-scoped to that command alone and never touches
+# the caller's own variable state), so publish_nix_image_store_identity
+# (called unconditionally, mode-agnostic, later in bootstrap_main) always
+# finds it unset here and publishes nothing -- .dx-image-store-identity is
+# an apple-image-only artefact. DX_IMAGE_IDENTITY (already validated above,
+# host-provided, stable per image) stands in as nix_install_image_essentials_root's
+# own GC-roots versioning key instead: same image across reboots publishes
+# the roots directory once and skips re-staging on every later boot; a
+# genuine image bump still publishes a fresh one and prunes the old, same
+# as before -- actually more correct than the old live-hash key, which
+# would have republished (and needed pruning) on literally every boot.
+#
+# First-boot detection collapses to ONE signal: whether .dx-image-identity-v1
+# itself is absent (not a second, separate store-identity marker). On a
+# reused volume whose image-identity marker matches, the only remaining
+# question is direct content verification of the bounded bootstrap-root set
+# nix_image_bootstrap_store_paths already enumerates -- the same `nix store
+# verify --recursive --no-trust` command nix_image_store_import_required's
+# own matching branch used, just no longer gated behind a meaningless
+# whole-store hash comparison.
 populate_prepared_nix_volume_in_place() {
     local volume_root="$1"
     local owner_uid owner_gid import_started
     local image_identity identity_marker recorded_identity
+    local roots root target_store
 
     owner_uid="$(id -u dx 2>/dev/null || printf '%s' 0)"
     owner_gid="$(id -g dx 2>/dev/null || printf '%s' 0)"
@@ -738,28 +780,31 @@ populate_prepared_nix_volume_in_place() {
         return 1
     fi
 
+    import_started=$SECONDS
     identity_marker="$volume_root/.dx-image-identity-v1"
     if [ ! -f "$identity_marker" ]; then
         publish_nix_volume_image_identity "$volume_root" "$image_identity" || return 1
+        DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$image_identity" nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid" || return 1
     else
         recorded_identity="$(cat "$identity_marker" 2>/dev/null || true)"
         if [ "$recorded_identity" != "$image_identity" ]; then
             echo "Error: this Nix volume was populated by a different image (recorded ${recorded_identity:0:19}... vs current ${image_identity:0:19}...); recreate the Nix volume (QNAP guests start from scratch) or wait for the verified import path (store-trust-plan.md Problem 1)." >&2
             return 1
         fi
-    fi
 
-    import_started=$SECONDS
-    if [ ! -f "$volume_root/.dx-image-store-identity" ]; then
-        DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$(nix_image_store_identity 2>/dev/null || true)"
-        export DX_NIX_PENDING_IMAGE_STORE_IDENTITY
-        nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid"
-    elif nix_image_store_import_required /nix "$volume_root"; then
-        echo "Error: this volume's Nix-store content no longer matches its own recorded identity (corruption, or an interrupted prior write, since this volume was last confirmed); see store-trust-plan.md." >&2
-        return 1
-    else
-        echo "Image Nix essentials identity is unchanged; skipping image-store import."
-        nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid"
+        roots=""
+        while IFS= read -r root; do roots="$roots $(printf '%q' "$root")"; done < <(nix_image_bootstrap_store_paths /nix)
+        if [ -z "$roots" ]; then
+            echo "Error: no bootstrap root paths resolved for essentials verification; refusing (store-trust-plan.md)." >&2
+            return 1
+        fi
+        target_store="$(nix_target_store_uri "$volume_root")"
+        if ! run_as_dx "nix --extra-experimental-features 'nix-command flakes' store verify --store '$target_store' --recursive --no-trust$roots" >/dev/null 2>&1; then
+            echo "Error: this volume's Nix-store content no longer matches its own recorded identity (corruption, or an interrupted prior write, since this volume was last confirmed); see store-trust-plan.md." >&2
+            return 1
+        fi
+        echo "Image Nix essentials verified; skipping image-store import."
+        DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$image_identity" nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid" || return 1
     fi
     echo "Nix volume image import completed in $((SECONDS - import_started))s."
 }
