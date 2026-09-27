@@ -21,7 +21,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -924,6 +924,188 @@ else
 fi
 
 rm -rf "$p8_fixture"
+
+# P9 (Branch 11 / Phase 3, Increment 3): populate_prepared_nix_volume's
+# explicit dispatch on DX_NIX_VOLUME_IN_PLACE, and
+# populate_prepared_nix_volume_in_place's amended two-check protocol
+# (docs/refactor/direct-volume-storage.md section 5.3): store-missing
+# refusal, DX_IMAGE_IDENTITY-absent refusal, the new image-identity marker
+# (write-once / match-and-continue / mismatch-refuse), and the ORIGINAL
+# nix_image_store_import_required check kept, unchanged, as a
+# corruption-only signal once the marker matches. Lower-level Nix
+# collaborators are stubbed throughout (their own behavior is unchanged and
+# tested elsewhere -- Section 5, tests/test_nix_store_import.sh); these
+# tests isolate only the new dispatch/marker logic this increment adds.
+# owner_uid/owner_gid fall back to the production code's own "0" default
+# (no real "dx" user exists on this host, exactly like every other
+# isolated fixture in this file).
+p9_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p9-in-place-populate.XXXXXX")"
+
+# 1. Store missing: refuse, naming the Docker copy-on-first-mount
+# dependency, before nix_image_store_import_required is ever consulted.
+p9_missing_root="$p9_fixture/vol-missing"
+mkdir -p "$p9_missing_root"
+p9_missing_calls="$p9_fixture/missing-calls.log"
+if (
+    nix_image_store_import_required() { printf 'CALLED %s\n' "$*" >> "$p9_missing_calls"; return 1; }
+    DX_IMAGE_IDENTITY=sha256:shouldnotmatter00000000000000000000000000000000000000000000000
+    populate_prepared_nix_volume_in_place "$p9_missing_root"
+) >"$p9_fixture/missing.out" 2>&1; then
+    test_fail "populate_prepared_nix_volume_in_place: refuses when /nix/store is missing"
+else
+    if stdin_matches -F 'requires /nix/store to already exist' < "$p9_fixture/missing.out" \
+        && [ ! -s "$p9_missing_calls" ]; then
+        test_pass "populate_prepared_nix_volume_in_place: refuses when /nix/store is missing, naming the Docker copy-on-first-mount dependency, before any identity check"
+    else
+        test_fail "populate_prepared_nix_volume_in_place: refuses when /nix/store is missing, naming the Docker copy-on-first-mount dependency, before any identity check (out: $(cat "$p9_fixture/missing.out"))"
+    fi
+fi
+
+# 2. Store present, DX_IMAGE_IDENTITY absent/empty: refuse.
+p9_root_noid="$p9_fixture/vol-noid"
+mkdir -p "$p9_root_noid/store"
+if (
+    unset DX_IMAGE_IDENTITY
+    populate_prepared_nix_volume_in_place "$p9_root_noid"
+) >"$p9_fixture/noid.out" 2>&1; then
+    test_fail "populate_prepared_nix_volume_in_place: refuses when DX_IMAGE_IDENTITY is absent"
+else
+    if stdin_matches -F 'requires the runtime image identity' < "$p9_fixture/noid.out"; then
+        test_pass "populate_prepared_nix_volume_in_place: refuses when DX_IMAGE_IDENTITY is absent"
+    else
+        test_fail "populate_prepared_nix_volume_in_place: refuses when DX_IMAGE_IDENTITY is absent (out: $(cat "$p9_fixture/noid.out"))"
+    fi
+fi
+
+# 3. Marker absent (first bootstrap-managed boot for this volume): writes
+# it atomically with the env value, then falls through to the existing
+# fresh-store-identity-marker branch (nix_image_store_import_required is
+# NOT consulted -- matches apple-image's own fresh-seed branch, which never
+# calls it either).
+p9_root_fresh="$p9_fixture/vol-fresh"
+mkdir -p "$p9_root_fresh/store"
+p9_fresh_calls="$p9_fixture/fresh-calls.log"
+p9_fresh_output="$({
+    # No "dx" user/group exists on this host (same as every other isolated
+    # fixture in this file); stub chown so the real atomic-marker publish
+    # path (dx_validate_atomic_marker_path/dx_publish_atomic_marker,
+    # exercised for real here, unstubbed) can still complete.
+    chown() { printf 'chown %s\n' "$*" >> "$p9_fresh_calls"; }
+    nix_image_store_import_required() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_fresh_calls"; return 1; }
+    nix_image_store_identity() { printf 'fresh-pending-identity\n'; }
+    nix_install_image_essentials_root() { printf 'install_root %s\n' "$*" >> "$p9_fresh_calls"; }
+    DX_IMAGE_IDENTITY=sha256:freshimage000000000000000000000000000000000000000000000000000
+    populate_prepared_nix_volume_in_place "$p9_root_fresh"
+    echo "marker=$(cat "$p9_root_fresh/.dx-image-identity-v1" 2>/dev/null)"
+    echo "pending=$DX_NIX_PENDING_IMAGE_STORE_IDENTITY"
+} 2>&1)"
+if printf '%s\n' "$p9_fresh_output" | stdin_matches -F 'marker=sha256:freshimage000000000000000000000000000000000000000000000000000' \
+    && printf '%s\n' "$p9_fresh_output" | stdin_matches -F 'pending=fresh-pending-identity' \
+    && grep -qF -- 'install_root' "$p9_fresh_calls" \
+    && ! grep -qF -- 'MUST-NOT-BE-CALLED' "$p9_fresh_calls"; then
+    test_pass "populate_prepared_nix_volume_in_place: marker absent -> writes it, publishes roots, never consults the corruption check"
+else
+    test_fail "populate_prepared_nix_volume_in_place: marker absent -> writes it, publishes roots, never consults the corruption check (output: $p9_fresh_output; calls: $(cat "$p9_fresh_calls" 2>/dev/null))"
+fi
+
+# 4. Marker present and matching DX_IMAGE_IDENTITY, corruption check says
+# "not required" (matching, verified) -> proceeds, republishes roots. This
+# is the common "recreate preserves /nix" path.
+p9_root_match="$p9_fixture/vol-match"
+mkdir -p "$p9_root_match/store"
+printf 'sha256:matchimage00000000000000000000000000000000000000000000000000\n' > "$p9_root_match/.dx-image-identity-v1"
+printf 'unrelated-existing-marker\n' > "$p9_root_match/.dx-image-store-identity"
+p9_match_calls="$p9_fixture/match-calls.log"
+p9_match_output="$({
+    nix_image_store_import_required() { printf 'import_required %s\n' "$*" >> "$p9_match_calls"; return 1; }
+    nix_install_image_essentials_root() { printf 'install_root %s\n' "$*" >> "$p9_match_calls"; }
+    DX_IMAGE_IDENTITY=sha256:matchimage00000000000000000000000000000000000000000000000000
+    populate_prepared_nix_volume_in_place "$p9_root_match"
+} 2>&1)"
+if grep -qF -- 'import_required /nix' "$p9_match_calls" \
+    && grep -qF -- 'install_root' "$p9_match_calls" \
+    && [ "$(cat "$p9_root_match/.dx-image-identity-v1")" = 'sha256:matchimage00000000000000000000000000000000000000000000000000' ]; then
+    test_pass "populate_prepared_nix_volume_in_place: marker matches -> the original corruption check still runs, roots republished"
+else
+    test_fail "populate_prepared_nix_volume_in_place: marker matches -> the original corruption check still runs, roots republished (output: $p9_match_output; calls: $(cat "$p9_match_calls" 2>/dev/null))"
+fi
+
+# 5. Marker present and matching, but the corruption check says "required"
+# (content diverged/verification failed since last confirmed) -> refuse,
+# citing store-trust-plan.md; nix_install_image_essentials_root must not run.
+p9_root_corrupt="$p9_fixture/vol-corrupt"
+mkdir -p "$p9_root_corrupt/store"
+printf 'sha256:corruptimage0000000000000000000000000000000000000000000000000\n' > "$p9_root_corrupt/.dx-image-identity-v1"
+printf 'unrelated-existing-marker\n' > "$p9_root_corrupt/.dx-image-store-identity"
+if (
+    nix_image_store_import_required() { return 0; }
+    nix_install_image_essentials_root() { echo "MUST-NOT-RUN"; }
+    DX_IMAGE_IDENTITY=sha256:corruptimage0000000000000000000000000000000000000000000000000
+    populate_prepared_nix_volume_in_place "$p9_root_corrupt"
+) >"$p9_fixture/corrupt.out" 2>&1; then
+    test_fail "populate_prepared_nix_volume_in_place: marker matches but the corruption check fails -> refuses"
+else
+    if stdin_matches -F 'store-trust-plan.md' < "$p9_fixture/corrupt.out" \
+        && ! stdin_matches -F 'MUST-NOT-RUN' < "$p9_fixture/corrupt.out"; then
+        test_pass "populate_prepared_nix_volume_in_place: marker matches but the corruption check fails -> refuses, citing store-trust-plan.md, before publishing roots"
+    else
+        test_fail "populate_prepared_nix_volume_in_place: marker matches but the corruption check fails -> refuses, citing store-trust-plan.md, before publishing roots (out: $(cat "$p9_fixture/corrupt.out"))"
+    fi
+fi
+
+# 6. Marker present and MISMATCHED (a genuine image bump on a reused
+# volume): refuse, naming both identities prefix-shortened and
+# store-trust-plan.md, WITHOUT ever consulting the corruption check (the
+# marker mismatch is decisive on its own -- design point D's amendment).
+p9_root_bump="$p9_fixture/vol-bump"
+mkdir -p "$p9_root_bump/store"
+printf 'sha256:oldimage0000000000000000000000000000000000000000000000000000\n' > "$p9_root_bump/.dx-image-identity-v1"
+p9_bump_calls="$p9_fixture/bump-calls.log"
+if (
+    nix_image_store_import_required() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_bump_calls"; return 1; }
+    DX_IMAGE_IDENTITY=sha256:newimage0000000000000000000000000000000000000000000000000000
+    populate_prepared_nix_volume_in_place "$p9_root_bump"
+) >"$p9_fixture/bump.out" 2>&1; then
+    test_fail "populate_prepared_nix_volume_in_place: a mismatched marker (image bump) refuses"
+else
+    if stdin_matches -F 'sha256:oldimage0000' < "$p9_fixture/bump.out" \
+        && stdin_matches -F 'sha256:newimage0000' < "$p9_fixture/bump.out" \
+        && stdin_matches -F 'store-trust-plan.md' < "$p9_fixture/bump.out" \
+        && stdin_matches -F 'recreate the Nix volume' < "$p9_fixture/bump.out" \
+        && [ ! -s "$p9_bump_calls" ]; then
+        test_pass "populate_prepared_nix_volume_in_place: a mismatched marker (image bump) refuses, naming both identities and store-trust-plan.md, without ever consulting the corruption check"
+    else
+        test_fail "populate_prepared_nix_volume_in_place: a mismatched marker (image bump) refuses, naming both identities and store-trust-plan.md, without ever consulting the corruption check (out: $(cat "$p9_fixture/bump.out"); calls: $(cat "$p9_bump_calls" 2>/dev/null))"
+    fi
+fi
+
+# 7. Dispatch integration: populate_prepared_nix_volume with
+# DX_NIX_VOLUME_IN_PLACE=true routes to populate_prepared_nix_volume_in_place
+# (never the apple-image remount/fstab tail below it).
+p9_root_dispatch="$p9_fixture/vol-dispatch"
+mkdir -p "$p9_root_dispatch/store"
+printf 'sha256:dispatchimage000000000000000000000000000000000000000000000000\n' > "$p9_root_dispatch/.dx-image-identity-v1"
+printf 'unrelated-existing-marker\n' > "$p9_root_dispatch/.dx-image-store-identity"
+p9_dispatch_output="$({
+    nix_image_store_import_required() { return 1; }
+    nix_install_image_essentials_root() { echo "roots-published"; }
+    umount() { echo "MUST-NOT-UMOUNT"; }
+    mount() { echo "MUST-NOT-MOUNT"; }
+    DX_NIX_VOLUME_ROOT="$p9_root_dispatch"
+    DX_NIX_VOLUME_IN_PLACE=true
+    DX_IMAGE_IDENTITY=sha256:dispatchimage000000000000000000000000000000000000000000000000
+    populate_prepared_nix_volume
+} 2>&1)"
+if printf '%s\n' "$p9_dispatch_output" | stdin_matches -F 'roots-published' \
+    && ! printf '%s\n' "$p9_dispatch_output" | stdin_matches -F 'MUST-NOT-UMOUNT' \
+    && ! printf '%s\n' "$p9_dispatch_output" | stdin_matches -F 'MUST-NOT-MOUNT' \
+    && ! printf '%s\n' "$p9_dispatch_output" | stdin_matches -F 'Adding /nix to /etc/fstab'; then
+    test_pass "populate_prepared_nix_volume: DX_NIX_VOLUME_IN_PLACE=true dispatches to the in-place function, never the apple-image remount/fstab tail"
+else
+    test_fail "populate_prepared_nix_volume: DX_NIX_VOLUME_IN_PLACE=true dispatches to the in-place function, never the apple-image remount/fstab tail (output: $p9_dispatch_output)"
+fi
+
+rm -rf "$p9_fixture"
 
 print_summary
 exit_with_code

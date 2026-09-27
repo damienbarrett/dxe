@@ -566,6 +566,11 @@ populate_prepared_nix_volume() {
     local owner_uid owner_gid import_started
     local volume_root="${DX_NIX_VOLUME_ROOT:?Nix volume was not prepared}"
 
+    if [ "${DX_NIX_VOLUME_IN_PLACE:-false}" = true ]; then
+        populate_prepared_nix_volume_in_place "$volume_root"
+        return
+    fi
+
     if [ "${DX_NIX_VOLUME_ALREADY_MOUNTED:-false}" = true ]; then
         return 0
     fi
@@ -602,6 +607,89 @@ populate_prepared_nix_volume() {
             echo "$DX_NIX_VOLUME_DEVICE /nix $DX_NIX_VOLUME_FS_TYPE $DX_NIX_VOLUME_MOUNT_OPTS 0 0" >> /etc/fstab
         fi
     fi
+}
+
+# Branch 11 / Phase 3 (qnap-dxe-plan.md DQ4, docs/refactor/
+# direct-volume-storage.md section 5, Increment 0b's amendment): writes the
+# host-provided runtime image identity into the volume the first time this
+# volume is bootstrap-managed. Mirrors publish_nix_image_store_identity's
+# own mktemp/chown/atomic-publish shape. dx does not exist yet at this
+# point in bootstrap_main's order (populate runs after create_user), so
+# "dx:dx" here matches that function's own convention of the account name
+# rather than a resolved uid/gid.
+publish_nix_volume_image_identity() {
+    local volume_root="$1"
+    local image_identity="$2"
+    local marker="$volume_root/.dx-image-identity-v1"
+    local temporary
+
+    dx_validate_atomic_marker_path "$marker" "direct-volume image identity marker" || return 1
+    temporary="$(mktemp "$volume_root/.dx-image-identity-v1.tmp.XXXXXX")" || return 1
+    printf '%s\n' "$image_identity" > "$temporary"
+    if ! chown dx:dx "$temporary" \
+        || ! dx_publish_atomic_marker "$temporary" "$marker" "direct-volume image identity marker"; then
+        rm -f "$temporary"
+        return 1
+    fi
+}
+
+# Branch 11 / Phase 3 (qnap-dxe-plan.md DQ4, docs/refactor/
+# direct-volume-storage.md section 5): the direct-volume counterpart to
+# apple-image's populate_prepared_nix_volume body above, with no remount/
+# fstab tail (volume_root is already /nix, the final mount point). Design
+# point D's amended image-bump detection: the HOST tells the guest which
+# image created the container (DX_IMAGE_IDENTITY, bin/dx-create-container's
+# env token, independent of the volume's own content, which Docker's
+# copy-on-first-mount never touches for a non-empty volume -- see the
+# design note for why the volume's own content cannot be an independent
+# witness here). The ORIGINAL nix_image_store_import_required check is
+# kept, unchanged, as a self-consistency/corruption-only signal once the
+# image-identity marker already matches; it is never reached when the
+# marker mismatches, since a mismatch is decisive on its own.
+populate_prepared_nix_volume_in_place() {
+    local volume_root="$1"
+    local owner_uid owner_gid import_started
+    local image_identity identity_marker recorded_identity
+
+    owner_uid="$(id -u dx 2>/dev/null || printf '%s' 0)"
+    owner_gid="$(id -g dx 2>/dev/null || printf '%s' 0)"
+    migrate_durable_nix_identity_if_needed "$volume_root"
+
+    if [ ! -d "$volume_root/store" ]; then
+        echo "Error: direct-volume mode requires /nix/store to already exist. Docker populates an empty named volume from the image's content at its mount point on first use; an empty $volume_root/store means that dependency did not hold. Never seeding /nix into /nix." >&2
+        return 1
+    fi
+
+    image_identity="${DX_IMAGE_IDENTITY:-}"
+    if [ -z "$image_identity" ]; then
+        echo "Error: direct-volume mode requires the runtime image identity; recreate the container with a current dx-create-container." >&2
+        return 1
+    fi
+
+    identity_marker="$volume_root/.dx-image-identity-v1"
+    if [ ! -f "$identity_marker" ]; then
+        publish_nix_volume_image_identity "$volume_root" "$image_identity" || return 1
+    else
+        recorded_identity="$(cat "$identity_marker" 2>/dev/null || true)"
+        if [ "$recorded_identity" != "$image_identity" ]; then
+            echo "Error: this Nix volume was populated by a different image (recorded ${recorded_identity:0:19}... vs current ${image_identity:0:19}...); recreate the Nix volume (QNAP guests start from scratch) or wait for the verified import path (store-trust-plan.md Problem 1)." >&2
+            return 1
+        fi
+    fi
+
+    import_started=$SECONDS
+    if [ ! -f "$volume_root/.dx-image-store-identity" ]; then
+        DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$(nix_image_store_identity 2>/dev/null || true)"
+        export DX_NIX_PENDING_IMAGE_STORE_IDENTITY
+        nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid"
+    elif nix_image_store_import_required /nix "$volume_root"; then
+        echo "Error: this volume's Nix-store content no longer matches its own recorded identity (corruption, or an interrupted prior write, since this volume was last confirmed); see store-trust-plan.md." >&2
+        return 1
+    else
+        echo "Image Nix essentials identity is unchanged; skipping image-store import."
+        nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid"
+    fi
+    echo "Nix volume image import completed in $((SECONDS - import_started))s."
 }
 
 # Branch 11 / Phase 3 (qnap-dxe-plan.md DQ4, docs/refactor/
