@@ -45,3 +45,26 @@ case "$DX_FAKE_GUEST_RAW" in
         ;;
 esac' "$body")"
 }
+
+# Fake `ssh` for the docker-ssh runtime adapter's MANAGEMENT-plane transport
+# (bin/lib/dx-runtime-docker.sh), distinct from fake_ssh_write above (that
+# one is the DX guest boundary's own base64-wrapped transport; this one is
+# not that). The real adapter always sends ONE already-quoted remote
+# command string (dx_runtime_docker_quote_argv), matching exactly how a
+# real sshd hands the joined trailing argument to the remote login shell to
+# parse -- this fake reproduces that hand-off with a plain `eval` in its own
+# process, so a fixture's own fake `docker` (or `uname`, etc.) executable,
+# placed on PATH in the same directory via fake_tool_write, runs exactly as
+# it would on the real remote host. A test asserting the exact argv ssh
+# itself was invoked with (the management connection options, or the raw
+# quoted command string before it is parsed) should read $DXE_FAKE_SSH_ARGV_LOG
+# if it set DXE_FAKE_SSH_ARGV_LOG to a writable file path first.
+fake_qnap_ssh_write() {
+    local directory="$1"
+    fake_tool_write "$directory" ssh '
+if [ -n "${DXE_FAKE_SSH_ARGV_LOG:-}" ]; then printf "%s\n" "$@" > "$DXE_FAKE_SSH_ARGV_LOG"; fi
+dx_fake_last=""
+for dx_fake_arg in "$@"; do dx_fake_last="$dx_fake_arg"; done
+eval "$dx_fake_last"
+'
+}

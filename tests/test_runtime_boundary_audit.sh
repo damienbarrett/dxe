@@ -1,9 +1,13 @@
 #!/bin/bash
 set -uo pipefail
 
-# Branch 11 / Phase 1 (qnap-dxe-plan.md DQ2, Phase 1 item 6): automated
-# source audit. Fails if any file under bin/ OTHER THAN
-# bin/lib/dx-runtime-apple.sh invokes a raw Apple `container` lifecycle verb
+# Branch 11 / Phase 1-2 (qnap-dxe-plan.md DQ2, Phase 1 item 6): automated
+# source audit. Fails if any file under bin/ OTHER THAN the two runtime
+# adapters themselves (bin/lib/dx-runtime-apple.sh, bin/lib/dx-runtime-docker.sh
+# -- extended to the latter in Phase 2, since it is the docker-ssh adapter's
+# own legitimate home for both a real local `container` reference and the
+# literal token "container" as a remote `docker container <verb>` argument)
+# invokes a raw Apple `container` lifecycle verb
 # (list/inspect/exec/run/create/start/stop/kill/delete/rm/image/volume/
 # logs/export/stats/system). tests/ may still call `container` directly
 # (approved by the task spec) and is out of this audit's scope entirely
@@ -30,16 +34,36 @@ VERB_PATTERN='(^|[^A-Za-z0-9_."$.-])container[[:space:]]+(list|inspect|exec|run|
 # proven red/green against disposable fixtures below before trusting it
 # against the real tree.
 audit_bin_tree() {
-    local root="$1" file matches
+    local root="$1" file matches content trimmed
     matches=""
     while IFS= read -r file; do
         [ -f "$file" ] || continue
-        case "$file" in */lib/dx-runtime-apple.sh) continue ;; esac
+        case "$file" in */lib/dx-runtime-apple.sh|*/lib/dx-runtime-docker.sh) continue ;; esac
         while IFS= read -r line; do
             [ -n "$line" ] || continue
             # Pure comment lines (only whitespace before the '#') are never
-            # a real invocation.
-            case "$line" in [[:space:]]*'#'*) continue ;; esac
+            # a real invocation. Two independent bugs here, both caught
+            # 2026-09-27 (Branch 11 / Phase 2) by a new dx-runtime-docker.sh
+            # comment that happened to match no OTHER exception below and so
+            # exposed both: (1) testing against "$line" itself (grep -n's raw
+            # "NUM:content" output) rather than the file content only ever
+            # matches a comment starting at column 0 of its OWN grep record,
+            # which never happens once grep's numeric prefix is prepended;
+            # (2) in a glob/case pattern (unlike a regex), "*" is an
+            # independent "any characters" wildcard, not a quantifier on the
+            # PRECEDING atom -- so "[[:space:]]*'#'*" does not mean "zero or
+            # more spaces, then #", it means "one whitespace char, then
+            # anything, then a literal #, then anything", which both
+            # requires at least one leading space (so it never matched a
+            # column-0 comment even with bug 1 fixed) and, worse, would
+            # accept a REAL call as "pure comment" whenever it starts with
+            # whitespace and has a bare "#" anywhere later (an inline
+            # trailing comment on indented code). Fixed properly: strip
+            # grep's prefix, strip leading whitespace with the standard
+            # bash idiom, then test literally for a leading "#".
+            content="${line#*:}"
+            trimmed="${content#"${content%%[![:space:]]*}"}"
+            case "$trimmed" in '#'*) continue ;; esac
             # Dated, reasoned exceptions -- human-readable text that
             # happens to match the verb shape, not a real call. Each one
             # named here was confirmed absent from bin/lib/dx-runtime-apple.sh
@@ -120,6 +144,47 @@ if [ -z "$(audit_bin_tree "$fixture")" ]; then
     test_pass "audit exempts bin/lib/dx-runtime-apple.sh itself"
 else
     test_fail "audit exempts bin/lib/dx-runtime-apple.sh itself"
+fi
+rm -f "$fixture/bin/lib/dx-runtime-apple.sh"
+
+cat > "$fixture/bin/lib/dx-runtime-docker.sh" <<'EOF'
+dx_runtime_docker_container_running() { dx_runtime_docker_ssh_exec "$1" container inspect --format '{{.State.Running}}' "$2"; }
+EOF
+if [ -z "$(audit_bin_tree "$fixture")" ]; then
+    test_pass "audit exempts bin/lib/dx-runtime-docker.sh itself (Phase 2's own adapter)"
+else
+    test_fail "audit exempts bin/lib/dx-runtime-docker.sh itself (Phase 2's own adapter)"
+fi
+rm -rf "$fixture"
+
+# --- Regression: the pure-comment-line filter must work at ANY line number,
+# not only when grep's own "N:" prefix happens to be short (Branch 11 /
+# Phase 2, 2026-09-27 -- see the dated comment on the filter itself). Ten
+# padding lines push the real line past single digits; the comment names an
+# operation no OTHER exception arm above covers, so a false positive here
+# could not hide behind one of those.
+fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX")"
+trap 'rm -rf "$fixture"' EXIT
+mkdir -p "$fixture/bin"
+{
+    echo '#!/bin/bash'
+    for _ in 1 2 3 4 5 6 7 8 9; do echo '# padding'; done
+    echo "# a docker-ssh comment mentioning Apple's own 'container system status' for comparison"
+} > "$fixture/bin/dx-example"
+if [ -z "$(audit_bin_tree "$fixture")" ]; then
+    test_pass "a pure comment naming a container verb is exempt at a two-digit line number too"
+else
+    test_fail "a pure comment naming a container verb is exempt at a two-digit line number too"
+fi
+{
+    echo '#!/bin/bash'
+    for _ in 1 2 3 4 5 6 7 8 9; do echo '# padding'; done
+    echo 'container system status'
+} > "$fixture/bin/dx-example"
+if [ -n "$(audit_bin_tree "$fixture")" ]; then
+    test_pass "a real call at a two-digit line number is still caught (the comment fix did not overreach)"
+else
+    test_fail "a real call at a two-digit line number is still caught (the comment fix did not overreach)"
 fi
 rm -rf "$fixture"
 

@@ -13,6 +13,7 @@ case "$version" in *'version 3.2.'*) ;; *) echo "Error: /bin/bash is not Bash 3.
 /bin/bash "$SCRIPT_DIR/test_persist_backup_select.sh"
 /bin/bash "$SCRIPT_DIR/test_dx_backup.sh"
 /bin/bash "$SCRIPT_DIR/test_dx_restore.sh"
+/bin/bash "$SCRIPT_DIR/test_docker_runtime_adapter.sh"
 # tests/qnap/phase0-*.sh run on this Mac's default Bash 3.2, exactly like
 # bin/dx*, so this is their Bash 3.2 regression net.
 /bin/bash "$SCRIPT_DIR/test_section27_qnap_scripts.sh"

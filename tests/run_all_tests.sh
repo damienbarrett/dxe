@@ -16,7 +16,7 @@ SKIP_INTEGRATION=false
 # Every section this runner can dispatch. An unknown --section= must fail rather
 # than report success over an empty run: tests/run-tier.sh selects whole tiers by
 # section number, so a silent no-op would shrink a tier without failing CI.
-KNOWN_SECTIONS="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32"
+KNOWN_SECTIONS="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33"
 
 for arg in "$@"; do
     case $arg in
@@ -130,6 +130,7 @@ run_test "$SCRIPT_DIR/test_runtime_boundary_characterisation.sh" "31"
 # Branch 11 / Phase 1 item 6: the automated source audit (no raw `container`
 # lifecycle verb outside bin/lib/dx-runtime-apple.sh).
 run_test "$SCRIPT_DIR/test_runtime_boundary_audit.sh" "32"
+run_test "$SCRIPT_DIR/test_docker_runtime_adapter.sh" "33"
 
 echo ""
 echo "======================================"
