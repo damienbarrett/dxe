@@ -871,30 +871,76 @@ fake_qnap_ssh_write "$docker_status_fixture"
 # Image section this test cares about never runs at all.
 fake_tool_write "$docker_status_fixture" uname 'case "$1" in -m) echo aarch64 ;; esac'
 fake_tool_write "$docker_status_fixture" docker '
-case "$1 $2" in
-    "version --format")     echo "27.0.0" ;;
-    "info --format")        echo "sha256:fake|qnap-dxe|aarch64|linux" ;;
-    "image inspect")         exit 0 ;;
-    "image ls")
-        # Faithful to dx_runtime_docker_image_list'"'"'s real --format
-        # string: if Repository and Tag are still joined by a colon (the
-        # regression this test exists to catch), render output the same
-        # (broken) way a real `docker image ls` would -- one combined
-        # column -- so this test only stays green when production truly
-        # emits separate columns, not merely because this fake ignores
-        # what format it was asked for.
-        case "$*" in
-            *"{{.Repository}}:{{.Tag}}"*)
-                printf "REPOSITORY:TAG\tIMAGE ID\tCREATED\tSIZE\n"
-                printf "dx-qnap-spike-nixos:latest\tabc123\t1 day ago\t500MB\n"
+case "$1" in
+    version) [ "$2" = --format ] && echo "27.0.0" ;;
+    info)    [ "$2" = --format ] && echo "sha256:fake|qnap-dxe|aarch64|linux" ;;
+    image)
+        case "$2" in
+            inspect) exit 0 ;;
+            ls)
+                # Faithful to dx_runtime_docker_image_list'"'"'s real --format
+                # string: if Repository and Tag are still joined by a colon
+                # (Finding 4, already fixed), render output the same
+                # (broken) way a real `docker image ls` would -- one
+                # combined column -- so this test only stays green when
+                # production truly emits separate columns, not merely
+                # because this fake ignores what format it was asked for.
+                case "$*" in
+                    *"{{.Repository}}:{{.Tag}}"*)
+                        printf "REPOSITORY:TAG\tIMAGE ID\tCREATED\tSIZE\n"
+                        printf "dx-qnap-spike-nixos:latest\tabc123\t1 day ago\t500MB\n"
+                        ;;
+                    *)
+                        printf "REPOSITORY\tTAG\tIMAGE ID\tCREATED\tSIZE\n"
+                        printf "dx-qnap-spike-nixos\tlatest\tabc123\t1 day ago\t500MB\n"
+                        ;;
+                esac
                 ;;
-            *)
-                printf "REPOSITORY\tTAG\tIMAGE ID\tCREATED\tSIZE\n"
-                printf "dx-qnap-spike-nixos\tlatest\tabc123\t1 day ago\t500MB\n"
-                ;;
+            *) exit 1 ;;
         esac
         ;;
-    "container inspect")     exit 1 ;;
+    container)
+        case "$2" in
+            inspect)
+                shift 2
+                if [ "$1" = --format ]; then
+                    case "$2" in
+                        *".State.Running"*) echo false ;;
+                        # dx_runtime_docker_lock_audit'"'"'s label query on the
+                        # (differently-named) lock container -- exit 1 makes
+                        # it report "not held", the same fail-safe path a
+                        # real absent lock container takes. Not this test'"'"'s
+                        # concern; only here so it does not abort under
+                        # set -e.
+                        *) exit 1 ;;
+                    esac
+                else
+                    exit 0
+                fi
+                ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    ps)
+        # Finding 5 (NAS re-gate): docker ps/ls render .Labels as a
+        # comma-separated STRING, not a map. A real Docker CLI (29.4.0,
+        # verified live 2026-09-28) rejects `index .Labels "io.dxe.system"`
+        # here with exactly this error. Faithful to
+        # dx_runtime_docker_container_list'"'"'s real --format string: if it
+        # still contains the old (wrong) map-style shape, reproduce the
+        # real failure instead of silently ignoring it, so this test only
+        # stays green when production truly uses `.Label "..."` (a method,
+        # not `index .Labels`).
+        case "$*" in
+            *"index .Labels"*)
+                echo "failed to execute template: template: :1:42: executing \"\" at <index .Labels \"io.dxe.system\">: error calling index: cannot index slice/array with type string" >&2
+                exit 1
+                ;;
+        esac
+        printf "NAMES\tIMAGE\tSTATUS\tsystem\n"
+        printf "dxe-status-fixture\tfake-image\tUp 1 second\tx86_64-linux\n"
+        ;;
+    logs) : ;;
     *) exit 1 ;;
 esac'
 run_docker_status() {
@@ -916,16 +962,19 @@ set -e
 # row, never in the "--- Image (...) ---" header itself -- the header
 # alone would satisfy a weaker "does it mention the image name" check even
 # while dx-status dies right after printing it, which is exactly the bug
-# this test exists to catch. "--- SSH" is the next section dx-status
-# always prints unconditionally, so its presence also proves the script
-# ran to completion (exit 0) rather than aborting under set -e partway
-# through the Image section.
+# this test exists to catch. Likewise "x86_64-linux" (the fake io.dxe.system
+# label value) only appears in the Container section's own rendered ps row
+# (Finding 5), never in its "--- Container (...) ---" header. "--- SSH" is
+# the section dx-status always prints unconditionally right after both,
+# so its presence also proves the script ran to completion (exit 0) rather
+# than aborting under set -e partway through either section.
 if [ "$docker_status_rc" -eq 0 ] \
     && printf '%s\n' "$docker_status_out" | stdin_matches -F "abc123" \
+    && printf '%s\n' "$docker_status_out" | stdin_matches -F -- "x86_64-linux" \
     && printf '%s\n' "$docker_status_out" | stdin_matches -F -- "--- SSH"; then
-    test_pass "dx-status (docker-ssh) renders the Image section instead of dying silently on the column-shape mismatch"
+    test_pass "dx-status (docker-ssh) renders the Image and Container sections instead of dying silently on their column-shape mismatches"
 else
-    test_fail "dx-status (docker-ssh) renders the Image section instead of dying silently on the column-shape mismatch (rc=$docker_status_rc, got: $docker_status_out)"
+    test_fail "dx-status (docker-ssh) renders the Image and Container sections instead of dying silently on their column-shape mismatches (rc=$docker_status_rc, got: $docker_status_out)"
 fi
 rm -rf "$docker_status_fixture"
 

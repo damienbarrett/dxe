@@ -1580,6 +1580,17 @@ out="$(
 # docker-ssh output shows it, while staying column-1-anchored (bin/dx-status's
 # `dx_runtime_container_list -a | grep "^${DX_CONTAINER_NAME}[[:space:]]"`
 # keeps working unmodified).
+#
+# Finding 5 (NAS re-gate): `docker ps`/`ls` formats render `.Labels` as a
+# comma-separated STRING, not a map -- only `docker inspect` exposes it as
+# a map. A real Docker CLI (29.4.0, verified live 2026-09-28) rejects
+# `index .Labels "io.dxe.system"` here with "failed to execute template:
+# ... error calling index: cannot index slice/array with type string". The
+# fakes cannot catch a Go-template error on their own, so this one
+# reproduces that exact real failure whenever a ps/ls format still
+# contains the wrong (map-style) shape, so a regression back to it fails
+# loudly here instead of silently on the NAS. The correct field is
+# `{{.Label "io.dxe.system"}}` (singular, a method -- not `index .Labels`).
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
@@ -1588,16 +1599,26 @@ out="$(
 [ \"\$1\" = ps ] || { echo UNMATCHED >&2; exit 99; }
 shift
 printf '%s\n' \"\$@\" > '$argv_log'
+for a in \"\$@\"; do
+    case \"\$a\" in
+        *'index .Labels'*)
+            echo 'failed to execute template: template: :1:42: executing \"\" at <index .Labels \"io.dxe.system\">: error calling index: cannot index slice/array with type string' >&2
+            exit 1
+            ;;
+    esac
+done
 "
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_list -a >/dev/null
-    got="$(cat "$argv_log")"
-    printf '%s\n' "$got" | stdin_matches -F -- '{{index .Labels "io.dxe.system"}}' \
+    rc=$?
+    got="$(cat "$argv_log" 2>/dev/null)"
+    [ "$rc" -eq 0 ] \
+        && printf '%s\n' "$got" | stdin_matches -F -- '{{.Label "io.dxe.system"}}' \
         && printf '%s\n' "$got" | stdin_matches -F -- '{{.Names}}'
 )
-[ "$?" -eq 0 ] && test_pass "container_list format includes the io.dxe.system column, still starting with {{.Names}}" || test_fail "container_list format includes the io.dxe.system column, still starting with {{.Names}}"
+[ "$?" -eq 0 ] && test_pass "container_list format includes the io.dxe.system column via .Label (ps/ls semantics), still starting with {{.Names}}" || test_fail "container_list format includes the io.dxe.system column via .Label (ps/ls semantics), still starting with {{.Names}}"
 
 # --- dx_container_list_names boundary-leak fix (Branch 11 / Phase 3,
 # Increment 4, docs/refactor/direct-volume-storage.md): bin/lib/dx-container.sh's

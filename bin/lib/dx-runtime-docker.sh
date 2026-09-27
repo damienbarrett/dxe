@@ -386,7 +386,7 @@ dx_runtime_docker_container_list() {
     # fourth column, keeping {{.Names}} first so bin/dx-status's own
     # column-1-anchored `grep "^${DX_CONTAINER_NAME}[[:space:]]"` still works
     # unmodified.
-    dx_runtime_docker_ssh_exec "$bin" ps "$@" --format 'table {{.Names}}	{{.Image}}	{{.Status}}	{{index .Labels "io.dxe.system"}}'
+    dx_runtime_docker_ssh_exec "$bin" ps "$@" --format 'table {{.Names}}	{{.Image}}	{{.Status}}	{{.Label "io.dxe.system"}}'
 }
 
 # --- Lifecycle (item 4) -----------------------------------------------------
