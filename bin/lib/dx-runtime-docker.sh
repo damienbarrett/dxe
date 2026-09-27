@@ -382,7 +382,11 @@ dx_runtime_docker_container_running() {
 dx_runtime_docker_container_list() {
     local bin
     bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" ps "$@" --format 'table {{.Names}}	{{.Image}}	{{.Status}}'
+    # io.dxe.system (Branch 11 / Phase 4 design point E) is appended as a
+    # fourth column, keeping {{.Names}} first so bin/dx-status's own
+    # column-1-anchored `grep "^${DX_CONTAINER_NAME}[[:space:]]"` still works
+    # unmodified.
+    dx_runtime_docker_ssh_exec "$bin" ps "$@" --format 'table {{.Names}}	{{.Image}}	{{.Status}}	{{index .Labels "io.dxe.system"}}'
 }
 
 # --- Lifecycle (item 4) -----------------------------------------------------
@@ -431,16 +435,18 @@ dx_runtime_docker_profile_id() {
     printf '%s__%s' "${DX_REMOTE_HOST:?}" "${DX_CONTAINER_NAME:?}"
 }
 
-# Populates DXE_RUNTIME_DOCKER_LABEL_ARGV with the four `--label k=v` pairs
-# every docker-ssh-created resource carries (qnap-dxe-plan.md DQ6). One
-# line, not kcov's usual multi-line array-literal style: kcov's line-based
-# instrumentation does not reliably attribute a hit to every continuation
-# line of a multi-line array assignment (confirmed: the 4 continuation
-# lines of an earlier draft never registered a hit despite this function
-# running constantly), the same class of kcov limitation
+# Populates DXE_RUNTIME_DOCKER_LABEL_ARGV with the five `--label k=v` pairs
+# every docker-ssh-created resource carries (qnap-dxe-plan.md DQ6, plus
+# io.dxe.system from Branch 11 / Phase 4 design point E -- the guest system
+# so an image/container/volume/lock can never be mistaken for a different
+# architecture). One line, not kcov's usual multi-line array-literal style:
+# kcov's line-based instrumentation does not reliably attribute a hit to
+# every continuation line of a multi-line array assignment (confirmed: the
+# 4 continuation lines of an earlier draft never registered a hit despite
+# this function running constantly), the same class of kcov limitation
 # tests/run-coverage-linux.sh's own KCOV_SUBSHELL_TERMINATOR works around.
 dx_runtime_docker_label_flags() {
-    DXE_RUNTIME_DOCKER_LABEL_ARGV=(--label io.dxe.managed=true --label "io.dxe.schema=$DXE_RUNTIME_DOCKER_LABEL_SCHEMA" --label "io.dxe.profile=$(dx_runtime_docker_profile_id)" --label "io.dxe.role=$1")
+    DXE_RUNTIME_DOCKER_LABEL_ARGV=(--label io.dxe.managed=true --label "io.dxe.schema=$DXE_RUNTIME_DOCKER_LABEL_SCHEMA" --label "io.dxe.profile=$(dx_runtime_docker_profile_id)" --label "io.dxe.role=$1" --label "io.dxe.system=${DX_GUEST_SYSTEM:?}")
 }
 
 dx_runtime_docker_container_create() {
@@ -785,11 +791,12 @@ dx_runtime_docker_lock_acquire() {
     bin="$(dx_runtime_docker_require_bin)" || return 1
     lock_name="$(dx_runtime_docker_lock_name)"
     owner="$(dx_runtime_docker_lock_owner_token)"
+    # Branch 11 / Phase 4: reuses the same shared label helper containers
+    # and volumes already call, so the lock picks up io.dxe.system (and any
+    # future addition) without duplicating the other four labels by hand.
+    dx_runtime_docker_label_flags lock
     dx_runtime_docker_ssh_exec "$bin" create --name "$lock_name" \
-        --label io.dxe.managed=true \
-        --label "io.dxe.schema=$DXE_RUNTIME_DOCKER_LABEL_SCHEMA" \
-        --label "io.dxe.profile=$(dx_runtime_docker_profile_id)" \
-        --label io.dxe.role=lock \
+        "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}" \
         --label "io.dxe.owner=$owner" \
         "$DX_IMAGE" >/dev/null 2>&1 || {
         echo "Error: could not acquire the remote lock '$lock_name' (it may already be held -- run 'dx-lock status' to see by whom)." >&2

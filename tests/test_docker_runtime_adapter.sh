@@ -565,7 +565,7 @@ shift
 printf '%s\n' \"\$@\" > '$argv_log'
 "
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_create \
         --name dx-qnap --image dx-qnap-nixos \
@@ -583,6 +583,7 @@ printf '%s\n' \"\$@\" > '$argv_log'
     printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-bootstrap:/guest-bootstrap:rw" && test_pass "container_create mounts the bootstrap volume at its configured path" || test_fail "container_create mounts the bootstrap volume at its configured path"
     printf '%s\n' "$got" | stdin_matches -F -- "--restart" && printf '%s\n' "$got" | stdin_matches -F -- "unless-stopped" && test_pass "container_create renders --restart from DX_CONTAINER_RESTART_POLICY" || test_fail "container_create renders --restart from DX_CONTAINER_RESTART_POLICY"
     printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.managed=true" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.role=container" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.profile=qnap-dxe__dx-qnap" && test_pass "container_create carries the DQ6 labels" || test_fail "container_create carries the DQ6 labels"
+    printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.system=x86_64-linux" && test_pass "container_create carries the io.dxe.system label (Branch 11 / Phase 4)" || test_fail "container_create carries the io.dxe.system label (Branch 11 / Phase 4)"
     printf '%s\n' "$got" | stdin_matches -F -- "--name" && test_pass "container_create keeps --name" || test_fail "container_create keeps --name"
     printf '%s\n' "$got" | stdin_matches -F -- "-c
 echo hi
@@ -740,13 +741,29 @@ shift 2
 printf '%s\n' \"\$@\" > '$argv_log'
 "
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_volume_create dx-qnap-nix
     got="$(cat "$argv_log")"
     printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.role=nix" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.profile=qnap-dxe__dx-qnap" && printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-nix"
 )
 [ "$?" -eq 0 ] && test_pass "volume_create: role derived from the configured name, DQ6 labels attached" || test_fail "volume_create: role derived from the configured name, DQ6 labels attached"
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/volcreate-system-argv.log"
+    fake_tool_write "$dir" docker "
+[ \"\$1 \$2\" = 'volume create' ] || { echo UNMATCHED >&2; exit 99; }
+shift 2
+printf '%s\n' \"\$@\" > '$argv_log'
+"
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_volume_create dx-qnap-nix
+    printf '%s\n' "$(cat "$argv_log")" | stdin_matches -F -- "io.dxe.system=x86_64-linux"
+)
+[ "$?" -eq 0 ] && test_pass "volume_create carries the io.dxe.system label (Branch 11 / Phase 4)" || test_fail "volume_create carries the io.dxe.system label (Branch 11 / Phase 4)"
 
 # volume_create: refuses a name that is not one of the three configured
 # volumes rather than creating something unlabelled.
@@ -988,12 +1005,35 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = create ] && [ "$2" = --name ] && [ "$3" = dxe-lock-qnap-dxe__dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     owner="$(dx_runtime_docker_lock_acquire)"
     [ -n "$owner" ] && printf '%s\n' "$owner" | stdin_matches ":"
 )
 [ "$?" -eq 0 ] && test_pass "lock_acquire: succeeds and prints a non-empty owner token" || test_fail "lock_acquire: succeeds and prints a non-empty owner token"
+
+# Acquire: the lock container carries io.dxe.system too (Branch 11 / Phase
+# 4) -- proven via the shared dx_runtime_docker_label_flags helper, not a
+# hand-duplicated label list.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/lock-acquire-argv.log"
+    fake_tool_write "$dir" docker "
+[ \"\$1\" = create ] || { echo UNMATCHED >&2; exit 99; }
+shift
+printf '%s\n' \"\$@\" > '$argv_log'
+"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_docker_lock_acquire >/dev/null
+    got="$(cat "$argv_log")"
+    printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.system=x86_64-linux" \
+        && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.role=lock" \
+        && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.owner="
+)
+[ "$?" -eq 0 ] && test_pass "lock_acquire carries io.dxe.system alongside its existing DQ6 labels" || test_fail "lock_acquire carries io.dxe.system alongside its existing DQ6 labels"
 
 # Acquire: fails (name conflict) when already held.
 (
@@ -1001,7 +1041,7 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "Error: Conflict. The container name ... is already in use" >&2; exit 1'
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_docker_lock_acquire 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "may already be held"
@@ -1519,6 +1559,30 @@ out="$(
 )
 [ "$?" -ne 0 ] && test_pass "image_identity (apple): fails closed when container image inspect cannot find the image" || test_fail "image_identity (apple): fails closed when container image inspect cannot find the image"
 
+# container_list (Branch 11 / Phase 4, design point E): the rendered
+# `docker ps` --format string gains an io.dxe.system column so dx-status's
+# docker-ssh output shows it, while staying column-1-anchored (bin/dx-status's
+# `dx_runtime_container_list -a | grep "^${DX_CONTAINER_NAME}[[:space:]]"`
+# keeps working unmodified).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/list-format-argv.log"
+    fake_tool_write "$dir" docker "
+[ \"\$1\" = ps ] || { echo UNMATCHED >&2; exit 99; }
+shift
+printf '%s\n' \"\$@\" > '$argv_log'
+"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_container_list -a >/dev/null
+    got="$(cat "$argv_log")"
+    printf '%s\n' "$got" | stdin_matches -F -- '{{index .Labels "io.dxe.system"}}' \
+        && printf '%s\n' "$got" | stdin_matches -F -- '{{.Names}}'
+)
+[ "$?" -eq 0 ] && test_pass "container_list format includes the io.dxe.system column, still starting with {{.Names}}" || test_fail "container_list format includes the io.dxe.system column, still starting with {{.Names}}"
+
 # --- dx_container_list_names boundary-leak fix (Branch 11 / Phase 3,
 # Increment 4, docs/refactor/direct-volume-storage.md): bin/lib/dx-container.sh's
 # dx_container_list_names used to call dx_runtime_apple_container_list_names
@@ -1596,9 +1660,13 @@ echo "UNMATCHED: $*" >&2; exit 99'
     # join with spaces so a role's --label token can be matched adjacent
     # to the volume name that follows it in the real argv.
     created="$(tr '\n' ' ' < "$cv_log")"
-    printf '%s\n' "$created" | stdin_matches -F -- '--label io.dxe.role=nix dxe-p3-nix' \
-        && printf '%s\n' "$created" | stdin_matches -F -- '--label io.dxe.role=persist dxe-p3-persist' \
-        && printf '%s\n' "$created" | stdin_matches -F -- '--label io.dxe.role=bootstrap dxe-p3-bootstrap' \
+    # Branch 11 / Phase 4: io.dxe.role is followed by io.dxe.system now
+    # (dx_runtime_docker_label_flags gained a fifth label), so the volume
+    # name that used to sit directly after "role=<x>" now sits after the
+    # system label instead -- deliberately updated, not a weakened check.
+    printf '%s\n' "$created" | stdin_matches -F -- '--label io.dxe.role=nix --label io.dxe.system=x86_64-linux dxe-p3-nix' \
+        && printf '%s\n' "$created" | stdin_matches -F -- '--label io.dxe.role=persist --label io.dxe.system=x86_64-linux dxe-p3-persist' \
+        && printf '%s\n' "$created" | stdin_matches -F -- '--label io.dxe.role=bootstrap --label io.dxe.system=x86_64-linux dxe-p3-bootstrap' \
         && printf '%s\n' "$created" | stdin_matches -F -- 'io.dxe.managed=true'
 )
 [ "$?" -eq 0 ] && test_pass "dx-create-volumes (docker-ssh): all three volumes created with DQ6 labels and the correct role" || test_fail "dx-create-volumes (docker-ssh): all three volumes created with DQ6 labels and the correct role"
