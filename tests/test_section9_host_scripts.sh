@@ -726,8 +726,25 @@ case "$1" in
                 exit 0
                 ;;
             bash)
-                printf "Tools: fake\nPersist: fake\n"
-                exit 0
+                # Item 4 (fix/test-hardening): this used to answer every
+                # "bash -lc ..." exec identically regardless of command,
+                # which could never distinguish the new keyring check
+                # (below) from the existing Tools/Persist and tmux checks.
+                # Small, general fixture improvement: branch on a distinct
+                # substring of each script body ("$3" here, the script
+                # text) instead.
+                case "${3:-}" in
+                    *"tmux ls"*)
+                        if [ -n "${DX_FAKE_TMUX:-}" ]; then printf "%s\n" "$DX_FAKE_TMUX"; exit 0; else exit 1; fi
+                        ;;
+                    *"dx-keyring"*)
+                        if [ -n "${DX_FAKE_KEYRING:-}" ]; then printf "%s\n" "$DX_FAKE_KEYRING"; exit 0; else exit 1; fi
+                        ;;
+                    *)
+                        printf "Tools: fake\nPersist: fake\n"
+                        exit 0
+                        ;;
+                esac
                 ;;
             *) exit 1 ;;
         esac
@@ -788,6 +805,47 @@ if printf '%s\n' "$status_out" | sed -n '/--- Bootstrap Generation ---/,+1p' | s
     test_pass "dx-status reports no bootstrap generation section for a container that does not exist"
 else
     test_fail "dx-status reports no bootstrap generation section for a container that does not exist (got: $status_out)"
+fi
+
+# --- Item 4 (fix/test-hardening): dx-status has no "keyring: not running" -
+# --- line for Branch 15's failure policy B warning path (guest reachable, -
+# --- keyring not started). When the guest is reachable, show the         -
+# --- keyring status the guest's own "dx-keyring status" reports (live /  -
+# --- stale / absent), through dx_runtime_exec (so a docker-ssh profile   -
+# --- gets the same line for free -- confirmed no dx-status-specific      -
+# --- docker-ssh branch exists besides the unrelated Remote Lock section, -
+# --- both already exercised via the same fake `container exec` fixture   -
+# --- above). ---
+status_out="$(DX_FAKE_EXISTS=1 DX_FAKE_RUNNING=1 DX_FAKE_KEYRING=live run_status 2>&1)"
+if printf '%s\n' "$status_out" | stdin_matches -F -- 'keyring: live'; then
+    test_pass "dx-status reports a live keyring"
+else
+    test_fail "dx-status reports a live keyring (got: $status_out)"
+fi
+
+status_out="$(DX_FAKE_EXISTS=1 DX_FAKE_RUNNING=1 DX_FAKE_KEYRING=stale run_status 2>&1)"
+if printf '%s\n' "$status_out" | stdin_matches -F -- 'keyring: stale'; then
+    test_pass "dx-status reports a stale keyring"
+else
+    test_fail "dx-status reports a stale keyring (got: $status_out)"
+fi
+
+status_out="$(DX_FAKE_EXISTS=1 DX_FAKE_RUNNING=1 DX_FAKE_KEYRING=absent run_status 2>&1)"
+if printf '%s\n' "$status_out" | stdin_matches -F -- 'keyring: not running'; then
+    test_pass "dx-status says \"keyring: not running\" for the not-started (absent) case"
+else
+    test_fail "dx-status says \"keyring: not running\" for the not-started (absent) case (got: $status_out)"
+fi
+
+# DX_FAKE_KEYRING unset entirely: the fixture's "dx-keyring" case then
+# exits 1 (as it would for a guest where dx-keyring is not installed, or
+# any other probe failure) -- dx-status must still say "not running", not
+# abort under its own `set -euo pipefail`.
+status_out="$(DX_FAKE_EXISTS=1 DX_FAKE_RUNNING=1 run_status 2>&1)"
+if printf '%s\n' "$status_out" | stdin_matches -F -- 'keyring: not running'; then
+    test_pass "dx-status says \"keyring: not running\" when the keyring probe itself fails/is unavailable"
+else
+    test_fail "dx-status says \"keyring: not running\" when the keyring probe itself fails/is unavailable (got: $status_out)"
 fi
 
 # --- dx-reset-nix-volume (Branch 12, store-trust-plan.md): the real,

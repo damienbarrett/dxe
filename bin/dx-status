@@ -108,6 +108,22 @@ if container_is_running "$DX_CONTAINER_NAME"; then
 
     echo -e "\ntmux sessions:"
     dx_runtime_exec -u dx "$DX_CONTAINER_NAME" bash -lc "tmux ls 2>/dev/null" || echo "No active tmux sessions"
+
+    # Branch 15's failure policy B warning path (guest reachable, keyring
+    # not started) had no visible line here. dx-keyring status reports
+    # exactly one of live/stale/absent (bin/dx-keyring.sh); "not running"
+    # is friendlier than "absent" for the case an operator actually cares
+    # about, and also covers a guest that predates dx-keyring entirely (no
+    # such command, or the probe otherwise fails) -- `|| true` so this
+    # never aborts the script under `set -e`. dx_runtime_exec is the same
+    # shared, runtime-agnostic call the checks above already use, so a
+    # docker-ssh profile gets this line for free.
+    dx_keyring_state="$(dx_runtime_exec -u dx "$DX_CONTAINER_NAME" bash -lc "command -v dx-keyring >/dev/null 2>&1 && dx-keyring status 2>/dev/null | head -1" 2>/dev/null || true)"
+    case "$dx_keyring_state" in
+        live) echo "keyring: live" ;;
+        stale) echo "keyring: stale" ;;
+        *) echo "keyring: not running" ;;
+    esac
 else
     echo "Container is not running or not found"
 fi
