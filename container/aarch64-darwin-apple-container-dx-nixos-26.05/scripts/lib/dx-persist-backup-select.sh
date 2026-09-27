@@ -43,12 +43,15 @@
 # Built-in rebuildable-cache directory names, matched as a path COMPONENT at
 # any depth (so "node_modules" also denies "a/b/node_modules/c"). Glob
 # patterns (result-*) are supported.
-DX_PBS_BUILTIN_COMPONENT_DENY="node_modules target .direnv result result-* __pycache__ .cache dist build .venv .tox .pytest_cache .mypy_cache"
+DX_PBS_BUILTIN_COMPONENT_DENY="node_modules target .direnv result result-* __pycache__ .cache dist build .venv .tox .pytest_cache .mypy_cache .pnpm-store .Trash-* .tmp"
 
 # Built-in path-shaped deny patterns, matched as an ANCHORED glob against the
 # full path relative to the backup root (e.g. /persist). Unlike the component
 # list above, these describe a specific location, not a bare directory name.
-DX_PBS_BUILTIN_PATH_DENY="home/dx/.local/state/dx-ai/generations/*/profile"
+# home/dx/.gemini/antigravity-cli is the `agy` binary/state bundle `dx-ai`
+# reinstalls (see scripts/dx-ai.sh and bootstrap/activation.sh); its sibling
+# config/credentials elsewhere under .gemini stay in.
+DX_PBS_BUILTIN_PATH_DENY="home/dx/.local/state/dx-ai/generations/*/profile home/dx/.gemini/antigravity-cli"
 
 # Extra deny patterns from DX_BACKUP_EXCLUDE_FILE (one per line), passed in by
 # the caller (bin/dx-backup) as extra positional arguments after the root.
@@ -204,14 +207,16 @@ dx_pbs_walk_repo_files() {
                 -name node_modules -o -name target -o -name .direnv -o \
                 -name result -o -name 'result-*' -o -name __pycache__ -o \
                 -name .cache -o -name dist -o -name build -o -name .venv -o \
-                -name .tox -o -name .pytest_cache -o -name .mypy_cache \
+                -name .tox -o -name .pytest_cache -o -name .mypy_cache -o \
+                -name .pnpm-store -o -name '.Trash-*' -o -name .tmp \
             \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
       else
           find . \( -name .git -o \( \
                 -name node_modules -o -name target -o -name .direnv -o \
                 -name result -o -name 'result-*' -o -name __pycache__ -o \
                 -name .cache -o -name dist -o -name build -o -name .venv -o \
-                -name .tox -o -name .pytest_cache -o -name .mypy_cache \
+                -name .tox -o -name .pytest_cache -o -name .mypy_cache -o \
+                -name .pnpm-store -o -name '.Trash-*' -o -name .tmp \
             \) \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
       fi | while IFS= read -r -d '' entry; do printf '%s\0' "${entry#./}"; done
     )
@@ -386,14 +391,16 @@ dx_pbs_list_outside_repos() {
                 -name node_modules -o -name target -o -name .direnv -o \
                 -name result -o -name 'result-*' -o -name __pycache__ -o \
                 -name .cache -o -name dist -o -name build -o -name .venv -o \
-                -name .tox -o -name .pytest_cache -o -name .mypy_cache \
+                -name .tox -o -name .pytest_cache -o -name .mypy_cache -o \
+                -name .pnpm-store -o -name '.Trash-*' -o -name .tmp \
             \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
     else
         find "$root" \( \
                 -name node_modules -o -name target -o -name .direnv -o \
                 -name result -o -name 'result-*' -o -name __pycache__ -o \
                 -name .cache -o -name dist -o -name build -o -name .venv -o \
-                -name .tox -o -name .pytest_cache -o -name .mypy_cache \
+                -name .tox -o -name .pytest_cache -o -name .mypy_cache -o \
+                -name .pnpm-store -o -name '.Trash-*' -o -name .tmp \
             \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
     fi | while IFS= read -r -d '' found; do
         relpath="${found#"$root"/}"

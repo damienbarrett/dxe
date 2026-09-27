@@ -78,6 +78,29 @@ printf 'cache\n' > "$FIXTURE/persist/home/dx/.cache/pip/wheel"
 mkdir -p "$FIXTURE/persist/home/dx/.local/state/dx-ai/generations/7"
 ln -s /nix/store/does-not-matter "$FIXTURE/persist/home/dx/.local/state/dx-ai/generations/7/profile"
 
+# --- Branch 18: additional built-in component-deny entries. ---
+# pnpm's content-addressable package store.
+mkdir -p "$FIXTURE/persist/home/dx/.pnpm-store/v3/files/ab"
+printf 'pkgdata\n' > "$FIXTURE/persist/home/dx/.pnpm-store/v3/files/ab/content"
+# A trash directory.
+mkdir -p "$FIXTURE/persist/home/dx/.Trash-1000"
+printf 'deleted\n' > "$FIXTURE/persist/home/dx/.Trash-1000/oldfile.txt"
+# Transient scratch (e.g. under ~/.codex), alongside real, kept session
+# history in the same persisted directory -- proves the deny is scoped to
+# the literal `.tmp` component, not the whole `.codex` tree.
+mkdir -p "$FIXTURE/persist/home/dx/.codex/.tmp"
+printf 'scratch\n' > "$FIXTURE/persist/home/dx/.codex/.tmp/workfile"
+mkdir -p "$FIXTURE/persist/home/dx/.codex/sessions"
+printf 'session data\n' > "$FIXTURE/persist/home/dx/.codex/sessions/rollout.json"
+
+# --- Branch 18: additional built-in path-deny entry -- the agy binary
+# bundle dx-ai reinstalls, alongside a sibling .gemini path that must stay
+# in (its config/credentials). ---
+mkdir -p "$FIXTURE/persist/home/dx/.gemini/antigravity-cli/bin"
+printf 'binary\n' > "$FIXTURE/persist/home/dx/.gemini/antigravity-cli/bin/agy"
+mkdir -p "$FIXTURE/persist/home/dx/.gemini/other-config"
+printf 'keep me\n' > "$FIXTURE/persist/home/dx/.gemini/other-config/settings.json"
+
 # --- A dangling symlink outside any repository: mirrored as a symlink. ---
 ln -s /no/such/target "$FIXTURE/persist/home/dx/.dangling"
 
@@ -138,6 +161,14 @@ assert_listed "home/dx/.bash_history" "a file outside any repository is always a
 assert_not_listed "home/dx/.cache/pip/wheel" "a deny-listed cache dir outside any repository is excluded"
 assert_not_listed "home/dx/.local/state/dx-ai/generations/7/profile" "the Nix-profile generations tree is excluded by the built-in path pattern"
 assert_not_listed "scratch/throwaway.tmp" "DX_BACKUP_EXCLUDE_FILE-style user pattern is honoured"
+
+# Branch 18: additional built-in deny entries.
+assert_not_listed "home/dx/.pnpm-store/v3/files/ab/content" "pnpm's content-addressable store (.pnpm-store) is excluded"
+assert_not_listed "home/dx/.Trash-1000/oldfile.txt" "a trash directory (.Trash-*) is excluded"
+assert_not_listed "home/dx/.codex/.tmp/workfile" "a .tmp scratch directory (e.g. under .codex) is excluded"
+assert_listed "home/dx/.codex/sessions/rollout.json" "real session history beside a .tmp scratch dir stays in"
+assert_not_listed "home/dx/.gemini/antigravity-cli/bin/agy" "the agy binary bundle (.gemini/antigravity-cli) is excluded (dx-ai reinstalls it)"
+assert_listed "home/dx/.gemini/other-config/settings.json" "other .gemini content (config/credentials) is not excluded"
 
 # `.git` FILE (linked worktree/submodule marker): not a repo boundary.
 assert_listed "git/worktree-like/marker.txt" "content beside a .git FILE (not directory) falls through to always-at-risk"
