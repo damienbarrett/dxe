@@ -6,10 +6,19 @@
 # contract (bin/lib/dx-runtime.sh) instead; behaviour, output, and error
 # handling are unchanged, only the raw call site moved to
 # bin/lib/dx-runtime-apple.sh. Every name here is preserved exactly for
-# existing callers and tests. `dx_container_list_names` in particular has no
-# Docker equivalent to dispatch to (it is Apple CLI-version fallback logic,
-# not a contract operation), so it calls the Apple adapter directly rather
-# than through dx_runtime_dispatch_ok.
+# existing callers and tests.
+#
+# `dx_container_list_names` (Branch 11 / Phase 3, Increment 4: fixed a
+# boundary leak found during Phase 3's audit-extension work) used to call
+# dx_runtime_apple_container_list_names directly, unconditionally -- under
+# DX_RUNTIME=docker-ssh this reached for the local Apple `container` binary
+# instead of dispatching to whichever runtime is actually configured. It now
+# derives names from dx_runtime_container_list's raw table listing (the
+# `--quiet` fast path and its own version-fallback stay Apple-internal,
+# inside dx_runtime_apple_container_list_names, which dx_runtime_apple_
+# container_exists/_running still use directly -- this wrapper's own two
+# callers never needed that optimisation to be correct, only to be a valid
+# per-runtime dispatch).
 
 DX_CONTAINER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=dx-runtime.sh
@@ -38,7 +47,13 @@ container_system_ensure_started() {
     fi
 }
 
-dx_container_list_names() { dx_runtime_apple_container_list_names "$@"; }
+dx_container_list_names() {
+    if [ "$1" = true ]; then
+        dx_runtime_container_list -a | awk 'NR > 1 {print $1}'
+    else
+        dx_runtime_container_list | awk 'NR > 1 {print $1}'
+    fi
+}
 
 # No `-q`: see tests/test_helpers.sh's stdin_matches comment for why
 # `writer | grep -q` is unsafe under `set -o pipefail` (every caller of these

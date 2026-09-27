@@ -30,6 +30,19 @@ test_section "Runtime boundary audit (Branch 11 / Phase 1, item 6)"
 
 VERB_PATTERN='(^|[^A-Za-z0-9_."$.-])container[[:space:]]+(list|inspect|exec|run|create|start|stop|kill|delete|rm|image|volume|logs|export|stats|system)\b'
 
+# Branch 11 / Phase 3, Increment 4 (docs/refactor/direct-volume-storage.md):
+# besides a raw Apple `container` verb, any fully-spelled dx_runtime_apple_*
+# or dx_runtime_docker_* name outside the two adapter files is also a
+# boundary leak -- it reaches one runtime's adapter directly, bypassing
+# dx_runtime.sh's dispatch, so it runs unconditionally regardless of
+# DX_RUNTIME (bin/lib/dx-container.sh's dx_container_list_names did exactly
+# this before this increment fixed it). A dynamic dispatch construction like
+# dx_runtime.sh's own "dx_runtime_docker_$op" does not match this pattern
+# (the name must be fully spelled out, immediately followed by a word
+# boundary -- a trailing "$op" is not one), so bin/lib/dx-runtime.sh's own
+# dispatcher needs no exception here.
+RUNTIME_PREFIX_PATTERN='\bdx_runtime_(apple|docker)_[A-Za-z_][A-Za-z0-9_]*\b'
+
 # The audit logic itself, callable against an arbitrary root so it can be
 # proven red/green against disposable fixtures below before trusting it
 # against the real tree.
@@ -87,9 +100,21 @@ audit_bin_tree() {
                 *'Legacy cleanup command: container volume rm'*) continue ;;
                 *"confirm with 'container exec"*) continue ;;
                 *'(container logs unavailable)'*) continue ;;
+                # Branch 11 / Phase 3, Increment 4: bin/dx-lock and
+                # bin/dx-status's own read-only lock-audit view are the
+                # coordinating session's authorised exceptions (Phase 2's
+                # design review). Locking is not a dx_runtime_<op> contract
+                # operation at all -- Apple has no lock concept to dispatch
+                # to -- so these two names have no dispatch-level equivalent
+                # to route through. Scoped to exactly these two files: the
+                # same names appearing in any OTHER bin/ file are still a
+                # real leak and must still be caught.
+                *dx_runtime_docker_lock_audit*|*dx_runtime_docker_lock_release*)
+                    case "$file" in */dx-lock|*/dx-status) continue ;; esac
+                    ;;
             esac
             matches="$matches$file:$line"$'\n'
-        done < <(grep -nE "$VERB_PATTERN" "$file" 2>/dev/null)
+        done < <(grep -nE "$VERB_PATTERN|$RUNTIME_PREFIX_PATTERN" "$file" 2>/dev/null)
     done < <(find "$root/bin" -type f)
     printf '%s' "$matches"
 }
@@ -157,6 +182,80 @@ else
 fi
 rm -rf "$fixture"
 
+# --- dx_runtime_apple_*/dx_runtime_docker_* boundary leak (Branch 11 /
+# Phase 3, Increment 4): a fully-spelled call to either adapter's own
+# namespace, outside the two adapter files, bypasses dx_runtime.sh's
+# dispatch and so runs unconditionally regardless of DX_RUNTIME.
+fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX")"
+trap 'rm -rf "$fixture"' EXIT
+mkdir -p "$fixture/bin/lib"
+cat > "$fixture/bin/dx-example" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+dx_example_list_names() { dx_runtime_apple_container_list_names "$@"; }
+EOF
+if [ -n "$(audit_bin_tree "$fixture")" ]; then
+    test_pass "audit detects a raw dx_runtime_apple_* call planted in a fixture entrypoint (red)"
+else
+    test_fail "audit detects a raw dx_runtime_apple_* call planted in a fixture entrypoint (red)"
+fi
+
+cat > "$fixture/bin/dx-example" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+dx_example_list_names() { dx_runtime_container_list "$@"; }
+EOF
+if [ -z "$(audit_bin_tree "$fixture")" ]; then
+    test_pass "audit is clean once the fixture entrypoint calls the dispatch-level contract instead (green)"
+else
+    test_fail "audit is clean once the fixture entrypoint calls the dispatch-level contract instead (green)"
+fi
+
+# A dynamic dispatch construction ("dx_runtime_docker_$op") is not a fully-
+# spelled name and must not be caught -- this is exactly bin/lib/dx-runtime.sh's
+# own dispatcher shape, which is not one of the two adapter files but must
+# still be exempt.
+cat > "$fixture/bin/dx-example" <<'EOF'
+#!/bin/bash
+op=container_list
+"dx_runtime_docker_$op" "$@"
+EOF
+if [ -z "$(audit_bin_tree "$fixture")" ]; then
+    test_pass "audit does not false-positive on a dynamic dx_runtime_<runtime>_\$op dispatch construction"
+else
+    test_fail "audit does not false-positive on a dynamic dx_runtime_<runtime>_\$op dispatch construction"
+fi
+
+# The allow-list is scoped to exactly bin/dx-lock and bin/dx-status calling
+# exactly dx_runtime_docker_lock_audit/_release -- the same call from any
+# OTHER file must still be caught.
+cat > "$fixture/bin/dx-example" <<'EOF'
+#!/bin/bash
+dx_runtime_docker_lock_audit
+EOF
+if [ -n "$(audit_bin_tree "$fixture")" ]; then
+    test_pass "the dx-lock/dx-status allow-list does not extend to any other file"
+else
+    test_fail "the dx-lock/dx-status allow-list does not extend to any other file"
+fi
+rm -f "$fixture/bin/dx-example"
+
+cat > "$fixture/bin/dx-lock" <<'EOF'
+#!/bin/bash
+dx_runtime_docker_lock_audit
+dx_runtime_docker_lock_release ""
+EOF
+cat > "$fixture/bin/dx-status" <<'EOF'
+#!/bin/bash
+dx_runtime_docker_lock_audit
+EOF
+if [ -z "$(audit_bin_tree "$fixture")" ]; then
+    test_pass "the dx-lock/dx-status allow-list exempts exactly their own authorised lock calls"
+else
+    test_fail "the dx-lock/dx-status allow-list exempts exactly their own authorised lock calls ($(audit_bin_tree "$fixture"))"
+fi
+rm -rf "$fixture"
+
 # --- Regression: the pure-comment-line filter must work at ANY line number,
 # not only when grep's own "N:" prefix happens to be short (Branch 11 /
 # Phase 2, 2026-09-27 -- see the dated comment on the filter itself). Ten
@@ -188,12 +287,14 @@ else
 fi
 rm -rf "$fixture"
 
-# --- The real gate: bin/ as it exists in this checkout.
+# --- The real gate: bin/ as it exists in this checkout. Covers both the
+# raw Apple `container` verb check and (Branch 11 / Phase 3, Increment 4)
+# the dx_runtime_apple_*/dx_runtime_docker_* boundary-leak check together.
 real_matches="$(audit_bin_tree "$BASE_DIR")"
 if [ -z "$real_matches" ]; then
-    test_pass "no raw Apple container lifecycle call remains under bin/ outside bin/lib/dx-runtime-apple.sh"
+    test_pass "no raw container lifecycle call or dx_runtime_apple_*/dx_runtime_docker_* boundary leak remains under bin/ outside the two adapter files (and the dx-lock/dx-status allow-list)"
 else
-    test_fail "raw container lifecycle call(s) found outside bin/lib/dx-runtime-apple.sh: $real_matches"
+    test_fail "raw container lifecycle call(s) or dx_runtime_apple_*/dx_runtime_docker_* boundary leak(s) found outside the two adapter files: $real_matches"
 fi
 
 print_summary

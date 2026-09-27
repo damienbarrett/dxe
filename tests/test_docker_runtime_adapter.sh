@@ -1519,5 +1519,196 @@ out="$(
 )
 [ "$?" -ne 0 ] && test_pass "image_identity (apple): fails closed when container image inspect cannot find the image" || test_fail "image_identity (apple): fails closed when container image inspect cannot find the image"
 
+# --- dx_container_list_names boundary-leak fix (Branch 11 / Phase 3,
+# Increment 4, docs/refactor/direct-volume-storage.md): bin/lib/dx-container.sh's
+# dx_container_list_names used to call dx_runtime_apple_container_list_names
+# DIRECTLY, unconditionally -- under DX_RUNTIME=docker-ssh this reached for
+# the local Apple `container` binary instead of dispatching to the docker-ssh
+# adapter. A poisoned `container` fake (fails loudly if ever invoked) proves
+# it is never reached now that dx_container_list_names routes through
+# dx_runtime_container_list.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" container 'echo "apple adapter should never run" >&2; exit 99'
+    fake_tool_write "$dir" docker '
+[ "$1" = ps ] || { echo "UNMATCHED: $*" >&2; exit 99; }
+case "$*" in *"-a"*) ;; *) echo "expected -a to pass through" >&2; exit 98 ;; esac
+echo "NAMES	IMAGE	STATUS"
+echo "dx-qnap-all	dx-qnap-nixos	Up 2 hours"'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DXE_RUNTIME_DOCKER_BIN=docker
+    dx_container_list_names true | grep -q -x -- dx-qnap-all
+)
+[ "$?" -eq 0 ] && test_pass "dx_container_list_names(true): docker-ssh reaches the docker adapter, never the local Apple container binary" || test_fail "dx_container_list_names(true): docker-ssh reaches the docker adapter, never the local Apple container binary"
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" container 'echo "apple adapter should never run" >&2; exit 99'
+    fake_tool_write "$dir" docker '
+[ "$1" = ps ] || { echo "UNMATCHED: $*" >&2; exit 99; }
+case "$*" in *"-a"*) echo "expected no -a for the running-only form" >&2; exit 98 ;; esac
+echo "NAMES	IMAGE	STATUS"
+echo "dx-qnap-running	dx-qnap-nixos	Up 2 hours"'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DXE_RUNTIME_DOCKER_BIN=docker
+    dx_container_list_names false | grep -q -x -- dx-qnap-running
+)
+[ "$?" -eq 0 ] && test_pass "dx_container_list_names(false): docker-ssh's running-only form omits -a, never reaches the local Apple container binary" || test_fail "dx_container_list_names(false): docker-ssh's running-only form omits -a, never reaches the local Apple container binary"
+
+# --- Helpers through the adapter under DX_RUNTIME=docker-ssh (Branch 11 /
+# Phase 3, Increment 4, item 4): bin/dx-create-volumes, bin/dx-destroy-container,
+# bin/dx-destroy-image, and bin/dx-migrate-persist already went through the
+# runtime-neutral contract in Phase 1 (no code change needed in any of
+# them); this proves that contract renders correct, DQ6-labelled Docker
+# argv end to end when actually invoked as entrypoints, not just at the
+# adapter-function level Section 33 already covers elsewhere in this file.
+
+# dx-create-volumes: every volume it ensures is created with DQ6 labels,
+# the role resolved correctly for all three configured volumes.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    cv_log="$dir/create-argv.log"
+    export DX_FAKE_ARGV_LOG="$cv_log"
+    : > "$cv_log"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "volume inspect") exit 1 ;;
+    "volume create")
+        shift 2
+        printf "%s\n" "$@" >> "$DX_FAKE_ARGV_LOG"
+        exit 0
+        ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+        DX_CONTAINER_NAME=dx-qnap \
+        DX_NIX_VOLUME=dxe-p3-nix DX_PERSIST_VOLUME=dxe-p3-persist DX_BOOTSTRAP_VOLUME=dxe-p3-bootstrap \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-create-volumes" >/dev/null 2>&1
+    # One token per line (dx-create-container's own logging convention);
+    # join with spaces so a role's --label token can be matched adjacent
+    # to the volume name that follows it in the real argv.
+    created="$(tr '\n' ' ' < "$cv_log")"
+    printf '%s\n' "$created" | stdin_matches -F -- '--label io.dxe.role=nix dxe-p3-nix' \
+        && printf '%s\n' "$created" | stdin_matches -F -- '--label io.dxe.role=persist dxe-p3-persist' \
+        && printf '%s\n' "$created" | stdin_matches -F -- '--label io.dxe.role=bootstrap dxe-p3-bootstrap' \
+        && printf '%s\n' "$created" | stdin_matches -F -- 'io.dxe.managed=true'
+)
+[ "$?" -eq 0 ] && test_pass "dx-create-volumes (docker-ssh): all three volumes created with DQ6 labels and the correct role" || test_fail "dx-create-volumes (docker-ssh): all three volumes created with DQ6 labels and the correct role"
+
+# dx-destroy-container: label check (container inspect) happens before the
+# delete; a mismatched label refuses the delete as a collision, never an
+# adoption candidate (DQ6).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "container inspect") echo "false|||"; exit 0 ;;
+esac
+case "$1" in
+    ps) echo "NAMES	IMAGE	STATUS"; echo "dx-qnap	dx-qnap-nixos	Exited"; exit 0 ;;
+    rm) echo "docker rm should never run on a label mismatch" >&2; exit 99 ;;
+    *) echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+        DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dxe-p3-nix \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-destroy-container" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision"
+)
+[ "$?" -eq 0 ] && test_pass "dx-destroy-container (docker-ssh): label check runs before delete, refusing a collision rather than deleting" || test_fail "dx-destroy-container (docker-ssh): label check runs before delete, refusing a collision rather than deleting"
+
+# dx-destroy-image: images are never labelled (docker tag cannot attach a
+# label), so this is a plain passthrough once the image is confirmed to
+# exist -- proves the entrypoint reaches the docker adapter at all.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    di_log="$dir/image-rm.log"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "image inspect") exit 0 ;;
+esac
+case "$1" in
+    image)
+        [ "$2" = rm ] && { shift 2; printf "%s\n" "$@" >> "'"$di_log"'"; exit 0; }
+        ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+        DX_IMAGE=dxe-p3-image \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-destroy-image" >/dev/null 2>&1
+    grep -qF -- dxe-p3-image "$di_log"
+)
+[ "$?" -eq 0 ] && test_pass "dx-destroy-image (docker-ssh): reaches the docker adapter and removes the confirmed image" || test_fail "dx-destroy-image (docker-ssh): reaches the docker adapter and removes the confirmed image"
+
+# dx-migrate-persist: dx_runtime_run_ephemeral's argv (Apple's own flag
+# vocabulary: --rm --volume NAME:TARGET:MODE --entrypoint sh IMAGE -lc
+# SCRIPT -- ARGS) happens to be valid `docker run` syntax too -- asserted
+# at the argv level (docs/refactor/direct-volume-storage.md's task file:
+# "if a real incompatibility appears, STOP and report, do not redesign
+# run_ephemeral"). The legacy volume exists and is empty of anything but
+# the sentinel-check reads, so migration completes.
+mp_dir="$(new_tool_dir)"
+mp_log="$mp_dir/run-argv.log"
+: > "$mp_log"
+(
+    dir="$mp_dir"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "container inspect") exit 1 ;;
+    "volume inspect")
+        [ "$3" = dxe-p3-legacy ] && exit 0
+        [ "$3" = dxe-p3-persist ] && exit 1
+        exit 1
+        ;;
+    "image inspect") exit 0 ;;
+esac
+case "$1" in
+    run)
+        shift
+        printf "%s\n" "$@" >> "'"$mp_log"'"
+        case "$*" in
+            *"--volume dxe-p3-persist:/new:rw --entrypoint sh"*"cat"*) exit 0 ;;
+            *"--volume dxe-p3-legacy:/old:ro"*) exit 0 ;;
+            *) exit 0 ;;
+        esac
+        ;;
+    volume)
+        [ "$2" = create ] && exit 0
+        ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+        DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dxe-p3-image \
+        DX_LEGACY_WORKSPACE_VOLUME=dxe-p3-legacy DX_PERSIST_VOLUME=dxe-p3-persist \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-migrate-persist" 2>&1)"; rc=$?
+    argv="$(tr '\n' ' ' < "$mp_log")"
+    [ "$rc" -eq 0 ] \
+        && printf '%s\n' "$argv" | stdin_matches -F -- '--rm --volume dxe-p3-persist:/new:rw --entrypoint sh' \
+        && printf '%s\n' "$argv" | stdin_matches -F -- '--volume dxe-p3-legacy:/old:ro --volume dxe-p3-persist:/new:rw --entrypoint sh'
+)
+[ "$?" -eq 0 ] && test_pass "dx-migrate-persist (docker-ssh): dx_runtime_run_ephemeral's Apple-flavoured argv is valid docker run syntax too" || test_fail "dx-migrate-persist (docker-ssh): dx_runtime_run_ephemeral's Apple-flavoured argv is valid docker run syntax too (argv: $(cat "$mp_log" 2>/dev/null))"
+
 print_summary
 exit_with_code
