@@ -6,7 +6,11 @@ tests, parallel experiments, or multiple containers on the same host.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `DX_RUNTIME` | `apple` | Container lifecycle runtime. `apple` is the only implemented value; `docker` is reserved for a future remote-Docker runtime and is rejected with a clear message until then. |
+| `DX_RUNTIME` | `apple` | Container lifecycle runtime. `apple` (the local Apple Container runtime) or `docker-ssh` (the remote Docker-over-SSH runtime, `qnap-dxe-plan.md` Phase 2); any other value, including the retired Phase 1 placeholder `docker`, is rejected with a clear message. |
+| `DX_REMOTE_HOST` | empty | Validated OpenSSH config alias for the `docker-ssh` runtime's target host (e.g. `qnap-dxe`); required when `DX_RUNTIME=docker-ssh`, must stay empty for `apple`. The alias itself owns the username, identity file, address, and host-key policy -- this field only ever stores its name, never ssh option text. See `tests/profiles/qnap-example.env`. |
+| `DX_GUEST_SYSTEM` | `aarch64-linux` | Target guest system for the `docker-ssh` runtime's preflight, matching the remote host's own `uname -m` (`aarch64-linux` or `x86_64-linux`). Unused by `apple`, which is always `aarch64-linux`. |
+| `DX_NIX_STORAGE_MODE` | `apple-image` | `apple-image` (the existing Apple sparse-image-in-a-managed-volume shape) or `direct-volume` (`qnap-dxe-plan.md` DQ4: mount the Nix volume directly at `/nix`, used by `docker-ssh`). |
+| `DX_CONTAINER_RESTART_POLICY` | `no` | `no` or `unless-stopped`. Apple never sets a restart-policy flag regardless of this value (`dx_runtime_capability restart_policy` is false for `apple`); `docker-ssh` passes it to `docker create --restart`. |
 | `DX_CONTAINER_NAME` | `dx-host` | Apple container name. Change this to create a separate container without touching the default DXE instance. |
 | `DX_IMAGE` | `dx-nixos-26.05` | Image name used by `dx-create-image` and `dx-create-container`. |
 | `DX_SSH_PORT` | `2222` | Host port forwarded to guest SSH port `2222`. Use a different port for a second running container. |

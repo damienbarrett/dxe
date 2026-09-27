@@ -88,22 +88,112 @@ expect_reject "DX_BACKUP_DIR rejects a relative path" dx_config_validate_value D
 expect_reject "DX_BACKUP_DIR rejects an empty value" dx_config_validate_value DX_BACKUP_DIR ''
 
 # Branch 11 / Phase 1 (qnap-dxe-plan.md DQ2/DQ3): DX_RUNTIME selects the
-# lifecycle adapter bin/lib/dx-runtime.sh dispatches to. Phase 1 ships only
-# the Apple adapter, so `docker` -- a real, named future value, not garbage
-# -- is rejected with its own clear message distinct from every other
-# invalid value's generic rejection.
+# lifecycle adapter bin/lib/dx-runtime.sh dispatches to. Phase 2
+# (docker-ssh) is now implemented alongside apple; `docker` -- Phase 1's
+# placeholder name, not garbage -- is rejected with its own clear message
+# naming the real value, distinct from every other invalid value's generic
+# rejection.
 expect_ok "DX_RUNTIME is a registered config field" dx_config_is_field DX_RUNTIME
 [ "$(dx_config_default DX_RUNTIME)" = apple ] && test_pass "DX_RUNTIME defaults to apple" || test_fail "DX_RUNTIME defaults to apple"
 expect_ok "DX_RUNTIME accepts apple" dx_config_validate_value DX_RUNTIME apple
-expect_reject "DX_RUNTIME rejects docker until Phase 2" dx_config_validate_value DX_RUNTIME docker
+expect_ok "DX_RUNTIME accepts docker-ssh" dx_config_validate_value DX_RUNTIME docker-ssh
+expect_reject "DX_RUNTIME rejects the Phase 1 placeholder 'docker'" dx_config_validate_value DX_RUNTIME docker
 dx_runtime_docker_message="$(dx_config_validate_value DX_RUNTIME docker 2>&1 >/dev/null || true)"
-if printf '%s\n' "$dx_runtime_docker_message" | stdin_matches "not implemented until Phase 2"; then
-    test_pass "DX_RUNTIME=docker's rejection names Phase 2, not a generic invalid-value message"
+if printf '%s\n' "$dx_runtime_docker_message" | stdin_matches "docker-ssh"; then
+    test_pass "DX_RUNTIME=docker's rejection names the real value docker-ssh, not a generic invalid-value message"
 else
-    test_fail "DX_RUNTIME=docker's rejection names Phase 2 (got: $dx_runtime_docker_message)"
+    test_fail "DX_RUNTIME=docker's rejection names docker-ssh (got: $dx_runtime_docker_message)"
 fi
 expect_reject "DX_RUNTIME rejects an unknown value" dx_config_validate_value DX_RUNTIME bogus
 expect_reject "DX_RUNTIME rejects an empty value" dx_config_validate_value DX_RUNTIME ''
+
+# Branch 11 / Phase 2 (qnap-dxe-plan.md DQ3): the four new docker-ssh config
+# fields, their defaults, and their cross-field agreement with DX_RUNTIME.
+expect_ok "DX_REMOTE_HOST is a registered config field" dx_config_is_field DX_REMOTE_HOST
+[ "$(dx_config_default DX_REMOTE_HOST)" = '' ] && test_pass "DX_REMOTE_HOST defaults to empty" || test_fail "DX_REMOTE_HOST defaults to empty"
+expect_ok "DX_REMOTE_HOST accepts empty at the per-field level" dx_config_validate_value DX_REMOTE_HOST ''
+expect_ok "DX_REMOTE_HOST accepts a plain ssh alias" dx_config_validate_value DX_REMOTE_HOST qnap-dxe
+expect_ok "DX_REMOTE_HOST accepts an alias with digits and underscores" dx_config_validate_value DX_REMOTE_HOST qnap_2
+expect_reject "DX_REMOTE_HOST rejects a leading dot" dx_config_validate_value DX_REMOTE_HOST .qnap-dxe
+expect_reject "DX_REMOTE_HOST rejects a leading hyphen" dx_config_validate_value DX_REMOTE_HOST -qnap-dxe
+expect_reject "DX_REMOTE_HOST rejects whitespace" dx_config_validate_value DX_REMOTE_HOST 'qnap dxe'
+expect_reject "DX_REMOTE_HOST rejects shell metacharacters" dx_config_validate_value DX_REMOTE_HOST 'qnap;dxe'
+expect_reject "DX_REMOTE_HOST rejects a user@host shape (alias only, not arbitrary ssh target text)" dx_config_validate_value DX_REMOTE_HOST 'user@qnap-dxe'
+
+expect_ok "DX_GUEST_SYSTEM is a registered config field" dx_config_is_field DX_GUEST_SYSTEM
+[ "$(dx_config_default DX_GUEST_SYSTEM)" = aarch64-linux ] && test_pass "DX_GUEST_SYSTEM defaults to aarch64-linux" || test_fail "DX_GUEST_SYSTEM defaults to aarch64-linux"
+expect_ok "DX_GUEST_SYSTEM accepts aarch64-linux" dx_config_validate_value DX_GUEST_SYSTEM aarch64-linux
+expect_ok "DX_GUEST_SYSTEM accepts x86_64-linux" dx_config_validate_value DX_GUEST_SYSTEM x86_64-linux
+expect_reject "DX_GUEST_SYSTEM rejects an unsupported architecture" dx_config_validate_value DX_GUEST_SYSTEM armv7l-linux
+expect_reject "DX_GUEST_SYSTEM rejects an empty value" dx_config_validate_value DX_GUEST_SYSTEM ''
+
+expect_ok "DX_NIX_STORAGE_MODE is a registered config field" dx_config_is_field DX_NIX_STORAGE_MODE
+[ "$(dx_config_default DX_NIX_STORAGE_MODE)" = apple-image ] && test_pass "DX_NIX_STORAGE_MODE defaults to apple-image" || test_fail "DX_NIX_STORAGE_MODE defaults to apple-image"
+expect_ok "DX_NIX_STORAGE_MODE accepts apple-image" dx_config_validate_value DX_NIX_STORAGE_MODE apple-image
+expect_ok "DX_NIX_STORAGE_MODE accepts direct-volume" dx_config_validate_value DX_NIX_STORAGE_MODE direct-volume
+expect_reject "DX_NIX_STORAGE_MODE rejects an unknown value" dx_config_validate_value DX_NIX_STORAGE_MODE bogus
+
+expect_ok "DX_CONTAINER_RESTART_POLICY is a registered config field" dx_config_is_field DX_CONTAINER_RESTART_POLICY
+[ "$(dx_config_default DX_CONTAINER_RESTART_POLICY)" = no ] && test_pass "DX_CONTAINER_RESTART_POLICY defaults to no" || test_fail "DX_CONTAINER_RESTART_POLICY defaults to no"
+expect_ok "DX_CONTAINER_RESTART_POLICY accepts no" dx_config_validate_value DX_CONTAINER_RESTART_POLICY no
+expect_ok "DX_CONTAINER_RESTART_POLICY accepts unless-stopped" dx_config_validate_value DX_CONTAINER_RESTART_POLICY unless-stopped
+expect_reject "DX_CONTAINER_RESTART_POLICY rejects an unknown value" dx_config_validate_value DX_CONTAINER_RESTART_POLICY always
+
+# Cross-field agreement (qnap-dxe-plan.md DQ3: "Invalid cross-field
+# combinations fail before contacting either runtime"): DX_REMOTE_HOST is
+# required for docker-ssh and forbidden for apple. Exercised through a full
+# dx_init_config resolution (not dx_config_validate_value alone, which never
+# sees two fields at once) in an isolated fixture root with no root .env,
+# so only DX_RUNTIME/DX_REMOTE_HOST environment overrides matter.
+cross_root="$fixture/cross"
+mkdir -p "$cross_root"
+(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    DX_RUNTIME=docker-ssh
+    dx_init_config "$cross_root" >/dev/null 2>&1
+) && test_fail "DX_RUNTIME=docker-ssh with no DX_REMOTE_HOST refuses to resolve" || test_pass "DX_RUNTIME=docker-ssh with no DX_REMOTE_HOST refuses to resolve"
+(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    dx_init_config "$cross_root" >/dev/null 2>&1
+) && test_pass "DX_RUNTIME=docker-ssh with a valid DX_REMOTE_HOST resolves" || test_fail "DX_RUNTIME=docker-ssh with a valid DX_REMOTE_HOST resolves"
+(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    DX_RUNTIME=apple DX_REMOTE_HOST=qnap-dxe
+    dx_init_config "$cross_root" >/dev/null 2>&1
+) && test_fail "DX_RUNTIME=apple with a non-empty DX_REMOTE_HOST refuses to resolve" || test_pass "DX_RUNTIME=apple with a non-empty DX_REMOTE_HOST refuses to resolve"
+(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    dx_init_config "$cross_root" >/dev/null 2>&1
+) && test_pass "DX_RUNTIME=apple (default) with no DX_REMOTE_HOST resolves" || test_fail "DX_RUNTIME=apple (default) with no DX_REMOTE_HOST resolves"
+
+# The checked-in example profile (qnap-dxe-plan.md DQ3) parses cleanly under
+# the same strict data grammar as any other profile -- placeholder values
+# only, no real hostname/user/path, proven separately by
+# tests/test_section1_secrets.sh's leak scan.
+(
+    for field in $DXE_CONFIG_FIELDS; do unset "DXE_PARSED_$field"; done
+    DX_PROJECT_ROOT="$BASE_DIR"
+    dx_parse_config_file "$BASE_DIR/tests/profiles/qnap-example.env"
+) && test_pass "tests/profiles/qnap-example.env parses under the config data grammar" || test_fail "tests/profiles/qnap-example.env parses under the config data grammar"
+example_root="$fixture/qnap-example-root"
+mkdir -p "$example_root"
+(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field" "DXE_PARSED_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    DX_PROJECT_ROOT="$example_root"
+    dx_parse_config_file "$BASE_DIR/tests/profiles/qnap-example.env"
+    for name in $DXE_CONFIG_FIELDS; do
+        parsed_name="DXE_PARSED_$name"
+        [ "${!parsed_name+x}" = x ] && printf -v "$name" '%s' "${!parsed_name}"
+    done
+    dx_init_config "$example_root" >/dev/null 2>&1
+    [ "$DX_RUNTIME" = docker-ssh ] && [ "$DX_REMOTE_HOST" = qnap-dxe ] && [ "$DX_GUEST_SYSTEM" = x86_64-linux ] && [ "$DX_NIX_STORAGE_MODE" = direct-volume ]
+) && test_pass "tests/profiles/qnap-example.env resolves a valid docker-ssh configuration" || test_fail "tests/profiles/qnap-example.env resolves a valid docker-ssh configuration"
 
 # Process identity and lock reclamation use PID plus process start, never PID alone.
 lock="$fixture/live.lock"

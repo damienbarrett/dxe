@@ -3,7 +3,7 @@
 # This file intentionally does not set shell options or initialize configuration.
 
 DXE_CONFIG_SNAPSHOT_VERSION_CURRENT=1
-DXE_CONFIG_FIELDS="DX_RUNTIME DX_CONTAINER_NAME DX_IMAGE DX_SSH_PORT DX_SSH_KEY DX_SSH_KEY_PUB DX_SSH_CONNECT_TIMEOUT DX_CONTEXT_DIR DX_BOOTSTRAP_SOURCE DX_BOOTSTRAP_VOLUME DX_BOOTSTRAP_PATH DX_BOOTSTRAP_WAIT_TIMEOUT DX_BOOTSTRAP_CONFIRM_TIMEOUT DX_GUEST_ACTIVATION_TIMEOUT DX_GUEST_ACTIVATION_ATTEMPTS DX_GUEST_ACTIVATION_RETRY_DELAY DX_NIX_VOLUME DX_NIX_MOUNT DX_NIX_DISK DX_NIX_DISK_SIZE DX_PERSIST_VOLUME DX_GIT_MOUNT_SOURCE DX_GIT_MOUNT_TARGET DX_GUEST_WORKDIR DX_CONTAINER_MEMORY DX_CONTAINER_CPUS DX_CONTAINER_VOLUME_DIR DX_STOP_GRACE_SECONDS DX_STOP_COMMAND_TIMEOUT DX_STOP_WAIT_TIMEOUT DX_DELETE_COMMAND_TIMEOUT DX_MOUNT_IDENTITY_DIR DX_TUNNEL_LOCK_TIMEOUT DX_BACKUP_DIR"
+DXE_CONFIG_FIELDS="DX_RUNTIME DX_REMOTE_HOST DX_GUEST_SYSTEM DX_NIX_STORAGE_MODE DX_CONTAINER_RESTART_POLICY DX_CONTAINER_NAME DX_IMAGE DX_SSH_PORT DX_SSH_KEY DX_SSH_KEY_PUB DX_SSH_CONNECT_TIMEOUT DX_CONTEXT_DIR DX_BOOTSTRAP_SOURCE DX_BOOTSTRAP_VOLUME DX_BOOTSTRAP_PATH DX_BOOTSTRAP_WAIT_TIMEOUT DX_BOOTSTRAP_CONFIRM_TIMEOUT DX_GUEST_ACTIVATION_TIMEOUT DX_GUEST_ACTIVATION_ATTEMPTS DX_GUEST_ACTIVATION_RETRY_DELAY DX_NIX_VOLUME DX_NIX_MOUNT DX_NIX_DISK DX_NIX_DISK_SIZE DX_PERSIST_VOLUME DX_GIT_MOUNT_SOURCE DX_GIT_MOUNT_TARGET DX_GUEST_WORKDIR DX_CONTAINER_MEMORY DX_CONTAINER_CPUS DX_CONTAINER_VOLUME_DIR DX_STOP_GRACE_SECONDS DX_STOP_COMMAND_TIMEOUT DX_STOP_WAIT_TIMEOUT DX_DELETE_COMMAND_TIMEOUT DX_MOUNT_IDENTITY_DIR DX_TUNNEL_LOCK_TIMEOUT DX_BACKUP_DIR"
 
 dx_config_is_field() {
     case " $DXE_CONFIG_FIELDS " in
@@ -22,6 +22,10 @@ dx_config_path_field() {
 dx_config_default() {
     case "$1" in
         DX_RUNTIME) printf '%s' apple ;;
+        DX_REMOTE_HOST) printf '%s' '' ;;
+        DX_GUEST_SYSTEM) printf '%s' aarch64-linux ;;
+        DX_NIX_STORAGE_MODE) printf '%s' apple-image ;;
+        DX_CONTAINER_RESTART_POLICY) printf '%s' no ;;
         DX_CONTAINER_NAME) printf '%s' dx-host ;;
         DX_IMAGE) printf '%s' dx-nixos-26.05 ;;
         DX_SSH_PORT) printf '%s' 2222 ;;
@@ -63,12 +67,13 @@ dx_config_validate_value() {
     local name="$1" value="$2" number
     case "$name" in
         DX_RUNTIME)
-            # Phase 1 (qnap-dxe-plan.md DQ2/DQ3) ships only the Apple
-            # adapter. `docker` is a real, named future value (Phase 2's
-            # runtime), so it earns its own clear rejection message here
-            # rather than falling into the generic "invalid value"
-            # reported by every caller of this predicate; any other value
-            # is simply invalid.
+            # Phase 2 (qnap-dxe-plan.md DQ2/DQ3) ships the docker-ssh
+            # adapter alongside Apple's. Phase 1 used the placeholder name
+            # `docker`; that bare name is never valid (the implemented value
+            # is `docker-ssh`, DQ1's Docker-over-SSH control plane), and it
+            # earns its own clear rejection message pointing at the real
+            # name, distinct from the generic "invalid value" reported by
+            # every caller of this predicate for any other bogus value.
             case "$value" in
                 # `:` (not a bare `;;`) so this no-op branch is itself a
                 # traceable command -- an empty case arm registers no
@@ -77,9 +82,37 @@ dx_config_validate_value() {
                 # linux.sh's KCOV_SUBSHELL_TERMINATOR for the same class of
                 # kcov limitation).
                 apple) : ;;
-                docker) echo "Error: DX_RUNTIME=docker is not implemented until Phase 2." >&2; return 1 ;;
+                docker-ssh) : ;;
+                docker) echo "Error: DX_RUNTIME=docker was Phase 1's placeholder name; the implemented value is 'docker-ssh'." >&2; return 1 ;;
                 *) return 1 ;;
             esac
+            ;;
+        DX_REMOTE_HOST)
+            # A validated OpenSSH config alias (qnap-dxe-plan.md DQ1: "The
+            # OpenSSH alias owns the username, management identity file,
+            # MagicDNS name, host-key policy... DXE configuration stores the
+            # alias, not arbitrary SSH option text"). Empty is allowed at
+            # this per-field level -- it is the correct value for
+            # DX_RUNTIME=apple -- and is required (or forbidden) only in
+            # combination with DX_RUNTIME, which dx_config_validate_cross_fields
+            # checks once every field is resolved. Same character class as
+            # the other short-identifier fields (DX_CONTAINER_NAME etc.):
+            # no leading dot/hyphen, no shell metacharacters, so it can only
+            # ever cross an ssh command line as a single, unambiguous token.
+            case "$value" in
+                '') : ;;
+                [.-]*|*[!A-Za-z0-9_.-]*) return 1 ;;
+                *) : ;;
+            esac
+            ;;
+        DX_GUEST_SYSTEM)
+            case "$value" in aarch64-linux|x86_64-linux) : ;; *) return 1 ;; esac
+            ;;
+        DX_NIX_STORAGE_MODE)
+            case "$value" in apple-image|direct-volume) : ;; *) return 1 ;; esac
+            ;;
+        DX_CONTAINER_RESTART_POLICY)
+            case "$value" in no|unless-stopped) : ;; *) return 1 ;; esac
             ;;
         DX_CONTAINER_NAME|DX_NIX_VOLUME|DX_PERSIST_VOLUME|DX_BOOTSTRAP_VOLUME)
             case "$value" in ''|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
@@ -109,6 +142,31 @@ dx_config_validate_value() {
             ;;
         DX_GIT_MOUNT_SOURCE|DX_GUEST_WORKDIR)
             case "$value" in ''|/*) ;; *) return 1 ;; esac
+            ;;
+    esac
+}
+
+# Cross-field checks that need more than one already-resolved field at once
+# (qnap-dxe-plan.md DQ3: "Invalid cross-field combinations fail before
+# contacting either runtime"). Called only after every field in
+# DXE_CONFIG_FIELDS has its own per-field value validated and resolved (by
+# dx_init_config's own loop, or by dx_validate_config_snapshot for an
+# inherited child snapshot) -- never from dx_config_validate_value itself,
+# which only ever sees one NAME/value pair and cannot see DX_RUNTIME while
+# validating DX_REMOTE_HOST or vice versa.
+dx_config_validate_cross_fields() {
+    case "${DX_RUNTIME:-}" in
+        docker-ssh)
+            [ -n "${DX_REMOTE_HOST:-}" ] || {
+                echo "Error: DX_REMOTE_HOST is required when DX_RUNTIME=docker-ssh (a validated OpenSSH config alias for the QNAP host)." >&2
+                return 1
+            }
+            ;;
+        *)
+            [ -z "${DX_REMOTE_HOST:-}" ] || {
+                echo "Error: DX_REMOTE_HOST must be empty unless DX_RUNTIME=docker-ssh." >&2
+                return 1
+            }
             ;;
     esac
 }
@@ -182,6 +240,7 @@ dx_validate_config_snapshot() {
         value=${!name}
         dx_config_validate_value "$name" "$value" || { echo "Error: invalid $name in resolved DXE configuration snapshot." >&2; return 1; }
     done
+    dx_config_validate_cross_fields
 }
 
 dx_config_set_resolved() {
@@ -235,6 +294,8 @@ dx_init_config() {
         dx_config_set_resolved "$name" "$value" "$origin"
         unset "$parsed_name"
     done
+
+    dx_config_validate_cross_fields || return 1
 
     DXE_CONFIG_SNAPSHOT_VERSION=$DXE_CONFIG_SNAPSHOT_VERSION_CURRENT
     DXE_CONFIG_RESOLVED=1
