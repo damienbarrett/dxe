@@ -177,3 +177,20 @@ directly — see the note above), committed separately (`d713906`). Raised,
 not lowered: this branch adds real production scope lines
 (`dx-persist-backup-select.sh`, `bin/lib/dx-backup.sh`), so leaving the
 prior baseline in place would have been unearned slack.
+
+## Landing (2026-09-27)
+
+Rebased onto `main` `4b965d7` (docs-only movement since the branch base;
+no conflicts); the ratchet re-measured on a clean export of the rebased tip
+is unchanged at 2004 bp. The open point from the task — a "denied by the
+deny-list" total in `--dry-run --summary` — was decided by the coordinating
+session as option (c): not added (the walk prunes component-denied
+directories before the selector sees them, so a cheap count would mislead;
+the by-directory/by-reason breakdown is the tool for that). Re-checked on the
+rebased tip: bash-3.2 suite, Sections 1, 10 and 27, the runtime-boundary
+audit, the three backup/restore test files, the Phase 0 dry-runs, the private
+identifier scan. G5: GitHub Actions on the pushed branch, green before `main`
+was fast-forwarded. Live verification on the primary guest (a
+`--dry-run --summary` and a real `dx-backup` against the very nested-repo
+shape that crashed the earlier run) follows the landing and is recorded in
+the coordinating session's promotion notes.
