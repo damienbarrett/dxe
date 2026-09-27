@@ -650,16 +650,59 @@ echo hi
 )
 [ "$?" -eq 0 ] && test_pass "container_kill: passthrough" || test_fail "container_kill: passthrough"
 
+# --- DQ6 labels + collision refusal (item 5) --------------------------
+
+# container_delete: label check passes (managed=true, matching profile,
+# role=container), then the real rm/--force call happens.
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
-    fake_tool_write "$dir" docker '[ "$1" = rm ] && [ "$2" = --force ] && [ "$3" = dx-qnap ] && exit 0; exit 1'
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "container inspect") echo "true|1|qnap-dxe__dx-qnap|container" ;;
+    *) [ "$1" = rm ] && [ "$2" = --force ] && [ "$3" = dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_delete --force dx-qnap
 )
-[ "$?" -eq 0 ] && test_pass "container_delete: Apple's 'delete' verb maps to Docker's 'rm', --force passes through" || test_fail "container_delete: Apple's 'delete' verb maps to Docker's 'rm', --force passes through"
+[ "$?" -eq 0 ] && test_pass "container_delete: label match -> Apple's 'delete' verb maps to Docker's 'rm', --force passes through" || test_fail "container_delete: label match -> Apple's 'delete' verb maps to Docker's 'rm', --force passes through"
+
+# container_delete: refuses when the target is unlabelled (a collision, not
+# an adoption candidate) -- the fake rm would fail loudly if ever reached.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "container inspect") echo "<no value>|<no value>|<no value>|<no value>" ;;
+    *) echo "docker rm should never run" >&2; exit 99 ;;
+esac'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_container_delete dx-qnap 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "container_delete: refuses an unlabelled same-named container (DQ6 collision)" || test_fail "container_delete: refuses an unlabelled same-named container (DQ6 collision)"
+
+# container_delete: refuses when labelled for a DIFFERENT profile.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "container inspect") echo "true|1|qnap-OTHER__dx-qnap|container" ;;
+    *) echo "docker rm should never run" >&2; exit 99 ;;
+esac'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_container_delete dx-qnap 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "container_delete: refuses a container labelled for a different profile" || test_fail "container_delete: refuses a container labelled for a different profile"
 
 (
     dir="$(new_tool_dir)"
@@ -670,29 +713,86 @@ echo hi
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_image_delete dx-qnap-nixos
 )
-[ "$?" -eq 0 ] && test_pass "image_delete: passthrough" || test_fail "image_delete: passthrough"
+[ "$?" -eq 0 ] && test_pass "image_delete: passthrough (no label check possible -- images are never built, only pulled+tagged)" || test_fail "image_delete: passthrough (no label check possible -- images are never built, only pulled+tagged)"
 
+# volume_create: role derived from the configured volume name, labels attached.
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
-    fake_tool_write "$dir" docker '[ "$1" = volume ] && [ "$2" = create ] && [ "$3" = dx-qnap-nix ] && exit 0; exit 1'
+    argv_log="$fixture/volcreate-argv.log"
+    fake_tool_write "$dir" docker "
+[ \"\$1 \$2\" = 'volume create' ] || { echo UNMATCHED >&2; exit 99; }
+shift 2
+printf '%s\n' \"\$@\" > '$argv_log'
+"
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_volume_create dx-qnap-nix
+    got="$(cat "$argv_log")"
+    printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.role=nix" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.profile=qnap-dxe__dx-qnap" && printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-nix"
 )
-[ "$?" -eq 0 ] && test_pass "volume_create: passthrough" || test_fail "volume_create: passthrough"
+[ "$?" -eq 0 ] && test_pass "volume_create: role derived from the configured name, DQ6 labels attached" || test_fail "volume_create: role derived from the configured name, DQ6 labels attached"
 
+# volume_create: refuses a name that is not one of the three configured
+# volumes rather than creating something unlabelled.
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
-    fake_tool_write "$dir" docker '[ "$1" = volume ] && [ "$2" = rm ] && [ "$3" = dx-qnap-nix ] && exit 0; exit 1'
+    fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_volume_create some-other-volume 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "not one of the configured DXE volumes"
+)
+[ "$?" -eq 0 ] && test_pass "volume_create: refuses an unrecognized volume name rather than creating it unlabelled" || test_fail "volume_create: refuses an unrecognized volume name rather than creating it unlabelled"
+
+# volume_delete: label match succeeds.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "volume inspect") echo "true|1|qnap-dxe__dx-qnap|nix" ;;
+    *) [ "$1" = volume ] && [ "$2" = rm ] && [ "$3" = dx-qnap-nix ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_volume_delete dx-qnap-nix
 )
-[ "$?" -eq 0 ] && test_pass "volume_delete: passthrough" || test_fail "volume_delete: passthrough"
+[ "$?" -eq 0 ] && test_pass "volume_delete: label match -> passthrough" || test_fail "volume_delete: label match -> passthrough"
+
+# volume_delete: refuses an unlabelled same-named volume.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "volume inspect") echo "<no value>|<no value>|<no value>|<no value>" ;;
+    *) echo "docker volume rm should never run" >&2; exit 99 ;;
+esac'
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_volume_delete dx-qnap-nix 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "volume_delete: refuses an unlabelled same-named volume (DQ6 collision)" || test_fail "volume_delete: refuses an unlabelled same-named volume (DQ6 collision)"
+
+# volume_delete: refuses a name outside the three configured volumes.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_volume_delete some-other-volume 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "not one of the configured DXE volumes"
+)
+[ "$?" -eq 0 ] && test_pass "volume_delete: refuses an unrecognized volume name" || test_fail "volume_delete: refuses an unrecognized volume name"
 
 # exec: argv-verbatim AND stdin passthrough (piped and file-redirected),
 # exit status unchanged under `set -o pipefail`, no intermediate cat/subshell

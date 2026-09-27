@@ -432,11 +432,68 @@ dx_runtime_docker_container_kill() {
     dx_runtime_docker_ssh_exec "$bin" kill "$@"
 }
 
+# --- DQ6 label verification before deletion (item 5) -----------------------
+#
+# "An existing same-named unlabelled or differently labelled object is a
+# collision, not an adoption candidate" (DQ6). Checked here, not at create
+# time: dx_runtime_volume_create/dx_runtime_container_create are only ever
+# reached after an existing caller's own dx_runtime_*_exists check already
+# returned false (bin/lib/dx-container.sh's container_ensure_volume:
+# "dx_runtime_volume_exists ... || dx_runtime_volume_create ..."), so a
+# collision at CREATE time is a create-then-immediately-delete question the
+# existing entrypoints do not raise; DESTRUCTIVE commands always run
+# unconditionally against a name the caller already resolved to exist, so
+# this is where "prove ownership before mutation" actually bites, matching
+# the plan's own item-5 wording: "Add DQ6 labels and collision refusal
+# before enabling deletion."
+#
+# Images are the one exception: qnap-dxe-plan.md Phase 0 found the NAS
+# refuses a remote `docker build`, so image_build (above) never builds --
+# it pulls and tags a pinned reference, and `docker tag` cannot attach a
+# label (only a build or commit can). There is therefore no label DQ6
+# could check for an image; image_delete's only available protection is
+# the exact-name addressing its one caller (bin/dx-destroy-image) already
+# provides. Documented here rather than silently pretended away.
+
+dx_runtime_docker_volume_labels() {
+    local bin="$1" name="$2" fields
+    fields="$(dx_runtime_docker_ssh_exec "$bin" volume inspect --format '{{index .Labels "io.dxe.managed"}}|{{index .Labels "io.dxe.schema"}}|{{index .Labels "io.dxe.profile"}}|{{index .Labels "io.dxe.role"}}' "$name" 2>/dev/null)" || return 1
+    printf '%s\n' "$fields" | tail -n1 | tr -d '\r'
+}
+
+dx_runtime_docker_container_labels() {
+    local bin="$1" name="$2" fields
+    fields="$(dx_runtime_docker_ssh_exec "$bin" container inspect --format '{{index .Config.Labels "io.dxe.managed"}}|{{index .Config.Labels "io.dxe.schema"}}|{{index .Config.Labels "io.dxe.profile"}}|{{index .Config.Labels "io.dxe.role"}}' "$name" 2>/dev/null)" || return 1
+    printf '%s\n' "$fields" | tail -n1 | tr -d '\r'
+}
+
+# Shared refusal logic: given a "managed|schema|profile|role" fields
+# string (or a failed lookup) and the expected role, refuse unless every
+# field matches this profile exactly.
+dx_runtime_docker_verify_labels() {
+    local kind="$1" name="$2" expected_role="$3" fields="$4" managed schema profile role
+    if [ -z "$fields" ]; then
+        echo "Error: refusing to delete $kind '$name': it does not exist or its labels could not be read." >&2
+        return 1
+    fi
+    IFS='|' read -r managed schema profile role <<<"$fields"
+    if [ "$managed" != true ] || [ "$profile" != "$(dx_runtime_docker_profile_id)" ] || [ "$role" != "$expected_role" ]; then
+        echo "Error: refusing to delete $kind '$name': it exists but is unlabelled or labelled for a different profile/role (qnap-dxe-plan.md DQ6 -- this is a collision, not an adoption candidate). Found managed=${managed:-<none>} schema=${schema:-<none>} profile=${profile:-<none>} role=${role:-<none>}; expected managed=true profile=$(dx_runtime_docker_profile_id) role=$expected_role." >&2
+        return 1
+    fi
+}
+
 # Apple's verb is "delete"; Docker's is "rm" -- otherwise identical flags
-# (Apple --force, Docker -f/--force).
+# (Apple --force, Docker -f/--force). The container name is always the
+# last argument (bin/dx-destroy-container calls this as either
+# "dx_runtime_container_delete NAME" or
+# "dx_runtime_container_delete --force NAME").
 dx_runtime_docker_container_delete() {
-    local bin
+    local bin name fields
     bin="$(dx_runtime_docker_require_bin)" || return 1
+    for name in "$@"; do :; done
+    fields="$(dx_runtime_docker_container_labels "$bin" "$name")" || true
+    dx_runtime_docker_verify_labels container "$name" container "$fields" || return 1
     dx_runtime_docker_ssh_exec "$bin" rm "$@"
 }
 
@@ -504,21 +561,51 @@ dx_runtime_docker_image_build() {
     dx_runtime_docker_ssh_exec "$bin" tag "$ref" "$image"
 }
 
+# No label check possible (see this section's own module comment): images
+# are never labelled under the pull+tag-only build design. The one caller
+# (bin/dx-destroy-image) already addresses by exact configured name; that
+# is the only protection available here.
 dx_runtime_docker_image_delete() {
     local bin
     bin="$(dx_runtime_docker_require_bin)" || return 1
     dx_runtime_docker_ssh_exec "$bin" image rm "$@"
 }
 
+# Role is derived from which configured volume name was passed -- the one
+# caller (bin/lib/dx-container.sh's container_ensure_volume) only ever
+# calls this with DX_NIX_VOLUME, DX_PERSIST_VOLUME, or DX_BOOTSTRAP_VOLUME
+# (bin/dx-create-volumes, bin/dx-migrate-persist). Fails closed on any
+# other name rather than creating an unlabelled volume.
+dx_runtime_docker_volume_role() {
+    case "$1" in
+        "${DX_NIX_VOLUME:-dx-nix}") printf 'nix' ;;
+        "${DX_PERSIST_VOLUME:-dx-persist}") printf 'persist' ;;
+        "${DX_BOOTSTRAP_VOLUME:-dx-bootstrap}") printf 'bootstrap' ;;
+        *) return 1 ;;
+    esac
+}
+
 dx_runtime_docker_volume_create() {
-    local bin
+    local bin role
     bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" volume create "$@"
+    role="$(dx_runtime_docker_volume_role "$1")" || {
+        echo "Error: dx_runtime_docker_volume_create: '$1' is not one of the configured DXE volumes (DX_NIX_VOLUME/DX_PERSIST_VOLUME/DX_BOOTSTRAP_VOLUME); refusing to create it unlabelled (qnap-dxe-plan.md DQ6)." >&2
+        return 1
+    }
+    dx_runtime_docker_label_flags "$role"
+    dx_runtime_docker_ssh_exec "$bin" volume create "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}" "$@"
 }
 
 dx_runtime_docker_volume_delete() {
-    local bin
+    local bin name role fields
     bin="$(dx_runtime_docker_require_bin)" || return 1
+    for name in "$@"; do :; done
+    role="$(dx_runtime_docker_volume_role "$name")" || {
+        echo "Error: refusing to delete volume '$name': not one of the configured DXE volumes (DX_NIX_VOLUME/DX_PERSIST_VOLUME/DX_BOOTSTRAP_VOLUME)." >&2
+        return 1
+    }
+    fields="$(dx_runtime_docker_volume_labels "$bin" "$name")" || true
+    dx_runtime_docker_verify_labels volume "$name" "$role" "$fields" || return 1
     dx_runtime_docker_ssh_exec "$bin" volume rm "$@"
 }
 
