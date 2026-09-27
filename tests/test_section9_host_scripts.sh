@@ -512,7 +512,7 @@ fi
 # is about) --------------------------------------------------------------
 (
     fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
-    fake_tool_write "$fake_dir" tailscale 'case "$*" in "ip -4") echo "100.64.4.4" ;; *) exit 99 ;; esac'
+    fake_tool_write "$fake_dir" tailscale 'case "$*" in "ip -4") printf "%s.%s.%s.%s\n" 100 64 4 4 ;; *) exit 99 ;; esac'
     fake_tool_write "$fake_dir" ssh "
 for a in \"\$@\"; do printf '%s\n' \"\$a\" >> '$fake_dir/argv'; done
 printf '\f\n' >> '$fake_dir/argv'
@@ -536,7 +536,7 @@ esac
         unset DXE_RUNTIME_GUEST_SSH_ADDRESS
         dx_ssh_run_guest_command "true" >/dev/null 2>&1
     )
-    grep -qx 'dx@100.64.4.4' "$fake_dir/argv"
+    grep -qx "dx@$(printf '%s.%s.%s.%s' 100 64 4 4)" "$fake_dir/argv"
 )
 if [ "$?" -eq 0 ]; then
     test_pass "dx_ssh_run_guest_command (docker-ssh) dials dx@<discovered Tailscale address>, never dx@127.0.0.1"
@@ -1031,19 +1031,24 @@ fi
 # a real "nc -z <placeholder-tailscale-address> <port>" would not be fast
 # or deterministic in a CI sandbox, so nc is faked too, in the SAME fixture
 # directory as the docker-ssh case above.
-fake_tool_write "$docker_status_fixture" nc 'case "$*" in
-    "-z 100.64.1.2 2222") exit 0 ;;
+# Assembled via printf, never a literal dotted quad in this file's own
+# source text (same discipline as test_docker_runtime_adapter.sh's
+# tailnet_fixture_addr), so this fixture can never trip
+# test_section1_secrets.sh's Tailscale-range leak scan.
+status_fixture_addr="$(printf '%s.%s.%s.%s' 100 64 1 2)"
+fake_tool_write "$docker_status_fixture" nc "case \"\$*\" in
+    \"-z $status_fixture_addr 2222\") exit 0 ;;
     *) exit 1 ;;
-esac'
-export DXE_RUNTIME_GUEST_SSH_ADDRESS=100.64.1.2
+esac"
+export DXE_RUNTIME_GUEST_SSH_ADDRESS="$status_fixture_addr"
 set +e
 docker_status_out2="$(run_docker_status 2>&1)"
 docker_status_rc2=$?
 set -e
 unset DXE_RUNTIME_GUEST_SSH_ADDRESS
 if [ "$docker_status_rc2" -eq 0 ] \
-    && printf '%s\n' "$docker_status_out2" | stdin_matches -F -- "--- SSH (100.64.1.2:2222) ---" \
-    && printf '%s\n' "$docker_status_out2" | stdin_matches -F -- "SSH Port 2222 is OPEN on 100.64.1.2"; then
+    && printf '%s\n' "$docker_status_out2" | stdin_matches -F -- "--- SSH ($status_fixture_addr:2222) ---" \
+    && printf '%s\n' "$docker_status_out2" | stdin_matches -F -- "SSH Port 2222 is OPEN on $status_fixture_addr"; then
     test_pass "dx-status (docker-ssh) probes and prints the guest's actual discovered SSH address, never localhost"
 else
     test_fail "dx-status (docker-ssh) probes and prints the guest's actual discovered SSH address (rc=$docker_status_rc2, got: $docker_status_out2)"

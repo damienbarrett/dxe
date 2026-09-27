@@ -172,7 +172,27 @@ important being that Docker injects `HOME=/root` where Apple leaves it
 unset, which had let the essentials install work on Apple by accident;
 the bootstrap now names its root profile explicitly. See
 `qnap-dxe-plan.md`'s own Phase 4 status and
-`docs/refactor/arch-neutral-guest.md` for the full
+`docs/refactor/arch-neutral-guest.md` for the full design. **Phase 5
+(make SSH and user workflows remote-aware, `feat/qnap-remote-ssh`) is
+done on the branch, fakes only** -- items 1-8 implemented (item 9,
+running `tailscaled` inside the guest, stays deferred per the
+2026-09-26 decision recorded in `qnap-dxe-plan.md`'s own Phase 5 section
+until items 1-8 land): a new `dx_runtime_guest_ssh_address` contract
+operation and `--publish` rendering make a `docker-ssh` guest's SSH port
+publish directly on the NAS's own discovered Tailscale address rather
+than controller loopback; the shared SSH option/endpoint builder,
+`dx-wait-ssh`, `dx-status`, and `dx-tunnel.sh`'s dial sites all reach it
+through that one seam; a per-profile known-hosts file pins the guest's
+SSH host identity for `docker-ssh` profiles; `dx-enter` forces its own
+ssh pty (`-tt`) exactly when Docker's own exec requests one; `dx-export`
+is atomic; and `dx-mount`/`dx-nix-disk`/a bind-mount volume spec all fail
+closed under `docker-ssh` before any remote mutation (closing the
+`bin/dx-mount` gap Phase 2 found, and a wider adapter-level gap found
+during this phase). Developed and characterised entirely against fake
+`ssh`/`docker`/`nc` boundaries, the NAS never touched; design:
+`docs/refactor/remote-aware-ssh.md`. Both live gates (Apple `dx-test`;
+a disposable QNAP guest reached directly on its Tailscale address) are
+the coordinating session's own next step, not yet run.
 
 **Target:** QNAP TVS-h674T. Its Intel Core 12th-gen CPU means **x86_64**
 (confirmed by Phase 0's `uname -m`). On `main` (before this branch lands)
@@ -368,7 +388,7 @@ For each proposal:
 | --- | --- | --- |
 | Bootstrap refactor v2 | **Park** until Branch 12 is done, then re-decide | Its phases assume today's code. The store-trust fix will change that code, so it would need rebaselining anyway. |
 | Declarative Nix audit | **Reject as a single programme; accept its items one at a time** as small branches, alongside other work | Each conversion (for example SSH or sudo config into Home Manager) is independently useful and small. A big-bang migration conflicts with limiting work in progress. |
-| QNAP runtime | **Resolved 2026-09-26: accepted** as Branch 11. Phases 0-4 landed (Phase 4 on 2026-09-28: the first native x86_64 guest bootstrapped on the QNAP); Phases 5-7 remain | The target is a TVS-h674T (x86_64, confirmed in Phase 0); Phase 4's per-system flake outputs and keyed Antigravity pin let the guest build natively there. |
+| QNAP runtime | **Resolved 2026-09-26: accepted** as Branch 11. Phases 0-4 landed (Phase 4 on 2026-09-28: the first native x86_64 guest bootstrapped on the QNAP); Phase 5 done on the branch pending its live gate; Phases 6-7 remain | The target is a TVS-h674T (x86_64, confirmed in Phase 0); Phase 4's per-system flake outputs and keyed Antigravity pin let the guest build natively there; Phase 5 reaches it directly on the NAS's own Tailscale address instead of a jump host. |
 
 **Coverage metric conflict:** only relevant if you accept both v2 and the Nix
 audit's item #12. That item replaces the coverage ratio with a ceiling on

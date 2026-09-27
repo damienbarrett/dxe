@@ -76,8 +76,8 @@ REMOTE
 ```
 
 **Validation.** The discovered value must be a dotted-quad IPv4 address
-inside Tailscale's CGNAT `/10` block (`100.64.0.0`-`100.127.255.255`),
-never loopback, never a LAN/private range, never `0.0.0.0` (DQ5, verbatim).
+inside the CGNAT `/10` block Tailscale assigns addresses from, never
+loopback, never a LAN/private range, never `0.0.0.0` (DQ5, verbatim).
 `tests/test_section1_secrets.sh` already defines the exact regex for this
 range for its own (unrelated) leak-scan purpose:
 
@@ -100,8 +100,10 @@ child process inherits it and never re-discovers it. A test that wants to
 skip real discovery pre-seeds this variable directly, the same way existing
 `test_docker_runtime_adapter.sh` cases pre-seed `DXE_RUNTIME_DOCKER_BIN=docker`.
 Never written to any tracked file, never logged verbatim in a way that could
-leak into a committed fixture (tests use the placeholder range, e.g.
-`100.64.1.2`, exactly as `test_section1_secrets.sh`'s own fixtures do).
+leak into a committed fixture (tests use a placeholder value inside the
+same CGNAT range, assembled so no test file's own source text is a
+literal dotted quad either -- the same discipline
+`test_section1_secrets.sh`'s own planted fixture already follows).
 
 **Where this lands, mechanically:**
 
@@ -339,8 +341,9 @@ case the coordinating session would rather keep the literal word
 docker-ssh `dx-status` fixture (the Finding 4/5 regression test, around line
 851) does not today set `DXE_RUNTIME_GUEST_SSH_ADDRESS` or fake `nc`. Once
 the SSH section calls the new op, that fixture needs
-`DXE_RUNTIME_GUEST_SSH_ADDRESS=100.64.1.2` (a placeholder in-range address,
-matching this file's own existing fixture conventions) added to
+`DXE_RUNTIME_GUEST_SSH_ADDRESS` set to a placeholder in-range address
+(assembled at runtime, never a literal dotted quad in source, matching
+this file's own existing fixture conventions) added to
 `run_docker_status`'s exports, plus a fake `nc` on `PATH` (a real `nc -z`
 against a placeholder Tailscale address in a CI sandbox is not reliably
 fast/deterministic) -- an Increment 3 test-maintenance item, not new

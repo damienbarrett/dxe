@@ -85,6 +85,25 @@ Two additions beyond `qnap-dxe-plan.md` DQ2's literal enumeration:
   7's local-state scoping (`docker-ssh:<alias>:<daemon-id>`) and DQ6's
   per-profile lock naming, and `capability` answers differently for three
   of the four questions (see Phase 2's own section below).
+- **`dx_runtime_guest_ssh_address`** (Branch 11 / Phase 5,
+  `qnap-dxe-plan.md` DQ5) — the address the guest's own SSH server is
+  published on and reached at. Apple: the fixed `127.0.0.1` constant it
+  always assumed implicitly. Docker-ssh: the NAS's Tailscale IPv4 address,
+  discovered over the management connection (Phase 0's proven qpkg-CLI-
+  then-interface-fallback shape, a fresh production copy under `bin/lib/`
+  since `tests/qnap/lib/phase0-common.sh` cannot be sourced from `bin/`),
+  validated as a dotted quad in Tailscale's CGNAT range, cached in
+  `DXE_RUNTIME_GUEST_SSH_ADDRESS` like the Docker binary path, never
+  written to any tracked file. `bin/lib/dx-ssh-common.sh`'s
+  `dx_ssh_endpoint` (`dx@$(dx_runtime_guest_ssh_address)`) is what every
+  guest-SSH caller (`dx-ssh`, `dx-herdr`, `dx-wait-ssh`, `dx-tunnel.sh`,
+  `dx-status`) actually dials, and `bin/dx-create-container`'s neutral
+  `--publish PORT:2222` (no bind address) is prefixed by each adapter with
+  this same address before rendering its real `-p`/`--publish` flag. A
+  new capability, `raw_nix_disk` (Apple: yes; docker-ssh: no — DQ8:
+  "Apple-only; fail immediately with a clear capability message"), joins
+  the existing four for the same reason `bin/dx-nix-disk` needed a
+  fail-closed guard. Full design: `docs/refactor/remote-aware-ssh.md`.
 
 ## What stayed outside the contract
 

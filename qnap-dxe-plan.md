@@ -783,6 +783,17 @@ and its `ps` format used `inspect`'s map-style label access. Evidence:
 
 ## Phase 5 — Make SSH and user workflows remote-aware
 
+**Status (2026-09-28, `feat/qnap-remote-ssh`):** items 1-8 implemented
+against fakes only (Increments 1-7; design:
+`docs/refactor/remote-aware-ssh.md`); the live gate (Apple `dx-test` and a
+disposable QNAP guest) is the coordinating session's own next step, not
+yet run. User decisions this phase settled beyond the numbered items
+above: Phase 5 proceeds now; item 9 is deferred until items 1-8 land (see
+item 9's own text below — unchanged, still the governing decision); the
+guest SSH port is `2222` on the NAS's Tailscale address, recorded
+explicitly in `tests/profiles/qnap-example.env` alongside the DQ5
+sentence rather than left to default inference.
+
 1. Extend the shared SSH option builder with a validated remote guest address
    (host + port) instead of assuming controller loopback; do not duplicate it in
    individual commands.

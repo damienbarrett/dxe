@@ -107,6 +107,18 @@ operations.
     `aarch64-linux`) sees it too, as a no-op confirmation. See
     [`docs/refactor/arch-neutral-guest.md`](refactor/arch-neutral-guest.md)
     for the full design.
+12. **The guest's own SSH address is remote-aware, not assumed loopback.**
+    A new contract operation, `dx_runtime_guest_ssh_address`, is what every
+    guest-SSH entry point (`dx-ssh`, `dx-herdr`, `dx-wait-ssh`,
+    `dx-tunnel.sh`, `dx-status`) actually dials, through the single shared
+    option/endpoint builder in `bin/lib/dx-ssh-common.sh`
+    (`dx_ssh_endpoint`/`dx_ssh_common_options`) rather than a
+    per-caller-hardcoded `dx@127.0.0.1`. Apple's answer is that same fixed
+    loopback constant, unchanged; `docker-ssh`'s answer is the NAS's own
+    Tailscale address, discovered over the management connection and
+    validated, never the LAN or `0.0.0.0` (`qnap-dxe-plan.md` DQ5). See
+    "Reaching a QNAP guest over SSH" below for the address, the guest's
+    pinned host identity, and what refuses.
 
 ### Layered lifecycle scripts
 
@@ -143,18 +155,18 @@ or perform maintenance operations.
 | --- | --- |
 | [`bin/dx-lib.sh`](../bin/dx-lib.sh) | Short compatibility facade that loads the source-only host libraries and resolves one complete configuration snapshot. |
 | [`bin/dx-profile`](../bin/dx-profile) | Parses a named data profile from `tests/profiles/<name>.env`, resolves the complete snapshot, then execs the command. A remote Docker-over-SSH profile (`DX_RUNTIME=docker-ssh`, `DX_REMOTE_HOST`, `DX_GUEST_SYSTEM`, `DX_NIX_STORAGE_MODE`, `DX_CONTAINER_RESTART_POLICY`) follows the placeholder-only shape in [`tests/profiles/qnap-example.env`](../tests/profiles/qnap-example.env); the real profile is a local, git-ignored copy (see that file's header and [`docs/configuration.md`](configuration.md)). |
-| [`bin/dx-mount`](../bin/dx-mount) | Launches an isolated side container, records a bounded v2 identity manifest, and exposes audit/migration/destroy-plan modes. |
-| [`bin/dx-wait-ssh`](../bin/dx-wait-ssh) | Blocks until guest SSH responds. Gates the SSH connection layer. |
-| [`bin/dx-status`](../bin/dx-status) | Reports image, container, SSH, tool, persist, tmux, and profile-aware tunnel migration state; for `DX_RUNTIME=docker-ssh`, also the remote per-profile lock's read-only state. |
+| [`bin/dx-mount`](../bin/dx-mount) | Launches an isolated side container, records a bounded v2 identity manifest, and exposes audit/migration/destroy-plan modes. Refuses before any mutation under a runtime without the `bind_mounts` capability (`DX_RUNTIME=docker-ssh` today): a controller-local directory is never a valid remote bind source over SSH. |
+| [`bin/dx-wait-ssh`](../bin/dx-wait-ssh) | Blocks until guest SSH responds, dialling the guest's own remote-aware address (`dx_ssh_endpoint`). Gates the SSH connection layer. |
+| [`bin/dx-status`](../bin/dx-status) | Reports image, container, SSH (the address actually probed, on either runtime), tool, persist, tmux, and profile-aware tunnel migration state; for `DX_RUNTIME=docker-ssh`, also the remote per-profile lock's read-only state. |
 | [`bin/dx-lock`](../bin/dx-lock) | `DX_RUNTIME=docker-ssh` only: reports who holds the remote per-profile lock (`status`), or removes it after printing that same owner metadata (`unlock --force`) -- never on elapsed time alone (`qnap-dxe-plan.md` DQ6). |
 | [`bin/dx-put`](../bin/dx-put) | Copies host files into the guest. |
 | [`bin/dx-forward`](../bin/dx-forward) | Exposes guest web ports on macOS loopback addresses with SSH local forwarding. |
 | [`bin/dx-reverse`](../bin/dx-reverse) | Exposes macOS loopback services inside the guest with SSH reverse forwarding. |
-| [`bin/dx-enter`](../bin/dx-enter) | Direct `container exec` shell, bypassing SSH. |
+| [`bin/dx-enter`](../bin/dx-enter) | Direct `container exec` shell, bypassing SSH. Over `docker-ssh`, the management SSH transport forces its own pty (`-tt`) whenever a TTY was requested, so it works both interactively and driven non-interactively (e.g. `dx-enter <cmd>`). |
 | [`bin/dx-gc`](../bin/dx-gc) | Runs Nix garbage collection and store optimization inside the guest. |
 | [`bin/dx-reclaim`](../bin/dx-reclaim) | Reclaims host disk space by deleting old Nix generations in the guest and trimming persistent filesystems. |
-| [`bin/dx-export`](../bin/dx-export) | Archives the container to a tar file. |
-| [`bin/dx-nix-disk`](../bin/dx-nix-disk) | Prepares a sparse Nix disk image; lifecycle-adjacent storage prep. |
+| [`bin/dx-export`](../bin/dx-export) | Archives the container to a tar file. Atomic: streams to a `.partial` sibling first, verified non-empty, then renamed into place; a mid-stream failure or an interruption removes the partial rather than leaving a truncated file at the final path. |
+| [`bin/dx-nix-disk`](../bin/dx-nix-disk) | Prepares a sparse Nix disk image; lifecycle-adjacent storage prep. Apple-only (`raw_nix_disk` capability); refuses immediately under `DX_RUNTIME=docker-ssh`, before any mutation. |
 | [`bin/dx-reset-nix-volume`](../bin/dx-reset-nix-volume) | Removes ONLY the Nix volume (`/persist` and the bootstrap volume are untouched); refuses while the container still exists or the runtime reports the volume in use. The volume-scoped recovery path both `store-trust-plan.md` refusals (a collision at a pin bump, or a broken prerequisite right after the volume reaches its final place) name by command: run this, then `./bin/dx` to rebuild `/nix` from the image and re-seed it. Replaces the earlier "no valid procedure, full destroy-and-rebuild with salvage" pin-bump text in `docs/release-maintenance.md`. |
 | [`bin/dx-backup`](../bin/dx-backup) | Captures the at-risk contents of `/persist` into a Mac folder, incrementally. |
 | [`bin/dx-restore`](../bin/dx-restore) | Pushes a captured mirror (or a named subpath of it) back into a running guest's `/persist`. |
@@ -193,6 +205,61 @@ paths and, under `apple-image`, discards blocks the guest filesystem has
 already marked free. It is reasonable to run occasionally after large
 rebuilds or dependency churn, but it does not need to run constantly or on a
 tight schedule.
+
+### Reaching a QNAP guest over SSH
+
+Branch 11 / Phase 5 (`qnap-dxe-plan.md` DQ5) made every guest-SSH entry
+point reach a `docker-ssh` guest directly on the NAS's own Tailscale
+address, instead of the controller's loopback Apple always used. Nothing
+here changes Apple's own behaviour: `dx@127.0.0.1`, today's exact SSH
+options, unchanged.
+
+**The address.** `dx_runtime_guest_ssh_address` (a `dx_runtime_<op>`
+contract operation, like every other runtime-neutral call) is Apple's
+fixed loopback constant, or `docker-ssh`'s NAS Tailscale IPv4 address,
+discovered over the existing management SSH connection (the same
+qpkg-CLI-then-interface-fallback shape Phase 0's spike proved), validated
+as a dotted quad in Tailscale's own CGNAT range, and cached for the rest
+of the process. Never the LAN, never `0.0.0.0`, never written to any
+tracked file — an address that cannot be discovered or does not validate
+refuses outright ("the NAS has no Tailscale address; DQ5 forbids
+publishing on the LAN or 0.0.0.0"). The guest's own SSH port is published
+there directly (`bin/dx-create-container`'s neutral `--publish
+PORT:2222`, prefixed by each adapter with its own address) — no jump
+host, exposure governed entirely by Tailscale ACLs.
+
+**The pin.** `docker-ssh` connections use a real, persistent, per-profile
+known-hosts file (`${XDG_STATE_HOME:-$HOME/.local/state}/dxe/<profile-id>/known_hosts`,
+`<profile-id>` the same `<DX_REMOTE_HOST>__<DX_CONTAINER_NAME>` identity
+tunnel/mount/backup state already uses) with `StrictHostKeyChecking=
+accept-new`, prepared 0700 by the SSH option builder itself before ever
+dialling out. First contact records the guest's host key normally; a
+later mismatch is OpenSSH's own refusal, which already names the
+known-hosts file, the offending line, and the exact remedy
+(`ssh-keygen -R '[<address>]:<port>' -f <file>`). Apple's disposable,
+constantly-recreated local guest is never pinned — there is nothing
+stable there worth pinning.
+
+**What refuses, and when.** Fail-closed, before any remote mutation:
+
+| Command | Under `docker-ssh` |
+| --- | --- |
+| `dx-mount DIR` | Refuses (`bind_mounts` capability absent): a controller-local directory is never a valid remote bind source. |
+| `dx-nix-disk` | Refuses (`raw_nix_disk` capability absent): Apple-only sparse-image mechanism. |
+| A `--volume git:...` (bind-mount) spec reaching `dx_runtime_container_create` by any path, not only through `dx-mount` | Refuses at the adapter itself, for the same reason, before any `docker create` call. |
+
+**`dx-enter`.** `docker exec -it` requests a pty from the remote Docker
+daemon; the outer management SSH transport now forces its own pty
+(`-tt`, not a single `-t` — a single `-t` depends on the ssh client's own
+local stdin being a real terminal, which `-tt` does not) exactly when a
+TTY was requested, so `dx-enter` works both attached to a real terminal
+and driven non-interactively. Every other exec caller is unaffected: none
+of them request a TTY.
+
+**`dx-export`.** Streams to a `.partial` sibling of the target file,
+verified non-empty, renamed into place only on success; a trap removes
+the partial on any other exit path (failure or interruption), on both
+runtimes.
 
 ### Backing up and restoring /persist
 

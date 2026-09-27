@@ -89,6 +89,7 @@ behaviour.
 | `dx_runtime_exec` | `container exec [-i] [-t] [-u USER] NAME CMD...` | `dx-sync-bootstrap`, `dx-start-container`, `dx-status`, `dx-gc`, `dx-reclaim`, `dx-get`, `dx-put`, `dx-enter`, `bin/lib/dx-backup.sh`, `dx_bootstrap_confirm_publication` |
 | `dx_runtime_logs` | `container logs [-n N] NAME` | `dx-status`, `dx-wait-ssh` |
 | `dx_runtime_export` | `container export NAME` (stdout stream) | `dx-export` |
+| `dx_runtime_guest_ssh_address` (Branch 11 / Phase 5, `qnap-dxe-plan.md` DQ5) | fixed constant `127.0.0.1` | `bin/lib/dx-ssh-common.sh`'s `dx_ssh_endpoint`/`dx_ssh_common_options` (in turn used by `dx-ssh`, `dx-herdr`, `dx-wait-ssh`, `dx-tunnel.sh`), `dx-status`'s SSH section, `dx-create-container`'s `--publish` rendering (each adapter prepends its own answer) |
 
 Two operations are proposed **beyond** DQ2's literal minimum-set wording,
 because an entrypoint uses them today (DQ2: "define ONLY operations an
@@ -110,6 +111,9 @@ confirm before extraction:
   This adds contract surface with no corresponding characterisation test
   possible today (nothing exercises it) — confirm this is wanted in Phase 1
   rather than deferred whole to Phase 2, where DQ8's table is actually used.
+  (Added since, Branch 11 / Phase 5: a fifth capability, `raw_nix_disk`
+  (Apple yes, docker-ssh no), for `bin/dx-nix-disk`'s DQ8 disposition
+  — "Apple-only; fail immediately with a clear capability message".)
 
 Not migrated, by design, per DQ8 (Apple-only, no runtime abstraction
 applies): `bin/dx-reclaim`'s host-side sparse-image size measurement

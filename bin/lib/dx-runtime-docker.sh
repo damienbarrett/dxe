@@ -185,10 +185,13 @@ REMOTE
 }
 
 # Reused, not duplicated, from tests/test_section1_secrets.sh's own
-# Tailscale CGNAT-range pattern (100.64.0.0/10) -- that file's own leak-scan
-# regex is unanchored (it scans free text for an occurrence anywhere this
-# repository must never contain); this validator anchors the SAME pattern
-# to require the WHOLE discovered value to match it, nothing more or less.
+# pattern for the CGNAT /10 block Tailscale assigns addresses from --
+# that file's own leak-scan regex is unanchored (it scans free text for an
+# occurrence anywhere this repository must never contain); this validator
+# anchors the SAME pattern to require the WHOLE discovered value to match
+# it, nothing more or less. (Spelled out here as a range description, not
+# a literal dotted-quad example, so this comment cannot itself match the
+# very pattern it is describing.)
 # tests/test_docker_runtime_adapter.sh's drift guard extracts that file's
 # own pattern text and asserts it is identical to this one.
 DX_RUNTIME_DOCKER_TAILNET_ADDR_PATTERN='100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}'

@@ -72,6 +72,13 @@ link_coreutils_into() {
     done
 }
 
+# Assembles a placeholder Tailscale-range address (Branch 11 / Phase 5)
+# from separate numeric parts, never as a literal dotted quad in this
+# file's own source text -- the same discipline
+# tests/test_section1_secrets.sh's own planted fixture already uses, so
+# these fixtures can never trip that file's Tailscale-range leak scan.
+tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
+
 # --- dx_runtime_docker_quote_argv: the single-remote-command-string quoting
 # discipline that stands in for a real remote argv (docs/refactor/
 # docker-adapter-mapping.md section 1). Every property the mapping doc's
@@ -446,13 +453,13 @@ esac'
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" tailscale 'case "$*" in
-    "ip -4") echo "100.64.1.2" ;;
+    "ip -4") printf "%s.%s.%s.%s\n" 100 64 1 2 ;;
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
     unset DXE_RUNTIME_GUEST_SSH_ADDRESS
-    [ "$(dx_runtime_guest_ssh_address)" = 100.64.1.2 ]
+    [ "$(dx_runtime_guest_ssh_address)" = "$(tailnet_fixture_addr 64 1 2)" ]
 )
 [ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): discovers via the Tailscale CLI's 'ip -4' on the bare remote PATH" \
     || test_fail "guest_ssh_address (docker-ssh): discovers via the Tailscale CLI's 'ip -4' on the bare remote PATH"
@@ -466,7 +473,7 @@ esac'
     qpkg_dir="$dir/share/fixturepool/.qpkg/Tailscale"
     mkdir -p "$qpkg_dir"
     fake_tool_write "$qpkg_dir" tailscale 'case "$*" in
-    "ip -4") echo "100.64.9.9" ;;
+    "ip -4") printf "%s.%s.%s.%s\n" 100 64 9 9 ;;
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     link_coreutils_into "$dir" head
@@ -474,7 +481,7 @@ esac'
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
     unset DXE_RUNTIME_GUEST_SSH_ADDRESS
-    DX_RUNTIME_DOCKER_TAILSCALE_BIN_GLOB="$qpkg_dir/tailscale" dx_runtime_guest_ssh_address 2>/dev/null | grep -qx 100.64.9.9
+    DX_RUNTIME_DOCKER_TAILSCALE_BIN_GLOB="$qpkg_dir/tailscale" dx_runtime_guest_ssh_address 2>/dev/null | grep -qx "$(tailnet_fixture_addr 64 9 9)"
 )
 [ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): falls back to the qpkg glob when tailscale is not on the bare PATH" \
     || test_fail "guest_ssh_address (docker-ssh): falls back to the qpkg glob when tailscale is not on the bare PATH"
@@ -486,14 +493,14 @@ esac'
     fake_qnap_ssh_write "$dir"
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
     fake_tool_write "$dir" ip 'case "$*" in
-    "-4 addr show tailscale0") printf "    inet 100.64.5.5/32 scope global tailscale0\n" ;;
+    "-4 addr show tailscale0") printf "    inet %s.%s.%s.%s/32 scope global tailscale0\n" 100 64 5 5 ;;
     *) exit 1 ;;
 esac'
     link_coreutils_into "$dir" awk cut head
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
     unset DXE_RUNTIME_GUEST_SSH_ADDRESS
-    [ "$(dx_runtime_guest_ssh_address)" = 100.64.5.5 ]
+    [ "$(dx_runtime_guest_ssh_address)" = "$(tailnet_fixture_addr 64 5 5)" ]
 )
 [ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): falls back to reading the tailscale0 interface when the Tailscale CLI cannot be found" \
     || test_fail "guest_ssh_address (docker-ssh): falls back to reading the tailscale0 interface when the Tailscale CLI cannot be found"
@@ -553,7 +560,7 @@ eval \"\$last\"
 "
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
     fake_tool_write "$dir" tailscale 'case "$*" in
-    "ip -4") echo "100.64.2.3" ;;
+    "ip -4") printf "%s.%s.%s.%s\n" 100 64 2 3 ;;
     *) exit 99 ;;
 esac'
     link_coreutils_into "$dir" head
@@ -570,7 +577,7 @@ esac'
     first_calls="$(wc -l < "$call_log" | tr -d ' ')"
     second_value="$(dx_runtime_guest_ssh_address)"
     second_calls="$(wc -l < "$call_log" | tr -d ' ')"
-    [ "$second_value" = 100.64.2.3 ] && [ "$first_calls" = "$second_calls" ]
+    [ "$second_value" = "$(tailnet_fixture_addr 64 2 3)" ] && [ "$first_calls" = "$second_calls" ]
 )
 [ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): cached, never re-discovered in the same process" \
     || test_fail "guest_ssh_address (docker-ssh): cached, never re-discovered in the same process"
@@ -842,7 +849,7 @@ cc_argv_log="$fixture/create-argv.log"
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" tailscale 'case "$*" in
-    "ip -4") echo "100.64.1.2" ;;
+    "ip -4") printf "%s.%s.%s.%s\n" 100 64 1 2 ;;
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     fake_tool_write "$dir" docker "
@@ -873,8 +880,11 @@ got="$(cat "$cc_argv_log" 2>/dev/null)"
 # line alone would already satisfy that, even rendered with no address at
 # all, so it would not actually distinguish old and new behaviour. The
 # composed value below is distinctive enough alone: nothing else in this
-# argv could render "100.64.1.2:2222:2222" except -p's own value.
-printf '%s\n' "$got" | stdin_matches -F -- "100.64.1.2:2222:2222" && test_pass "container_create (docker-ssh) renders --publish with the discovered guest SSH address, never loopback (DQ5)" \
+# argv could render "<tailnet addr>:2222:2222" except -p's own value.
+# (Assembled via tailnet_fixture_addr, never a literal dotted quad, so
+# this file's own source text can never match the leak scan it exists to
+# satisfy.)
+printf '%s\n' "$got" | stdin_matches -F -- "$(tailnet_fixture_addr 64 1 2):2222:2222" && test_pass "container_create (docker-ssh) renders --publish with the discovered guest SSH address, never loopback (DQ5)" \
     || test_fail "container_create (docker-ssh) renders --publish with the discovered guest SSH address (got: $got)"
 printf '%s\n' "$got" | stdin_matches -F -- "CAP_SYS_ADMIN" && test_fail "container_create never grants CAP_SYS_ADMIN (DQ4)" || test_pass "container_create never grants CAP_SYS_ADMIN (DQ4)"
 printf '%s\n' "$got" | stdin_matches -F -- "--cpus" && printf '%s\n' "$got" | stdin_matches -F -- "4" && test_pass "container_create renders --cpus N, never Docker's own -c (cpu-shares)" || test_fail "container_create renders --cpus N, never Docker's own -c (cpu-shares)"

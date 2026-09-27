@@ -19,9 +19,11 @@ Everything here follows directly from `qnap-dxe-plan.md`'s decisions
 Increment 4 for a reason this document did not originally anticipate: see
 `dx_runtime_container_create`'s row in section 4 and
 `docs/refactor/runtime-boundary.md`'s "Phase 2" section for what changed
-and why. The three points originally flagged for review are resolved (see
-"Flagged for review" at the end, now a decision log rather than an open
-list); one new item was flagged during implementation and remains open.
+and why. The three points originally flagged for review, and a fourth
+flagged during Phase 2's own implementation, are all resolved (see
+"Flagged for review" at the end, now a decision log, not an open list) --
+the fourth (`bin/dx-mount`'s missing `bind_mounts` guard) by Branch 11 /
+Phase 5 item 7.
 
 ## 1. How every remote command is built (DQ1, Phase 2 item 1)
 
@@ -214,6 +216,7 @@ number(s) satisfied.
 | `bind_mounts` | no | DQ8: `dx-mount DIR` is unsupported in the first QNAP release — a controller-local directory is never a valid remote bind source |
 | `restart_policy` | yes | DQ3: `DX_CONTAINER_RESTART_POLICY` is a real docker-ssh field (`no`\|`unless-stopped`), unlike Apple's fixed "no" |
 | `host_filesystem_reclamation` | no | DQ8: Apple's sparse-image/`fstrim` host-side reclamation has no Docker equivalent; guest-side `nix-collect-garbage` still works via `dx_runtime_exec`, unaffected |
+| `raw_nix_disk` (Branch 11 / Phase 5) | no | DQ8: `bin/dx-nix-disk`'s sparse Apple raw-disk-image mechanism has no Docker equivalent at all; `bin/dx-nix-disk` refuses immediately, before any mutation |
 
 ## 5. Ephemeral-run retry (Apple's race vs. Docker)
 
@@ -387,18 +390,19 @@ list to fix.
    `dx_runtime_docker_lock_audit`/`dx_runtime_docker_lock_release` directly,
    not through the `dx_runtime_<op>` dispatch contract, since locking is not
    one of the Phase 1 contract's operations.
-4. **NEW — `bin/dx-mount` does not refuse under `DX_RUNTIME=docker-ssh`
-   (found during Increment 7; unresolved).** DQ8's capability table records
-   `bind_mounts: no` for docker-ssh (a controller-local directory is never a
-   valid remote bind source over SSH) and `dx_runtime_docker_capability` in
-   `bin/lib/dx-runtime-docker.sh` answers this correctly, but nothing in
-   `bin/dx-mount` itself queries that capability and refuses before
-   attempting a bind mount against a docker-ssh profile. `bin/dx-mount` is
-   not `bin/lib/`, `bin/dx-status`, or any of the other files this task is
-   authorised to touch, so this is a pre-existing gap the docker-ssh adapter
-   makes reachable rather than something Phase 2 introduced or can close
-   itself. Recorded in the progress file's Findings section at discovery;
-   flagged here for the coordinating session to decide who closes it and
-   when (a small, self-contained fix: an early `[ "${DX_RUNTIME:-apple}" =
-   docker-ssh ] && { echo ...; exit 1; }`-shaped guard, mirroring
-   `bin/dx-lock`'s own Apple-only-equivalent refusal shape).
+4. **`bin/dx-mount` does not refuse under `DX_RUNTIME=docker-ssh` —
+   RESOLVED, Branch 11 / Phase 5 item 7.** DQ8's capability table records
+   `bind_mounts: no` for docker-ssh and `dx_runtime_docker_capability` in
+   `bin/lib/dx-runtime-docker.sh` already answered this correctly, but
+   nothing in `bin/dx-mount` itself queried that capability before this
+   phase. `bin/dx-mount` is now (Phase 5's authorised file list includes
+   it) guarded with an early `dx_runtime_capability bind_mounts || fail
+   ...` before `dx_require_container_cli`, in its create/attach path (the
+   destroy/print-plan/audit/migrate branches never create a bind mount).
+   Widened further per the coordinating session's decision: `DX_GIT_MOUNT_SOURCE`
+   is a plain config field settable directly, independent of `bin/dx-mount`,
+   so `dx_runtime_docker_container_create`'s own `--volume` case now
+   refuses a `git:` (bind-mount) spec at the adapter level too, closing the
+   gap for any caller that reaches the runtime-neutral vocabulary without
+   going through `bin/dx-mount` at all. See
+   `docs/refactor/remote-aware-ssh.md` section 7.
