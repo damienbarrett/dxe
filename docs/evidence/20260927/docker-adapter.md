@@ -198,3 +198,32 @@ than opening a branch for it, and added the QNAP profile shape to
 read-only `dx-status` against a disposable QNAP profile -- the exit gate's
 one live step -- had not been run at landing time; it needs the user's
 explicit go and is recorded separately when it happens.
+
+## Exit gate: the live read-only step (2026-09-27)
+
+Run by the coordinating session from `main` `13bcfa4` after the user's
+explicit go, against a disposable local profile copied from
+`tests/profiles/qnap-example.env` with resource names that exist nowhere on
+the NAS (`dx-qnap-spike*`; the file is git-ignored locally, never
+committed). Two read-only invocations, both bounded by a 3-minute alarm,
+stdin from `/dev/null`, output kept in the private recovery log:
+
+- `dx-profile <disposable> dx-status` exited 0 and reported the image,
+  container and bootstrap generation as not found and the remote
+  per-profile lock as not held -- every section came back from the NAS
+  without an error line.
+- The full preflight chain (`dx_runtime_available`: host reachability,
+  `uname -m` against `DX_GUEST_SYSTEM`, Docker CLI discovery, Engine/CLI
+  compatibility, daemon identity) succeeded; the CLI was found at the
+  Container Station qpkg path (the glob fallback -- Phase 0's real shape,
+  nothing on the non-interactive PATH) and a stable daemon ID was captured.
+
+Nothing was created, started, or changed on the NAS. Phase 2's exit gate is
+met in full.
+
+One observation for Phase 5, not a Phase 2 defect: `dx-status`'s "SSH"
+section still probes the controller's own loopback port (the Apple default,
+`localhost:2222`) and so reported the Mac's `dx-host` SSH port as open while
+describing a QNAP profile whose guest does not exist. Making that probe
+remote-aware is Phase 5 item 2 verbatim; recorded there.
+

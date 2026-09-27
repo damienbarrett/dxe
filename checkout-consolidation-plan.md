@@ -39,8 +39,10 @@ Updated 2026-09-27, after this trim.
   Phase 0) has had only a throwaway inventory and disposable spike (Phase 0,
   destroyed after), the Apple-side runtime-boundary extraction (Phase 1), and
   a remote Docker-over-SSH adapter developed and characterised entirely
-  against fake `ssh`/`docker` boundaries (Phase 2) -- no live command has
-  ever reached the NAS. Phases 3-7 (direct storage mode, the x86_64 guest,
+  against fake `ssh`/`docker` boundaries (Phase 2), whose exit gate's one
+  live step -- a read-only `dx-status` and preflight against a disposable
+  profile -- ran on 2026-09-27 and passed (nothing on the NAS created or
+  changed). Phases 3-7 (direct storage mode, the x86_64 guest,
   remote-aware SSH/workflows, lifecycle hardening, and promotion) are not
   started. Phase 0's own maintenance-window items, 8b/8c, are also still
   open.
@@ -140,10 +142,10 @@ found and flagged, not closed (outside that branch's allowed-file scope):
 DQ8's capability table already answers `bind_mounts: no` correctly -- see
 `docs/refactor/docker-adapter-mapping.md`'s "Flagged for review" item 4. It
 is tracked under `qnap-dxe-plan.md`'s Phase 5 item 7 (fail-closed capability
-checks), not as a branch of its own. The one live step remaining for Phase 2
--- a read-only `dx-status` against a disposable QNAP profile -- is the
-coordinating session's own job, after the user's explicit go, separate from
-the branch that just landed. **Phases 3-7 are not started** (direct
+checks), not as a branch of its own. Phase 2's one live step -- a read-only
+`dx-status` and preflight against a disposable QNAP profile -- was run by the
+coordinating session on 2026-09-27 after the user's go and passed; the exit
+gate is met in full (see the evidence record). **Phases 3-7 are not started** (direct
 storage mode, the architecture-neutral guest, remote-aware SSH/workflows,
 lifecycle hardening, and promotion -- see `qnap-dxe-plan.md` for each
 phase's own detail, including Phase 5's Tailscale-in-guest work).

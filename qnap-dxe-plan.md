@@ -593,10 +593,15 @@ Section 33, 100+ cases). Full design and as-built command mapping:
 - Validation on the finished tree: fast suite green (100+ new cases, 0
   failed), macOS Bash 3.2 gate green, ShellCheck (pinned, `--severity=warning`)
   clean, public-repo secrets scan clean.
-- **The read-only `dx-status` gate against a disposable QNAP profile is the
-  coordinating session's own, separate step after this branch lands** — it
-  was never run from this branch (the NAS is production and off-limits to
-  the implementing session).
+- **The read-only `dx-status` gate against a disposable QNAP profile was run
+  by the coordinating session on 2026-09-27, after the user's explicit go
+  and after the branch had landed** (never from the branch itself: the NAS
+  is production and off-limits to the implementing session). It exited 0
+  with every section answered from the NAS (image/container/bootstrap not
+  found, remote lock not held), and the full preflight chain succeeded --
+  Docker CLI discovered at the qpkg path via the glob fallback, daemon ID
+  captured. Nothing on the NAS was created or changed. **Phase 2's exit gate
+  is met in full**; details in `docs/evidence/20260927/docker-adapter.md`.
 - **One gap found, not closed by this phase**: `bin/dx-mount` does not
   refuse under `DX_RUNTIME=docker-ssh` even though DQ8's capability table
   (`dx_runtime_docker_capability`) correctly answers `bind_mounts: no`.
@@ -658,7 +663,10 @@ Section 33, 100+ cases). Full design and as-built command mapping:
    (host + port) instead of assuming controller loopback; do not duplicate it in
    individual commands.
 2. Adapt wait/status probes to test the guest at that address rather than
-   controller loopback.
+   controller loopback. (Observed live 2026-09-27 during Phase 2's exit
+   gate: under a docker-ssh profile `dx-status` still probes
+   `localhost:2222` and reported the controller's own Apple guest's SSH port
+   as open for a QNAP guest that does not exist.)
 3. Route interactive SSH, command SSH, put/get, Herdr, and guest probes through
    the shared transport.
 4. Verify `dx-forward` and `dx-reverse` through the direct guest SSH connection,
