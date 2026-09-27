@@ -24,10 +24,10 @@ Updated 2026-09-27, after this trim.
   bootstrap-recreate), 16 (keyring owned by `dx-ai`) and 17 (`dx-backup`
   transfer stall) are all landed, CI green, live-verified on `dx-test`. See
   the table below for each branch's evidence record.
-- **`dx-host` (the primary guest) runs current `main`** (promoted 2026-09-27
-  to `6688a7c`'s payload per Appendix D -- Phases 2 and 3 included, via a
-  container-only recreate onto its existing volumes -- after the `122258c`
-  and `abd4d2d` promotions earlier that day). It has every landed branch, including
+- **`dx-host` (the primary guest) runs current `main`** (promoted 2026-09-28
+  to `6bfe9f0`'s payload per Appendix D -- Branch 12, the hardening branch
+  and Phase 4 included, via a container-only recreate onto its existing
+  volumes -- after four earlier promotions on 2026-09-26/27). It has every landed branch, including
   Branch 16 (the keyring is started by `dx-ai`/`dx-keyring`, not bootstrap;
   verified live after the promotion: `dx-keyring status` was `stale` after
   the restart and `live` with one `dbus-daemon` and one
@@ -471,8 +471,12 @@ rehearsed dry run on `dx-test`.
 `6688a7c` (2026-09-27, Phases 2 and 3: a container-only recreate onto the
 existing volumes so the two new create-time env tokens took effect; backup
 current beforehand, `/persist` file count identical, keyring `stale` then
-`live` after a cold `dx-ai`). `dx-host` is current; the next promotion
-follows the next runtime-affecting landing.
+`live` after a cold `dx-ai`), and `main` `6bfe9f0` (2026-09-28, Branch 12,
+the hardening branch and Phase 4: container-only recreate for the third
+create-time env token; backup current beforehand, `/persist` file count
+identical, the new store-trust checks passed on the primary's real volume,
+`dx-status` now shows the keyring line). `dx-host` is current; the next
+promotion follows the next runtime-affecting landing.
 
 **Before promoting:**
 
