@@ -18,6 +18,7 @@ source "$SCRIPT_DIR/lib/fake-tools.sh"
 source "$BASE_DIR/bin/lib/dx-config.sh"
 source "$BASE_DIR/bin/lib/dx-host-util.sh"
 source "$BASE_DIR/bin/lib/dx-runtime.sh"
+source "$BASE_DIR/bin/lib/dx-container.sh"
 source "$BASE_DIR/bin/lib/dx-tunnel.sh"
 source "$BASE_DIR/bin/lib/dx-backup.sh"
 test_section "Docker-ssh runtime adapter (Branch 11 / Phase 2)"
@@ -209,7 +210,7 @@ esac'
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     out="$(dx_runtime_available 2>&1)"; rc=$?
-    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "did not report a compatible server version"
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "failed or printed no server version"
 )
 [ "$?" -eq 0 ] && test_pass "available: refuses when the engine reports no compatible server version" || test_fail "available: refuses when the engine reports no compatible server version"
 
@@ -1209,6 +1210,97 @@ esac'
     [ "$(dx_backup_resolve_dir)" = "/tmp/dxe-rtb-backups/dx-qnap/docker-ssh_qnap-dxe_abc123def" ]
 )
 [ "$?" -eq 0 ] && test_pass "dx_backup_resolve_dir: docker-ssh gains a runtime+daemon-ID path segment, never mixing two NASs' backups" || test_fail "dx_backup_resolve_dir: docker-ssh gains a runtime+daemon-ID path segment, never mixing two NASs' backups"
+
+# --- Diagnostics taxonomy (item 8) --------------------------------------
+
+# The classifier itself: each named class from
+# docs/refactor/docker-adapter-mapping.md section 7, plus an unrecognized
+# failure still getting a generic (never silent) label.
+(
+    [ "$(dx_runtime_docker_classify_failure 'Permission denied (publickey).')" = "authentication failure" ] &&
+    [ "$(dx_runtime_docker_classify_failure 'Host key verification failed.')" = "authentication failure" ] &&
+    [ "$(dx_runtime_docker_classify_failure 'ssh: connect to host qnap-dxe port 22: Connection refused')" = "connection loss" ] &&
+    [ "$(dx_runtime_docker_classify_failure 'ssh: connect to host qnap-dxe port 22: Operation timed out')" = "connection loss" ] &&
+    [ "$(dx_runtime_docker_classify_failure 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?')" = "daemon restart or unreachable" ] &&
+    [ "$(dx_runtime_docker_classify_failure 'bash: docker: command not found')" = "missing Docker access" ] &&
+    [ "$(dx_runtime_docker_classify_failure 'something entirely unexpected')" = "remote command failure" ]
+)
+[ "$?" -eq 0 ] && test_pass "classify_failure: every named class, plus a generic fallback for the unrecognized case" || test_fail "classify_failure: every named class, plus a generic fallback for the unrecognized case"
+
+# available: connection loss is named distinctly (a timeout-shaped ssh
+# failure, not a generic "cannot reach").
+(
+    dir="$(new_tool_dir)"
+    fake_tool_write "$dir" ssh 'echo "ssh: connect to host qnap-dxe port 22: Operation timed out" >&2; exit 255'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
+    out="$(dx_runtime_available 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "connection loss" && printf '%s\n' "$out" | stdin_matches -F -- "Operation timed out"
+)
+[ "$?" -eq 0 ] && test_pass "available: a connect-timeout failure is named 'connection loss', with the raw ssh text quoted" || test_fail "available: a connect-timeout failure is named 'connection loss', with the raw ssh text quoted"
+
+# available: authentication failure is named distinctly.
+(
+    dir="$(new_tool_dir)"
+    fake_tool_write "$dir" ssh 'echo "Permission denied (publickey)." >&2; exit 255'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
+    out="$(dx_runtime_available 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "authentication failure"
+)
+[ "$?" -eq 0 ] && test_pass "available: a bad-key failure is named 'authentication failure'" || test_fail "available: a bad-key failure is named 'authentication failure'"
+
+# available: engine incompatibility is named with the classified reason
+# too (a daemon-restart-shaped docker-level failure this time, not ssh).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
+    out="$(dx_runtime_available 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "daemon restart or unreachable" && printf '%s\n' "$out" | stdin_matches -F -- "Is the docker daemon running?"
+)
+[ "$?" -eq 0 ] && test_pass "available: an unreachable daemon is named 'daemon restart or unreachable', with the raw docker text quoted" || test_fail "available: an unreachable daemon is named 'daemon restart or unreachable', with the raw docker text quoted"
+
+# system_running: failure is silent (matches Apple's own boolean-check
+# convention) but still records the classifiable reason for a caller that
+# wants it.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "Cannot connect to the Docker daemon. Is the docker daemon running?" >&2; exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_system_running
+    rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$DXE_RUNTIME_DOCKER_LAST_FAILURE" | stdin_matches "Is the docker daemon running"
+)
+[ "$?" -eq 0 ] && test_pass "system_running: records a classifiable failure reason without printing anything itself (matches Apple's silent convention)" || test_fail "system_running: records a classifiable failure reason without printing anything itself (matches Apple's silent convention)"
+
+# container_system_ensure_started: names the runtime, never says "Apple"
+# for docker-ssh, and never says anything docker-ssh-specific for apple
+# (byte-for-byte unchanged message).
+(
+    DX_RUNTIME=apple
+    container_system_is_running() { return 1; }
+    dx_runtime_system_start() { :; }
+    out="$(container_system_ensure_started 2>&1)"
+    [ "$out" = "Apple container system is not running; starting it..." ]
+)
+[ "$?" -eq 0 ] && test_pass "container_system_ensure_started: apple's message is byte-for-byte unchanged" || test_fail "container_system_ensure_started: apple's message is byte-for-byte unchanged"
+(
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    container_system_is_running() { return 1; }
+    dx_runtime_system_start() { :; }
+    out="$(container_system_ensure_started 2>&1)"
+    printf '%s\n' "$out" | stdin_matches -F -- "qnap-dxe" && ! printf '%s\n' "$out" | stdin_matches "Apple"
+)
+[ "$?" -eq 0 ] && test_pass "container_system_ensure_started: docker-ssh's message never says 'Apple'" || test_fail "container_system_ensure_started: docker-ssh's message never says 'Apple'"
 
 print_summary
 exit_with_code

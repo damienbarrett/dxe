@@ -18,8 +18,24 @@ source "$DX_CONTAINER_LIB_DIR/dx-runtime.sh"
 dx_require_container_cli() { dx_runtime_available; }
 
 container_system_is_running() { dx_runtime_system_running; }
+# Branch 11 / Phase 2: "Apple container system is not running" was correct
+# wording (and is kept byte-for-byte, matching
+# tests/test_runtime_boundary_audit.sh's own named exception for this
+# exact string) when DX_RUNTIME=apple, the only runtime this message
+# described until now; it would be factually wrong read for
+# DX_RUNTIME=docker-ssh, which gets its own wording instead.
+# dx_runtime_system_start always refuses for docker-ssh (with its own
+# clear message pointing at the NAS's App Center UI) rather than actually
+# starting anything remotely.
 container_system_ensure_started() {
-    if ! container_system_is_running; then echo "Apple container system is not running; starting it..."; dx_runtime_system_start; fi
+    if ! container_system_is_running; then
+        if [ "${DX_RUNTIME:-apple}" = docker-ssh ]; then
+            echo "Docker Engine on $DX_REMOTE_HOST is not running; starting it..."
+        else
+            echo "Apple container system is not running; starting it..."
+        fi
+        dx_runtime_system_start
+    fi
 }
 
 dx_container_list_names() { dx_runtime_apple_container_list_names "$@"; }

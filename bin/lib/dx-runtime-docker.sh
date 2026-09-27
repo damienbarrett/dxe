@@ -149,15 +149,46 @@ dx_runtime_docker_require_bin() {
     printf '%s' "$DXE_RUNTIME_DOCKER_BIN"
 }
 
+# --- Diagnostics (item 8) ---------------------------------------------------
+#
+# Distinct failure classes, not a single generic "command failed": each
+# preflight/query/lifecycle call that fails captures the raw stderr text
+# from ssh or the remote docker invocation and classifies it here, so the
+# error message an operator sees names WHICH of the five classes applies
+# (docs/refactor/docker-adapter-mapping.md section 7) rather than leaving
+# them to guess. A class this function does not recognize still gets a
+# useful, if generic, label ("remote command failure") -- never silence.
+dx_runtime_docker_classify_failure() {
+    local text="$1"
+    case "$text" in
+        *"Permission denied"*|*"Host key verification failed"*|*"Too many authentication failures"*)
+            printf 'authentication failure' ;;
+        *"Connection refused"*|*"Connection closed"*|*"Connection timed out"*|*"Operation timed out"*|*"No route to host"*|*"Could not resolve hostname"*)
+            printf 'connection loss' ;;
+        *"Cannot connect to the Docker daemon"*|*"Is the docker daemon running"*)
+            printf 'daemon restart or unreachable' ;;
+        *"command not found"*|*"docker.sock"*"permission denied"*|*"dial unix"*"permission denied"*)
+            printf 'missing Docker access' ;;
+        *)
+            printf 'remote command failure' ;;
+    esac
+}
+
 # --- Preflight (item 2) ----------------------------------------------------
 
 # Real (never skippable) reachability check: BatchMode means a dead host,
 # bad key, or no tty fails within ConnectTimeout seconds rather than hanging
-# or prompting. Distinguishing connection-loss from auth-failure is item 8's
-# job (dx_runtime_docker_classify_ssh_failure, added with the rest of the
-# diagnostics taxonomy); this function only reports success/failure.
+# or prompting. Captures stderr into DXE_RUNTIME_DOCKER_LAST_FAILURE so a
+# caller can classify and report it distinctly (item 8) instead of a bare
+# pass/fail.
 dx_runtime_docker_host_reachable() {
-    dx_runtime_docker_ssh_raw true >/dev/null 2>&1
+    local stderr_file rc
+    stderr_file="$(mktemp "${TMPDIR:-/tmp}/dxe-docker-ssh-stderr.XXXXXX")" || return 1
+    rc=0
+    dx_runtime_docker_ssh_raw true >/dev/null 2>"$stderr_file" || rc=$?
+    DXE_RUNTIME_DOCKER_LAST_FAILURE="$(cat "$stderr_file")"
+    rm -f "$stderr_file"
+    return "$rc"
 }
 
 # uname -m vs DX_GUEST_SYSTEM (DQ7): refuses a mismatch before any Docker
@@ -189,10 +220,18 @@ dx_runtime_docker_check_arch() {
 # catches an unlikely 0-exit/empty-server edge without needing to parse or
 # compare version numbers ourselves.
 dx_runtime_docker_engine_compatible() {
-    local bin="$1" server_version
-    server_version="$(dx_runtime_docker_ssh_exec "$bin" version --format '{{.Server.Version}}' 2>/dev/null)" || return 1
+    local bin="$1" server_version stderr_file rc
+    stderr_file="$(mktemp "${TMPDIR:-/tmp}/dxe-docker-version-stderr.XXXXXX")" || return 1
+    rc=0
+    server_version="$(dx_runtime_docker_ssh_exec "$bin" version --format '{{.Server.Version}}' 2>"$stderr_file")" || rc=$?
+    DXE_RUNTIME_DOCKER_LAST_FAILURE="$(cat "$stderr_file")"
+    rm -f "$stderr_file"
+    [ "$rc" -eq 0 ] || return "$rc"
     server_version="$(printf '%s\n' "$server_version" | tail -n1 | tr -d '\r')"
-    [ -n "$server_version" ]
+    if [ -z "$server_version" ]; then
+        DXE_RUNTIME_DOCKER_LAST_FAILURE="docker version --format '{{.Server.Version}}' exited 0 but printed no server version"
+        return 1
+    fi
 }
 
 # Stable remote daemon identity (item 2's "stable Docker daemon ID"; feeds
@@ -226,13 +265,17 @@ dx_runtime_docker_discover_daemon_id() {
 # since a daemon or connection can change state between calls.
 dx_runtime_docker_available() {
     dx_runtime_docker_host_reachable || {
-        echo "Error: cannot reach QNAP host alias '$DX_REMOTE_HOST' over a non-interactive SSH connection (BatchMode=yes, ConnectTimeout=${DX_SSH_CONNECT_TIMEOUT:-15}s). Check the 'Host $DX_REMOTE_HOST' stanza in ~/.ssh/config and that the NAS is reachable over Tailscale." >&2
+        local class
+        class="$(dx_runtime_docker_classify_failure "${DXE_RUNTIME_DOCKER_LAST_FAILURE:-}")"
+        echo "Error: cannot reach QNAP host alias '$DX_REMOTE_HOST' over a non-interactive SSH connection ($class; BatchMode=yes, ConnectTimeout=${DX_SSH_CONNECT_TIMEOUT:-15}s). Check the 'Host $DX_REMOTE_HOST' stanza in ~/.ssh/config and that the NAS is reachable over Tailscale.${DXE_RUNTIME_DOCKER_LAST_FAILURE:+ (ssh said: $DXE_RUNTIME_DOCKER_LAST_FAILURE)}" >&2
         return 1
     }
     dx_runtime_docker_check_arch || return 1
     dx_runtime_docker_discover_bin || return 1
     dx_runtime_docker_engine_compatible "$DXE_RUNTIME_DOCKER_BIN" || {
-        echo "Error: Docker CLI/Engine on $DX_REMOTE_HOST did not report a compatible server version (docker version --format '{{.Server.Version}}' failed or was empty)." >&2
+        local class
+        class="$(dx_runtime_docker_classify_failure "${DXE_RUNTIME_DOCKER_LAST_FAILURE:-}")"
+        echo "Error: Docker CLI/Engine on $DX_REMOTE_HOST is not usable ($class): docker version --format '{{.Server.Version}}' failed or printed no server version.${DXE_RUNTIME_DOCKER_LAST_FAILURE:+ (docker said: $DXE_RUNTIME_DOCKER_LAST_FAILURE)}" >&2
         return 1
     }
     dx_runtime_docker_discover_daemon_id || return 1
@@ -243,9 +286,14 @@ dx_runtime_docker_available() {
 # reusing an already-discovered binary path but not re-running the full
 # preflight chain above.
 dx_runtime_docker_system_running() {
-    local bin
+    local bin stderr_file rc
     bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" info >/dev/null 2>&1
+    stderr_file="$(mktemp "${TMPDIR:-/tmp}/dxe-docker-info-stderr.XXXXXX")" || return 1
+    rc=0
+    dx_runtime_docker_ssh_exec "$bin" info >/dev/null 2>"$stderr_file" || rc=$?
+    DXE_RUNTIME_DOCKER_LAST_FAILURE="$(cat "$stderr_file")"
+    rm -f "$stderr_file"
+    return "$rc"
 }
 
 # dx_runtime_system_start's docker-ssh implementation: always refuses.
