@@ -1193,7 +1193,7 @@ esac'
 
 # dx_backup_resolve_dir: Apple's shape is byte-for-byte unchanged.
 (
-    DX_RUNTIME=apple DX_CONTAINER_NAME=dx-host DX_BACKUP_DIR=/tmp/dxe-rtb-backups
+    export DX_RUNTIME=apple DX_CONTAINER_NAME=dx-host DX_BACKUP_DIR=/tmp/dxe-rtb-backups
     [ "$(dx_backup_resolve_dir)" = "/tmp/dxe-rtb-backups/dx-host" ]
 )
 [ "$?" -eq 0 ] && test_pass "dx_backup_resolve_dir: apple's path is unchanged (BASE/container)" || test_fail "dx_backup_resolve_dir: apple's path is unchanged (BASE/container)"
@@ -1205,7 +1205,7 @@ esac'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "info --format" ] && echo "abc123def|qnap-fake|x86_64|linux"'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_BACKUP_DIR=/tmp/dxe-rtb-backups
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_BACKUP_DIR=/tmp/dxe-rtb-backups
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     [ "$(dx_backup_resolve_dir)" = "/tmp/dxe-rtb-backups/dx-qnap/docker-ssh_qnap-dxe_abc123def" ]
 )

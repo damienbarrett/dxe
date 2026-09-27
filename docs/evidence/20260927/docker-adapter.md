@@ -159,6 +159,18 @@ Phase 1 audit (8) and characterisation (28) tests, Section 33 (107), and
 both Phase 0 dry-runs with stdin from `/dev/null`. The private identifier
 scan of `main..feat/qnap-docker-adapter` was clean before the push.
 
+The first CI run (`36295696372`) was green on `bash-3-2` and red on `linux`
+in exactly one place: the runner-image ShellCheck (0.9.0, used by Section 0
+inside `run_all_tests.sh`) reported SC2034 on two plain
+`DX_...=... DX_BACKUP_DIR=...` subshell assignments in
+`tests/test_docker_runtime_adapter.sh` that only the sourced
+`dx_backup_resolve_dir` reads; the pinned 0.10.0 step had passed, the
+known 0.9.0/0.10.0 gap the standing brief warns about. Fixed by making both
+lines `export ...`, the form the same file already uses everywhere else;
+re-linted the whole CI file set with apt ShellCheck 0.9.0 in a throwaway
+Ubuntu 24.04 container (clean) and re-ran Section 33 under bash 3.2 (107
+passed) before pushing again.
+
 Landing also recorded the flagged `bin/dx-mount` gap under
 `qnap-dxe-plan.md`'s Phase 5 item 7 (fail-closed capability checks) rather
 than opening a branch for it, and added the QNAP profile shape to
