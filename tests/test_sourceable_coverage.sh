@@ -161,6 +161,17 @@ dx_get_host_timezone >/dev/null
     container_image_exists image; container_ensure_volume volume
 )
 (
+    # dx_runtime_apple_volume_usage (Branch 11 / Phase 3): today's host
+    # sparse-image sizing, both the missing-image and found-image branches.
+    vu_root="$fixture/apple-volume-usage"
+    mkdir -p "$vu_root/dxe-vu-missing"
+    DX_CONTAINER_VOLUME_DIR="$vu_root"
+    [ "$(dx_runtime_apple_volume_usage dxe-vu-missing)" = missing ]
+    mkdir -p "$vu_root/dxe-vu-present"
+    printf 'x' > "$vu_root/dxe-vu-present/volume.img"
+    dx_runtime_apple_volume_usage dxe-vu-present >/dev/null
+)
+(
     count=0
     container_is_running() { count=$((count + 1)); [ "$count" -lt 2 ]; }
     sleep() { :; }
@@ -1809,6 +1820,16 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     DX_NIX_VOLUME_ALREADY_MOUNTED=true DX_NIX_VOLUME_ROOT="$root" populate_prepared_nix_volume
     populate_prepared_nix_volume() { :; }
     setup_nix_volume_impl
+
+    # Branch 11 / Phase 3: publish_nix_volume_image_identity's chown/
+    # publish failure branch (never reached by the Section 3 happy-path
+    # test, which stubs chown to succeed).
+    unset -f chown
+    marker_fail_root="$root/image-identity-fail"
+    mkdir -p "$marker_fail_root"
+    chown() { return 1; }
+    publish_nix_volume_image_identity "$marker_fail_root" "sha256:coverage-probe" >/dev/null 2>&1 || true
+    unset -f chown
 )
 (
     # Exercise every refusal branch of the retained image-default profile
