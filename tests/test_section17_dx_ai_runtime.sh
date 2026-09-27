@@ -29,7 +29,12 @@ ai_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-ai-generations.XXXXXX")"
 trap 'chmod -R u+w "$ai_fixture" 2>/dev/null || true; rm -rf "$ai_fixture"' EXIT
 published="$ai_fixture/published"; state="$ai_fixture/state"
 mkdir -p "$published/pins" "$state/generations/previous"
-printf '%s\n' '{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"}' > "$published/pins/agy.json"
+# Branch 11 / Phase 4 (docs/refactor/arch-neutral-guest.md section 3):
+# pins/agy.json is a per-system keyed map. Both entries populated here (the
+# generation-lifecycle tests below don't care about agy specifically, only
+# that the required file exists and parses); the null/unsupported-system
+# case has its own dedicated fixtures further down.
+printf '%s\n' '{"aarch64-linux":{"version":"1","url":"https://example.invalid/agy-arm","hash":"sha512-test-arm"},"x86_64-linux":{"version":"1","url":"https://example.invalid/agy-amd","hash":"sha512-test-amd"}}' > "$published/pins/agy.json"
 printf '%s\n' fixture > "$published/flake.nix"
 printf '%s\n' fixture > "$published/flake.lock"
 seed_ai_profile() {
@@ -436,13 +441,140 @@ pin_before="$(shasum -a 256 "$published/pins/agy.json")"
 if (
     curl() { printf '%s\n' '{}'; }
     jq() { printf '%s' ''; }
-    dx_ai_refresh_pin "$published"
+    dx_ai_refresh_pin "$published" aarch64-linux
 ); then
     test_pass "malformed upstream AI manifest is non-destructive"
 else
     test_fail "malformed upstream AI manifest is non-destructive"
 fi
 if [ "$pin_before" = "$(shasum -a 256 "$published/pins/agy.json")" ]; then test_pass "malformed AI manifest leaves pin unchanged"; else test_fail "malformed AI manifest leaves pin unchanged"; fi
+
+# --- Branch 11 / Phase 4 (qnap-dxe-plan.md DQ7, docs/refactor/
+# arch-neutral-guest.md section 3): per-system agy manifest URL, per-system
+# pin refresh, native-system detection, and the null-pin "no native
+# artifact" diagnostic. ---
+
+if [ "$(dx_ai_agy_manifest_url aarch64-linux)" = "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json" ]; then
+    test_pass "dx_ai_agy_manifest_url resolves the arm64 manifest for aarch64-linux"
+else
+    test_fail "dx_ai_agy_manifest_url resolves the arm64 manifest for aarch64-linux"
+fi
+if [ "$(dx_ai_agy_manifest_url x86_64-linux)" = "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json" ]; then
+    test_pass "dx_ai_agy_manifest_url resolves the amd64 manifest for x86_64-linux"
+else
+    test_fail "dx_ai_agy_manifest_url resolves the amd64 manifest for x86_64-linux"
+fi
+expect_failure "dx_ai_agy_manifest_url refuses an unrecognized system" dx_ai_agy_manifest_url riscv64-linux
+
+# dx_ai_refresh_pin updates ONLY the named system's key, leaving every other
+# architecture's entry byte-for-byte untouched.
+refresh_fixture="$ai_fixture/refresh-pin"
+mkdir -p "$refresh_fixture/pins"
+printf '%s\n' '{"aarch64-linux":{"version":"1.0.5","url":"https://example.invalid/old-arm","hash":"sha512-oldarm"},"x86_64-linux":{"version":"1.2.12","url":"https://example.invalid/old-amd","hash":"sha512-oldamd"}}' > "$refresh_fixture/pins/agy.json"
+if (
+    curl() { printf '%s\n' '{"version":"9.9.9","url":"https://example.invalid/new-amd","sha512":"'"$(printf 'a%.0s' $(seq 1 128))"'"}'; }
+    nix() { [ "$1" = hash ] && printf 'sha512-newamdhash\n' || command nix "$@"; }
+    dx_ai_refresh_pin "$refresh_fixture" x86_64-linux
+) && refreshed_amd="$(jq -r '."x86_64-linux".version' "$refresh_fixture/pins/agy.json")" \
+    && refreshed_arm="$(jq -r '."aarch64-linux".url' "$refresh_fixture/pins/agy.json")" \
+    && [ "$refreshed_amd" = 9.9.9 ] && [ "$refreshed_arm" = "https://example.invalid/old-arm" ]; then
+    test_pass "dx_ai_refresh_pin updates only the named system's key"
+else
+    test_fail "dx_ai_refresh_pin updates only the named system's key"
+fi
+
+# dx_ai_native_system: a small uname -m -> Nix system mapping (Increment 3
+# replaces this with the shared scripts/lib/dx-guest-system.sh helper;
+# identical mapping in the meantime, per docs/refactor/arch-neutral-guest.md
+# section 3.4's note).
+if (
+    uname() { [ "${1:-}" = -m ] && printf '%s\n' aarch64 || command uname "$@"; }
+    [ "$(dx_ai_native_system)" = aarch64-linux ]
+); then
+    test_pass "dx_ai_native_system maps uname -m=aarch64 to aarch64-linux"
+else
+    test_fail "dx_ai_native_system maps uname -m=aarch64 to aarch64-linux"
+fi
+if (
+    uname() { [ "${1:-}" = -m ] && printf '%s\n' x86_64 || command uname "$@"; }
+    [ "$(dx_ai_native_system)" = x86_64-linux ]
+); then
+    test_pass "dx_ai_native_system maps uname -m=x86_64 to x86_64-linux"
+else
+    test_fail "dx_ai_native_system maps uname -m=x86_64 to x86_64-linux"
+fi
+if (
+    uname() { [ "${1:-}" = -m ] && printf '%s\n' armv7l || command uname "$@"; }
+    dx_ai_native_system
+); then
+    test_fail "dx_ai_native_system refuses an unrecognized guest architecture"
+else
+    test_pass "dx_ai_native_system refuses an unrecognized guest architecture"
+fi
+
+# dx_ai_tools_for_system: the full DX_AI_TOOLS list when the system's agy
+# pin is non-null; DX_AI_TOOLS minus agy, plus DQ7's exact diagnostic on
+# stderr, when it is null. Never silently substitutes a foreign binary --
+# that guarantee is flake.nix's own per-system agy/aiPackages filtering
+# (section 3.3); this only keeps dx-ai's own bookkeeping in agreement.
+tools_fixture="$ai_fixture/tools-for-system"
+mkdir -p "$tools_fixture/pins"
+printf '%s\n' '{"aarch64-linux":{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"},"x86_64-linux":null}' > "$tools_fixture/pins/agy.json"
+supported_expected="$(printf '%s\n' $DX_AI_TOOLS)"
+if supported_out="$(dx_ai_tools_for_system "$tools_fixture" aarch64-linux 2>/dev/null)" && [ "$supported_out" = "$supported_expected" ]; then
+    test_pass "dx_ai_tools_for_system returns the full tool list when agy is supported"
+else
+    test_fail "dx_ai_tools_for_system returns the full tool list when agy is supported"
+fi
+unsupported_expected="$(for t in $DX_AI_TOOLS; do [ "$t" != agy ] && printf '%s\n' "$t"; done)"
+if unsupported_out="$(dx_ai_tools_for_system "$tools_fixture" x86_64-linux 2>/dev/null)" && [ "$unsupported_out" = "$unsupported_expected" ]; then
+    test_pass "dx_ai_tools_for_system excludes agy when its pin is null"
+else
+    test_fail "dx_ai_tools_for_system excludes agy when its pin is null"
+fi
+if dx_ai_tools_for_system "$tools_fixture" x86_64-linux 2>&1 >/dev/null | stdin_matches -F "agy: no native artifact for x86_64-linux; skipping (DQ7)"; then
+    test_pass "dx_ai_tools_for_system prints DQ7's exact unsupported-tool diagnostic"
+else
+    test_fail "dx_ai_tools_for_system prints DQ7's exact unsupported-tool diagnostic"
+fi
+
+# End-to-end: a sourced dx_ai_main run on a system whose agy pin is null
+# stages a generation whose .tools-manifest and published executables
+# reflect the adjusted list -- proving the exclusion is actually wired into
+# the real generation lifecycle, not only callable in isolation.
+noagy_published="$ai_fixture/noagy-published"; noagy_state="$ai_fixture/noagy-state"
+mkdir -p "$noagy_published/pins"
+printf '%s\n' '{"aarch64-linux":{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"},"x86_64-linux":null}' > "$noagy_published/pins/agy.json"
+printf '%s\n' fixture > "$noagy_published/flake.nix"
+printf '%s\n' fixture > "$noagy_published/flake.lock"
+(
+    uname() { [ "${1:-}" = -m ] && printf '%s\n' x86_64 || command uname "$@"; }
+    dx_ai_update_flake() { :; }
+    dx_ai_ensure_cached() { :; }
+    dx_ai_install_profile() {
+        local stage="$1" tool
+        mkdir -p "$stage/profile/bin"
+        for tool in $(cat "$stage/.tools-manifest" 2>/dev/null || printf '%s\n' $DX_AI_TOOLS); do
+            printf '#!/bin/sh\n' > "$stage/profile/bin/$tool"; chmod 0755 "$stage/profile/bin/$tool"
+        done
+    }
+    dx_ai_setup_credentials() { :; }
+    dx_ai_ensure_keyring() { :; }
+    dx_ai_verify() { :; }
+    id() { printf '%s\n' 1000; }
+    dx_ai_boot_id() { printf '%s\n' test-boot-id; }
+    dx_ai_process_start() { printf '%s\n' 123; }
+    DX_AI_BOOTSTRAP_ROOT="$noagy_published" DX_AI_STATE_ROOT="$noagy_state" dx_ai_main
+) >/dev/null 2>&1
+noagy_manifest="$(readlink -f "$noagy_state/current" 2>/dev/null)"
+if [ -n "$noagy_manifest" ] && [ -f "$noagy_manifest/.tools-manifest" ] \
+    && ! grep -qx agy "$noagy_manifest/.tools-manifest" \
+    && [ ! -e "$noagy_manifest/profile/bin/agy" ] \
+    && [ -x "$noagy_manifest/profile/bin/codex" ]; then
+    test_pass "a real dx_ai_main run on a null-agy system publishes a generation without agy"
+else
+    test_fail "a real dx_ai_main run on a null-agy system publishes a generation without agy"
+fi
 
 # R5: an unavailable boot ID is not an identity. In that environment dx-ai
 # must fail before touching a live owner's lock rather than parse an empty
@@ -503,7 +635,7 @@ fi
 # for hosts whose real mv lacks GNU's -T.
 f8_published="$ai_fixture/f8-published"; f8_state="$ai_fixture/f8-state"
 mkdir -p "$f8_published/pins"
-printf '%s\n' '{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"}' > "$f8_published/pins/agy.json"
+printf '%s\n' '{"aarch64-linux":{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"},"x86_64-linux":{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"}}' > "$f8_published/pins/agy.json"
 printf '%s\n' fixture > "$f8_published/flake.nix"
 printf '%s\n' fixture > "$f8_published/flake.lock"
 
@@ -529,6 +661,11 @@ id() { printf '%s\n' 1000; }
 # than the R5 fail-closed guard above.
 dx_ai_boot_id() { printf '%s\n' test-boot-id; }
 dx_ai_process_start() { printf '%s\n' 123; }
+# The host running this unit test may report a Darwin-style uname -m (e.g.
+# "arm64") that dx_ai_native_system's Linux-only mapping does not recognize
+# -- production dx-ai.sh only ever runs inside the Linux guest. Stub it to
+# the identity a real guest supplies, same reasoning as the two stubs above.
+dx_ai_native_system() { printf '%s\n' aarch64-linux; }
 
 f8_path_before="$PATH"
 DX_AI_BOOTSTRAP_ROOT="$f8_published" DX_AI_STATE_ROOT="$f8_state" dx_ai_main
@@ -566,7 +703,7 @@ fi
 # and never reach dx_ai_install_profile/nix profile add. ---
 f16_published="$ai_fixture/f16-published"; f16_state="$ai_fixture/f16-state"
 mkdir -p "$f16_published/pins"
-printf '%s\n' '{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"}' > "$f16_published/pins/agy.json"
+printf '%s\n' '{"aarch64-linux":{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"},"x86_64-linux":{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"}}' > "$f16_published/pins/agy.json"
 printf '%s\n' fixture > "$f16_published/flake.nix"
 printf '%s\n' fixture > "$f16_published/flake.lock"
 
@@ -578,6 +715,7 @@ dx_ai_verify() { :; }
 id() { printf '%s\n' 1000; }
 dx_ai_boot_id() { printf '%s\n' test-boot-id; }
 dx_ai_process_start() { printf '%s\n' 123; }
+dx_ai_native_system() { printf '%s\n' aarch64-linux; }
 nix() {
     case "$*" in
         "build --dry-run --extra-experimental-features "*"#ai-tools")

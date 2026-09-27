@@ -193,7 +193,11 @@ if grep -q "nix flake update" "$DX_AI_SCRIPT" && grep -q "nixpkgs-unstable" "$DX
 else
     test_fail "guest dx-ai updates nixpkgs-unstable"
 fi
-assert_file_contains "$DX_AI_SCRIPT" "AGY_MANIFEST_URL=" "guest dx-ai has an agy updater manifest URL"
+# Branch 11 / Phase 4 (docs/refactor/arch-neutral-guest.md section 3): the
+# single flat AGY_MANIFEST_URL constant became a per-system function --
+# deliberate, not a regression (AGY_MANIFEST_URL had no consumer outside
+# this one static assertion; confirmed by grep across the tree).
+assert_file_contains "$DX_AI_SCRIPT" "dx_ai_agy_manifest_url" "guest dx-ai resolves a per-system agy updater manifest URL"
 assert_file_contains "$DX_AI_SCRIPT" "Refreshing Antigravity CLI manifest" "guest dx-ai refreshes the agy manifest before install"
 assert_file_contains "$DX_AI_SCRIPT" "nix hash convert --hash-algo sha512 --to sri" "guest dx-ai converts agy manifest hash to Nix SRI"
 assert_file_contains_literal "$DX_AI_SCRIPT" "pins/agy.json" "guest dx-ai updates the structured agy pin"

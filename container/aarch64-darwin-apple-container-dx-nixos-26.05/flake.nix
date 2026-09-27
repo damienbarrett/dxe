@@ -126,57 +126,63 @@
           # Google. Mirrors what `curl -fsSL https://antigravity.google/cli/install.sh
           # | bash` would do, but pinned and autoPatchelf'd for NixOS.
           #
-          # Branch 11 / Phase 4, Increment 1: still reads the single flat
-          # agyPin (not yet keyed per system) for every system --
-          # pins/agy.json becomes a per-system keyed map, and this
-          # derivation becomes conditional on that system having a native
-          # artifact, in the very next increment (docs/refactor/
-          # arch-neutral-guest.md section 3). This increment is per-system
-          # OUTPUTS only (design point A); it does not change which bytes
-          # `agy` resolves to for any system.
-          agy = pkgs.stdenv.mkDerivation rec {
-            pname = "antigravity-cli";
-            version = agyPin.version;
+          # Branch 11 / Phase 4, Increment 2 (qnap-dxe-plan.md DQ7,
+          # docs/refactor/arch-neutral-guest.md section 3): pins/agy.json is
+          # a per-system keyed map. A missing/unsupported system's entry is
+          # JSON `null`, and this whole derivation becomes `null` for that
+          # system -- so aiPackages below can only ever include a genuinely
+          # native agy build; it is never possible for a foreign-
+          # architecture binary to reach the closure by construction, not by
+          # a runtime check.
+          agySystemPin = agyPin.${system} or null;
+          agy =
+            if agySystemPin == null then null else pkgs.stdenv.mkDerivation rec {
+              pname = "antigravity-cli";
+              version = agySystemPin.version;
 
-            src = pkgs.fetchurl {
-              # An explicit name keeps this derivation's store-path name stable
-              # (antigravity-cli-src) across pin refreshes, independent of
-              # whatever filename Google's manifest happens to use -- dx-ai.sh's
-              # dx_ai_check_cached allow-lists this exact name as agy's own
-              # trivial, always-local fetch step (fetchurl otherwise defaults the
-              # name to the URL's basename, which is not under our control).
-              name = "antigravity-cli-src";
-              url = agyPin.url;
-              hash = agyPin.hash;
+              src = pkgs.fetchurl {
+                # An explicit name keeps this derivation's store-path name stable
+                # (antigravity-cli-src) across pin refreshes, independent of
+                # whatever filename Google's manifest happens to use -- dx-ai.sh's
+                # dx_ai_check_cached allow-lists this exact name as agy's own
+                # trivial, always-local fetch step (fetchurl otherwise defaults the
+                # name to the URL's basename, which is not under our control).
+                name = "antigravity-cli-src";
+                url = agySystemPin.url;
+                hash = agySystemPin.hash;
+              };
+
+              nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+              buildInputs = [ pkgs.stdenv.cc.cc ];
+
+              unpackPhase = ''
+                runHook preUnpack
+                tar -xzf $src
+                runHook postUnpack
+              '';
+
+              dontConfigure = true;
+              dontBuild = true;
+
+              installPhase = ''
+                runHook preInstall
+                install -Dm755 antigravity $out/bin/agy
+                runHook postInstall
+              '';
             };
 
-            nativeBuildInputs = [ pkgs.autoPatchelfHook ];
-            buildInputs = [ pkgs.stdenv.cc.cc ];
-
-            unpackPhase = ''
-              runHook preUnpack
-              tar -xzf $src
-              runHook postUnpack
-            '';
-
-            dontConfigure = true;
-            dontBuild = true;
-
-            installPhase = ''
-              runHook preInstall
-              install -Dm755 antigravity $out/bin/agy
-              runHook postInstall
-            '';
-          };
-
           # Optional AI CLI tools kept out of the default install.
-          # `agy` is the locally-defined Antigravity CLI derivation above; let-bound
-          # names take precedence over `with unstable;`, so it resolves correctly.
+          # `agy` is the locally-defined Antigravity CLI derivation above (or
+          # `null` when this system has no native artifact -- omitted below,
+          # never substituted); let-bound names take precedence over
+          # `with unstable;`, so it resolves correctly.
           aiPackages = with unstable; [
             gemini-cli
             claude-code
             codex
+          ] ++ nixpkgs.lib.optionals (agy != null) [
             agy
+          ] ++ [
             herdr
             opencode
             # agy stores its known CLI state under ~/.gemini/antigravity-cli, which

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-AGY_MANIFEST_URL="${AGY_MANIFEST_URL:-https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json}"
 NIX_FLAGS=(--extra-experimental-features "nix-command flakes" --accept-flake-config)
 # Single source of truth for the optional AI tools bundle. Keep the Nix
 # declaration (flake.nix's aiPackages), bin/dx-herdr, and docs/guest.md in sync
@@ -142,10 +141,60 @@ dx_ai_lock_acquire() {
 
 dx_ai_lock_release() { rm -f "$1/owner"; rmdir "$1"; }
 
+# Branch 11 / Phase 4 (qnap-dxe-plan.md DQ7, docs/refactor/
+# arch-neutral-guest.md section 3.4): the Antigravity CLI publishes its
+# updater manifest at a per-system URL upstream (verified read-only against
+# the real host: both linux_arm64.json and linux_amd64.json exist at this
+# same path shape). No env override remains -- AGY_MANIFEST_URL had no
+# consumer outside one static test assertion, updated alongside this
+# change.
+dx_ai_agy_manifest_url() {
+    case "$1" in
+        aarch64-linux) printf '%s\n' "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json" ;;
+        x86_64-linux)  printf '%s\n' "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json" ;;
+        *) return 1 ;;
+    esac
+}
+
+# Branch 11 / Phase 4, Increment 2: a small local uname -m -> Nix system
+# mapping so dx-ai can select its own agy pin/manifest and tool inventory.
+# Increment 3 replaces this with the shared scripts/lib/dx-guest-system.sh
+# helper (also used by bootstrap.sh), which additionally cross-checks
+# DX_GUEST_SYSTEM; deliberately the identical mapping in the meantime.
+dx_ai_native_system() {
+    case "$(uname -m)" in
+        aarch64) printf '%s\n' aarch64-linux ;;
+        x86_64)  printf '%s\n' x86_64-linux ;;
+        *) echo "Error: unsupported guest architecture: $(uname -m)" >&2; return 1 ;;
+    esac
+}
+
+# The tool set to actually stage/publish/verify for $2 (a system), given
+# $1's pins/agy.json: the full DX_AI_TOOLS when that system's agy pin is
+# non-null, or DX_AI_TOOLS minus agy -- with DQ7's exact diagnostic on
+# stderr -- when it is null. This never causes a foreign-architecture
+# binary to be installed: that guarantee comes from flake.nix's own
+# per-system agy/aiPackages filtering (docs/refactor/arch-neutral-guest.md
+# section 3.3), which means a null-pin system's #ai-tools closure simply
+# never contains an agy derivation to begin with. This function only keeps
+# dx-ai's own bookkeeping (the tools-manifest, publish validation, verify)
+# in agreement with what that filtering actually built.
+dx_ai_tools_for_system() {
+    local root="$1" system="$2" is_null tool
+    is_null="$(jq -r --arg system "$system" '(.[$system] // null) == null' "$root/pins/agy.json" 2>/dev/null)" || is_null=true
+    if [ "$is_null" = true ]; then
+        echo "agy: no native artifact for $system; skipping (DQ7)" >&2
+        for tool in $DX_AI_TOOLS; do [ "$tool" = agy ] || printf '%s\n' "$tool"; done
+    else
+        printf '%s\n' $DX_AI_TOOLS
+    fi
+}
+
 dx_ai_refresh_pin() {
-    local root="$1" manifest version url sha512_hex hash tmp
-    echo "Refreshing Antigravity CLI manifest..."
-    manifest="$(curl -fsSL "$AGY_MANIFEST_URL")" || { echo "Warning: could not fetch agy manifest. Keeping current pin." >&2; return 0; }
+    local root="$1" system="$2" manifest_url manifest version url sha512_hex hash tmp
+    manifest_url="$(dx_ai_agy_manifest_url "$system")" || { echo "Warning: agy has no known manifest URL for $system; skipping pin refresh." >&2; return 0; }
+    echo "Refreshing Antigravity CLI manifest for $system..."
+    manifest="$(curl -fsSL "$manifest_url")" || { echo "Warning: could not fetch agy manifest. Keeping current pin." >&2; return 0; }
     version="$(printf '%s' "$manifest" | jq -r '.version // empty')"
     url="$(printf '%s' "$manifest" | jq -r '.url // empty')"
     sha512_hex="$(printf '%s' "$manifest" | jq -r '.sha512 // empty')"
@@ -155,13 +204,14 @@ dx_ai_refresh_pin() {
     [ "${#sha512_hex}" -eq 128 ] || { echo "Warning: malformed agy manifest hash. Keeping current pin." >&2; return 0; }
     hash="$(nix hash convert --hash-algo sha512 --to sri "$sha512_hex")" || { echo "Warning: could not convert agy manifest hash. Keeping current pin." >&2; return 0; }
     tmp="$(mktemp "$root/pins/.agy.json.XXXXXX")" || return 1
-    if ! jq --arg version "$version" --arg url "$url" --arg hash "$hash" '.version=$version | .url=$url | .hash=$hash' "$root/pins/agy.json" > "$tmp"; then
+    if ! jq --arg system "$system" --arg version "$version" --arg url "$url" --arg hash "$hash" \
+        '.[$system] = {version:$version, url:$url, hash:$hash}' "$root/pins/agy.json" > "$tmp"; then
         rm -f "$tmp"
         return 1
     fi
-    if [ "$(cat "$tmp")" = "$(cat "$root/pins/agy.json")" ]; then rm -f "$tmp"; echo "Antigravity CLI pin is unchanged ($version)."; return 0; fi
+    if [ "$(cat "$tmp")" = "$(cat "$root/pins/agy.json")" ]; then rm -f "$tmp"; echo "Antigravity CLI pin for $system is unchanged ($version)."; return 0; fi
     if ! mv -f "$tmp" "$root/pins/agy.json"; then rm -f "$tmp"; return 1; fi
-    echo "Pinned agy $version from upstream manifest."
+    echo "Pinned agy $version for $system from upstream manifest."
 }
 
 dx_ai_stage_generation() {
@@ -191,8 +241,8 @@ dx_ai_stage_generation() {
 }
 
 dx_ai_update_flake() {
-    local stage="$1"
-    dx_ai_refresh_pin "$stage"
+    local stage="$1" system="$2"
+    dx_ai_refresh_pin "$stage" "$system"
     echo "Updating nixpkgs-unstable..."
     (cd "$stage" && nix flake update "${NIX_FLAGS[@]}" nixpkgs-unstable)
     nix flake metadata "${NIX_FLAGS[@]}" "$stage" >/dev/null
@@ -539,7 +589,7 @@ EOF
 }
 
 dx_ai_main() {
-    local action=update published state id stage="" lock result=0
+    local action=update published state id stage="" lock result=0 system
     case "${1:-}" in
         -h|--help) dx_ai_usage; return ;;
         --recover) action=recover; shift ;;
@@ -566,8 +616,15 @@ dx_ai_main() {
         return
     fi
     published="$(dx_ai_published_root)"; [ -f "$published/flake.nix" ] || { echo "Error: published bootstrap flake is missing." >&2; dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return 1; }
+    # Branch 11 / Phase 4, Increment 2 (docs/refactor/arch-neutral-guest.md
+    # section 3.4): resolve this guest's own system once, and adjust
+    # DX_AI_TOOLS (a global the staging/validation/verify functions below
+    # already read) BEFORE staging, so a system with no native agy artifact
+    # stages, publishes, and verifies a generation that never claims agy.
+    system="$(dx_ai_native_system)" || { dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return 1; }
+    DX_AI_TOOLS="$(dx_ai_tools_for_system "$published" "$system" | tr '\n' ' ')"; DX_AI_TOOLS="${DX_AI_TOOLS% }"
     if ! stage="$(dx_ai_stage_generation "$published" "$state" "$id")"; then dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return 1; fi
-    dx_ai_update_flake "$stage" || result=$?
+    dx_ai_update_flake "$stage" "$system" || result=$?
     [ "$result" -ne 0 ] || dx_ai_ensure_cached "$stage" "$state" || result=$?
     [ "$result" -ne 0 ] || dx_ai_install_profile "$stage" || result=$?
     [ "$result" -ne 0 ] || dx_ai_publish_generation "$state" "$id" "$stage" || result=$?

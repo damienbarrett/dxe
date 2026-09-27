@@ -194,28 +194,36 @@ code.
 
 ### Bumping `agy` (Antigravity CLI)
 
-`agy` is fetched as a pinned tarball from Google's release bucket (see the
-`antigravity-cli` derivation in `container/.../flake.nix`). The binary ships with
-a self-updater, but the Nix store is read-only, so `dx-ai` refreshes the local
-flake pin from Google's CLI manifest before installing or upgrading `ai-tools`.
+`agy` is fetched as a pinned tarball from Google's release bucket, keyed per
+Nix system in `pins/agy.json` (Branch 11 / Phase 4, DQ7:
+`docs/refactor/arch-neutral-guest.md` section 3) and spliced into the `agy`
+derivation in `container/.../flake.nix` per system. An architecture with no
+native artifact has a JSON `null` entry there; `agy` is then omitted from
+that system's `ai-tools` closure entirely (never a foreign-architecture
+binary), and `dx-ai` prints `agy: no native artifact for <system>; skipping
+(DQ7)` and installs every other tool. The binary ships with a self-updater,
+but the Nix store is read-only, so `dx-ai` refreshes the local flake pin
+(for its own running system only) from Google's CLI manifest before
+installing or upgrading `ai-tools`.
 
 To inspect the upstream manifest manually:
 
 ```bash
-# Linux arm64; substitute linux_amd64 / darwin_arm64 / darwin_amd64 as needed.
+# aarch64-linux; substitute linux_amd64 for x86_64-linux.
 curl -fsSL https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json
 ```
 
 The manifest returns `{ "version": ..., "url": ..., "sha512": ... }`. `dx-ai`
 converts `sha512` to a Nix SRI hash with `nix hash convert --hash-algo sha512
---to sri` and rewrites the local mutable generation's pin before running `nix
-profile add` or `nix profile upgrade`; `/guest-bootstrap` remains unchanged.
+--to sri` and rewrites that system's key in the local mutable generation's
+`pins/agy.json` before running `nix profile add` or `nix profile upgrade`;
+`/guest-bootstrap` remains unchanged.
 
 To update the checked-in fallback pin:
 
-1. Replace the `version`, `src.url`, and `src.hash` in the `agy` derivation in
-   `flake.nix`. `hash` uses SRI format: `sha512-<base64>`. Convert from the
-   manifest's hex with:
+1. Replace the `version`, `url`, and `hash` under the target system's key
+   (`"aarch64-linux"` or `"x86_64-linux"`) in `pins/agy.json`. `hash` uses
+   SRI format: `sha512-<base64>`. Convert from the manifest's hex with:
 
    ```bash
    printf '%s' "<sha512-hex>" | xxd -r -p | base64 | tr -d '\n'
