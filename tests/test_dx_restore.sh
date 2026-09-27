@@ -313,6 +313,53 @@ source "$BASE_DIR/bin/lib/dx-backup.sh"
 # shellcheck source=../bin/lib/dx-runtime.sh
 source "$BASE_DIR/bin/lib/dx-runtime.sh"
 
+# --- Item 2 follow-up (fix/test-hardening, live finding 2026-09-28): even
+# --- after the O(n^2) guest-hash join above was fixed, a live 60,168-target
+# --- dry run against a mirror the guest held NONE of still did not finish
+# --- in 15 minutes -- dx_backup_restore_status's local-hashing loop ran
+# --- dx_pbs_hash_entry once per target UNCONDITIONALLY, wasting every one
+# --- of those forks on a target that was always going to classify
+# --- "create" regardless of its local hash (a target absent from the guest
+# --- never needs a local hash at all). Fix: hash locally only for targets
+# --- the guest batch reports "present". Proved here with a RECORDING stub
+# --- (records every path it is called with) over an exact, small set: one
+# --- identical, one conflicting, one missing -- proving both that
+# --- classification is still correct AND that the missing target's path
+# --- never reaches dx_pbs_hash_entry. ---
+RECORD_LOG="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-record.XXXXXX")"
+RECORD_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-record-dir.XXXXXX")"
+RECORD_TARGETS="$RECORD_FIXTURE/targets.txt"
+printf 'present/identical.txt\npresent/conflict.txt\nabsent/missing.txt\n' > "$RECORD_TARGETS"
+dx_runtime_exec() {
+    printf 'present/identical.txt\tpresent\t1\t1\tsame-hash\n'
+    printf 'present/conflict.txt\tpresent\t1\t1\tguest-hash-differs\n'
+    printf 'absent/missing.txt\tmissing\n'
+}
+dx_pbs_hash_entry() {
+    printf '%s\n' "$1" >> "$RECORD_LOG"
+    case "$1" in
+        *present/identical.txt) printf '1\t1\tsame-hash\n' ;;
+        *) printf '1\t1\tlocal-hash-differs\n' ;;
+    esac
+}
+RECORD_OUT="$(dx_backup_restore_status test-container "$RECORD_FIXTURE" "$RECORD_TARGETS")"
+if printf '%s\n' "$RECORD_OUT" | stdin_matches -F -x -- "$(printf 'present/identical.txt\tidentical')" \
+    && printf '%s\n' "$RECORD_OUT" | stdin_matches -F -x -- "$(printf 'present/conflict.txt\tconflict')" \
+    && printf '%s\n' "$RECORD_OUT" | stdin_matches -F -x -- "$(printf 'absent/missing.txt\tcreate')"; then
+    test_pass "dx_backup_restore_status still classifies identical/conflict/create correctly hashing only present targets locally"
+else
+    test_fail "dx_backup_restore_status still classifies identical/conflict/create correctly hashing only present targets locally (got: $RECORD_OUT)"
+fi
+record_call_count="$(wc -l < "$RECORD_LOG" | tr -d '[:space:]')"
+if [ "$record_call_count" -eq 2 ] && ! grep -qF 'absent/missing.txt' "$RECORD_LOG"; then
+    test_pass "dx_backup_restore_status hashes locally ONLY the targets the guest reports present -- an absent target never calls dx_pbs_hash_entry"
+else
+    test_fail "dx_backup_restore_status hashes locally ONLY the targets the guest reports present (calls: $record_call_count; log: $(cat "$RECORD_LOG" 2>/dev/null))"
+fi
+rm -f "$RECORD_LOG"
+rm -rf "$RECORD_FIXTURE"
+unset -f dx_runtime_exec dx_pbs_hash_entry
+
 PERF_N=60000
 PERF_IDENTICAL=40000
 PERF_CONFLICT=10000
@@ -371,22 +418,30 @@ perf_create="$(printf '%s\n' "$PERF_OUT" | awk -F'\t' '$2 == "create"' | wc -l |
 perf_identical="$(printf '%s\n' "$PERF_OUT" | awk -F'\t' '$2 == "identical"' | wc -l | tr -d '[:space:]')"
 perf_conflict="$(printf '%s\n' "$PERF_OUT" | awk -F'\t' '$2 == "conflict"' | wc -l | tr -d '[:space:]')"
 
-# 1800s (30 minutes), not "well under a minute": this shared dev sandbox's
-# own fork() cost, entirely inside the UNCHANGED per-target local-hash
-# step (not this fix's join), varies from ~90s to 7+ minutes here purely
-# with concurrent sibling-subagent load -- this worktree is one of several
-# sibling subagents' own full test-suite runs sharing the same physical
-# host at once (confirmed directly: other worktrees' own test_dx_restore.sh
-# and run_all_tests.sh processes observed running concurrently with this
-# one) -- and neither number is this fix's own cost. The OLD algorithm at
-# this same scale, same host, does not even get close (confirmed
-# separately: still running, unfinished, after 10+ minutes ALONE, with its
-# most expensive targets -- the ones needing the longest per-target scan --
-# still ahead of it; under the same multi-agent contention this bound
-# absorbs, it would take drastically longer still). A real regression --
-# the join itself going quadratic again -- would blow far past this bound
-# too, since it would then dominate over the (bounded, contention-
-# independent) per-target cost instead of vanishing next to it.
+# 1800s (30 minutes), not "well under a minute": this fixture still pays
+# the real, UNCHANGED local-hashing cost for its 50,000 PRESENT targets
+# (40,000 identical + 10,000 conflict -- the follow-up below only skips
+# hashing the 10,000 ABSENT ones, so this mixed fixture's own bound is
+# governed by present-count, not target-count, but 50,000 is still close
+# enough to 60,000 that the same generous bound applies). This shared dev
+# sandbox's own fork() cost, entirely inside that per-target local-hash
+# step (not either fix's join/skip logic), varies from ~90s to 7+ minutes
+# here purely with concurrent sibling-subagent load -- this worktree is one
+# of several sibling subagents' own full test-suite runs sharing the same
+# physical host at once (confirmed directly: other worktrees' own
+# test_dx_restore.sh and run_all_tests.sh processes observed running
+# concurrently with this one) -- and neither number is this fix's own cost.
+# The OLD algorithm at this same scale, same host, does not even get close
+# (confirmed separately: still running, unfinished, after 10+ minutes
+# ALONE, with its most expensive targets -- the ones needing the longest
+# per-target scan -- still ahead of it; under the same multi-agent
+# contention this bound absorbs, it would take drastically longer still).
+# A real regression -- the join itself going quadratic again -- would blow
+# far past this bound too, since it would then dominate over the (bounded,
+# contention-independent) per-target cost instead of vanishing next to it.
+# The TRUE "well under a minute" case -- every target absent, as the live
+# finding actually hit -- is the separate fixture below, which pays none of
+# this per-target cost at all and so is NOT widened for contention.
 if [ "$perf_elapsed" -lt 1800 ]; then
     test_pass "a 60,000-target dx_backup_restore_status join does not reintroduce O(n^2) scanning (${perf_elapsed}s; see comment above for this dev host's own fork() cost and why it is not \"well under a minute\" literally here)"
 else
@@ -398,6 +453,75 @@ else
     test_fail "the 60,000-target classification is correct (got identical=$perf_identical conflict=$perf_conflict create=$perf_create)"
 fi
 rm -rf "$PERF_FIXTURE"
+
+# --- Item 2 follow-up (fix/test-hardening, live finding 2026-09-28): the
+# --- EXACT live scenario -- a 60,168-target dry run against a mirror the
+# --- guest held NONE of (a full restore of a retained-but-unpushed
+# --- backup) -- reproduced here at the same 60,000 scale but with every
+# --- target absent from the guest. Before this follow-up this paid the
+# --- same 60,000 wasted dx_pbs_hash_entry forks as the mixed fixture
+# --- above; after it, zero local hashes are ever attempted (a RECORDING
+# --- stub proves the call count directly), so this is the one fixture in
+# --- this file that genuinely IS "well under a minute" regardless of this
+# --- shared sandbox's contention, and is deliberately NOT widened for it
+# --- (unlike the mixed fixture above, which still pays a real, unavoidable
+# --- per-present-target cost). ---
+ABSENT_N=60000
+ABSENT_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-absent.XXXXXX")"
+ABSENT_HASHES="$ABSENT_FIXTURE/guest-hashes.tsv"
+ABSENT_TARGETS="$ABSENT_FIXTURE/targets.txt"
+{
+    i=1
+    while [ "$i" -le "$ABSENT_N" ]; do
+        printf 'perf/f%d\tmissing\n' "$i"
+        i=$((i + 1))
+    done
+} > "$ABSENT_HASHES"
+{
+    i=1
+    while [ "$i" -le "$ABSENT_N" ]; do
+        printf 'perf/f%d\n' "$i"
+        i=$((i + 1))
+    done
+} > "$ABSENT_TARGETS"
+
+ABSENT_CALL_LOG="$ABSENT_FIXTURE/calls.log"
+: > "$ABSENT_CALL_LOG"
+dx_runtime_exec() {
+    case "$*" in
+        *"--hash-paths"*) cat "$ABSENT_HASHES" ;;
+        *) : ;; # ship-list / remove-list calls: no real guest, nothing to do
+    esac
+}
+dx_pbs_hash_entry() {
+    echo "$1" >> "$ABSENT_CALL_LOG"
+    printf '1\t1\tshould-never-be-read\n'
+}
+
+absent_start="$(date +%s)"
+ABSENT_OUT="$(dx_backup_restore_status test-container "$ABSENT_FIXTURE" "$ABSENT_TARGETS")"
+absent_end="$(date +%s)"
+absent_elapsed=$((absent_end - absent_start))
+
+absent_create="$(printf '%s\n' "$ABSENT_OUT" | awk -F'\t' '$2 == "create"' | wc -l | tr -d '[:space:]')"
+absent_call_count="$(wc -l < "$ABSENT_CALL_LOG" | tr -d '[:space:]')"
+
+if [ "$absent_elapsed" -lt 60 ]; then
+    test_pass "a 60,000-target dry run where the guest holds NONE of them completes in well under a minute (${absent_elapsed}s) -- the exact live scenario this follow-up fixes"
+else
+    test_fail "a 60,000-target dry run where the guest holds NONE of them completes in well under a minute (${absent_elapsed}s)"
+fi
+if [ "$absent_call_count" -eq 0 ]; then
+    test_pass "dx_backup_restore_status calls dx_pbs_hash_entry ZERO times when every target is absent from the guest"
+else
+    test_fail "dx_backup_restore_status calls dx_pbs_hash_entry ZERO times when every target is absent from the guest (got $absent_call_count calls)"
+fi
+if [ "$absent_create" -eq "$ABSENT_N" ]; then
+    test_pass "all 60,000 absent targets still classify correctly as create when no local hash is ever attempted"
+else
+    test_fail "all 60,000 absent targets still classify correctly as create when no local hash is ever attempted (got $absent_create)"
+fi
+rm -rf "$ABSENT_FIXTURE"
 
 print_summary
 exit_with_code

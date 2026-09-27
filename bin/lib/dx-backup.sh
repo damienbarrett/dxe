@@ -367,7 +367,7 @@ DX_BACKUP_HASH_PATHS_ARG_THRESHOLD=1000
 #                refuses this target (and the whole run) without --force.
 dx_backup_restore_status() {
     local container_name="$1" backup_dir="$2" targets="$3"
-    local hashes local_hashes path local_line
+    local hashes local_hashes present_list path local_line
     local -a target_list=()
     while IFS= read -r path || [ -n "$path" ]; do
         [ -n "$path" ] || continue
@@ -388,35 +388,65 @@ dx_backup_restore_status() {
         dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" --hash-paths "$DX_BACKUP_GUEST_ROOT" "${target_list[@]}" > "$hashes"
     fi
 
-    # One local hash per target, in target_list order (unavoidable, O(n),
-    # unchanged from before: dx_pbs_hash_entry itself is not what was slow).
-    # An empty local_hash (dx_pbs_hash_entry failed -- could not read/hash
-    # the local mirror copy) means this target must classify "conflict"
-    # regardless of what the guest has, same as the old per-target failure
-    # branch below.
+    # Only a target the guest batch reports "present" can ever need a local
+    # hash: a "missing" target classifies "create" unconditionally below,
+    # regardless of what (if anything) the local mirror holds, so hashing it
+    # would be pure waste. A live 60,168-target dry run against a mirror the
+    # guest held NONE of (a full restore of a retained-but-unpushed backup)
+    # still did not finish in 15 minutes after the O(n^2) guest-hash join
+    # above was fixed -- every one of those dx_pbs_hash_entry forks was
+    # wasted, since every target was going to classify "create" regardless
+    # of its local hash. One awk pass extracts the present subset from
+    # $hashes (never a per-target grep/scan -- the same O(n^2) mistake this
+    # whole item exists to fix).
+    present_list="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-present.XXXXXX")"
+    awk -F'\t' '$2 == "present" { print $1 }' "$hashes" > "$present_list"
+
+    # One local hash per PRESENT target only (unavoidable, O(present-count)
+    # now rather than O(n): a target absent from the guest never reaches
+    # this loop at all). An empty local_hash (dx_pbs_hash_entry failed --
+    # could not read/hash the local mirror copy) means this target must
+    # classify "conflict" below, same as the old per-target failure branch.
+    #
+    # Seeded with one sentinel line whose path field ("") can never match a
+    # real target (target paths are never empty, filtered above) before the
+    # loop below is guaranteed to be the case that matters most -- EVERY
+    # target absent from the guest, present_list empty, zero real lines
+    # written. Without this sentinel, an awk reading two files where the
+    # FIRST is completely empty still sees `NR == FNR` hold true through
+    # the START of the SECOND file too (both begin at 1), silently
+    # misrouting $hashes's own lines into the join's array-population
+    # branch below and producing NO output at all -- caught by both the
+    # existing 1001-target ARG_MAX test (its guest fixture is emptied
+    # before the dry-run, so every target reports missing) and the new
+    # all-absent fixture below.
     local_hashes="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-local.XXXXXX")"
-    for path in "${target_list[@]}"; do
+    printf '\t\n' > "$local_hashes"
+    while IFS= read -r path || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
         local_line="$(dx_pbs_hash_entry "$backup_dir/current/$path" 2>/dev/null)" || local_line=""
         # Single line (this file's own convention, see dx_backup_restore_push's
         # sh -c body below): a bare `done` starts no traceable command of its
         # own, so kcov never registers a hit on a "done > FILE" line by itself
         # -- it must share a line with a real command to be measured as covered.
-        printf '%s\t%s\n' "$path" "$(printf '%s\n' "$local_line" | cut -f3)"; done > "$local_hashes"
+        printf '%s\t%s\n' "$path" "$(printf '%s\n' "$local_line" | cut -f3)"; done < "$present_list" >> "$local_hashes"
 
-    # Single pass joining the two lists, replacing what used to be one awk
-    # scan of the WHOLE guest hash batch PER target (O(targets * guest
-    # lines) -- a 60,000-target full-mirror dry run had not finished after
-    # 13 minutes). awk's own associative arrays give this one linear pass
-    # over each file instead. Exact match on field 1 throughout, never a
+    # Single pass joining the two lists: $hashes (EVERY target, present or
+    # missing) drives the output so every target still gets exactly one
+    # output line; $local_hashes (present targets only, from the loop above)
+    # is the lookup array. Exact match on field 1 throughout, never a
     # substring search (Branch 17's rule): a target path that is a suffix
     # of another target's path (e.g. repo/.gitignore vs.
     # other/repo/.gitignore) must never let the OTHER target's line answer
-    # for it. Single line (this file's own convention, see dx-put's sh -c
-    # body): a multi-line quoted argument only registers a coverage hit on
-    # its first line, not each interior line.
-    awk -F'\t' 'NR == FNR { gstatus[$1] = $2; ghash[$1] = $5; next } { path = $1; lhash = $2; if (gstatus[path] != "present") { print path "\tcreate"; next }; if (lhash == "") { print path "\tconflict"; next }; if (ghash[path] == lhash) { print path "\tidentical"; next }; print path "\tconflict" }' "$hashes" "$local_hashes"
+    # for it. A present target missing from $local_hashes, or present there
+    # with an empty hash, means dx_pbs_hash_entry could not read the local
+    # mirror copy -- still "conflict", same as an explicit empty local_hash
+    # always has been. Single line (this file's own convention, see
+    # dx-put's sh -c body): a multi-line quoted argument only registers a
+    # coverage hit on its first line, not each interior line.
+    awk -F'\t' 'NR == FNR { lhash[$1] = $2; next } { path = $1; if ($2 != "present") { print path "\tcreate"; next }; if (!(path in lhash) || lhash[path] == "") { print path "\tconflict"; next }; if ($5 == lhash[path]) { print path "\tidentical"; next }; print path "\tconflict" }' "$local_hashes" "$hashes"
 
-    rm -f "$hashes" "$local_hashes"
+    rm -f "$hashes" "$local_hashes" "$present_list"
 }
 
 # Push $3 (relative paths, one per line) from $2/current/ into the guest at
