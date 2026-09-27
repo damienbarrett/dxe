@@ -710,6 +710,53 @@ recreate check, which moves to Phase 4 as stated above.**
 - Apple aarch64 build and live gates remain green.
 - The QNAP guest verifies the required CLI inventory after bootstrap.
 
+**Status 2026-09-28: items 1-5 done on `feat/qnap-arch-neutral`,
+developed and characterised entirely against Nix evaluation
+(`nix flake check --no-build --no-write-lock-file --all-systems` in a
+throwaway `nixos/nix:2.34.8` container), fixtures, and fakes -- the real
+NAS was never touched, and the x86_64 closure was never built anywhere.
+Full design: `docs/refactor/arch-neutral-guest.md`.**
+
+User decisions recorded 2026-09-27, settled and not reopened: (1) Phase 4
+proceeds now as a subagent task; (2) on the NAS only disposable names
+(`dx-qnap-spike*`) may exist until Phase 7, and the exit gate's guest is
+created and destroyed by the coordinating session; (3) the QNAP guest is
+**8 GB / 4 CPU** (`DX_CONTAINER_MEMORY=8G`, `DX_CONTAINER_CPUS=4` in
+`tests/profiles/qnap-example.env`, Apple's default unchanged at 12G); (4)
+the x86_64 closure is built natively inside the disposable QNAP guest
+during its own bootstrap, cache first, building only what is not cached
+(the same way the Apple guest works today) -- no cross-compilation, no
+emulation, no separate builder.
+
+**amd64 Antigravity finding (design point B, discovered read-only during
+Increment 0):** a native x86_64 Antigravity CLI artifact exists upstream
+(version 1.2.12, distinct from arm64's pinned 1.0.5, each refreshed
+independently against its own manifest) -- `pins/agy.json`'s
+`x86_64-linux` entry is real data, not `null`. The `null`/"no native
+artifact" path DQ7 requires is still built and unit-tested
+(`dx_ai_tools_for_system`, its DQ7 diagnostic, and `flake.nix`'s
+per-system `agy`/`aiPackages` filtering that makes a foreign-architecture
+binary structurally impossible to install), but is not exercised by the
+real live exit gate below, since both supported architectures currently
+have real pins. Per the coordinating session's decision, no synthetic
+null-pin override exists in production or at the exit gate to force that
+path on real hardware; the unit tests are the proof.
+
+Item 6 (the context-tree rename) remains pending, deliberately untouched
+by this branch, per DQ7's own instruction that it be a standalone
+mechanical commit, never mixed with runtime behavior changes. What it
+would touch: every `DX_CONTEXT_DIR`/`DX_BOOTSTRAP_SOURCE` default in
+`bin/lib/dx-config.sh`, every hardcoded path reference across `bin/`,
+`tests/`, and `docs/`, and the directory move itself -- see
+`docs/refactor/arch-neutral-guest.md` section 9.
+
+Not yet run (the coordinating session's job, after this branch's own
+validation -- G1-G3, the ratchet, `tests/run-coverage-linux.sh` -- all
+passed): the exit gate's live x86_64 native build and CLI-inventory
+verification (`scripts/dx-verify-inventory.sh` via `dx_runtime_exec`) on a
+disposable QNAP guest, and the Apple `dx-test` regression tier (the
+dual-target gate).
+
 ## Phase 5 — Make SSH and user workflows remote-aware
 
 1. Extend the shared SSH option builder with a validated remote guest address

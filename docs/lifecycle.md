@@ -80,6 +80,33 @@ operations.
     mode, and
     [`docs/refactor/direct-volume-storage.md`](refactor/direct-volume-storage.md)
     for the full in-guest protocol.
+11. **The guest is architecture-neutral; the guest itself selects its own
+    system.** One flake tree, evaluated per system
+    (`aarch64-linux`/`x86_64-linux`) via a small local `forEachSystem`
+    helper, not a duplicated Home Manager/NixVim/bootstrap/scripts tree per
+    architecture (qnap-dxe-plan.md DQ7). `packages.<system>.*` and
+    `devShells.<system>` exist for both; `homeConfigurations` gains flat
+    `"dx-<system>"` attributes, and `homeConfigurations.dx` stays a real
+    alias -- the same derivation, not a second definition -- of
+    `dx-aarch64-linux`, so nothing that still names the bare attribute
+    breaks. The guest never trusts a host-supplied system name blindly: a
+    shared sourceable helper
+    (`scripts/lib/dx-guest-system.sh`, used by both `bootstrap.sh` and
+    `scripts/dx-ai.sh`) maps its own `uname -m` to a Nix system and
+    cross-checks it against `DX_GUEST_SYSTEM` -- a third
+    `dx-create-container` env token, alongside `DX_NIX_STORAGE_MODE` and
+    `DX_IMAGE_IDENTITY` -- refusing before touching Nix if the two
+    disagree. `pins/agy.json` (the Antigravity CLI's download pin) is
+    keyed per system the same way; an architecture with no native artifact
+    gets a JSON `null` entry, `flake.nix` omits that architecture's `agy`
+    from `aiPackages` entirely (never substituting a foreign binary), and
+    `dx-ai` prints an explicit "agy: no native artifact for `<system>`;
+    skipping (DQ7)" and installs everything else. Docker-ssh's resource
+    labels (item below) include `io.dxe.system`, and `bin/dx-create-container`
+    forwards `DX_GUEST_SYSTEM` unconditionally, so Apple's guest (always
+    `aarch64-linux`) sees it too, as a no-op confirmation. See
+    [`docs/refactor/arch-neutral-guest.md`](refactor/arch-neutral-guest.md)
+    for the full design.
 
 ### Layered lifecycle scripts
 
