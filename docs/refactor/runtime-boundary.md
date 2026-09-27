@@ -216,3 +216,92 @@ boundaries (`tests/test_docker_runtime_adapter.sh`, Section 33); the real
 NAS is production and was never touched by this branch. The only live
 step -- a read-only `dx-status` against a disposable QNAP profile -- is
 the coordinating session's own, separate step after this branch lands.
+
+## Phase 3: direct-volume storage mode
+
+Phase 3 (`feat/qnap-direct-storage`, `qnap-dxe-plan.md` "Phase 3 — Add
+direct Docker storage mode") adds `DX_NIX_STORAGE_MODE`
+(`apple-image` default | `direct-volume`) to the guest bootstrap and a new
+contract operation, `dx_runtime_image_identity`. Full design:
+`docs/refactor/direct-volume-storage.md` (design point D's amendment
+recorded in that file's section 5). Summary:
+
+- `bin/dx-create-container` forwards two new `--env` tokens for BOTH
+  runtimes: `DX_NIX_STORAGE_MODE` and `DX_IMAGE_IDENTITY` (the runtime's
+  own stable image identity, resolved once via the new
+  `dx_runtime_image_identity` op -- Apple extracts `container image
+  inspect`'s fixed top-level `"id"` field with a `sed` match, no `jq`
+  dependency on the controller; Docker uses a structured `docker image
+  inspect --format '{{.Id}}'` query, the same shape
+  `tests/qnap/phase0-spike.sh` already used for its own digest
+  comparison). Apple's create argv changes by exactly these two
+  deliberate tokens (`tests/test_runtime_boundary_characterisation.sh`);
+  apple-image mode in the guest reads neither.
+- The guest bootstrap (`container/.../bootstrap/base-and-storage.sh`)
+  gains an explicit `prepare_nix_volume_impl`/`populate_prepared_nix_volume`
+  dispatch on `DX_NIX_STORAGE_MODE`: `apple-image` keeps its entire
+  existing body verbatim (an absent variable, i.e. every container
+  created before this branch including the primary guest, falls straight
+  through to it); `direct-volume` requires `/nix` already mounted
+  (`findmnt -n -o TARGET /nix`), sets `DX_NIX_VOLUME_IN_PLACE=true` --
+  deliberately NOT `DX_NIX_VOLUME_ALREADY_MOUNTED`, which would bypass
+  part of the store-identity protocol -- and never calls
+  `mkfs.btrfs`/`mkfs.ext4`/`mount`/`umount`/`truncate`/`blkid` or touches
+  `/etc/fstab`.
+- A new guest marker, `.dx-image-identity-v1`, written once per volume
+  and compared verbatim on every later boot, is what detects a plain
+  image bump on a reused Docker volume: the volume's own content is
+  unaffected by which image created the container (Docker's
+  copy-on-first-mount never touches a non-empty volume), so the host has
+  to say instead. The pre-existing `nix_image_store_import_required`
+  check is kept, unchanged, as a self-consistency/corruption-only signal
+  once the identity marker already matches.
+- `bin/lib/dx-container.sh`'s `dx_container_list_names` boundary leak
+  (called `dx_runtime_apple_container_list_names` directly, reaching for
+  the local Apple binary even under `DX_RUNTIME=docker-ssh`) is fixed: it
+  now derives names from `dx_runtime_container_list`'s raw table listing.
+  The Section 32 audit now also fails on any fully-spelled
+  `dx_runtime_apple_*`/`dx_runtime_docker_*` call outside the two adapter
+  files, with a documented allow-list for `bin/dx-lock`/`bin/dx-status`'s
+  lock helpers (Phase 2's authorised entrypoints, which have no
+  dispatch-level equivalent to route through -- locking is not a
+  `dx_runtime_<op>` contract operation).
+- A new contract operation, `dx_runtime_volume_usage`, feeds a
+  capability-aware `dx-reclaim`: Apple keeps its exact host sparse-image
+  `du -sh` (moved into the adapter verbatim); Docker queries `docker
+  system df -v` with a Go template that filters by volume name
+  server-side, returning just that volume's byte size as a plain scalar
+  -- avoiding a `{{json .}}` blob that would need a parser on the
+  controller. `dx-reclaim` skips `fstrim` entirely under `docker-ssh`
+  (`dx_runtime_capability host_filesystem_reclamation` says no),
+  printing one line saying so, and no longer reads the host filesystem
+  directly.
+- `bin/lib/dx-backup.sh`'s unidirectional exec discipline (Branch 17) is
+  characterised under `docker-ssh`: the stdin-shipping phase renders
+  `docker exec -i -u dx <name> sh -c ...`, the tar-streaming phase
+  renders `docker exec -u dx <name> tar ... -T <file> -cf -` with no
+  `-i` at all -- no code change needed, `dx_runtime_exec` already
+  dispatches transparently and both CLIs agree on this flag vocabulary.
+
+Developed and characterised entirely against fake `ssh`/`docker`
+boundaries and guest-bootstrap fixtures (recording shell-function stubs
+for `findmnt`/`mkfs.btrfs`/`mkfs.ext4`/`mount`/`umount`/`truncate`/`blkid`,
+proving none of them is ever called on the `direct-volume` path); the
+real NAS was never touched. Per the user's 2026-09-27 decisions: item 7
+(a restore drill before production cutover) is dropped because QNAP
+guests start from scratch, and item 6 is satisfied by proving the
+*existing* `dx-backup`/`dx-restore` (Branches 10/17/18) render valid
+Docker argv, not a new procedure. The exit gate's "recreate preserves
+`/nix`, `/persist`, SSH authorization, tool state, and the current
+bootstrap generation" check needs a real x86_64 QNAP guest to run
+against, which does not exist until Phase 4; it therefore moves to
+**Phase 4's own exit gate**.
+
+One design point is deliberately left open, not closed by this phase:
+direct-volume mode has no pre-remount window at all -- every bootstrap
+binary, from the first instruction, comes from the volume's own store,
+so every check this phase adds is itself executed by tools drawn from
+the exact store it is checking. This is `store-trust-plan.md` Problem 2
+("after the remount, no binary from the persistent store may be trusted
+to prove that same trust root sound") in a sharper form than apple-image
+ever presented it. Not waived, not solved here; Branch 12 owns it.

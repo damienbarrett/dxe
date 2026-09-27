@@ -46,11 +46,36 @@ operations.
 9. **Runtime-neutral entrypoints.** No lifecycle script calls the `container`
    binary directly; each reaches it through `bin/lib/dx-runtime.sh`'s
    `dx_runtime_<op>` contract, which dispatches on the `DX_RUNTIME`
-   configuration field (default, and today the only implemented value,
-   `apple`) to an adapter. An automated audit
-   (`tests/test_runtime_boundary_audit.sh`) fails the build if a raw
-   `container` call reappears outside the adapter. See
+   configuration field (default `apple`; `docker-ssh` is the second
+   implemented runtime, for a remote QNAP guest over SSH) to an adapter. An
+   automated audit (`tests/test_runtime_boundary_audit.sh`) fails the build
+   if a raw `container` call, or a call into either adapter's own
+   `dx_runtime_apple_*`/`dx_runtime_docker_*` namespace, reappears outside
+   the two adapter files (`bin/dx-lock` and `bin/dx-status`'s read-only
+   lock helpers are the one documented, narrowly-scoped exception). See
    [`docs/refactor/runtime-boundary.md`](refactor/runtime-boundary.md).
+10. **Storage mode is explicit, not inferred.** `DX_NIX_STORAGE_MODE`
+    (`apple-image` default | `direct-volume`) tells the guest bootstrap
+    which of the two `/nix` protocols to run, forwarded by
+    `dx-create-container` as a plain env token so an absent value (every
+    container created before this setting existed) behaves exactly like
+    `apple-image`. `apple-image` formats and mounts Apple's own
+    runtime-managed raw volume; `direct-volume` (`docker-ssh` only) mounts
+    a Docker named volume directly at `/nix` with no formatting, staging,
+    or `/etc/fstab` edit at all, relying on Docker's own documented
+    behaviour of populating a fresh, empty named volume from the image's
+    content at its mount point the first time it is used. This is also
+    what "a QNAP guest starts from scratch" means in practice: there is no
+    existing `/nix`/`/persist` data to migrate onto a QNAP, so
+    `direct-volume` mode is only ever exercised against freshly created
+    volumes, and a second `--env DX_IMAGE_IDENTITY=...` token (the
+    runtime's own stable identity for the image that created the
+    container) lets the guest detect and refuse a later image change on a
+    *reused* volume rather than silently trusting mismatched content. See
+    "Reclaiming host disk space" below for what else differs by storage
+    mode, and
+    [`docs/refactor/direct-volume-storage.md`](refactor/direct-volume-storage.md)
+    for the full in-guest protocol.
 
 ### Layered lifecycle scripts
 
@@ -108,26 +133,34 @@ or perform maintenance operations.
 Apple Container stores named volumes as sparse host images. The apparent size
 of those images can stay high after the guest deletes data until the guest
 filesystem reports its free blocks back to the host. `dx-reclaim` handles that
-maintenance path for the DX volumes:
+maintenance path for the DX volumes, for either storage mode:
 
 ```bash
 ./bin/dx-reclaim
 ```
 
 Run it when the `dx-nix` or `dx-persist` volume has grown noticeably and you
-want to return unused space to macOS. The container must already be running.
+want to return unused space. The container must already be running.
 
-`dx-reclaim` prints host sparse-image usage and guest filesystem usage before
-and after the operation. It then:
+`dx-reclaim` prints volume usage (via `dx_runtime_volume_usage`: Apple's own
+host sparse-image size; a `docker-ssh` guest's Docker-visible volume size, or
+`unknown` when Docker cannot say) and guest filesystem usage before and after
+the operation. It then:
 
-1. Deletes old Nix generations inside the guest with `nix-collect-garbage -d`.
-2. Runs `fstrim -v` on `/nix` and `/persist` so already-free blocks can be
-   discarded from the sparse host images.
+1. Deletes old Nix generations inside the guest with `nix-collect-garbage -d`
+   (identical for both runtimes).
+2. **`apple-image` only:** runs `fstrim -v` on `/nix` and `/persist` so
+   already-free blocks can be discarded from the sparse host images.
+   **`direct-volume` (`docker-ssh`) skips this step entirely** and prints one
+   line saying so (`dx_runtime_capability host_filesystem_reclamation`
+   answers no for `docker-ssh` — there is no host-side sparse image to trim
+   against a Docker named volume).
 
 This does not delete persisted files. It removes only unreferenced Nix store
-paths and discards blocks the guest filesystem has already marked free. It is
-reasonable to run occasionally after large rebuilds or dependency churn, but it
-does not need to run constantly or on a tight schedule.
+paths and, under `apple-image`, discards blocks the guest filesystem has
+already marked free. It is reasonable to run occasionally after large
+rebuilds or dependency churn, but it does not need to run constantly or on a
+tight schedule.
 
 ### Backing up and restoring /persist
 

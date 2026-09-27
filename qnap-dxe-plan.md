@@ -635,6 +635,48 @@ Section 33, 100+ cases). Full design and as-built command mapping:
   executed.
 - A documented backup can restore `/persist` into an isolated container.
 
+**Status 2026-09-27: items 1-6 done on `feat/qnap-direct-storage`,
+developed and characterised entirely against fake `ssh`/`docker`
+boundaries and guest-bootstrap fixtures (recording shell-function stubs
+for `findmnt`/`mkfs.btrfs`/`mkfs.ext4`/`mount`/`umount`/`truncate`/`blkid`,
+proving none of them is ever called on the `direct-volume` path); the real
+NAS was never touched. Full design: `docs/refactor/direct-volume-storage.md`;
+narrative summary: `docs/refactor/runtime-boundary.md`'s "Phase 3" section.**
+
+User decisions recorded 2026-09-27, settled and not reopened: (1) Phase 3
+proceeds now as a subagent task; (2) storage is Docker named volumes in
+Container Station's default volume location only -- no bind mounts, no
+QNAP share/pool path in any tracked file (DQ4's later `/persist` bind
+stays out of scope); (3) QNAP guests start from scratch, so **item 7 (the
+restore drill) is dropped**, and **item 6 is satisfied by the existing
+`dx-backup`/`dx-restore`** (Branches 10/17/18), proven under fakes to
+render valid Docker argv through the runtime exec boundary, not a second
+procedure.
+
+Design point D's original mechanism (refuse only when
+`nix_image_store_import_required` reports "required") could not detect a
+plain image bump on a reused volume, because Docker's copy-on-first-mount
+never touches a non-empty volume -- the volume's own content is
+unaffected either way. Fixed with a new contract operation,
+`dx_runtime_image_identity`, and a host-provided `DX_IMAGE_IDENTITY` env
+token compared against a guest marker (`.dx-image-identity-v1`) written
+once per volume; the original check is kept, unchanged, as a
+corruption-only signal once the marker matches. **Direct-volume mode has
+no pre-remount window at all** -- every bootstrap binary, from the first
+instruction, comes from the volume's own store. This is
+`store-trust-plan.md` Problem 2 in a sharper form than apple-image ever
+presented it; not waived, not solved here -- Branch 12 owns it.
+
+The exit gate's "recreate preserves `/nix`, `/persist`, SSH authorization,
+tool state, and the current bootstrap generation" check needs a real
+x86_64 QNAP guest to run against, which does not exist until Phase 4; it
+therefore **moves to Phase 4's own exit gate**. This phase's own scope --
+the direct-volume in-guest protocol and its fake-boundary proof -- is
+done. Not yet run: the coordinating session's live disposable-volume
+check on the NAS (confirming the Docker copy-on-first-mount dependency
+with the real guest image) and the Apple `dx-test` regression tier --
+both required, per the dual-target gate, before this branch lands.
+
 ## Phase 4 — Make the guest architecture-neutral
 
 1. Parameterize flake outputs for the Phase 0 target and retain
