@@ -89,6 +89,21 @@ dx_runtime_apple_volume_exists() { container volume inspect "$1" >/dev/null 2>&1
 dx_runtime_apple_volume_create() { container volume create "$@"; }
 dx_runtime_apple_volume_delete() { container volume rm "$@"; }
 
+# Branch 11 / Phase 3 (qnap-dxe-plan.md Phase 3 item 5): today's exact
+# bin/dx-reclaim host-side sparse-image sizing (moved here verbatim,
+# including "missing" for an absent image -- dx-reclaim's own pre-existing
+# wording, unchanged), now reached through the contract instead of
+# dx-reclaim reading the host filesystem directly.
+dx_runtime_apple_volume_usage() {
+    local volume="$1" image
+    image="$DX_CONTAINER_VOLUME_DIR/$volume/volume.img"
+    if [ ! -f "$image" ]; then
+        printf 'missing\n'
+        return 0
+    fi
+    du -sh "$image" 2>/dev/null | cut -f1
+}
+
 # Renders bin/lib/dx-runtime.sh's runtime-neutral container_create
 # vocabulary into Apple's own `container create` argv, in the exact order
 # bin/dx-create-container has always built it in (name, entrypoint,

@@ -176,6 +176,7 @@ number(s) satisfied.
 | `dx_runtime_volume_exists` | `<docker> volume inspect <name>` | exit status; `--format '{{json .}}'` when labels are needed | connection-loss | 3 |
 | `dx_runtime_volume_create` | `<docker> volume create --label io.dxe.managed=true --label io.dxe.schema=<v> --label io.dxe.profile=<profile-id> --label io.dxe.role=<nix\|persist\|bootstrap> <name>` (role resolved from which of `DX_NIX_VOLUME`/`DX_PERSIST_VOLUME`/`DX_BOOTSTRAP_VOLUME` the given name matches; refuses to create an unrecognised name unlabelled) | n/a (create) | connection-loss, name-collision (pre-check via inspect first: an existing same-named, differently-labelled volume refuses instead of `volume create`'s own silent idempotent success) | 4, 5 |
 | `dx_runtime_volume_delete` | label check then `<docker> volume rm <name>` | `{{json .Labels}}` from `volume inspect` | connection-loss, label-mismatch | 4, 5 |
+| `dx_runtime_volume_usage` (Branch 11 / Phase 3, added after this document's original Phase 2 scope; `qnap-dxe-plan.md` Phase 3 item 5) | `<docker> system df -v --format "{{range .Volumes}}{{if eq .Name \"<name>\"}}{{.UsageData.Size}}{{end}}{{end}}"` -- Docker's own template filters by name and returns just the matching volume's byte size, never a `{{json .}}` blob needing a parser on the controller | the filtered scalar itself; "unknown" when empty/unparseable or the query fails | connection-loss | n/a (Phase 3) |
 
 ### Container
 

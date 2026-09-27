@@ -9,31 +9,21 @@ rule() {
     printf '%s\n' "------------------------------------------------------------"
 }
 
-volume_image_path() {
-    local volume="$1"
-    printf '%s\n' "$DX_CONTAINER_VOLUME_DIR/$volume/volume.img"
-}
-
-host_image_size() {
-    local image="$1"
-    if [ ! -f "$image" ]; then
-        printf 'missing'
-        return 0
-    fi
-
-    du -sh "$image" 2>/dev/null | cut -f1
-}
-
 # Nix must run as dx: the store is single-user dx-owned, and a root-invoked
 # nix re-owns /nix/store to root:nixbld, locking dx out.
 run_in_guest() {
     dx_runtime_exec -u dx "$DX_CONTAINER_NAME" /usr/bin/bash -lc "$1"
 }
 
+# Branch 11 / Phase 3 (qnap-dxe-plan.md Phase 3 item 5): the capability-aware
+# neutral op replaces this file's own host-filesystem read (Apple) / adds a
+# Docker-native report where Apple had none. "Volume usage" (not "Host
+# sparse image usage") because under docker-ssh this reports a remote
+# Docker volume's size, never anything on the controller's own filesystem.
 report_host_images() {
-    echo "Host sparse image usage:"
-    printf '  %-14s %s\n' "$DX_NIX_VOLUME" "$(host_image_size "$(volume_image_path "$DX_NIX_VOLUME")")"
-    printf '  %-14s %s\n' "$DX_PERSIST_VOLUME" "$(host_image_size "$(volume_image_path "$DX_PERSIST_VOLUME")")"
+    echo "Volume usage:"
+    printf '  %-14s %s\n' "$DX_NIX_VOLUME" "$(dx_runtime_volume_usage "$DX_NIX_VOLUME")"
+    printf '  %-14s %s\n' "$DX_PERSIST_VOLUME" "$(dx_runtime_volume_usage "$DX_PERSIST_VOLUME")"
 }
 
 report_guest_filesystems() {
@@ -87,10 +77,14 @@ rule
 run_in_guest "nix-collect-garbage -d"
 
 rule
-echo "Trimming guest filesystems..."
-rule
-trim_mount "$DX_NIX_MOUNT"
-trim_mount /persist
+if dx_runtime_capability host_filesystem_reclamation; then
+    echo "Trimming guest filesystems..."
+    rule
+    trim_mount "$DX_NIX_MOUNT"
+    trim_mount /persist
+else
+    echo "Skipping filesystem trim: not supported against a Docker volume under this runtime (qnap-dxe-plan.md DQ4)."
+fi
 
 rule
 echo "After"

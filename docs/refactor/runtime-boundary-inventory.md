@@ -77,6 +77,7 @@ behaviour.
 | `dx_runtime_volume_exists` | `container volume inspect VOL >/dev/null 2>&1` | `container_ensure_volume` (name kept), `dx-create-volumes`, `dx-destroy-volumes`, `dx-migrate-persist` |
 | `dx_runtime_volume_create` | `container volume create VOL` | `container_ensure_volume` (name kept) |
 | `dx_runtime_volume_delete` | `container volume rm VOL` | `dx-destroy-volumes` |
+| `dx_runtime_volume_usage` | today's host sparse-image `du -sh` under `DX_CONTAINER_VOLUME_DIR` (moved here verbatim from `bin/dx-reclaim`; "missing" for an absent image, unchanged) | `dx-reclaim` (Branch 11 / Phase 3 item 5, `qnap-dxe-plan.md` Phase 3: capability-aware; Docker has no host-side image to measure, so it queries `docker system df -v` instead and skips `fstrim` entirely) |
 | `dx_runtime_container_exists` | `container list -a --quiet` (fallback: `container list -a` + `awk`) | `container_exists` (name kept) |
 | `dx_runtime_container_running` | `container list --quiet` (fallback: `container list` + `awk`) | `container_is_running` (name kept) |
 | `dx_runtime_container_list` | `container list [-a]` (raw text for human display) | `dx-status` |

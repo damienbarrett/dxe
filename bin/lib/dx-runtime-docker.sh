@@ -672,6 +672,35 @@ dx_runtime_docker_volume_delete() {
     dx_runtime_docker_ssh_exec "$bin" volume rm "$@"
 }
 
+# Branch 11 / Phase 3 (qnap-dxe-plan.md Phase 3 item 5): a capability-aware
+# size report for bin/dx-reclaim. Docker has no host-side sparse image to
+# measure (DQ4); `docker system df -v` is the structured, Docker-native
+# usage query. Rather than requesting the whole `--format '{{json .}}'`
+# blob and parsing it on the controller (no guaranteed jq -- this file's
+# own module comment), the volume name is validated (it can only ever be
+# one of the configured DXE volumes, already constrained to
+# [A-Za-z0-9_.-] by bin/lib/dx-config.sh's own validation, so it is safe to
+# interpolate into a Go template string) and Docker's own template engine
+# does the filtering server-side, returning just the one matching volume's
+# byte size as a plain scalar -- no JSON parsing needed on either side.
+# "unknown" covers every way Docker cannot say: the query fails outright,
+# or the volume is absent from the report, or the returned text is not a
+# plain byte count.
+dx_runtime_docker_volume_usage() {
+    local bin name output
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    name="$1"
+    output="$(dx_runtime_docker_ssh_exec "$bin" system df -v --format "{{range .Volumes}}{{if eq .Name \"$name\"}}{{.UsageData.Size}}{{end}}{{end}}" 2>/dev/null)" || {
+        printf 'unknown\n'
+        return 0
+    }
+    output="$(printf '%s\n' "$output" | tail -n1 | tr -d '\r')"
+    case "$output" in
+        ''|*[!0-9]*) printf 'unknown\n' ;;
+        *) printf '%s\n' "$output" ;;
+    esac
+}
+
 # Exec with optional stdin/user/TTY, logs, export: a plain function call
 # with no intermediate subshell or pipe of its own (dx_runtime_docker_ssh_exec
 # -> dx_runtime_docker_ssh_raw -> a bare `ssh` invocation), so stdin and

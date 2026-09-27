@@ -72,10 +72,19 @@ dx_runtime_image_delete() { dx_runtime_dispatch image_delete "$@"; }
 # fail closed rather than proceed without an identity.
 dx_runtime_image_identity() { dx_runtime_dispatch image_identity "$@"; }
 
-# Volume: exists, create, delete.
+# Volume: exists, create, delete, usage.
 dx_runtime_volume_exists() { dx_runtime_dispatch volume_exists "$@"; }
 dx_runtime_volume_create() { dx_runtime_dispatch volume_create "$@"; }
 dx_runtime_volume_delete() { dx_runtime_dispatch volume_delete "$@"; }
+
+# dx_runtime_volume_usage <volume> -- capability-aware size report for
+# bin/dx-reclaim (Branch 11 / Phase 3, qnap-dxe-plan.md Phase 3 item 5).
+# Apple: today's host sparse-image size (unchanged wording: "missing" for
+# an absent image, matching dx-reclaim's pre-existing output exactly).
+# Docker: a structured, single-field `docker system df -v` query (never
+# table parsing); "unknown" when Docker cannot say (the volume is absent
+# from the report, or the query fails).
+dx_runtime_volume_usage() { dx_runtime_dispatch volume_usage "$@"; }
 
 # Container: exists, running, list, create, start, stop, kill, delete.
 dx_runtime_container_exists() { dx_runtime_dispatch container_exists "$@"; }

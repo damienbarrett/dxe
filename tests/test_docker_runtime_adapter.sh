@@ -1710,5 +1710,83 @@ echo "UNMATCHED: $*" >&2; exit 99'
 )
 [ "$?" -eq 0 ] && test_pass "dx-migrate-persist (docker-ssh): dx_runtime_run_ephemeral's Apple-flavoured argv is valid docker run syntax too" || test_fail "dx-migrate-persist (docker-ssh): dx_runtime_run_ephemeral's Apple-flavoured argv is valid docker run syntax too (argv: $(cat "$mp_log" 2>/dev/null))"
 
+# --- dx_runtime_volume_usage (Branch 11 / Phase 3, Increment 5, item 5):
+# capability-aware size report for bin/dx-reclaim.
+out="$(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "system df")
+        shift 2
+        case "$*" in
+            *dxe-p3-nix*) echo 123456789 ;;
+        esac
+        exit 0
+        ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_volume_usage dxe-p3-nix
+)"
+[ "$out" = 123456789 ] && test_pass "volume_usage (docker-ssh): returns the matching volume's byte size from docker system df -v" || test_fail "volume_usage (docker-ssh): returns the matching volume's byte size from docker system df -v (got: $out)"
+out="$(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1 $2" = "system df" ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_volume_usage dxe-p3-absent
+)"
+[ "$out" = unknown ] && test_pass "volume_usage (docker-ssh): 'unknown' when the volume is absent from the report" || test_fail "volume_usage (docker-ssh): 'unknown' when the volume is absent from the report (got: $out)"
+out="$(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_volume_usage dxe-p3-nix
+)"
+[ "$out" = unknown ] && test_pass "volume_usage (docker-ssh): 'unknown' when the query fails outright" || test_fail "volume_usage (docker-ssh): 'unknown' when the query fails outright (got: $out)"
+
+# dx-reclaim under docker-ssh: skips fstrim entirely (DQ4: no fstrim
+# against a Docker volume), printing one line saying so; a poisoned
+# fstrim proves it is never reached. Volume usage still reports (via
+# dx_runtime_volume_usage) and Nix GC still runs in the guest.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "container inspect") echo true; exit 0 ;;
+    "system df") exit 0 ;;
+esac
+case "$1" in
+    exec)
+        shift
+        case "$*" in
+            *fstrim*) echo "fstrim must never run under docker-ssh" >&2; exit 99 ;;
+            *nix-collect-garbage*) exit 0 ;;
+            *) exit 0 ;;
+        esac
+        ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+        DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dxe-p3-nix DX_PERSIST_VOLUME=dxe-p3-persist \
+        DX_NIX_MOUNT=/nix \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-reclaim" 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ] && printf '%s\n' "$out" | stdin_matches -F -- 'Skipping filesystem trim'
+)
+[ "$?" -eq 0 ] && test_pass "dx-reclaim (docker-ssh): skips fstrim entirely, never reaching the guest fstrim call" || test_fail "dx-reclaim (docker-ssh): skips fstrim entirely, never reaching the guest fstrim call"
+
 print_summary
 exit_with_code
