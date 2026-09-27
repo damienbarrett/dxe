@@ -569,10 +569,37 @@ nix_image_store_import_required() {
 # Never attempts repair or quarantine (store-trust-plan.md's own "Not
 # collision quarantine" section): any collision refuses deterministically,
 # naming the offending path and the volume-scoped recovery path.
+# One bootstrap root's own share of nix_verify_no_bootstrap_path_collision's
+# work, factored out so that function's own loop can stay a single physical
+# line (`done < <(...)` on its own line is not attributed a hit by kcov's
+# line-based tracer, the same class of gap
+# tests/run-coverage-linux.sh's own KCOV_SUBSHELL_TERMINATOR exclusion
+# documents for a standalone `)` -- matching this file's two other
+# `while ... done < <(nix_image_bootstrap_store_paths ...)` loops, both
+# already single-line, avoids it entirely rather than adding a new
+# exclusion).
+nix_verify_single_bootstrap_path_collision() {
+    local path="$1" source_store="$2" target_store="$3" image_hash volume_hash
+    [ -n "$path" ] || return 0
+
+    if ! nix --extra-experimental-features 'nix-command flakes' store verify --store "$source_store" --no-trust "$path" >/dev/null 2>&1; then
+        echo "Error: image path $path fails its own content verification (this image's registered hash does not match its own on-disk content); refusing to import a store this image cannot vouch for itself. Recovery: ./bin/dx-destroy-container (or ./bin/dx-destroy) if a container still exists, then ./bin/dx-reset-nix-volume, then ./bin/dx to rebuild /nix from the image." >&2
+        return 1
+    fi
+
+    image_hash="$(nix-store -q --hash "$path" --store "$source_store" 2>/dev/null)" || return 0
+    volume_hash="$(run_as_dx "nix-store -q --hash '$path' --store '$target_store'" 2>/dev/null)" || return 0
+    if [ "$image_hash" != "$volume_hash" ]; then
+        echo "Error: $path already exists on the reused Nix volume with different content than the current image (recorded ${volume_hash:0:19}... vs current ${image_hash:0:19}...); refusing to import mismatched content. Recovery: ./bin/dx-destroy-container (or ./bin/dx-destroy) if a container still exists, then ./bin/dx-reset-nix-volume, then ./bin/dx to rebuild /nix from the image." >&2
+        return 1
+    fi
+    return 0
+}
+
 nix_verify_no_bootstrap_path_collision() {
     local source_root="$1"
     local destination_root="$2"
-    local source_store target_store path image_hash volume_hash
+    local source_store target_store path
 
     # Both stores are addressed through the same explicit store-URI
     # construction nix_target_store_uri already uses for the destination
@@ -583,21 +610,7 @@ nix_verify_no_bootstrap_path_collision() {
     # instead of the real mounted store.
     source_store="$(nix_target_store_uri "$source_root")"
     target_store="$(nix_target_store_uri "$destination_root")"
-    while IFS= read -r path; do
-        [ -n "$path" ] || continue
-
-        if ! nix --extra-experimental-features 'nix-command flakes' store verify --store "$source_store" --no-trust "$path" >/dev/null 2>&1; then
-            echo "Error: image path $path fails its own content verification (this image's registered hash does not match its own on-disk content); refusing to import a store this image cannot vouch for itself. Recovery: ./bin/dx-destroy-container (or ./bin/dx-destroy) if a container still exists, then ./bin/dx-reset-nix-volume, then ./bin/dx to rebuild /nix from the image." >&2
-            return 1
-        fi
-
-        image_hash="$(nix-store -q --hash "$path" --store "$source_store" 2>/dev/null)" || continue
-        volume_hash="$(run_as_dx "nix-store -q --hash '$path' --store '$target_store'" 2>/dev/null)" || continue
-        if [ "$image_hash" != "$volume_hash" ]; then
-            echo "Error: $path already exists on the reused Nix volume with different content than the current image (recorded ${volume_hash:0:19}... vs current ${image_hash:0:19}...); refusing to import mismatched content. Recovery: ./bin/dx-destroy-container (or ./bin/dx-destroy) if a container still exists, then ./bin/dx-reset-nix-volume, then ./bin/dx to rebuild /nix from the image." >&2
-            return 1
-        fi
-    done < <(nix_image_bootstrap_store_paths "$source_root")
+    while IFS= read -r path; do nix_verify_single_bootstrap_path_collision "$path" "$source_store" "$target_store" || return 1; done < <(nix_image_bootstrap_store_paths "$source_root")
     return 0
 }
 
