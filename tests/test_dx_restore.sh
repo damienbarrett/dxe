@@ -371,19 +371,23 @@ perf_create="$(printf '%s\n' "$PERF_OUT" | awk -F'\t' '$2 == "create"' | wc -l |
 perf_identical="$(printf '%s\n' "$PERF_OUT" | awk -F'\t' '$2 == "identical"' | wc -l | tr -d '[:space:]')"
 perf_conflict="$(printf '%s\n' "$PERF_OUT" | awk -F'\t' '$2 == "conflict"' | wc -l | tr -d '[:space:]')"
 
-# 600s (10 minutes), not "well under a minute": this shared dev sandbox's
+# 1800s (30 minutes), not "well under a minute": this shared dev sandbox's
 # own fork() cost, entirely inside the UNCHANGED per-target local-hash
-# step (not this fix's join), varies from ~90s to 6+ minutes here purely
-# with concurrent sibling-subagent load (see comment above and the
-# progress file) -- neither number is this fix's own cost. The OLD
-# algorithm at this same scale, same host, does not even get close
-# (confirmed separately: still running, unfinished, after 10+ minutes,
-# with its most expensive targets -- the ones needing the longest per-
-# target scan -- still ahead of it). A real regression -- the join itself
-# going quadratic again -- would blow far past this bound too, since it
-# would then dominate over the (bounded, contention-independent) per-
-# target cost instead of vanishing next to it.
-if [ "$perf_elapsed" -lt 600 ]; then
+# step (not this fix's join), varies from ~90s to 7+ minutes here purely
+# with concurrent sibling-subagent load -- this worktree is one of several
+# sibling subagents' own full test-suite runs sharing the same physical
+# host at once (confirmed directly: other worktrees' own test_dx_restore.sh
+# and run_all_tests.sh processes observed running concurrently with this
+# one) -- and neither number is this fix's own cost. The OLD algorithm at
+# this same scale, same host, does not even get close (confirmed
+# separately: still running, unfinished, after 10+ minutes ALONE, with its
+# most expensive targets -- the ones needing the longest per-target scan --
+# still ahead of it; under the same multi-agent contention this bound
+# absorbs, it would take drastically longer still). A real regression --
+# the join itself going quadratic again -- would blow far past this bound
+# too, since it would then dominate over the (bounded, contention-
+# independent) per-target cost instead of vanishing next to it.
+if [ "$perf_elapsed" -lt 1800 ]; then
     test_pass "a 60,000-target dx_backup_restore_status join does not reintroduce O(n^2) scanning (${perf_elapsed}s; see comment above for this dev host's own fork() cost and why it is not \"well under a minute\" literally here)"
 else
     test_fail "a 60,000-target dx_backup_restore_status join does not reintroduce O(n^2) scanning (${perf_elapsed}s)"
