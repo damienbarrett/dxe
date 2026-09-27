@@ -1,0 +1,40 @@
+#!/bin/bash
+set -euo pipefail
+
+# dx-reset-nix-volume
+# store-trust-plan.md's volume-scoped recovery path (Branch 12): removes
+# ONLY the Nix store volume (DX_NIX_VOLUME) so the next `./bin/dx` rebuilds
+# it from the image. /persist and the bootstrap volume are never touched.
+# This is what both store-trust refusals (nix_verify_no_bootstrap_path_
+# collision, verify_remount_prerequisites) name by command name as their
+# recovery path -- a real, volume-scoped, tested procedure, not
+# "destroy-and-rebuild with salvage" (docs/release-maintenance.md's
+# now-replaced pin-bump text).
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+dx_require_container_cli
+
+if container_exists "$DX_CONTAINER_NAME"; then
+    echo "Error: refusing to reset $DX_NIX_VOLUME while container $DX_CONTAINER_NAME still exists; run ./bin/dx-destroy-container (or ./bin/dx-destroy) first, then re-run this command." >&2
+    exit 1
+fi
+
+if ! dx_runtime_volume_exists "$DX_NIX_VOLUME"; then
+    echo "Nix volume $DX_NIX_VOLUME does not exist; nothing to reset."
+else
+    echo "Removing Nix volume $DX_NIX_VOLUME..."
+    if ! dx_runtime_volume_delete "$DX_NIX_VOLUME"; then
+        echo "Error: failed to remove $DX_NIX_VOLUME. A container may still reference it (the runtime reports the volume in use); destroy the container first." >&2
+        exit 1
+    fi
+fi
+
+# Defence in depth: dx-destroy-container already releases this claim on its
+# own exit path, but an operator may have removed the container by some
+# other route. Releasing again is idempotent (bin/lib/dx-container.sh only
+# removes a claim file that names this exact container).
+dx_nix_volume_claim_release "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME"
+
+echo "Nix volume reset. /persist and the bootstrap volume are untouched."
+echo "Next step: ./bin/dx -- this rebuilds /nix from the image and re-seeds it."

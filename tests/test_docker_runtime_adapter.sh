@@ -1629,6 +1629,68 @@ esac'
 )
 [ "$?" -eq 0 ] && test_pass "dx-destroy-container (docker-ssh): label check runs before delete, refusing a collision rather than deleting" || test_fail "dx-destroy-container (docker-ssh): label check runs before delete, refusing a collision rather than deleting"
 
+# dx-reset-nix-volume (Branch 12, store-trust-plan.md): the same DQ6 label
+# check dx-destroy-container/dx-destroy-volumes already go through
+# (dx_runtime_volume_delete -> dx_runtime_docker_volume_delete's own
+# verify-before-delete) applies here too, with no code of its own to prove
+# it -- this is exactly what a new entrypoint reusing the existing
+# runtime-neutral contract should look like. A volume that exists but is
+# unlabelled/mislabelled refuses as a collision, never an adoption
+# candidate; "volume rm" must never run.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "container inspect") exit 1 ;;
+    "volume inspect") echo "false|||"; exit 0 ;;
+esac
+case "$1" in
+    volume) [ "$2" = rm ] && { echo "docker volume rm should never run on a label mismatch" >&2; exit 99; } ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+        DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dxe-p3-nix \
+        DX_PERSIST_VOLUME=dxe-p3-persist DX_BOOTSTRAP_VOLUME=dxe-p3-bootstrap \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-reset-nix-volume" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision"
+)
+[ "$?" -eq 0 ] && test_pass "dx-reset-nix-volume (docker-ssh): the existing DQ6 label check refuses an unlabelled/mislabelled volume as a collision, never deleting it" || test_fail "dx-reset-nix-volume (docker-ssh): the existing DQ6 label check refuses an unlabelled/mislabelled volume as a collision, never deleting it"
+
+# The correctly-labelled case reaches the adapter and deletes exactly the
+# Nix volume's own docker-ssh argv shape ("volume rm NAME"), proving the
+# entrypoint end to end under docker-ssh, never touching persist/bootstrap.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    rn_log="$dir/volume-rm.log"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "container inspect") exit 1 ;;
+    "volume inspect") echo "true|1|qnap-dxe__dx-qnap|nix"; exit 0 ;;
+esac
+case "$1" in
+    volume)
+        if [ "$2" = rm ]; then shift 2; printf "%s\n" "$@" >> "'"$rn_log"'"; exit 0; fi
+        ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+        DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dxe-p3-nix \
+        DX_PERSIST_VOLUME=dxe-p3-persist DX_BOOTSTRAP_VOLUME=dxe-p3-bootstrap \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-reset-nix-volume" 2>&1)"
+    [ "$(cat "$rn_log" 2>/dev/null)" = dxe-p3-nix ] && printf '%s\n' "$out" | stdin_matches -F './bin/dx'
+)
+[ "$?" -eq 0 ] && test_pass "dx-reset-nix-volume (docker-ssh): a correctly-labelled volume is deleted by exact name, naming the ./bin/dx next step" || test_fail "dx-reset-nix-volume (docker-ssh): a correctly-labelled volume is deleted by exact name, naming the ./bin/dx next step"
+
 # dx-destroy-image: images are never labelled (docker tag cannot attach a
 # label), so this is a plain passthrough once the image is confirmed to
 # exist -- proves the entrypoint reaches the docker adapter at all.

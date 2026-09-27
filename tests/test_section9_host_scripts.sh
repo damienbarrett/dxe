@@ -790,5 +790,123 @@ else
     test_fail "dx-status reports no bootstrap generation section for a container that does not exist (got: $status_out)"
 fi
 
+# --- dx-reset-nix-volume (Branch 12, store-trust-plan.md): the real,
+# volume-scoped recovery path both store-trust refusals point at by name.
+# Drives the real entrypoint with a fake `container` on PATH, the same
+# pattern dx-status above uses. The fake answers exactly the calls
+# container_exists/dx_runtime_volume_exists/dx_runtime_volume_delete render
+# on the Apple adapter (list -a --quiet, volume inspect, volume rm).
+reset_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-reset-nix-volume.XXXXXX")"
+trap 'rm -rf "$reset_fixture"' EXIT
+fake_tool_write "$reset_fixture/bin" container '
+case "$1" in
+    list)
+        shift
+        for a in "$@"; do [ "$a" = "-a" ] && all=true; done
+        if [ "${all:-false}" = true ] && [ "${DX_FAKE_EXISTS:-0}" = 1 ]; then
+            printf "%s\n" "$DX_CONTAINER_NAME"
+        fi
+        exit 0
+        ;;
+    volume)
+        shift
+        case "$1" in
+            inspect)
+                [ "${DX_FAKE_VOL_EXISTS:-1}" = 1 ] && [ "$2" = "$DX_NIX_VOLUME" ] && exit 0
+                exit 1
+                ;;
+            rm)
+                shift
+                printf "%s\n" "$@" >> "${DX_FAKE_VOL_RM_LOG:-/dev/null}"
+                [ "${DX_FAKE_VOL_RM_FAIL:-0}" = 1 ] && exit 1
+                exit 0
+                ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    *) exit 1 ;;
+esac'
+
+run_reset() {
+    (
+        unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION DX_PROJECT_ROOT
+        for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+        export PATH="$reset_fixture/bin:/usr/bin:/bin"
+        export HOME="$reset_fixture/home-$$-$RANDOM"
+        export DX_CONTAINER_NAME=dxe-reset-fixture DX_NIX_VOLUME=dxe-reset-fixture-nix
+        export DX_PERSIST_VOLUME=dxe-reset-fixture-persist DX_BOOTSTRAP_VOLUME=dxe-reset-fixture-bootstrap
+        "$BASE_DIR/bin/dx-reset-nix-volume"
+    )
+}
+
+# 1. Container still exists: refuse, naming dx-destroy-container/dx-destroy
+# by name, before any volume operation is attempted at all.
+rm_log="$reset_fixture/rm-container-exists.log"
+if out="$(DX_FAKE_EXISTS=1 DX_FAKE_VOL_RM_LOG="$rm_log" run_reset 2>&1)"; then
+    test_fail "dx-reset-nix-volume: refuses while the container still exists"
+else
+    if printf '%s\n' "$out" | stdin_matches -F 'dx-destroy-container' \
+        && printf '%s\n' "$out" | stdin_matches -F 'dx-destroy' \
+        && [ ! -s "$rm_log" ]; then
+        test_pass "dx-reset-nix-volume: refuses while the container still exists, naming dx-destroy-container/dx-destroy, before any volume operation"
+    else
+        test_fail "dx-reset-nix-volume: refuses while the container still exists, naming dx-destroy-container/dx-destroy, before any volume operation (out: $out; log: $(cat "$rm_log" 2>/dev/null))"
+    fi
+fi
+
+# 2. Container absent, volume absent: a clean no-op, "nothing to reset".
+rm_log="$reset_fixture/rm-nothing.log"
+if out="$(DX_FAKE_EXISTS=0 DX_FAKE_VOL_EXISTS=0 DX_FAKE_VOL_RM_LOG="$rm_log" run_reset 2>&1)"; then
+    if printf '%s\n' "$out" | stdin_matches -F 'nothing to reset' && [ ! -s "$rm_log" ]; then
+        test_pass "dx-reset-nix-volume: container and volume both absent -> a clean no-op, no volume operation attempted"
+    else
+        test_fail "dx-reset-nix-volume: container and volume both absent -> a clean no-op, no volume operation attempted (out: $out; log: $(cat "$rm_log" 2>/dev/null))"
+    fi
+else
+    test_fail "dx-reset-nix-volume: container and volume both absent -> a clean no-op (exit nonzero; out: $out)"
+fi
+
+# 3. Container absent, volume exists, delete succeeds: removes EXACTLY the
+# Nix volume by name (never persist/bootstrap), prints the ./bin/dx next
+# step, and releases a stale claim naming this exact container.
+rm_log="$reset_fixture/rm-success.log"
+claim_home="$reset_fixture/claim-home"
+mkdir -p "$claim_home/.dx-cache/nix-volume-claims"
+printf 'dxe-reset-fixture\t1\t1970-01-01\n' > "$claim_home/.dx-cache/nix-volume-claims/dxe-reset-fixture-nix"
+if out="$(
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION DX_PROJECT_ROOT
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    export PATH="$reset_fixture/bin:/usr/bin:/bin"
+    export HOME="$claim_home"
+    export DX_CONTAINER_NAME=dxe-reset-fixture DX_NIX_VOLUME=dxe-reset-fixture-nix
+    export DX_PERSIST_VOLUME=dxe-reset-fixture-persist DX_BOOTSTRAP_VOLUME=dxe-reset-fixture-bootstrap
+    DX_FAKE_EXISTS=0 DX_FAKE_VOL_EXISTS=1 DX_FAKE_VOL_RM_LOG="$rm_log" "$BASE_DIR/bin/dx-reset-nix-volume"
+)"; then
+    if [ "$(cat "$rm_log" 2>/dev/null)" = dxe-reset-fixture-nix ] \
+        && printf '%s\n' "$out" | stdin_matches -F './bin/dx' \
+        && [ ! -e "$claim_home/.dx-cache/nix-volume-claims/dxe-reset-fixture-nix" ]; then
+        test_pass "dx-reset-nix-volume: removes exactly the Nix volume by name, releases a matching claim, and names the next step"
+    else
+        test_fail "dx-reset-nix-volume: removes exactly the Nix volume by name, releases a matching claim, and names the next step (out: $out; log: $(cat "$rm_log" 2>/dev/null); claim: $([ -e "$claim_home/.dx-cache/nix-volume-claims/dxe-reset-fixture-nix" ] && echo present || echo absent))"
+    fi
+else
+    test_fail "dx-reset-nix-volume: removes exactly the Nix volume by name (exit nonzero; out: $out)"
+fi
+
+# 4. Container absent, volume exists, delete FAILS (the runtime reports the
+# volume in use -- e.g. an orphaned referrer container): a clear, actionable
+# refusal, never silently reported as success.
+rm_log="$reset_fixture/rm-in-use.log"
+if out="$(DX_FAKE_EXISTS=0 DX_FAKE_VOL_EXISTS=1 DX_FAKE_VOL_RM_FAIL=1 DX_FAKE_VOL_RM_LOG="$rm_log" run_reset 2>&1)"; then
+    test_fail "dx-reset-nix-volume: reports a failed removal (volume in use) as an error, not a silent success"
+else
+    if printf '%s\n' "$out" | stdin_matches -F 'volume is in use' \
+        || printf '%s\n' "$out" | stdin_matches -F 'in use'; then
+        test_pass "dx-reset-nix-volume: reports a failed removal (volume in use) as an error"
+    else
+        test_fail "dx-reset-nix-volume: reports a failed removal (volume in use) as an error (out: $out)"
+    fi
+fi
+
 print_summary
 exit_with_code
