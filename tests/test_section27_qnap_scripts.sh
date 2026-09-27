@@ -387,7 +387,25 @@ for a in "${args[@]}"; do
 done
 if [ "$host_idx" -ge 0 ]; then
     cmd_args=("${args[@]:$((host_idx + 1))}")
-    cat >/dev/null 2>&1 || true
+    # Fix (fix/test-hardening, open follow-up: fake ssh blocks forever on
+    # an open stdin): only "docker exec -i" (step 6'"'"'s real tar-payload
+    # stream, piped in locally via "tar ... | ssh ...") ever has genuine
+    # local piped content on this stub'"'"'s stdin. Draining unconditionally
+    # here for every reparsed subcommand -- run, plain exec, pull,
+    # version, tag, ... -- used to also drain THIS WHOLE TEST PROCESS'"'"'s
+    # own inherited stdin for every one of those (none of them are
+    # locally piped at all), which is a normal instant no-op when that
+    # stdin is /dev/null (the standing rule) but blocks forever when it
+    # is an open pipe nothing closes (found 2026-09-27: a live-gate run
+    # without "</dev/null" sat 22 minutes inside this file). Redirect
+    # from /dev/null instead for every other case, so this stub can
+    # never block on a stdin it does not own (the fake itself, not the
+    # caller).
+    if [ "${cmd_args[1]:-}" = exec ] && [ "${cmd_args[2]:-}" = -i ]; then
+        cat >/dev/null 2>&1 || true
+    else
+        exec </dev/null
+    fi
     sh -c "${cmd_args[*]}"
     exit $?
 fi
@@ -1135,6 +1153,75 @@ if grep -qF -- 'FAKE_DOCKER_EXEC_SH_C: [sha256sum /tmp/payload.txt 2>/dev/null |
     test_pass "step 6's sha256-verification exec survives the ssh hop's own argument concatenation"
 else
     test_fail "step 6's sha256-verification exec survives the ssh hop's own argument concatenation"
+fi
+
+# --- Open follow-up (found 2026-09-27): a live-gate script ran ------------
+# --- "tests/run-tier.sh live" without "</dev/null", and this file's own    -
+# --- fake ssh then blocked forever -- the tier sat 22 minutes inside this  -
+# --- file, and two stale copies of the same test from an earlier run were -
+# --- found hung the same way. The standing "stdin from /dev/null" rule    -
+# --- every OTHER invocation in this file honours masks the bug: with a    -
+# --- closed stdin, an unconditional "cat >/dev/null" drain (ssh_reparse_  -
+# --- command's own, run before it reparses ANY docker subcommand via      -
+# --- "sh -c", not just the one -- "docker exec -i", step 6's real tar-    -
+# --- payload stream -- that ever has genuine local piped content) returns -
+# --- instantly. With an inherited stdin that is an open pipe nothing ever -
+# --- closes, that same drain blocks forever on every OTHER subcommand     -
+# --- (run, exec without -i, pull, version, tag, ...), because their ssh   -
+# --- call is never locally piped into at all -- their stdin IS whatever   -
+# --- this whole test process inherited. Invokes the stub DIRECTLY (a      -
+# --- plain "docker version" call, ssh_reparse_command's own shape for     -
+# --- every non-"exec -i" subcommand) rather than through the whole spike  -
+# --- script: exactly the vulnerable code path, one single process, no     -
+# --- descendant tree to track or clean up. Bounded: this test must never  -
+# --- itself hang the suite, so it backgrounds the call behind a real pipe -
+# --- held open read-write (never closes on its own) and polls with a hard -
+# --- kill past the bound -- the deliberate, documented exception to       -
+# --- "every test invocation gets stdin from /dev/null" (this IS the case  -
+# --- under test). Fixed-fd redirection only ("exec 9<>", not "exec {fd}<>"--
+# --- ): this file runs directly under real Bash 3.2 (run-bash32-tests.sh).-
+reset_marker
+OPEN_STDIN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dxe-qnap-openstdin.XXXXXX")"
+OPEN_STDIN_FIFO="$OPEN_STDIN_DIR/fifo"
+mkfifo "$OPEN_STDIN_FIFO"
+# Opened read-write (not read-only) so THIS shell also holds the write end
+# open: a read-only opener would see EOF the instant nothing else has it
+# open for writing, which is exactly the "closes on its own" shape this
+# test must NOT reproduce.
+exec 9<>"$OPEN_STDIN_FIFO"
+# set +e/-e (this file's own idiom, e.g. just above at lines 1112/1114):
+# a killed or timed-out background job's "wait" status is expected to be
+# non-zero here -- that is the very thing under test -- and a bare
+# non-zero statement under this file's earlier "set -e" (still active
+# since line 1114, with no matching "set +e" before this point) would
+# abort the WHOLE script on that status instead of letting this one test
+# report it normally.
+set +e
+(
+    "$STUB_DIR/ssh_reparse_command" -o BatchMode=yes -o ConnectTimeout=10 -o LogLevel=ERROR section27-host "$FAKE_LOCAL_DOCKER" version
+) <&9 >"$STUB_DIR/openstdin_out.log" 2>&1 &
+open_stdin_pid=$!
+open_stdin_bound=20
+open_stdin_waited=0
+while [ "$open_stdin_waited" -lt "$open_stdin_bound" ] && kill -0 "$open_stdin_pid" 2>/dev/null; do
+    sleep 1
+    open_stdin_waited=$((open_stdin_waited + 1))
+done
+if kill -0 "$open_stdin_pid" 2>/dev/null; then
+    kill -9 "$open_stdin_pid" 2>/dev/null
+    wait "$open_stdin_pid" 2>/dev/null
+    open_stdin_status=124
+else
+    wait "$open_stdin_pid" 2>/dev/null
+    open_stdin_status=$?
+fi
+set -e
+exec 9<&-
+rm -rf "$OPEN_STDIN_DIR"
+if [ "$open_stdin_status" -eq 0 ] && grep -qF 'Docker version' "$STUB_DIR/openstdin_out.log" 2>/dev/null; then
+    test_pass "Section 27's fake ssh completes within ${open_stdin_bound}s even when this whole test process's own stdin is an open pipe that never closes"
+else
+    test_fail "Section 27's fake ssh completes within ${open_stdin_bound}s even when this whole test process's own stdin is an open pipe that never closes (status=$open_stdin_status, out: $(cat "$STUB_DIR/openstdin_out.log" 2>/dev/null))"
 fi
 
 # --- Defect 2: step 9's diff guard must not flag step 2's own base-image --
