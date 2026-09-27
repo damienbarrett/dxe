@@ -1712,6 +1712,13 @@ echo "UNMATCHED: $*" >&2; exit 99'
 
 # --- dx_runtime_volume_usage (Branch 11 / Phase 3, Increment 5, item 5):
 # capability-aware size report for bin/dx-reclaim.
+# The fake below answers the way a real Docker CLI does (verified live on
+# Container Station Docker 27.1.2, 2026-09-27): the volume formatter exposes
+# `.Size` as a human-readable string and has NO `.UsageData` field, so a
+# template asking for the API byte count gets only a template error on
+# stderr and no size -- exactly how the original byte-count implementation
+# failed live. The fake therefore answers only a template that asks for
+# `.Size`.
 out="$(
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
@@ -1720,7 +1727,8 @@ case "$1 $2" in
     "system df")
         shift 2
         case "$*" in
-            *dxe-p3-nix*) echo 123456789 ;;
+            *dxe-p3-nix*"{{.Size}}"*) echo 4.835MB ;;
+            *dxe-p3-nix*UsageData*) echo "template: :1:65: executing at <.UsageData.Size>: cannot evaluate field UsageData in type *formatter.volumeContext" >&2 ;;
         esac
         exit 0
         ;;
@@ -1731,7 +1739,21 @@ echo "UNMATCHED: $*" >&2; exit 99'
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_volume_usage dxe-p3-nix
 )"
-[ "$out" = 123456789 ] && test_pass "volume_usage (docker-ssh): returns the matching volume's byte size from docker system df -v" || test_fail "volume_usage (docker-ssh): returns the matching volume's byte size from docker system df -v (got: $out)"
+[ "$out" = 4.835MB ] && test_pass "volume_usage (docker-ssh): returns the matching volume's human-readable .Size from docker system df -v" || test_fail "volume_usage (docker-ssh): returns the matching volume's human-readable .Size from docker system df -v (got: $out)"
+out="$(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "system df") shift 2; case "$*" in *dxe-p3-na*"{{.Size}}"*) echo N/A ;; esac; exit 0 ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_volume_usage dxe-p3-na
+)"
+[ "$out" = unknown ] && test_pass "volume_usage (docker-ssh): 'unknown' when Docker reports the size as N/A" || test_fail "volume_usage (docker-ssh): 'unknown' when Docker reports the size as N/A (got: $out)"
 out="$(
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"

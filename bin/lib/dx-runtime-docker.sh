@@ -682,21 +682,27 @@ dx_runtime_docker_volume_delete() {
 # [A-Za-z0-9_.-] by bin/lib/dx-config.sh's own validation, so it is safe to
 # interpolate into a Go template string) and Docker's own template engine
 # does the filtering server-side, returning just the one matching volume's
-# byte size as a plain scalar -- no JSON parsing needed on either side.
-# "unknown" covers every way Docker cannot say: the query fails outright,
-# or the volume is absent from the report, or the returned text is not a
-# plain byte count.
+# size as a plain scalar -- no JSON parsing needed on either side. The CLI's
+# volume formatter exposes `.Size` as Docker's own human-readable string
+# ("4.835MB", "0B", or "N/A" when the daemon has not computed it), NOT the
+# API's raw `.UsageData.Size` byte count -- verified live against a real
+# Container Station Docker (27.1.2) on 2026-09-27, where the byte-count
+# template failed with "can't evaluate field UsageData in type
+# *formatter.volumeContext". The human-readable string is printed verbatim,
+# which is also what the Apple side's `du -sh` prints. "unknown" covers
+# every way Docker cannot say: the query fails outright, the volume is
+# absent from the report, or the size is empty/"N/A".
 dx_runtime_docker_volume_usage() {
     local bin name output
     bin="$(dx_runtime_docker_require_bin)" || return 1
     name="$1"
-    output="$(dx_runtime_docker_ssh_exec "$bin" system df -v --format "{{range .Volumes}}{{if eq .Name \"$name\"}}{{.UsageData.Size}}{{end}}{{end}}" 2>/dev/null)" || {
+    output="$(dx_runtime_docker_ssh_exec "$bin" system df -v --format "{{range .Volumes}}{{if eq .Name \"$name\"}}{{.Size}}{{end}}{{end}}" 2>/dev/null)" || {
         printf 'unknown\n'
         return 0
     }
     output="$(printf '%s\n' "$output" | tail -n1 | tr -d '\r')"
     case "$output" in
-        ''|*[!0-9]*) printf 'unknown\n' ;;
+        ''|N/A|*[!A-Za-z0-9.]*) printf 'unknown\n' ;;
         *) printf '%s\n' "$output" ;;
     esac
 }

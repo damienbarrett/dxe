@@ -270,7 +270,10 @@ recorded in that file's section 5). Summary:
   capability-aware `dx-reclaim`: Apple keeps its exact host sparse-image
   `du -sh` (moved into the adapter verbatim); Docker queries `docker
   system df -v` with a Go template that filters by volume name
-  server-side, returning just that volume's byte size as a plain scalar
+  server-side, returning just that volume's size as a plain scalar (the
+  CLI formatter's human-readable `.Size`, e.g. "4.835MB"; verified live on
+  Container Station Docker 27.1.2 -- the API's `.UsageData.Size` byte count
+  is not a formatter field)
   -- avoiding a `{{json .}}` blob that would need a parser on the
   controller. `dx-reclaim` skips `fstrim` entirely under `docker-ssh`
   (`dx_runtime_capability host_filesystem_reclamation` says no),
