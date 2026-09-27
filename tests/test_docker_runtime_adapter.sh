@@ -1211,6 +1211,69 @@ if [ \"\${1:-}\" = exec ]; then cat; fi
 )
 [ "$?" -eq 0 ] && test_pass "exec: argv is passed verbatim (-i -u dx NAME CMD...)" || test_fail "exec: argv is passed verbatim (-i -u dx NAME CMD...)"
 
+# --- dx-enter TTY rule (Branch 11 / Phase 5, item 5; condition (b)) --------
+#
+# "docker exec -it" needs the OUTER ssh transport to force its own pty too
+# (-tt, not a single -t); every other exec shape (bin/lib/dx-backup.sh's -i
+# phase, bin/dx-sync-bootstrap, -u alone, bare) must never gain one, or a
+# piped-stdin exec (Branch 17's discipline) breaks. Captures ssh's OWN
+# argv (not just what reaches the fake docker) across four representative
+# calls in one fixture, so the assertion is a property of the real ssh
+# invocation, not merely of dx_runtime_docker_exec's own flags array.
+(
+    dir="$(new_tool_dir)"
+    ssh_argv_log="$fixture/exec-tty-ssh-argv.log"
+    : > "$ssh_argv_log"
+    fake_tool_write "$dir" ssh "
+printf '%s\n' \"\$@\" >> '$ssh_argv_log'
+printf '\f\n' >> '$ssh_argv_log'
+dx_fake_last=\"\"
+for dx_fake_arg in \"\$@\"; do dx_fake_last=\"\$dx_fake_arg\"; done
+eval \"\$dx_fake_last\"
+"
+    fake_tool_write "$dir" docker 'case "$1" in exec) exit 0 ;; *) echo "UNMATCHED: $*" >&2; exit 99 ;; esac'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_docker_exec -it dx-qnap bash -l >/dev/null 2>&1
+    printf 'x' | dx_runtime_docker_exec -i dx-qnap sh -c 'cat' >/dev/null 2>&1
+    dx_runtime_docker_exec -u dx dx-qnap true >/dev/null 2>&1
+    dx_runtime_docker_exec dx-qnap true >/dev/null 2>&1
+    tt_count="$(grep -c -x -- '-tt' "$ssh_argv_log")"
+    [ "$tt_count" -eq 1 ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_runtime_docker_exec: ssh gets -tt exactly once, only for the -it call, never for -i/-u/bare" \
+    || test_fail "dx_runtime_docker_exec: ssh gets -tt exactly once, only for the -it call, never for -i/-u/bare"
+
+# The real bin/dx-enter entrypoint (which always passes -it, whether or
+# not its own invocation runs under a real terminal -- "dx-enter <cmd>"
+# must work non-interactively too) drives the same -tt behaviour end to
+# end, not only through a direct dx_runtime_docker_exec call.
+(
+    dir="$(new_tool_dir)"
+    ssh_argv_log="$fixture/dx-enter-ssh-argv.log"
+    : > "$ssh_argv_log"
+    fake_tool_write "$dir" ssh "
+printf '%s\n' \"\$@\" >> '$ssh_argv_log'
+dx_fake_last=\"\"
+for dx_fake_arg in \"\$@\"; do dx_fake_last=\"\$dx_fake_arg\"; done
+eval \"\$dx_fake_last\"
+"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+esac
+case "$1" in exec) exit 0 ;; *) echo "UNMATCHED: $*" >&2; exit 99 ;; esac'
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
+    "$BASE_DIR/bin/dx-enter" true </dev/null >/dev/null 2>&1
+    grep -qx -- '-tt' "$ssh_argv_log"
+)
+[ "$?" -eq 0 ] && test_pass "bin/dx-enter (docker-ssh): drives ssh -tt end to end, including when run non-interactively" \
+    || test_fail "bin/dx-enter (docker-ssh): drives ssh -tt end to end, including when run non-interactively"
+
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"

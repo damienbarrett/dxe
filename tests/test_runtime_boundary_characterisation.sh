@@ -455,6 +455,74 @@ if [ "$(cat "$out_file")" = "FAKE-TAR-BYTES-dxe-rtb-export" ] && [ "$(cat "$log"
 else
     test_fail "dx-export streams the archive to the output file (content=$(cat "$out_file" 2>/dev/null) log=$(cat "$log"))"
 fi
+
+# Atomic export (Branch 11 / Phase 5, item 6): a mid-stream failure leaves
+# neither a truncated final file nor a leftover ".partial" sibling -- the
+# fake container prints SOME bytes and then fails, exactly the shape a
+# real interrupted/failed remote export takes.
+fake_tool_write "$ex_fixture/bin" container '
+case "$1" in
+    list)
+        shift
+        for a in "$@"; do
+            if [ "$a" = -a ]; then
+                [ "${DX_FAKE_EXISTS:-1}" = 1 ] && printf "%s\n" "$DX_CONTAINER_NAME"
+                exit 0
+            fi
+        done
+        exit 0
+        ;;
+    export) printf "PARTIAL-BYTES-THEN-FAILURE"; exit 1 ;;
+    *) exit 1 ;;
+esac
+'
+out_file2="$ex_fixture/out2.tar"
+env PATH="$ex_fixture/bin:/usr/bin:/bin" HOME="$(fresh_home "$ex_fixture/home3")" \
+    DX_CONTAINER_NAME=dxe-rtb-export DX_FAKE_EXISTS=1 \
+    "$BASE_DIR/bin/dx-export" "$out_file2" >/dev/null 2>&1
+export_fail_rc=$?
+if [ "$export_fail_rc" -ne 0 ] && [ ! -e "$out_file2" ] && [ ! -e "$out_file2.partial" ]; then
+    test_pass "dx-export (atomic): a mid-stream failure leaves neither a truncated final file nor a leftover .partial"
+else
+    test_fail "dx-export (atomic): a mid-stream failure leaves neither a truncated final file nor a leftover .partial (rc=$export_fail_rc, final=$([ -e "$out_file2" ] && echo present || echo absent), partial=$([ -e "$out_file2.partial" ] && echo present || echo absent))"
+fi
+
+# An interrupted export (SIGTERM mid-stream, e.g. an operator's Ctrl-C)
+# leaves no partial behind either -- the fake container writes a first
+# chunk, then blocks long enough to be killed before it would ever finish.
+fake_tool_write "$ex_fixture/bin" container '
+case "$1" in
+    list)
+        shift
+        for a in "$@"; do
+            if [ "$a" = -a ]; then
+                [ "${DX_FAKE_EXISTS:-1}" = 1 ] && printf "%s\n" "$DX_CONTAINER_NAME"
+                exit 0
+            fi
+        done
+        exit 0
+        ;;
+    export) printf "FIRST-CHUNK"; sleep 5; printf "NEVER-REACHED" ;;
+    *) exit 1 ;;
+esac
+'
+out_file3="$ex_fixture/out3.tar"
+env PATH="$ex_fixture/bin:/usr/bin:/bin" HOME="$(fresh_home "$ex_fixture/home4")" \
+    DX_CONTAINER_NAME=dxe-rtb-export DX_FAKE_EXISTS=1 \
+    "$BASE_DIR/bin/dx-export" "$out_file3" >/dev/null 2>&1 &
+export_pid=$!
+waited=0
+while [ ! -e "$out_file3.partial" ] && [ "$waited" -lt 40 ]; do sleep 0.1; waited=$((waited + 1)); done
+kill -TERM "$export_pid" 2>/dev/null
+wait "$export_pid" 2>/dev/null
+waited=0
+while { [ -e "$out_file3.partial" ] || kill -0 "$export_pid" 2>/dev/null; } && [ "$waited" -lt 40 ]; do sleep 0.1; waited=$((waited + 1)); done
+if [ ! -e "$out_file3" ] && [ ! -e "$out_file3.partial" ]; then
+    test_pass "dx-export (atomic): an interrupted (SIGTERM) export leaves no partial file behind"
+else
+    test_fail "dx-export (atomic): an interrupted (SIGTERM) export leaves no partial file behind (final=$([ -e "$out_file3" ] && echo present || echo absent), partial=$([ -e "$out_file3.partial" ] && echo present || echo absent))"
+fi
+
 rm -rf "$ex_fixture"
 
 # =============================================================================

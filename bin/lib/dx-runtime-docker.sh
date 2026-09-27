@@ -809,10 +809,58 @@ dx_runtime_docker_volume_usage() {
 # tests/test_sourceable_coverage.sh proves it for Apple. Docker's flag names
 # agree with Apple's (-i/-t/-u for exec, -n for logs' --tail); no
 # translation needed.
+# Branch 11 / Phase 5 (qnap-dxe-plan.md DQ8 item 5; docs/refactor/
+# remote-aware-ssh.md section 5): "docker exec -it" requests a pty from
+# the REMOTE Docker daemon, but the outer ssh transport carrying that
+# request also needs its OWN pty allocation for the remote pty to be
+# usable end to end -- until now nothing added one. Scans only the
+# LEADING flag tokens (name/user/tty flags always precede the container
+# name in every existing call, the same convention
+# dx_runtime_apple_container_create's own flag parser already follows),
+# so a command body that happens to contain the substring "-t" is never
+# mistaken for a flag. bin/dx-enter is the only caller that ever passes
+# -it; every other caller (dx-gc, dx-reclaim, dx-status, bin/lib/
+# dx-backup.sh's -i phase, dx-sync-bootstrap) passes -i alone, -u alone,
+# both, or neither, and must keep working exactly as before (Branch 17's
+# unidirectional-exec discipline) -- so the non-tty path below is
+# byte-for-byte what this function already did.
+#
+# Forces pty allocation with "-tt" (two -t options), not a single "-t":
+# OpenSSH's own manual is explicit that a single "-t" does not force
+# allocation when the ssh client's own local stdin is not itself a real
+# terminal (a script, a test harness, dx-enter driven non-interactively),
+# while multiple "-t" options force it unconditionally -- matching
+# "docker exec -it"'s own unconditional pty request. A single "-t" would
+# make "dx-enter <cmd>" over docker-ssh depend on whether ITS OWN
+# invocation happened to run under a real terminal, which is exactly the
+# "must work non-interactively too" requirement.
 dx_runtime_docker_exec() {
-    local bin
+    local bin flags=() tty=false
     bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" exec "$@"
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -it|-ti|-t) tty=true; flags+=("$1"); shift ;;
+            -i)         flags+=("$1"); shift ;;
+            -u)         flags+=("$1" "$2"); shift 2 ;;
+            *) break ;;
+        esac
+    done
+    # "${flags[@]+"${flags[@]}"}", not a bare "${flags[@]}": bash 3.2 (this
+    # Mac's own /bin/bash) treats a zero-element array as if it were unset
+    # when expanded under "set -u" (fixed only in bash 4.4+), so a bare
+    # exec call with no leading -i/-u/-t flags -- the common case -- would
+    # abort every caller running under "set -u" (tests/test_helpers.sh
+    # sets it for the whole suite) with "flags[@]: unbound variable". Same
+    # idiom bin/dx-backup and bin/dx-restore already use for their own
+    # possibly-empty arrays.
+    if [ "$tty" = true ]; then
+        local ssh_opts=() opt
+        while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$(dx_runtime_docker_ssh_option_argv)"
+        ssh_opts+=(-tt)
+        ssh "${ssh_opts[@]}" "${DX_REMOTE_HOST:?}" "$(dx_runtime_docker_quote_argv "$bin" exec "${flags[@]+"${flags[@]}"}" "$@")"
+    else
+        dx_runtime_docker_ssh_exec "$bin" exec "${flags[@]+"${flags[@]}"}" "$@"
+    fi
 }
 
 dx_runtime_docker_logs() {

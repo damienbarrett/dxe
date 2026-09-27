@@ -13,4 +13,18 @@ if ! container_exists "$DX_CONTAINER_NAME"; then
     exit 1
 fi
 
-dx_runtime_export "$DX_CONTAINER_NAME" > "$EXPORT_FILE"
+# Atomic (Branch 11 / Phase 5, qnap-dxe-plan.md Phase 5 item 6;
+# docs/refactor/remote-aware-ssh.md section 6): stream to a ".partial"
+# sibling in the same directory first, so a mid-stream failure or an
+# interruption never leaves a truncated or zero-byte file at $EXPORT_FILE
+# itself -- only a successful, non-empty stream is renamed into place.
+# The EXIT/HUP/INT/TERM trap removes the partial on every path except the
+# rename; `trap -` after the rename means a later, unrelated exit from
+# this same shell never tries to remove a partial that no longer exists.
+PARTIAL_FILE="$EXPORT_FILE.partial"
+dx_export_cleanup_partial() { rm -f "$PARTIAL_FILE"; }
+trap dx_export_cleanup_partial EXIT HUP INT TERM
+dx_runtime_export "$DX_CONTAINER_NAME" > "$PARTIAL_FILE"
+[ -s "$PARTIAL_FILE" ] || { echo "Error: export produced an empty archive." >&2; exit 1; }
+mv "$PARTIAL_FILE" "$EXPORT_FILE"
+trap - EXIT HUP INT TERM
