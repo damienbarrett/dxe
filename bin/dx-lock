@@ -1,0 +1,68 @@
+#!/bin/bash
+set -euo pipefail
+
+# dx-lock: read-only audit and explicit unlock of the docker-ssh runtime's
+# remote per-profile lock (qnap-dxe-plan.md DQ6, Phase 2 item 6). Only
+# meaningful for DX_RUNTIME=docker-ssh -- Apple's runtime is always local
+# (one controller, one daemon), so it has no remote lock to check. Goes
+# through bin/lib/dx-runtime-docker.sh's own lock functions (never a raw
+# `docker`/`container` call itself; tests/test_runtime_boundary_audit.sh
+# covers this).
+#
+# Never removes a lock based on elapsed time alone (DQ6): `status` only
+# reports who holds it and since when; `unlock` without --force prints
+# that same metadata and refuses, so an operator reviews it (confirming by
+# other means that the lock is genuinely stale) before re-running with
+# --force to actually remove it.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+
+usage() {
+    cat <<'EOF' >&2
+Usage: dx-lock <status|unlock> [--force]
+
+  status         Show whether this profile's remote per-profile lock is
+                 held, and by whom.
+  unlock         Print the lock's owner metadata and refuse (review it
+                 first).
+  unlock --force Remove the lock after printing its owner metadata.
+                 Elapsed time alone never justifies this -- only use it
+                 once you have confirmed by other means that the lock is
+                 genuinely stale.
+
+Only meaningful for DX_RUNTIME=docker-ssh; refuses for any other runtime.
+EOF
+}
+
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+esac
+
+[ "${DX_RUNTIME:-apple}" = docker-ssh ] || {
+    echo "Error: dx-lock only applies to DX_RUNTIME=docker-ssh (this profile is DX_RUNTIME=${DX_RUNTIME:-apple}, which has no remote lock)." >&2
+    exit 1
+}
+
+dx_require_container_cli
+
+case "${1:-}" in
+    status)
+        [ "$#" -eq 1 ] || { usage; exit 2; }
+        dx_runtime_docker_lock_audit
+        ;;
+    unlock)
+        [ "$#" -le 2 ] || { usage; exit 2; }
+        dx_runtime_docker_lock_audit
+        if [ "${2:-}" != --force ]; then
+            echo "Refusing to unlock without --force. Review the owner metadata above, confirm by other means that it is genuinely stale, then re-run: dx-lock unlock --force" >&2
+            exit 1
+        fi
+        dx_runtime_docker_lock_release ""
+        echo "Lock released."
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac

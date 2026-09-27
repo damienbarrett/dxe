@@ -111,3 +111,11 @@ if container_is_running "$DX_CONTAINER_NAME"; then
 else
     echo "Container is not running or not found"
 fi
+
+# qnap-dxe-plan.md DQ6/item 6: read-only lock display. Apple has no remote
+# lock concept (always local), so this section only ever appears for
+# docker-ssh. Explicit unlock is bin/dx-lock's job, never this script's.
+if [ "${DX_RUNTIME:-apple}" = docker-ssh ]; then
+    echo -e "\n--- Remote Lock ---"
+    dx_runtime_docker_lock_audit
+fi

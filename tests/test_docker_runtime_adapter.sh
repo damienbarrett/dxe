@@ -966,5 +966,184 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
 )
 [ "$?" -eq 0 ] && test_pass "image_build: refuses an argv shape other than bin/dx-create-image's own" || test_fail "image_build: refuses an argv shape other than bin/dx-create-image's own"
 
+# --- Remote per-profile lock (item 6) --------------------------------------
+
+# Acquire: succeeds, prints the owner token it just claimed.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1" = create ] && [ "$2" = --name ] && [ "$3" = dxe-lock-qnap-dxe__dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    owner="$(dx_runtime_docker_lock_acquire)"
+    [ -n "$owner" ] && printf '%s\n' "$owner" | stdin_matches ":"
+)
+[ "$?" -eq 0 ] && test_pass "lock_acquire: succeeds and prints a non-empty owner token" || test_fail "lock_acquire: succeeds and prints a non-empty owner token"
+
+# Acquire: fails (name conflict) when already held.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "Error: Conflict. The container name ... is already in use" >&2; exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_docker_lock_acquire 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "may already be held"
+)
+[ "$?" -eq 0 ] && test_pass "lock_acquire: refuses when the lock is already held" || test_fail "lock_acquire: refuses when the lock is already held"
+
+# Audit: "not held" when absent.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    [ "$(dx_runtime_docker_lock_audit)" = "not held" ]
+)
+[ "$?" -eq 0 ] && test_pass "lock_audit: reports 'not held' when absent" || test_fail "lock_audit: reports 'not held' when absent"
+
+# Audit: "held by ... since ..." when present. (owner|created -- 2 fields)
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1 $2" = "container inspect" ] && echo "somehost:123:456:20260927T000000Z|2026-09-27T00:00:00Z"'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_docker_lock_audit)"
+    printf '%s\n' "$out" | stdin_matches -F -- "held by somehost:123:456:20260927T000000Z since 2026-09-27T00:00:00Z"
+)
+[ "$?" -eq 0 ] && test_pass "lock_audit: reports the owner and creation time when held" || test_fail "lock_audit: reports the owner and creation time when held"
+
+# Release: succeeds when profile/role labels match (no owner check
+# requested). Release's own inspect format is 4 fields:
+# managed|profile|role|owner (no schema -- distinct from
+# dx_runtime_docker_container_labels' managed|schema|profile|role shape
+# used elsewhere).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "container inspect") echo "true|qnap-dxe__dx-qnap|lock|owner-x" ;;
+    *) [ "$1" = rm ] && [ "$2" = dxe-lock-qnap-dxe__dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_docker_lock_release ""
+)
+[ "$?" -eq 0 ] && test_pass "lock_release: succeeds when profile/role labels match" || test_fail "lock_release: succeeds when profile/role labels match"
+
+# Release: refuses when labelled for a different profile.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "container inspect") echo "true|qnap-OTHER__dx-qnap|lock|owner-x" ;;
+    *) echo "docker rm should never run" >&2; exit 99 ;;
+esac'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_docker_lock_release "" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "lock_release: refuses a lock labelled for a different profile" || test_fail "lock_release: refuses a lock labelled for a different profile"
+
+# Release: refuses when an expected owner is given and does not match.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "container inspect") echo "true|qnap-dxe__dx-qnap|lock|owner-real" ;;
+    *) echo "docker rm should never run" >&2; exit 99 ;;
+esac'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_docker_lock_release owner-expected-but-different 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "held by a different owner"
+)
+[ "$?" -eq 0 ] && test_pass "lock_release: refuses when the current owner does not match an expected one" || test_fail "lock_release: refuses when the current owner does not match an expected one"
+
+# --- bin/dx-lock end to end --------------------------------------------
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    out="$(DX_RUNTIME=apple "$BASE_DIR/bin/dx-lock" status 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "only applies to DX_RUNTIME=docker-ssh"
+)
+[ "$?" -eq 0 ] && test_pass "bin/dx-lock refuses for DX_RUNTIME=apple" || test_fail "bin/dx-lock refuses for DX_RUNTIME=apple"
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1" ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux" ;;
+    "container inspect") exit 1 ;;
+    *) echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" status 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "not held"
+)
+[ "$?" -eq 0 ] && test_pass "bin/dx-lock status reports 'not held' end to end" || test_fail "bin/dx-lock status reports 'not held' end to end"
+
+# unlock (no --force): only the audit query runs (owner|created, 2 fields)
+# -- release is never reached, so the fake never needs to answer its
+# 4-field shape here.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1" ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux" ;;
+    "container inspect") echo "somehost:1:2:20260927T000000Z|2026-09-27T00:00:00Z" ;;
+    *) echo "docker rm should never run without --force" >&2; exit 99 ;;
+esac'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" unlock 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "Refusing to unlock without --force" && printf '%s\n' "$out" | stdin_matches -F -- "somehost:1:2:20260927T000000Z"
+)
+[ "$?" -eq 0 ] && test_pass "bin/dx-lock unlock without --force shows owner metadata and refuses" || test_fail "bin/dx-lock unlock without --force shows owner metadata and refuses"
+
+# unlock --force: audit runs first (2-field shape), then release (4-field
+# shape) -- the fake distinguishes them by which label keys appear in the
+# requested --format string, since both are the same "container inspect"
+# verb with a different --format argument.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1" ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux" ;;
+    "container inspect")
+        case "$*" in
+            *"io.dxe.managed"*) echo "true|qnap-dxe__dx-qnap|lock|somehost:1:2:20260927T000000Z" ;;
+            *) echo "somehost:1:2:20260927T000000Z|2026-09-27T00:00:00Z" ;;
+        esac
+        ;;
+    *) [ "$1" = rm ] && [ "$2" = dxe-lock-qnap-dxe__dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" unlock --force 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "Lock released."
+)
+[ "$?" -eq 0 ] && test_pass "bin/dx-lock unlock --force removes the lock end to end" || test_fail "bin/dx-lock unlock --force removes the lock end to end"
+
 print_summary
 exit_with_code

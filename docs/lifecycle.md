@@ -89,7 +89,8 @@ or perform maintenance operations.
 | [`bin/dx-profile`](../bin/dx-profile) | Parses a named data profile from `tests/profiles/<name>.env`, resolves the complete snapshot, then execs the command. |
 | [`bin/dx-mount`](../bin/dx-mount) | Launches an isolated side container, records a bounded v2 identity manifest, and exposes audit/migration/destroy-plan modes. |
 | [`bin/dx-wait-ssh`](../bin/dx-wait-ssh) | Blocks until guest SSH responds. Gates the SSH connection layer. |
-| [`bin/dx-status`](../bin/dx-status) | Reports image, container, SSH, tool, persist, tmux, and profile-aware tunnel migration state. |
+| [`bin/dx-status`](../bin/dx-status) | Reports image, container, SSH, tool, persist, tmux, and profile-aware tunnel migration state; for `DX_RUNTIME=docker-ssh`, also the remote per-profile lock's read-only state. |
+| [`bin/dx-lock`](../bin/dx-lock) | `DX_RUNTIME=docker-ssh` only: reports who holds the remote per-profile lock (`status`), or removes it after printing that same owner metadata (`unlock --force`) -- never on elapsed time alone (`qnap-dxe-plan.md` DQ6). |
 | [`bin/dx-put`](../bin/dx-put) | Copies host files into the guest. |
 | [`bin/dx-forward`](../bin/dx-forward) | Exposes guest web ports on macOS loopback addresses with SSH local forwarding. |
 | [`bin/dx-reverse`](../bin/dx-reverse) | Exposes macOS loopback services inside the guest with SSH reverse forwarding. |
