@@ -1448,5 +1448,76 @@ printf 'FROM alpine AS builder\n' > "$containerfile_multi_token/Containerfile"
 )
 [ "$?" -eq 0 ] && test_pass "apple container_create: fails closed on an unrecognized parameter too" || test_fail "apple container_create: fails closed on an unrecognized parameter too"
 
+# --- image_identity (Branch 11 / Phase 3, design point D amendment): the
+# host's own stable per-image identity, used by bin/dx-create-container to
+# forward DX_IMAGE_IDENTITY so the direct-volume guest can detect a plain
+# image bump on a reused volume without needing to reach the image's own
+# store (docs/refactor/direct-volume-storage.md section 5). Docker: a
+# structured `--format '{{.Id}}'` query, the same shape
+# tests/qnap/phase0-spike.sh already uses for its own base/tag digest
+# comparison. Apple: `container image inspect` has no --format flag (real
+# CLI, confirmed via --help), so the fake below reproduces its actual JSON
+# shape (a top-level "id" field, distinct from the nested "digest" fields
+# under configuration.descriptor and each variants[] entry) and the adapter
+# extracts it without a JSON parser (bin/lib/dx-runtime-docker.sh's own
+# module comment: "the Mac side has no guaranteed jq").
+out="$(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1 $2 $3 $4" = "image inspect --format {{.Id}}" ] && [ "$5" = dx-qnap-nixos ] && echo sha256:abc123def456 || exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_image_identity dx-qnap-nixos
+)"
+[ "$out" = sha256:abc123def456 ] && test_pass "image_identity (docker-ssh): returns docker image inspect's {{.Id}} verbatim" || test_fail "image_identity (docker-ssh): returns docker image inspect's {{.Id}} verbatim (got: $out)"
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_image_identity missing-image
+)
+[ "$?" -ne 0 ] && test_pass "image_identity (docker-ssh): fails closed when docker image inspect cannot find the image" || test_fail "image_identity (docker-ssh): fails closed when docker image inspect cannot find the image"
+
+apple_image_inspect_json='[
+  {
+    "configuration" : {
+      "descriptor" : {
+        "digest" : "sha256:0000000000000000000000000000000000000000000000000000000000ff",
+        "mediaType" : "application/vnd.oci.image.index.v1+json",
+        "size" : 9218
+      },
+      "name" : "docker.io/library/dx-qnap-nixos:latest"
+    },
+    "id" : "deadbeef00112233445566778899aabbccddeeff0011223344556677889900aa",
+    "variants" : [
+      {
+        "digest" : "sha256:1111111111111111111111111111111111111111111111111111111111ee"
+      }
+    ]
+  }
+]'
+out="$(
+    dir="$(new_tool_dir)"
+    fake_tool_write "$dir" container "printf '%s\n' '$apple_image_inspect_json'"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=apple
+    dx_runtime_image_identity dx-qnap-nixos
+)"
+[ "$out" = sha256:deadbeef00112233445566778899aabbccddeeff0011223344556677889900aa ] \
+    && test_pass "image_identity (apple): extracts the top-level \"id\" field, not the nested \"digest\" fields, prefixed sha256:" \
+    || test_fail "image_identity (apple): extracts the top-level \"id\" field, not the nested \"digest\" fields, prefixed sha256: (got: $out)"
+(
+    dir="$(new_tool_dir)"
+    fake_tool_write "$dir" container 'exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=apple
+    dx_runtime_image_identity missing-image
+)
+[ "$?" -ne 0 ] && test_pass "image_identity (apple): fails closed when container image inspect cannot find the image" || test_fail "image_identity (apple): fails closed when container image inspect cannot find the image"
+
 print_summary
 exit_with_code

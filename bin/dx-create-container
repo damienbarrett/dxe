@@ -31,6 +31,19 @@ if [ -z "$HOST_TZ" ]; then
     HOST_TZ="UTC"
 fi
 
+# The runtime's own stable identity for $DX_IMAGE (qnap-dxe-plan.md DQ4,
+# docs/refactor/direct-volume-storage.md section 5): forwarded to the guest
+# below so a direct-volume guest can detect a plain image bump on a reused
+# volume without needing to reach the image's own store, which a non-empty
+# Docker named volume hides. Forwarded for DX_RUNTIME=apple too, even
+# though apple-image mode never reads it, so this script's behavior does
+# not itself branch on the runtime. Fails closed: a create with no image
+# identity is refused rather than proceeding without one.
+DX_IMAGE_IDENTITY="$(dx_runtime_image_identity "$DX_IMAGE")" || {
+    echo "Error: could not determine the runtime image identity for $DX_IMAGE." >&2
+    exit 1
+}
+
 # Runtime-neutral parameters (qnap-dxe-plan.md DQ2: "runtime-specific CLI
 # syntax ... lives only in the adapter"). Neither this script nor
 # dx_runtime_container_create's own dispatch names a single Apple or
@@ -56,6 +69,8 @@ CREATE_ARGS=(
     --env "DX_GUEST_ACTIVATION_ATTEMPTS=$DX_GUEST_ACTIVATION_ATTEMPTS"
     --env "DX_GUEST_ACTIVATION_RETRY_DELAY=$DX_GUEST_ACTIVATION_RETRY_DELAY"
     --env "DX_NIX_DISK_SIZE=$DX_NIX_DISK_SIZE"
+    --env "DX_NIX_STORAGE_MODE=$DX_NIX_STORAGE_MODE"
+    --env "DX_IMAGE_IDENTITY=$DX_IMAGE_IDENTITY"
     --memory "$DX_CONTAINER_MEMORY"
     --cpus "$DX_CONTAINER_CPUS"
     --publish "127.0.0.1:$DX_SSH_PORT:2222"

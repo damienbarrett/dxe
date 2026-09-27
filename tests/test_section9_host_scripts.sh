@@ -291,7 +291,11 @@ if diag="$(
     fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
     fake_tool_write "$fake_dir" container 'case "$1" in
     list) exit 0 ;;
-    image) [ "${2:-}" = list ] && printf "%s\n" "$DX_IMAGE"; exit 0 ;;
+    image)
+        [ "${2:-}" = list ] && printf "%s\n" "$DX_IMAGE"
+        [ "${2:-}" = inspect ] && printf "%s\n" "[{\"id\" : \"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\"}]"
+        exit 0
+        ;;
     create) printf "%s\n" "$@" >> "$DX_FAKE_CREATE_ARGV"; exit 0 ;;
     *) exit 0 ;;
 esac'

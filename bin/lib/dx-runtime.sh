@@ -56,11 +56,21 @@ dx_runtime_system_running() { dx_runtime_dispatch system_running "$@"; }
 dx_runtime_system_start() { dx_runtime_dispatch system_start "$@"; }
 dx_runtime_host_identity() { dx_runtime_dispatch host_identity "$@"; }
 
-# Image: exists, build, list, delete.
+# Image: exists, build, list, delete, identity.
 dx_runtime_image_exists() { dx_runtime_dispatch image_exists "$@"; }
 dx_runtime_image_list() { dx_runtime_dispatch image_list "$@"; }
 dx_runtime_image_build() { dx_runtime_dispatch image_build "$@"; }
 dx_runtime_image_delete() { dx_runtime_dispatch image_delete "$@"; }
+
+# dx_runtime_image_identity <image> -- the runtime's own stable identity for
+# an image reference (Branch 11 / Phase 3, docs/refactor/direct-volume-storage.md
+# section 5: the host tells the direct-volume guest which image created the
+# container, via bin/dx-create-container's DX_IMAGE_IDENTITY env token,
+# because the volume's own content cannot independently prove which image
+# populated it). Both adapters render "sha256:<hex>"; failure (image
+# missing, inspect failed, output unparseable) is a non-zero exit -- callers
+# fail closed rather than proceed without an identity.
+dx_runtime_image_identity() { dx_runtime_dispatch image_identity "$@"; }
 
 # Volume: exists, create, delete.
 dx_runtime_volume_exists() { dx_runtime_dispatch volume_exists "$@"; }

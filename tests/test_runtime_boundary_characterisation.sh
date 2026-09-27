@@ -660,14 +660,26 @@ rm -rf "$put_fixture"
 # config value below is pinned explicitly so the expected argv can be built
 # independently and compared exactly, in order, against what
 # dx_runtime_apple_container_create actually renders -- proving the
-# refactor changed nothing observable for DX_RUNTIME=apple.
+# refactor changed nothing observable for DX_RUNTIME=apple, EXCEPT the two
+# deliberate env tokens Branch 11 / Phase 3 adds on purpose
+# (docs/refactor/direct-volume-storage.md sections 5 and 7):
+# DX_NIX_STORAGE_MODE (design point A) and DX_IMAGE_IDENTITY (design point
+# D's amendment) -- both forwarded for DX_RUNTIME=apple too, even though
+# apple-image mode in the guest never reads either.
 # =============================================================================
 
 cc_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rtb-create-container.XXXXXX")"
 fake_tool_write "$cc_fixture/bin" container '
 case "$1" in
     list) exit 1 ;;
-    image) [ "$2 $3" = "list --quiet" ] && printf "%s\n" "$DX_IMAGE"; exit 0 ;;
+    image)
+        if [ "$2 $3" = "list --quiet" ]; then printf "%s\n" "$DX_IMAGE"; exit 0; fi
+        if [ "$2" = inspect ] && [ "$3" = "$DX_IMAGE" ]; then
+            printf "%s\n" "[{\"id\" : \"cafef00dcafef00dcafef00dcafef00dcafef00dcafef00dcafef00dcafef00\"}]"
+            exit 0
+        fi
+        exit 1
+        ;;
     create)
         shift
         printf "%s\n" "$@" >> "$DX_FAKE_ARGV_LOG"
@@ -692,6 +704,7 @@ env PATH="$cc_fixture/bin:/usr/bin:/bin" \
     DX_GUEST_ACTIVATION_ATTEMPTS=2 \
     DX_GUEST_ACTIVATION_RETRY_DELAY=5 \
     DX_NIX_DISK_SIZE=64G \
+    DX_NIX_STORAGE_MODE=apple-image \
     DX_CONTAINER_MEMORY=12G \
     DX_CONTAINER_CPUS=4 \
     DX_SSH_PORT=2222 \
@@ -702,10 +715,11 @@ env PATH="$cc_fixture/bin:/usr/bin:/bin" \
     "$BASE_DIR/bin/dx-create-container" >/dev/null 2>&1
 
 # Independently reconstructed (not copy-pasted from the adapter): the exact
-# argv bin/dx-create-container built before Branch 11 / Phase 2, in the
-# same order -- name, entrypoint, cap-add, the three volumes, five env
-# vars, memory, cpus, publish, [no git volume, no pub-key env: neither was
-# configured above].
+# argv bin/dx-create-container builds now -- name, entrypoint, cap-add, the
+# three volumes, seven env vars (five unchanged since before Branch 11 /
+# Phase 2, plus DX_NIX_STORAGE_MODE and DX_IMAGE_IDENTITY, Branch 11 /
+# Phase 3's two deliberate additions), memory, cpus, publish, [no git
+# volume, no pub-key env: neither was configured above].
 (
     source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
     entrypoint_cmd="$(dx_bootstrap_launch_command)"
@@ -722,15 +736,17 @@ env PATH="$cc_fixture/bin:/usr/bin:/bin" \
         -e DX_GUEST_ACTIVATION_ATTEMPTS=2 \
         -e DX_GUEST_ACTIVATION_RETRY_DELAY=5 \
         -e DX_NIX_DISK_SIZE=64G \
+        -e DX_NIX_STORAGE_MODE=apple-image \
+        -e DX_IMAGE_IDENTITY=sha256:cafef00dcafef00dcafef00dcafef00dcafef00dcafef00dcafef00dcafef00 \
         -m 12G -c 4 \
         -p 127.0.0.1:2222:2222 \
         dxe-rtb-image -c "$entrypoint_cmd" -- /guest-bootstrap \
         > "$cc_fixture/expected.log"
 )
 if diff "$cc_fixture/expected.log" "$cc_log" >/dev/null 2>&1; then
-    test_pass "dx-create-container renders today's exact Apple container-create argv, byte for byte, in order"
+    test_pass "dx-create-container renders today's exact Apple container-create argv, byte for byte, in order, plus the two deliberate Phase 3 env tokens"
 else
-    test_fail "dx-create-container renders today's exact Apple container-create argv, byte for byte, in order (diff: $(diff "$cc_fixture/expected.log" "$cc_log" 2>&1))"
+    test_fail "dx-create-container renders today's exact Apple container-create argv, byte for byte, in order, plus the two deliberate Phase 3 env tokens (diff: $(diff "$cc_fixture/expected.log" "$cc_log" 2>&1))"
 fi
 
 # The optional git-mount volume and pub-key env, when configured, land in

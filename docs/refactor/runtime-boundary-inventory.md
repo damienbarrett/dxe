@@ -73,6 +73,7 @@ behaviour.
 | `dx_runtime_image_list` | `container image list` (raw text for human display) | `dx-status` |
 | `dx_runtime_image_build` | `container build -t IMAGE CONTEXT` | `dx-create-image` |
 | `dx_runtime_image_delete` | `container image rm IMAGE` | `dx-destroy-image` |
+| `dx_runtime_image_identity` | `container image inspect IMAGE` (extracts the fixed top-level `"id"` field; no `--format` flag exists) | `dx-create-container` (Branch 11 / Phase 3, `docs/refactor/direct-volume-storage.md` section 5: forwarded as `DX_IMAGE_IDENTITY` so a direct-volume guest can detect an image bump on a reused volume) |
 | `dx_runtime_volume_exists` | `container volume inspect VOL >/dev/null 2>&1` | `container_ensure_volume` (name kept), `dx-create-volumes`, `dx-destroy-volumes`, `dx-migrate-persist` |
 | `dx_runtime_volume_create` | `container volume create VOL` | `container_ensure_volume` (name kept) |
 | `dx_runtime_volume_delete` | `container volume rm VOL` | `dx-destroy-volumes` |

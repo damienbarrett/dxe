@@ -66,6 +66,25 @@ dx_runtime_apple_image_list() { container image list "$@"; }
 dx_runtime_apple_image_build() { container build "$@"; }
 dx_runtime_apple_image_delete() { container image rm "$@"; }
 
+# Branch 11 / Phase 3 (docs/refactor/direct-volume-storage.md section 5.1):
+# `container image inspect <ref>` has no --format flag (confirmed against
+# the real Apple Container CLI's own --help), so it always prints a JSON
+# array whose first element has a stable top-level "id" field -- a bare hex
+# digest, confirmed against real local images to be distinct from the
+# "digest" fields nested under configuration.descriptor and each
+# variants[] entry (differently named, never confusable with it). Extracted
+# with a fixed-shape sed match rather than a JSON parser: this file's
+# controller side has no guaranteed jq (bin/lib/dx-runtime-docker.sh's own
+# module comment states the same reason for its --format-only queries), and
+# rendered with a "sha256:" prefix so both runtimes' identities share one
+# shape even though they are never compared to each other.
+dx_runtime_apple_image_identity() {
+    local ref="$1" id
+    id="$(container image inspect "$ref" 2>/dev/null | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+    [ -n "$id" ] || return 1
+    printf 'sha256:%s\n' "$id"
+}
+
 dx_runtime_apple_volume_exists() { container volume inspect "$1" >/dev/null 2>&1; }
 dx_runtime_apple_volume_create() { container volume create "$@"; }
 dx_runtime_apple_volume_delete() { container volume rm "$@"; }

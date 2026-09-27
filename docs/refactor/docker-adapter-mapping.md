@@ -167,6 +167,7 @@ number(s) satisfied.
 | `dx_runtime_image_list` | `<docker> image ls --filter label=io.dxe.managed=true --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}\t{{.Size}}'` | raw text for human display only (matches the inventory's existing "raw text for human display" scoping of this op; nothing in `bin/` parses its output except `dx-status`'s pre-existing name-anchored `grep`, which this column order preserves) | connection-loss | 3 (display, not a query the adapter itself parses) |
 | `dx_runtime_image_build` | never a remote `docker build`: parses the Containerfile's single `FROM <ref>` line (fail-closed on anything beyond exactly one such line) then `<docker> pull <ref>` + `<docker> tag <ref> <image>` — see "Flagged for review" item 1 for why this differs from the load/save design first proposed here | n/a | connection-loss, malformed-containerfile | 4 |
 | `dx_runtime_image_delete` | label check (`image inspect --format '{{json .Config.Labels}}'`) then `<docker> image rm <ref>` | `{{json .Config.Labels}}` | connection-loss, label-mismatch | 4, 5 |
+| `dx_runtime_image_identity` (Branch 11 / Phase 3, added after this document's original Phase 2 scope; see `docs/refactor/direct-volume-storage.md` section 5) | `<docker> image inspect --format '{{.Id}}' <ref>` | `{{.Id}}` (`sha256:<hex>`, rendered by Docker's own template, no controller-side parsing) | connection-loss | n/a (Phase 3) |
 
 ### Volume
 

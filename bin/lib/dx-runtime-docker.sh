@@ -339,6 +339,20 @@ dx_runtime_docker_image_exists() {
     dx_runtime_docker_ssh_exec "$bin" image inspect "$1" >/dev/null 2>&1
 }
 
+# Branch 11 / Phase 3 (docs/refactor/direct-volume-storage.md section 5.1):
+# the runtime's own stable image identity, forwarded by
+# bin/dx-create-container as DX_IMAGE_IDENTITY so the direct-volume guest
+# can detect an image bump on a reused volume without reaching the image's
+# own (hidden-under-the-mount) store. Structured, single-field query, the
+# same shape tests/qnap/phase0-spike.sh already uses for its own base/tag
+# digest comparison; Docker's template renders "sha256:<hex>" itself, no
+# parsing needed on the controller.
+dx_runtime_docker_image_identity() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" image inspect --format '{{.Id}}' "$1"
+}
+
 dx_runtime_docker_image_list() {
     local bin
     bin="$(dx_runtime_docker_require_bin)" || return 1
