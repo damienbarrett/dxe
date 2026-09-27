@@ -235,6 +235,18 @@ bounded bootstrap-root set's own content directly instead
 `DX_IMAGE_IDENTITY`-vs-marker mechanism this section describes is
 unaffected and remains exactly as designed here.
 
+**Further corrected, same phase, Finding 7:** Finding 6's fix keyed the
+republished GC roots by `DX_IMAGE_IDENTITY` itself, but that value is a
+71-character `sha256:<64 hex>` token on both runtimes, not the bare digest
+`nix_install_image_essentials_root`'s directory naming and validation
+expect — so the very first boot of a fresh direct-volume guest refused to
+publish any GC roots at all. The `sha256:` prefix is now stripped into a
+separate value before that one call, validated as genuinely 64 hex
+characters first (failing closed, naming the offending value, for any
+runtime whose identity token is shaped differently); the marker comparison
+itself still compares the raw, prefixed `DX_IMAGE_IDENTITY` as described
+above, unaffected.
+
 ## 2. Problem 2 — recovery blind spot for the post-remount trust root
 
 ### 2.1 Characterisation: the reproducer

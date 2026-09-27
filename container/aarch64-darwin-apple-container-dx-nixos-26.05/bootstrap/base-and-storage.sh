@@ -762,7 +762,7 @@ publish_nix_volume_image_identity() {
 populate_prepared_nix_volume_in_place() {
     local volume_root="$1"
     local owner_uid owner_gid import_started
-    local image_identity identity_marker recorded_identity
+    local image_identity identity_marker recorded_identity roots_identity
     local roots root target_store
 
     owner_uid="$(id -u dx 2>/dev/null || printf '%s' 0)"
@@ -779,12 +779,32 @@ populate_prepared_nix_volume_in_place() {
         echo "Error: direct-volume mode requires the runtime image identity; recreate the container with a current dx-create-container." >&2
         return 1
     fi
+    # DX_IMAGE_IDENTITY is the runtime's own image-identity TOKEN, not a bare
+    # digest: both dx_runtime_apple_image_identity (an explicit `printf
+    # 'sha256:%s'`) and Docker's `image inspect --format '{{.Id}}'` carry the
+    # `sha256:` algorithm prefix (71 chars total). nix_install_image_essentials_root's
+    # GC-roots directory name and its identity validation both expect a bare
+    # 64-hex digest (the shape nix_image_store_identity/sha256sum produce for
+    # apple-image mode's own fallback) -- passing the raw, prefixed token
+    # through unchanged fails that validation and refuses to publish roots on
+    # a fresh direct-volume guest's very first boot (Finding 7). Strip the
+    # prefix into a SEPARATE roots_identity for that one purpose only; the
+    # marker comparison above/below keeps comparing the raw, prefixed
+    # image_identity, since that is what publish_nix_volume_image_identity
+    # records. A foreign runtime whose identity token is not `sha256:<64
+    # hex>` must fail closed here, not publish GC roots under a garbage
+    # directory name.
+    roots_identity="${image_identity#sha256:}"
+    if ! [[ "$roots_identity" =~ ^[0123456789abcdef]{64}$ ]]; then
+        echo "Error: the runtime image identity '$image_identity' is not the expected sha256:<64 hex> shape; refusing to publish GC roots under it." >&2
+        return 1
+    fi
 
     import_started=$SECONDS
     identity_marker="$volume_root/.dx-image-identity-v1"
     if [ ! -f "$identity_marker" ]; then
         publish_nix_volume_image_identity "$volume_root" "$image_identity" || return 1
-        DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$image_identity" nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid" || return 1
+        DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$roots_identity" nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid" || return 1
     else
         recorded_identity="$(cat "$identity_marker" 2>/dev/null || true)"
         if [ "$recorded_identity" != "$image_identity" ]; then
@@ -804,7 +824,7 @@ populate_prepared_nix_volume_in_place() {
             return 1
         fi
         echo "Image Nix essentials verified; skipping image-store import."
-        DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$image_identity" nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid" || return 1
+        DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$roots_identity" nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid" || return 1
     fi
     echo "Nix volume image import completed in $((SECONDS - import_started))s."
 }

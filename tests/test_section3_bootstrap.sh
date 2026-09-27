@@ -1077,19 +1077,23 @@ fi
 
 rm -rf "$p8_fixture"
 
-# P9 (Branch 11 / Phase 3, Increment 3): populate_prepared_nix_volume's
-# explicit dispatch on DX_NIX_VOLUME_IN_PLACE, and
-# populate_prepared_nix_volume_in_place's amended two-check protocol
-# (docs/refactor/direct-volume-storage.md section 5.3): store-missing
-# refusal, DX_IMAGE_IDENTITY-absent refusal, the new image-identity marker
-# (write-once / match-and-continue / mismatch-refuse), and the ORIGINAL
-# nix_image_store_import_required check kept, unchanged, as a
-# corruption-only signal once the marker matches. Lower-level Nix
-# collaborators are stubbed throughout (their own behavior is unchanged and
-# tested elsewhere -- Section 5, tests/test_nix_store_import.sh); these
-# tests isolate only the new dispatch/marker logic this increment adds.
-# owner_uid/owner_gid fall back to the production code's own "0" default
-# (no real "dx" user exists on this host, exactly like every other
+# P9 (Branch 11 / Phase 3, Increment 3; corrected Branch 11 / Phase 4,
+# Findings 6 and 7): populate_prepared_nix_volume's explicit dispatch on
+# DX_NIX_VOLUME_IN_PLACE, and populate_prepared_nix_volume_in_place's
+# amended two-check protocol (docs/refactor/direct-volume-storage.md
+# section 5.3): store-missing refusal, DX_IMAGE_IDENTITY-absent refusal,
+# the new image-identity marker (write-once / match-and-continue /
+# mismatch-refuse), and -- as landed, replacing the original
+# nix_image_store_import_required corruption-only signal this comment used
+# to describe -- direct content verification of the bounded bootstrap-root
+# set once the marker matches (Finding 6), keyed by DX_IMAGE_IDENTITY's own
+# bare digest with its `sha256:` prefix stripped and validated before use
+# (Finding 7). Lower-level Nix collaborators are stubbed throughout (their
+# own behavior is unchanged and tested elsewhere -- Section 5,
+# tests/test_nix_store_import.sh); these tests isolate only the new
+# dispatch/marker/verification logic this increment and its two corrections
+# add. owner_uid/owner_gid fall back to the production code's own "0"
+# default (no real "dx" user exists on this host, exactly like every other
 # isolated fixture in this file).
 p9_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p9-in-place-populate.XXXXXX")"
 
@@ -1100,7 +1104,7 @@ mkdir -p "$p9_missing_root"
 p9_missing_calls="$p9_fixture/missing-calls.log"
 if (
     nix_image_store_import_required() { printf 'CALLED %s\n' "$*" >> "$p9_missing_calls"; return 1; }
-    DX_IMAGE_IDENTITY=sha256:shouldnotmatter00000000000000000000000000000000000000000000000
+    DX_IMAGE_IDENTITY=sha256:0000000000000000000000000000000000000000000000000000000000000000
     populate_prepared_nix_volume_in_place "$p9_missing_root"
 ) >"$p9_fixture/missing.out" 2>&1; then
     test_fail "populate_prepared_nix_volume_in_place: refuses when /nix/store is missing"
@@ -1129,13 +1133,42 @@ else
     fi
 fi
 
+# 2b (Branch 11 / Phase 4, Finding 7): store present, DX_IMAGE_IDENTITY
+# present but NOT the runtime-shaped `sha256:<64 hex>` token (a foreign
+# runtime, or a future format change) -> fail closed with a clear message
+# naming the offending value, before nix_install_image_essentials_root (and
+# therefore before any GC-roots publication under a garbage directory name)
+# is ever reached.
+p9_root_badshape="$p9_fixture/vol-badshape"
+mkdir -p "$p9_root_badshape/store"
+p9_badshape_calls="$p9_fixture/badshape-calls.log"
+if (
+    nix_install_image_essentials_root() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_badshape_calls"; }
+    DX_IMAGE_IDENTITY="md5:not-the-expected-shape"
+    populate_prepared_nix_volume_in_place "$p9_root_badshape"
+) >"$p9_fixture/badshape.out" 2>&1; then
+    test_fail "populate_prepared_nix_volume_in_place: a non-sha256:<64 hex> DX_IMAGE_IDENTITY refuses before publishing GC roots"
+else
+    if stdin_matches -F 'is not the expected sha256:<64 hex> shape' < "$p9_fixture/badshape.out" \
+        && stdin_matches -F 'md5:not-the-expected-shape' < "$p9_fixture/badshape.out" \
+        && [ ! -s "$p9_badshape_calls" ]; then
+        test_pass "populate_prepared_nix_volume_in_place: a non-sha256:<64 hex> DX_IMAGE_IDENTITY refuses before publishing GC roots, naming the offending value"
+    else
+        test_fail "populate_prepared_nix_volume_in_place: a non-sha256:<64 hex> DX_IMAGE_IDENTITY refuses before publishing GC roots, naming the offending value (out: $(cat "$p9_fixture/badshape.out"); calls: $(cat "$p9_badshape_calls" 2>/dev/null))"
+    fi
+fi
+
 # 3. Marker absent (first bootstrap-managed boot for this volume): writes
 # it atomically with the env value, then installs/publishes the essentials
-# roots keyed by DX_IMAGE_IDENTITY itself (Branch 11 / Phase 4, Finding 6:
-# never DX_IMAGE_IDENTITY's live-store-hash predecessor, and never
-# surviving past that one call -- see the function's own comment). Neither
-# nix_image_store_import_required NOR nix_image_store_identity (the real
-# `nix path-info --all` enumerator) may be consulted on this path.
+# roots keyed by DX_IMAGE_IDENTITY's bare digest, with its `sha256:`
+# algorithm prefix stripped before it is ever passed on as
+# DX_NIX_PENDING_IMAGE_STORE_IDENTITY (Branch 11 / Phase 4, Finding 6: never
+# DX_IMAGE_IDENTITY's live-store-hash predecessor; Finding 7: the prefixed
+# token itself is not a valid GC-roots key, so the strip has to happen
+# before this one call, not after), and never surviving past that one call
+# -- see the function's own comment. Neither nix_image_store_import_required
+# NOR nix_image_store_identity (the real `nix path-info --all` enumerator)
+# may be consulted on this path.
 p9_root_fresh="$p9_fixture/vol-fresh"
 mkdir -p "$p9_root_fresh/store"
 p9_fresh_calls="$p9_fixture/fresh-calls.log"
@@ -1148,19 +1181,52 @@ p9_fresh_output="$({
     nix_image_store_import_required() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_fresh_calls"; return 1; }
     nix_image_store_identity() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_fresh_calls"; return 1; }
     nix_install_image_essentials_root() { printf 'install_root %s pending=%s\n' "$*" "${DX_NIX_PENDING_IMAGE_STORE_IDENTITY:-<unset>}" >> "$p9_fresh_calls"; }
-    DX_IMAGE_IDENTITY=sha256:freshimage000000000000000000000000000000000000000000000000000
+    DX_IMAGE_IDENTITY=sha256:1100000000000000000000000000000000000000000000000000000000000000
     populate_prepared_nix_volume_in_place "$p9_root_fresh"
     echo "marker=$(cat "$p9_root_fresh/.dx-image-identity-v1" 2>/dev/null)"
     echo "pending-after-return=${DX_NIX_PENDING_IMAGE_STORE_IDENTITY:-<unset>}"
 } 2>&1)"
-if printf '%s\n' "$p9_fresh_output" | stdin_matches -F 'marker=sha256:freshimage000000000000000000000000000000000000000000000000000' \
+if printf '%s\n' "$p9_fresh_output" | stdin_matches -F 'marker=sha256:1100000000000000000000000000000000000000000000000000000000000000' \
     && printf '%s\n' "$p9_fresh_output" | stdin_matches -F 'pending-after-return=<unset>' \
     && grep -qF -- 'install_root' "$p9_fresh_calls" \
-    && grep -qF -- 'pending=sha256:freshimage000000000000000000000000000000000000000000000000000' "$p9_fresh_calls" \
+    && grep -qF -- 'pending=1100000000000000000000000000000000000000000000000000000000000000' "$p9_fresh_calls" \
     && ! grep -qF -- 'MUST-NOT-BE-CALLED' "$p9_fresh_calls"; then
     test_pass "populate_prepared_nix_volume_in_place: marker absent -> writes it, publishes roots keyed by DX_IMAGE_IDENTITY, never calls nix_image_store_identity, and the pending identity never survives the one call it steers"
 else
     test_fail "populate_prepared_nix_volume_in_place: marker absent -> writes it, publishes roots keyed by DX_IMAGE_IDENTITY, never calls nix_image_store_identity, and the pending identity never survives the one call it steers (output: $p9_fresh_output; calls: $(cat "$p9_fresh_calls" 2>/dev/null))"
+fi
+
+# 3b (Branch 11 / Phase 4, Finding 7 -- the real first-boot failure on a
+# real, runtime-shaped DX_IMAGE_IDENTITY token): both runtimes' image
+# identity carries the `sha256:` algorithm prefix (dx_runtime_apple_image_
+# identity's own `printf 'sha256:%s'`; Docker's `image inspect --format
+# '{{.Id}}'`), 71 chars total, never a bare 64-hex digest. Every fixture
+# above and below uses that real shape for DX_IMAGE_IDENTITY, but each one
+# also mocks nix_install_image_essentials_root itself, so none of them
+# actually exercises its own identity-shape validation or its GC-roots
+# directory name -- exactly the gap that let Finding 7 land undetected.
+# This fixture runs the REAL nix_install_image_essentials_root (only its
+# own nix_image_bootstrap_store_paths collaborator and chown are stubbed,
+# same reasons as test 3 above) and asserts the published GC-roots
+# directory is named by the BARE digest, with no `sha256:` anywhere in the
+# path.
+p9_root_realroots="$p9_fixture/vol-realroots"
+mkdir -p "$p9_root_realroots/store"
+p9_realroots_calls="$p9_fixture/realroots-calls.log"
+if (
+    chown() { printf 'chown %s\n' "$*" >> "$p9_realroots_calls"; }
+    nix_image_bootstrap_store_paths() { printf '%s\n' "/nix/store/dddddddddddddddddddddddddddddddd-essentials"; }
+    DX_IMAGE_IDENTITY=sha256:8800000000000000000000000000000000000000000000000000000000000000
+    populate_prepared_nix_volume_in_place "$p9_root_realroots"
+) >"$p9_fixture/realroots.out" 2>&1; then
+    if [ -L "$p9_root_realroots/var/nix/gcroots/dx-image-roots-v2-8800000000000000000000000000000000000000000000000000000000000000/dddddddddddddddddddddddddddddddd-essentials" ] \
+        && [ ! -e "$p9_root_realroots/var/nix/gcroots/dx-image-roots-v2-sha256:8800000000000000000000000000000000000000000000000000000000000000" ]; then
+        test_pass "populate_prepared_nix_volume_in_place: the real nix_install_image_essentials_root publishes GC roots named by the bare 64-hex digest, never the sha256:-prefixed token (Finding 7)"
+    else
+        test_fail "populate_prepared_nix_volume_in_place: the real nix_install_image_essentials_root publishes GC roots named by the bare 64-hex digest, never the sha256:-prefixed token (Finding 7) (out: $(cat "$p9_fixture/realroots.out"); tree: $(find "$p9_root_realroots/var/nix/gcroots" 2>/dev/null))"
+    fi
+else
+    test_fail "populate_prepared_nix_volume_in_place: the real nix_install_image_essentials_root publishes GC roots named by the bare 64-hex digest, never the sha256:-prefixed token (Finding 7) (out: $(cat "$p9_fixture/realroots.out"))"
 fi
 
 # 4/reproducer (Branch 11 / Phase 4, Finding 6 -- a real, deterministic NAS
@@ -1179,7 +1245,7 @@ fi
 # bootstrap roots decides this now, and it reports the store healthy).
 p9_root_match="$p9_fixture/vol-match"
 mkdir -p "$p9_root_match/store"
-printf 'sha256:matchimage00000000000000000000000000000000000000000000000000\n' > "$p9_root_match/.dx-image-identity-v1"
+printf 'sha256:2200000000000000000000000000000000000000000000000000000000000000\n' > "$p9_root_match/.dx-image-identity-v1"
 # A stale marker from an older, pre-Finding-6 boot may still physically
 # exist on a real reused volume; the fixed code must never read it.
 printf 'unrelated-stale-marker-from-before-this-fix\n' > "$p9_root_match/.dx-image-store-identity"
@@ -1221,7 +1287,7 @@ p9_match_output="$({
         fi
     }
     nix_install_image_essentials_root() { printf 'install_root %s\n' "$*" >> "$p9_match_calls"; }
-    DX_IMAGE_IDENTITY=sha256:matchimage00000000000000000000000000000000000000000000000000
+    DX_IMAGE_IDENTITY=sha256:2200000000000000000000000000000000000000000000000000000000000000
     populate_prepared_nix_volume_in_place "$p9_root_match"
 } 2>&1)"
 if printf '%s\n' "$p9_match_output" | stdin_matches -F 'Image Nix essentials verified; skipping image-store import.' \
@@ -1229,7 +1295,7 @@ if printf '%s\n' "$p9_match_output" | stdin_matches -F 'Image Nix essentials ver
     && grep -qF -- 'install_root' "$p9_match_calls" \
     && grep -qF -- "store verify --store" "$p9_match_calls" \
     && ! grep -qF -- 'MUST-NOT-BE-CALLED' "$p9_match_calls" \
-    && [ "$(cat "$p9_root_match/.dx-image-identity-v1")" = 'sha256:matchimage00000000000000000000000000000000000000000000000000' ]; then
+    && [ "$(cat "$p9_root_match/.dx-image-identity-v1")" = 'sha256:2200000000000000000000000000000000000000000000000000000000000000' ]; then
     test_pass "populate_prepared_nix_volume_in_place: a reused volume (marker matches) is verified by the bounded bootstrap-root content, not a live whole-store hash -- does not refuse, roots republished (Finding 6 reproducer)"
 else
     test_fail "populate_prepared_nix_volume_in_place: a reused volume (marker matches) is verified by the bounded bootstrap-root content, not a live whole-store hash -- does not refuse, roots republished (Finding 6 reproducer) (output: $p9_match_output; calls: $(cat "$p9_match_calls" 2>/dev/null))"
@@ -1246,13 +1312,13 @@ fi
 # nix_install_image_essentials_root must not run.
 p9_root_corrupt="$p9_fixture/vol-corrupt"
 mkdir -p "$p9_root_corrupt/store"
-printf 'sha256:corruptimage0000000000000000000000000000000000000000000000000\n' > "$p9_root_corrupt/.dx-image-identity-v1"
+printf 'sha256:3300000000000000000000000000000000000000000000000000000000000000\n' > "$p9_root_corrupt/.dx-image-identity-v1"
 if (
     nix_image_bootstrap_store_paths() { printf '%s\n' "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-essentials"; }
     run_as_dx() { eval "$1"; }
     nix() { return 1; }
     nix_install_image_essentials_root() { echo "MUST-NOT-RUN"; }
-    DX_IMAGE_IDENTITY=sha256:corruptimage0000000000000000000000000000000000000000000000000
+    DX_IMAGE_IDENTITY=sha256:3300000000000000000000000000000000000000000000000000000000000000
     populate_prepared_nix_volume_in_place "$p9_root_corrupt"
 ) >"$p9_fixture/corrupt.out" 2>&1; then
     test_fail "populate_prepared_nix_volume_in_place: marker matches but bootstrap-root content verification fails -> refuses"
@@ -1270,12 +1336,12 @@ fi
 # "verifying" an empty set and calling the volume trustworthy.
 p9_root_noroots="$p9_fixture/vol-noroots"
 mkdir -p "$p9_root_noroots/store"
-printf 'sha256:norootsimage000000000000000000000000000000000000000000000000\n' > "$p9_root_noroots/.dx-image-identity-v1"
+printf 'sha256:4400000000000000000000000000000000000000000000000000000000000000\n' > "$p9_root_noroots/.dx-image-identity-v1"
 if (
     nix_image_bootstrap_store_paths() { :; }
     nix_install_image_essentials_root() { echo "MUST-NOT-RUN"; }
     run_as_dx() { echo "MUST-NOT-VERIFY"; }
-    DX_IMAGE_IDENTITY=sha256:norootsimage000000000000000000000000000000000000000000000000
+    DX_IMAGE_IDENTITY=sha256:4400000000000000000000000000000000000000000000000000000000000000
     populate_prepared_nix_volume_in_place "$p9_root_noroots"
 ) >"$p9_fixture/noroots.out" 2>&1; then
     test_fail "populate_prepared_nix_volume_in_place: no bootstrap roots resolved -> fails closed"
@@ -1296,18 +1362,18 @@ fi
 # D's amendment).
 p9_root_bump="$p9_fixture/vol-bump"
 mkdir -p "$p9_root_bump/store"
-printf 'sha256:oldimage0000000000000000000000000000000000000000000000000000\n' > "$p9_root_bump/.dx-image-identity-v1"
+printf 'sha256:5500000000000000000000000000000000000000000000000000000000000000\n' > "$p9_root_bump/.dx-image-identity-v1"
 p9_bump_calls="$p9_fixture/bump-calls.log"
 if (
     nix_image_store_import_required() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_bump_calls"; return 1; }
     nix_image_bootstrap_store_paths() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_bump_calls"; return 1; }
-    DX_IMAGE_IDENTITY=sha256:newimage0000000000000000000000000000000000000000000000000000
+    DX_IMAGE_IDENTITY=sha256:6600000000000000000000000000000000000000000000000000000000000000
     populate_prepared_nix_volume_in_place "$p9_root_bump"
 ) >"$p9_fixture/bump.out" 2>&1; then
     test_fail "populate_prepared_nix_volume_in_place: a mismatched marker (image bump) refuses"
 else
-    if stdin_matches -F 'sha256:oldimage0000' < "$p9_fixture/bump.out" \
-        && stdin_matches -F 'sha256:newimage0000' < "$p9_fixture/bump.out" \
+    if stdin_matches -F 'sha256:550000000000' < "$p9_fixture/bump.out" \
+        && stdin_matches -F 'sha256:660000000000' < "$p9_fixture/bump.out" \
         && stdin_matches -F 'store-trust-plan.md' < "$p9_fixture/bump.out" \
         && stdin_matches -F 'recreate the Nix volume' < "$p9_fixture/bump.out" \
         && [ ! -s "$p9_bump_calls" ]; then
@@ -1322,7 +1388,7 @@ fi
 # (never the apple-image remount/fstab tail below it).
 p9_root_dispatch="$p9_fixture/vol-dispatch"
 mkdir -p "$p9_root_dispatch/store"
-printf 'sha256:dispatchimage000000000000000000000000000000000000000000000000\n' > "$p9_root_dispatch/.dx-image-identity-v1"
+printf 'sha256:7700000000000000000000000000000000000000000000000000000000000000\n' > "$p9_root_dispatch/.dx-image-identity-v1"
 p9_dispatch_output="$({
     nix_image_bootstrap_store_paths() { printf '%s\n' "/nix/store/cccccccccccccccccccccccccccccccc-essentials"; }
     run_as_dx() { eval "$1"; }
@@ -1341,7 +1407,7 @@ p9_dispatch_output="$({
     mount() { echo "MUST-NOT-MOUNT"; }
     DX_NIX_VOLUME_ROOT="$p9_root_dispatch"
     DX_NIX_VOLUME_IN_PLACE=true
-    export DX_IMAGE_IDENTITY=sha256:dispatchimage000000000000000000000000000000000000000000000000
+    export DX_IMAGE_IDENTITY=sha256:7700000000000000000000000000000000000000000000000000000000000000
     populate_prepared_nix_volume
 } 2>&1)"
 if printf '%s\n' "$p9_dispatch_output" | stdin_matches -F 'roots-published' \

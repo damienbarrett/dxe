@@ -420,9 +420,26 @@ bootstrap-root content verification in step 4 is the corruption/tamper
 safety net for a matching, reused volume. "Matching identity -> publish
 roots as today" (design point D's own words) still holds: a matched marker
 falls through to exactly the same `nix_install_image_essentials_root` call
-as before -- which now receives `DX_IMAGE_IDENTITY` itself (not a
-live-store hash) as its GC-roots versioning key, correctly publishing once
-per image rather than once per boot.
+as before -- which now receives a GC-roots versioning key derived from
+`DX_IMAGE_IDENTITY` (not a live-store hash), correctly publishing once per
+image rather than once per boot. **Corrected 2026-09-28 (Branch 11 / Phase
+4, Finding 7):** "derived from" matters precisely here. `DX_IMAGE_IDENTITY`
+is the runtime's own image-identity *token*, not a bare digest -- both
+`dx_runtime_apple_image_identity` (an explicit `printf 'sha256:%s'`) and
+Docker's `image inspect --format '{{.Id}}'` carry the `sha256:` algorithm
+prefix, 71 characters total. `nix_install_image_essentials_root`'s GC-roots
+directory name and its own identity validation both require the bare
+64-hex digest (the shape `nix_image_store_identity`/`sha256sum` produce for
+apple-image mode's own fallback). Passing the prefixed token straight
+through fails that validation outright -- refusing to publish GC roots on
+*every* fresh direct-volume guest's very first boot, an even more
+immediate failure than Finding 6's reboot-refusal. The fix strips the
+`sha256:` prefix into a separate roots-identity value before the one call
+that needs it (the marker comparison in steps 3/5 keeps comparing the raw,
+prefixed `DX_IMAGE_IDENTITY`, since that is what gets recorded), and
+validates that what remains is genuinely 64 hex characters, failing closed
+with a clear message naming the offending value if a foreign runtime ever
+produces a differently-shaped token.
 
 One related, pre-existing gap this phase does not touch either way: by the
 time `populate_prepared_nix_volume` runs (in either mode),
