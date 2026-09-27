@@ -25,8 +25,9 @@ Updated 2026-09-27, after this trim.
   transfer stall) are all landed, CI green, live-verified on `dx-test`. See
   the table below for each branch's evidence record.
 - **`dx-host` (the primary guest) runs current `main`** (promoted 2026-09-27
-  to `abd4d2d`'s bootstrap payload per Appendix D, after the `122258c`
-  promotion earlier that day). It has every landed branch, including
+  to `6688a7c`'s payload per Appendix D -- Phases 2 and 3 included, via a
+  container-only recreate onto its existing volumes -- after the `122258c`
+  and `abd4d2d` promotions earlier that day). It has every landed branch, including
   Branch 16 (the keyring is started by `dx-ai`/`dx-keyring`, not bootstrap;
   verified live after the promotion: `dx-keyring status` was `stale` after
   the restart and `live` with one `dbus-daemon` and one
@@ -430,8 +431,12 @@ rehearsed dry run on `dx-test`.
 **Status 2026-09-27:** see "Where things stand" above. Promotions so far:
 `main` `08700a8` (2026-09-26, the start-generation fix), `main` `122258c`
 (2026-09-27, Branches 6-15 including OpenCode and persist-backup), and
-`main` `abd4d2d` (2026-09-27, Branches 16 and 17 and Phase 1). `dx-host` is
-current; the next promotion follows the next runtime-affecting landing.
+`main` `abd4d2d` (2026-09-27, Branches 16 and 17 and Phase 1), and `main`
+`6688a7c` (2026-09-27, Phases 2 and 3: a container-only recreate onto the
+existing volumes so the two new create-time env tokens took effect; backup
+current beforehand, `/persist` file count identical, keyring `stale` then
+`live` after a cold `dx-ai`). `dx-host` is current; the next promotion
+follows the next runtime-affecting landing.
 
 **Before promoting:**
 
