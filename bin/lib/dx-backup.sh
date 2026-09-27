@@ -35,8 +35,26 @@ DX_BACKUP_GUEST_ROOT=/persist
 # BASE directory. /$DX_CONTAINER_NAME is always appended here, even when
 # DX_BACKUP_DIR is overridden, so dx-host and dx-test can never share a
 # mirror by accident.
+#
+# qnap-dxe-plan.md Phase 2 item 7: for DX_RUNTIME=docker-ssh, one more
+# segment -- dx_runtime_host_identity's own "docker-ssh:<alias>:<daemon-id>"
+# (colons replaced with underscores; only cosmetic, both characters are
+# valid in a Unix path, but colons read oddly in a directory listing) --
+# so two docker-ssh profiles that happen to share a container name (two
+# different NASs, or the same alias resolving to a different daemon) can
+# never mix their /persist backups under the same local directory: unlike
+# a stale tunnel socket, cross-contaminating backup data is a real
+# data-integrity hazard, not just a minor mixup. Apple's own path is
+# BYTE-FOR-BYTE unchanged (there is only ever one local Apple runtime, so
+# it never needed disambiguating).
 dx_backup_resolve_dir() {
-    printf '%s/%s\n' "${DX_BACKUP_DIR:?}" "${DX_CONTAINER_NAME:?}"
+    if [ "${DX_RUNTIME:-apple}" = docker-ssh ]; then
+        local identity
+        identity="$(dx_runtime_host_identity)"
+        printf '%s/%s/%s\n' "${DX_BACKUP_DIR:?}" "${DX_CONTAINER_NAME:?}" "${identity//:/_}"
+    else
+        printf '%s/%s\n' "${DX_BACKUP_DIR:?}" "${DX_CONTAINER_NAME:?}"
+    fi
 }
 
 # The selector script's path as it appears INSIDE the guest (or, in tests,

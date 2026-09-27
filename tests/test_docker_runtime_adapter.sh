@@ -18,6 +18,8 @@ source "$SCRIPT_DIR/lib/fake-tools.sh"
 source "$BASE_DIR/bin/lib/dx-config.sh"
 source "$BASE_DIR/bin/lib/dx-host-util.sh"
 source "$BASE_DIR/bin/lib/dx-runtime.sh"
+source "$BASE_DIR/bin/lib/dx-tunnel.sh"
+source "$BASE_DIR/bin/lib/dx-backup.sh"
 test_section "Docker-ssh runtime adapter (Branch 11 / Phase 2)"
 
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-docker-adapter.XXXXXX")"
@@ -1144,6 +1146,69 @@ esac'
     [ "$rc" -eq 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "Lock released."
 )
 [ "$?" -eq 0 ] && test_pass "bin/dx-lock unlock --force removes the lock end to end" || test_fail "bin/dx-lock unlock --force removes the lock end to end"
+
+# --- Identity-scoped local state (item 7) -----------------------------
+
+# dx_tunnel_key: Apple's shape is byte-for-byte unchanged.
+(
+    DX_RUNTIME=apple DX_CONTAINER_NAME=dx-host
+    [ "$(dx_tunnel_key forward 8080)" = "forward:dx-host:8080" ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_tunnel_key: apple's key shape is unchanged (direction:container:port)" || test_fail "dx_tunnel_key: apple's key shape is unchanged (direction:container:port)"
+
+# dx_tunnel_key: docker-ssh gains a fourth, identity segment.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1 $2" = "info --format" ] && echo "abc123def|qnap-fake|x86_64|linux"'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    [ "$(dx_tunnel_key forward 8080)" = "forward:dx-qnap:8080:docker-ssh:qnap-dxe:abc123def" ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_tunnel_key: docker-ssh gains a runtime+daemon-ID segment" || test_fail "dx_tunnel_key: docker-ssh gains a runtime+daemon-ID segment"
+
+# dx_tunnel_key: two different remote hosts (same container name) never
+# collide -- the whole point of item 7.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1 $2" = "info --format" ] && echo "aaa111|host-a|x86_64|linux"'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-a DX_CONTAINER_NAME=dx-qnap
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
+    key_a="$(dx_tunnel_key forward 8080)"
+    dir2="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir2"
+    fake_tool_write "$dir2" docker '[ "$1 $2" = "info --format" ] && echo "bbb222|host-b|x86_64|linux"'
+    PATH="$dir2:/usr/bin:/bin"
+    DX_REMOTE_HOST=qnap-b
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
+    key_b="$(dx_tunnel_key forward 8080)"
+    [ "$key_a" != "$key_b" ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_tunnel_key: two different remote hosts with the same container name never collide" || test_fail "dx_tunnel_key: two different remote hosts with the same container name never collide"
+
+# dx_backup_resolve_dir: Apple's shape is byte-for-byte unchanged.
+(
+    DX_RUNTIME=apple DX_CONTAINER_NAME=dx-host DX_BACKUP_DIR=/tmp/dxe-rtb-backups
+    [ "$(dx_backup_resolve_dir)" = "/tmp/dxe-rtb-backups/dx-host" ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_backup_resolve_dir: apple's path is unchanged (BASE/container)" || test_fail "dx_backup_resolve_dir: apple's path is unchanged (BASE/container)"
+
+# dx_backup_resolve_dir: docker-ssh gains a third, identity path segment
+# (colons replaced with underscores for a cleaner directory name).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1 $2" = "info --format" ] && echo "abc123def|qnap-fake|x86_64|linux"'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_BACKUP_DIR=/tmp/dxe-rtb-backups
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
+    [ "$(dx_backup_resolve_dir)" = "/tmp/dxe-rtb-backups/dx-qnap/docker-ssh_qnap-dxe_abc123def" ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_backup_resolve_dir: docker-ssh gains a runtime+daemon-ID path segment, never mixing two NASs' backups" || test_fail "dx_backup_resolve_dir: docker-ssh gains a runtime+daemon-ID path segment, never mixing two NASs' backups"
 
 print_summary
 exit_with_code

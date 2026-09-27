@@ -18,7 +18,25 @@ dx_tunnel_validate_port() {
 # One expansion rather than a branch: the suite always sets the override, so a
 # separate fallback line would never be executed and could never be covered.
 dx_tunnel_state_dir() { printf '%s\n' "${DX_TUNNEL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/dxe/tunnels}"; }
-dx_tunnel_key() { printf '%s:%s:%s' "$1" "$DX_CONTAINER_NAME" "$2"; }
+# qnap-dxe-plan.md Phase 2 item 7: scope tunnel state by runtime + stable
+# remote daemon identity too, so two docker-ssh profiles (or the same
+# alias silently resolving to a different daemon) can never collide over
+# the same cache slot. Apple's own key shape is BYTE-FOR-BYTE unchanged
+# (direction:container:port) -- there is only ever one local Apple
+# runtime, so it never needed disambiguating, and no existing socket/
+# metadata/lock path may shift for it. docker-ssh gains a fourth segment,
+# dx_runtime_host_identity's own "docker-ssh:<alias>:<daemon-id>" (cached
+# after the first call in a process, so this costs no repeated round
+# trip); dx_runtime_host_identity is available here the same way
+# dx_short_hash (bin/lib/dx-host-util.sh) already is -- assumed sourced
+# by the caller first (bin/dx-lib.sh's own order), not re-sourced here.
+dx_tunnel_key() {
+    if [ "${DX_RUNTIME:-apple}" = docker-ssh ]; then
+        printf '%s:%s:%s:%s' "$1" "$DX_CONTAINER_NAME" "$2" "$(dx_runtime_host_identity)"
+    else
+        printf '%s:%s:%s' "$1" "$DX_CONTAINER_NAME" "$2"
+    fi
+}
 dx_tunnel_hash() { dx_short_hash "$(dx_tunnel_key "$1" "$2")"; }
 dx_tunnel_socket_path() { printf '%s/s-%s.sock\n' "$(dx_tunnel_state_dir)" "$(dx_tunnel_hash "$1" "$2")"; }
 dx_tunnel_metadata_path() { printf '%s/m-%s.meta\n' "$(dx_tunnel_state_dir)" "$(dx_tunnel_hash "$1" "$2")"; }
