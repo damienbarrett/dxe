@@ -783,11 +783,22 @@ and its `ps` format used `inspect`'s map-style label access. Evidence:
 
 ## Phase 5 — Make SSH and user workflows remote-aware
 
-**Status (2026-09-28, `feat/qnap-remote-ssh`):** items 1-8 implemented
-against fakes only (Increments 1-7; design:
-`docs/refactor/remote-aware-ssh.md`); the live gate (Apple `dx-test` and a
-disposable QNAP guest) is the coordinating session's own next step, not
-yet run. User decisions this phase settled beyond the numbered items
+**Status (2026-09-28, `feat/qnap-remote-ssh`, landed):** items 1-8
+implemented against fakes only (Increments 1-7; design:
+`docs/refactor/remote-aware-ssh.md`) and both live gates passed
+(evidence: `docs/evidence/20260928/remote-aware-ssh.md`). On the NAS a
+disposable x86_64 guest published SSH on the Tailscale address only
+(Docker's port binding inspected), was reached directly from the
+controller for wait-ssh, ssh, put/get, forward/reverse (local binds on
+controller loopback), `dx-enter <cmd>`, an atomic export and `dx-status`,
+pinned its host key on first contact and kept it on the second, refused
+`dx-mount` and `dx-nix-disk` before any remote change, and was removed
+with nothing labelled left; `dx-test`'s full live tier passed under the
+profile environment. Of the exit gate, the "from an external network" run
+of the DQ8 set and an on-LAN unreachability probe remain the user's own
+check: the controller ran off-LAN, which made its own LAN probe weak
+evidence (the binding inspection is the strong evidence). User decisions
+this phase settled beyond the numbered items
 above: Phase 5 proceeds now; item 9 is deferred until items 1-8 land (see
 item 9's own text below — unchanged, still the governing decision); the
 guest SSH port is `2222` on the NAS's Tailscale address, recorded

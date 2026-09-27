@@ -48,14 +48,17 @@ Updated 2026-09-27, after this trim.
   NAS with disposable resources: the first native x86_64 DXE guest
   bootstrapped on the QNAP in about two minutes (evidence:
   `docs/evidence/20260927/direct-volume-storage.md`,
-  `docs/evidence/20260928/arch-neutral-guest.md`).
-  SSH/workflows, lifecycle hardening, and promotion) are not
+  `docs/evidence/20260928/arch-neutral-guest.md`). Phase 5 (remote-aware
+  SSH and workflows) landed 2026-09-28 the same way: the disposable guest
+  was reached directly on the NAS's Tailscale address from the controller
+  (evidence: `docs/evidence/20260928/remote-aware-ssh.md`). Phases 6-7
+  (lifecycle hardening, and promotion to a real QNAP profile) are not
   started. Phase 0's own maintenance-window items, 8b/8c, are also still
-  open.
-- **Remaining work:** Branch 11 Phases 3 and 4's landing/live-gate and Phases 5-7 (below), Branch 12
-  (`fix/store-trust`, Q6 resolved: fail fast), Branch 13 (the two large
-  proposals, Q7 -- still open, not urgent), and four small follow-ups from
-  Observations that are not yet branches (below).
+  open, deferred into Phase 6.
+- **Remaining work:** Branch 11 Phases 6-7 (below) and Branch 13 (the two
+  large proposals, Q7 -- still open, not urgent). Branch 12
+  (`fix/store-trust`) and the four small follow-ups (`fix/test-hardening`)
+  landed 2026-09-28.
 
 ### Feature-branch breakdown
 
@@ -92,11 +95,10 @@ the next one may start.
 | 17 | `fix/dx-backup-transfer-stall` | Make `dx-backup`'s transfer unidirectional (it deadlocked on large selections) and add `--dry-run --summary` for the at-risk breakdown | S–M | Yes (`dx-test`) | No | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/dx-backup-transfer-stall.md`; `dx-host` gets it at its next promotion |
 | 18 | `fix/dx-backup-deny-list` | Add user-approved entries to `dx-backup`'s deny-list (`.pnpm-store`, `.Trash-*`, `.tmp`, the `agy` binary bundle), a default location for the exclude file, and fix a nested-repository duplicate-path crash found live along the way | S | Yes (`dx-test`; unit fixtures only) | No (option 1a chosen 2026-09-27) | **Done** 2026-09-27 — landed on `main` (rebased onto `4b965d7`, CI green); evidence: `docs/evidence/20260927/dx-backup-deny-list.md`; the guest selector reaches `dx-host` through `dx-sync-bootstrap` (done at landing), the host side is on `main` immediately |
 
-**Remaining order:** Branch 11 Phases 3 and 4's landing/live-gate, Phases 5-7,
-and Branch 12 have no outstanding prerequisites -- both branches they waited
-on (9 and 10) are done. Store
-trust (12) is not a prerequisite for QNAP (11): a QNAP guest starts with
-fresh volumes. Branch 13 stays parked behind Q7.
+**Remaining order:** Branch 11 Phases 6-7 have no outstanding
+prerequisites -- Phases 0-5, Branch 12 (store trust) and the four small
+follow-ups (`fix/test-hardening`) are all on `main`. Branch 13 stays parked
+behind Q7.
 
 ---
 
@@ -190,9 +192,15 @@ closed under `docker-ssh` before any remote mutation (closing the
 `bin/dx-mount` gap Phase 2 found, and a wider adapter-level gap found
 during this phase). Developed and characterised entirely against fake
 `ssh`/`docker`/`nc` boundaries, the NAS never touched; design:
-`docs/refactor/remote-aware-ssh.md`. Both live gates (Apple `dx-test`;
-a disposable QNAP guest reached directly on its Tailscale address) are
-the coordinating session's own next step, not yet run.
+`docs/refactor/remote-aware-ssh.md`. **Landed 2026-09-28** after both
+live gates passed: `dx-test`'s full live tier under the profile
+environment, and on the NAS a disposable x86_64 guest whose SSH port was
+bound to the Tailscale address only and which the controller reached
+directly for every DQ8 command (the pin recorded on first contact and
+kept on the second; both refusals before any remote change; removed with
+nothing labelled left). See `docs/evidence/20260928/remote-aware-ssh.md`;
+the gate scripts, not the branch, needed three fixes. The exit gate's
+"from an external network" run is the user's own check, still to come.
 
 **Target:** QNAP TVS-h674T. Its Intel Core 12th-gen CPU means **x86_64**
 (confirmed by Phase 0's `uname -m`). On `main` (before this branch lands)
@@ -388,7 +396,7 @@ For each proposal:
 | --- | --- | --- |
 | Bootstrap refactor v2 | **Park** until Branch 12 is done, then re-decide | Its phases assume today's code. The store-trust fix will change that code, so it would need rebaselining anyway. |
 | Declarative Nix audit | **Reject as a single programme; accept its items one at a time** as small branches, alongside other work | Each conversion (for example SSH or sudo config into Home Manager) is independently useful and small. A big-bang migration conflicts with limiting work in progress. |
-| QNAP runtime | **Resolved 2026-09-26: accepted** as Branch 11. Phases 0-4 landed (Phase 4 on 2026-09-28: the first native x86_64 guest bootstrapped on the QNAP); Phase 5 done on the branch pending its live gate; Phases 6-7 remain | The target is a TVS-h674T (x86_64, confirmed in Phase 0); Phase 4's per-system flake outputs and keyed Antigravity pin let the guest build natively there; Phase 5 reaches it directly on the NAS's own Tailscale address instead of a jump host. |
+| QNAP runtime | **Resolved 2026-09-26: accepted** as Branch 11. Phases 0-5 landed (Phase 4 on 2026-09-28: the first native x86_64 guest bootstrapped on the QNAP; Phase 5 the same day: that guest reached directly on the NAS's Tailscale address from the controller); Phases 6-7 remain | The target is a TVS-h674T (x86_64, confirmed in Phase 0); Phase 4's per-system flake outputs and keyed Antigravity pin let the guest build natively there; Phase 5 reaches it directly on the NAS's own Tailscale address instead of a jump host. |
 
 **Coverage metric conflict:** only relevant if you accept both v2 and the Nix
 audit's item #12. That item replaces the coverage ratio with a ceiling on
