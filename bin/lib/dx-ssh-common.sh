@@ -1,7 +1,14 @@
 #!/bin/bash
 # Shared SSH endpoint, option assembly, and guest execution boundary. Safe to source.
 
-dx_ssh_endpoint() { printf '%s\n' dx@127.0.0.1; }
+# Remote-aware since Branch 11 / Phase 5 (qnap-dxe-plan.md DQ5;
+# docs/refactor/remote-aware-ssh.md section 3): Apple keeps dx@127.0.0.1
+# unchanged (dx_runtime_apple_guest_ssh_address is a fixed constant, no
+# discovery); docker-ssh dials dx@<the NAS's discovered Tailscale address>.
+# Every entry point that calls this or dx_ssh_common_options below (dx-ssh,
+# dx-herdr, dx-wait-ssh, dx-tunnel.sh) inherits the correct destination
+# automatically -- one seam, no per-caller branching on DX_RUNTIME.
+dx_ssh_endpoint() { printf '%s\n' "dx@$(dx_runtime_guest_ssh_address)"; }
 
 # Single source of truth for the SSH connection options shared by every DX SSH
 # entry point: dx-ssh's interactive branch, its argument branch, and dx-herdr
@@ -102,13 +109,24 @@ dx_ssh_run_guest_command() {
         return 255
     fi
 
+    # Resolved into a local, checked explicitly, before dialing out: a
+    # caller of this function is very often itself the subject of a "||"
+    # (Herdr's own probes capture this with "|| rc=$?"), which suspends
+    # `set -e` for anything this function does during that call -- an
+    # inline "$(dx_ssh_endpoint)" at the ssh call site would then silently
+    # become an empty destination argument instead of aborting, if guest
+    # SSH address discovery ever failed (DQ5). Matches ssh's own transport-
+    # failure convention (255).
+    local endpoint
+    endpoint="$(dx_ssh_endpoint)" || return 255
+
     local host_tz
     host_tz="$(dx_get_host_timezone)"
 
     local ssh_opts=() opt
     while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$(dx_ssh_common_options)"
 
-    ssh "${ssh_opts[@]}" "$(dx_ssh_endpoint)" "$(dx_guest_bash_command "$host_tz" "$remote_cmd_body")"
+    ssh "${ssh_opts[@]}" "$endpoint" "$(dx_guest_bash_command "$host_tz" "$remote_cmd_body")"
 }
 
 # Restore the guest's persisted colour scheme before the session's real
@@ -139,6 +157,11 @@ dx_run_interactive_ssh() {
         return 1
     fi
 
+    # See dx_ssh_run_guest_command's own comment on why this is resolved
+    # and checked explicitly rather than inlined at the ssh call site.
+    local endpoint
+    endpoint="$(dx_ssh_endpoint)" || return 1
+
     echo "Connecting to DX guest via SSH..." >&2
 
     local host_tz
@@ -159,7 +182,7 @@ dx_run_interactive_ssh() {
     while IFS= read -r opt; do ssh_opts+=("$opt"); done <<<"$(dx_ssh_common_options)"
 
     local status=0
-    ssh -t "${ssh_opts[@]}" "$(dx_ssh_endpoint)" "$(dx_guest_bash_command "$host_tz" "$remote_cmd_body")" || status=$?
+    ssh -t "${ssh_opts[@]}" "$endpoint" "$(dx_guest_bash_command "$host_tz" "$remote_cmd_body")" || status=$?
     dx_ssh_cleanup_osc
     trap - EXIT
     return "$status"

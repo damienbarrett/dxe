@@ -2231,6 +2231,64 @@ echo "UNMATCHED: $*" >&2; exit 99'
 )
 [ "$?" -eq 0 ] && test_pass "dx-reclaim (docker-ssh): skips fstrim entirely, never reaching the guest fstrim call" || test_fail "dx-reclaim (docker-ssh): skips fstrim entirely, never reaching the guest fstrim call"
 
+# --- bin/dx-put and bin/dx-get (docker-ssh): never dial the guest SSH
+# endpoint directly (Branch 11 / Phase 5, coordinating session's decision on
+# the design note's item 1) -----------------------------------------------
+#
+# Both go exclusively through dx_runtime_exec -- the management-plane
+# contract (ssh ... "$DX_REMOTE_HOST" <docker> exec ...) -- never the guest's
+# own direct SSH boundary (dx@<guest address>, bin/lib/dx-ssh-common.sh).
+# This keeps that reading honest against a future change: a fake ssh here
+# logs the COMPLETE argv of every invocation (not just the fake `docker`'s
+# own understanding of it), and the assertion is a property of the raw ssh
+# destination argument, independent of what dx_runtime_docker_ssh_raw's own
+# code currently does.
+(
+    dir="$(new_tool_dir)"
+    ssh_argv_log="$fixture/put-get-ssh-argv.log"
+    : > "$ssh_argv_log"
+    fake_tool_write "$dir" ssh "
+printf '%s\n' \"\$@\" >> '$ssh_argv_log'
+printf '\f\n' >> '$ssh_argv_log'
+dx_fake_last=\"\"
+for dx_fake_arg in \"\$@\"; do dx_fake_last=\"\$dx_fake_arg\"; done
+eval \"\$dx_fake_last\"
+"
+    fake_tool_write "$dir" docker '
+case "$1" in
+    version) [ "$2" = --format ] && echo "27.3.1" ;;
+    info)    [ "$2" = --format ] && echo "abc123def|qnap-fake|x86_64|linux" ;;
+    exec)
+        shift
+        while :; do
+            case "$1" in
+                -i) shift ;;
+                -u) shift 2 ;;
+                *) break ;;
+            esac
+        done
+        case "$*" in
+            *"[ -e "*) exit 0 ;;
+            *"[ -d "*) exit 1 ;;
+            *"cat "*) printf "fake-file-contents" ;;
+            *) exit 0 ;;
+        esac
+        ;;
+    *) echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_CONTAINER_NAME=dx-qnap
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID DXE_RUNTIME_GUEST_SSH_ADDRESS
+    put_source="$fixture/put-source.txt"
+    printf 'fixture contents\n' > "$put_source"
+    "$BASE_DIR/bin/dx-put" "$put_source" /persist/inbox/ >/dev/null 2>&1
+    get_dest="$fixture/get-dest.txt"
+    "$BASE_DIR/bin/dx-get" /persist/somefile "$get_dest" >/dev/null 2>&1
+    [ -s "$ssh_argv_log" ] && ! grep -q '^dx@' "$ssh_argv_log" && grep -q -x "$DX_REMOTE_HOST" "$ssh_argv_log"
+)
+[ "$?" -eq 0 ] && test_pass "dx-put and dx-get (docker-ssh): every ssh call dials the management alias, never the guest SSH endpoint directly" \
+    || test_fail "dx-put and dx-get (docker-ssh): every ssh call dials the management alias, never the guest SSH endpoint directly"
+
 # --- bin/lib/dx-backup.sh's unidirectional exec discipline under
 # docker-ssh (Branch 11 / Phase 3, Increment 6, item 6): Branch 17 found
 # that an exec carrying both stdin and bulk stdout over one multiplexed

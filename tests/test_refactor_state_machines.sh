@@ -6,7 +6,13 @@ source "$SCRIPT_DIR/test_helpers.sh"
 source "$SCRIPT_DIR/lib/fake-tools.sh"
 source "$BASE_DIR/bin/lib/dx-config.sh"
 source "$BASE_DIR/bin/lib/dx-host-util.sh"
+source "$BASE_DIR/bin/lib/dx-runtime.sh"
 source "$BASE_DIR/bin/lib/dx-container.sh"
+# Branch 11 / Phase 5: bin/lib/dx-tunnel.sh's dial sites now go through
+# dx_ssh_endpoint/dx_ssh_common_options (bin/lib/dx-ssh-common.sh), sourced
+# here in bin/dx-lib.sh's own order, one step ahead of dx-mount-plan.sh/
+# dx-tunnel.sh exactly as the real entrypoint sources it.
+source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
 source "$BASE_DIR/bin/lib/dx-mount-plan.sh"
 source "$BASE_DIR/bin/lib/dx-tunnel.sh"
 test_section "Refactor State-Machine Contracts"
@@ -314,9 +320,9 @@ expect_ok "successful stop removes retained state" dx_tunnel_stop forward 15173
 
 # Separate processes race on one key; the per-key lock permits one master.
 : > "$ssh_log"; export DXE_FAKE_SSH_START_DELAY=1
-tunnel_child='source "$1"; source "$2"; dx_port_in_use() { return 1; }; dx_tunnel_start forward 16000 6000'
-/bin/bash -c "$tunnel_child" _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-tunnel.sh" >/dev/null & tunnel_first=$!
-/bin/bash -c "$tunnel_child" _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-tunnel.sh" >/dev/null & tunnel_second=$!
+tunnel_child='source "$1"; source "$2"; source "$3"; source "$4"; dx_port_in_use() { return 1; }; dx_tunnel_start forward 16000 6000'
+/bin/bash -c "$tunnel_child" _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-runtime.sh" "$BASE_DIR/bin/lib/dx-ssh-common.sh" "$BASE_DIR/bin/lib/dx-tunnel.sh" >/dev/null & tunnel_first=$!
+/bin/bash -c "$tunnel_child" _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-runtime.sh" "$BASE_DIR/bin/lib/dx-ssh-common.sh" "$BASE_DIR/bin/lib/dx-tunnel.sh" >/dev/null & tunnel_second=$!
 tunnel_first_status=0; tunnel_second_status=0
 wait "$tunnel_first" || tunnel_first_status=$?; wait "$tunnel_second" || tunnel_second_status=$?
 start_count="$(grep -c -- '-f -N -M' "$ssh_log" || true)"
@@ -329,11 +335,11 @@ unset DXE_FAKE_SSH_START_DELAY
 expect_ok "concurrently-created tunnel remains stoppable" dx_tunnel_stop forward 16000
 
 export DXE_FAKE_SSH_START_DELAY=1
-tunnel_race_start='source "$1"; source "$2"; dx_port_in_use() { return 1; }; dx_tunnel_start reverse 18000 8000'
-tunnel_race_stop='source "$1"; source "$2"; dx_tunnel_stop reverse 18000'
-/bin/bash -c "$tunnel_race_start" _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-tunnel.sh" >/dev/null & race_start=$!
+tunnel_race_start='source "$1"; source "$2"; source "$3"; source "$4"; dx_port_in_use() { return 1; }; dx_tunnel_start reverse 18000 8000'
+tunnel_race_stop='source "$1"; source "$2"; source "$3"; source "$4"; dx_tunnel_stop reverse 18000'
+/bin/bash -c "$tunnel_race_start" _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-runtime.sh" "$BASE_DIR/bin/lib/dx-ssh-common.sh" "$BASE_DIR/bin/lib/dx-tunnel.sh" >/dev/null & race_start=$!
 sleep 0.2
-/bin/bash -c "$tunnel_race_stop" _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-tunnel.sh" >/dev/null & race_stop=$!
+/bin/bash -c "$tunnel_race_stop" _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-runtime.sh" "$BASE_DIR/bin/lib/dx-ssh-common.sh" "$BASE_DIR/bin/lib/dx-tunnel.sh" >/dev/null & race_stop=$!
 race_start_status=0; race_stop_status=0; wait "$race_start" || race_start_status=$?; wait "$race_stop" || race_stop_status=$?
 race_socket="$(dx_tunnel_socket_path reverse 18000)"; race_metadata="$(dx_tunnel_metadata_path reverse 18000)"
 if [ "$race_start_status" -eq 0 ] && [ "$race_stop_status" -eq 0 ] && [ ! -e "$race_socket" ] && [ ! -e "$race_metadata" ]; then

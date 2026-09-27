@@ -95,11 +95,23 @@ else
     echo "Not found"
 fi
 
-echo -e "\n--- SSH (localhost:$DX_SSH_PORT) ---"
-if nc -z localhost "$DX_SSH_PORT" 2>/dev/null; then
-    echo "SSH Port $DX_SSH_PORT is OPEN on localhost"
+# Probes the address the guest's SSH is actually reached at on THIS runtime
+# (Branch 11 / Phase 5, qnap-dxe-plan.md DQ5; docs/refactor/remote-aware-ssh.md
+# section 3) -- Apple prints its fixed 127.0.0.1 (loopback-equivalent to
+# today's "localhost" text; no test pins that literal word), docker-ssh the
+# NAS's discovered Tailscale address. Address discovery failure is caught
+# (the "if" suspends set -e for this one call) rather than left to abort the
+# whole script: every other dx-status section still runs.
+if dx_status_ssh_addr="$(dx_runtime_guest_ssh_address 2>&1)"; then
+    echo -e "\n--- SSH ($dx_status_ssh_addr:$DX_SSH_PORT) ---"
+    if nc -z "$dx_status_ssh_addr" "$DX_SSH_PORT" 2>/dev/null; then
+        echo "SSH Port $DX_SSH_PORT is OPEN on $dx_status_ssh_addr"
+    else
+        echo "SSH Port $DX_SSH_PORT is CLOSED on $dx_status_ssh_addr"
+    fi
 else
-    echo "SSH Port $DX_SSH_PORT is CLOSED on localhost"
+    echo -e "\n--- SSH ---"
+    echo "SSH address unavailable: $dx_status_ssh_addr"
 fi
 
 echo -e "\n--- Guest Environment ---"

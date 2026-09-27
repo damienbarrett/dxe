@@ -17,16 +17,22 @@ dx_require_positive_integer DX_SSH_PROGRESS_INTERVAL "$PROGRESS_INTERVAL"
 WAIT_MINUTES=$(( (WAIT_TIMEOUT + 59) / 60 ))
 echo "Bootstrap wait limit: ${WAIT_TIMEOUT}s (approximately ${WAIT_MINUTES} minutes). A fresh factory-reset bootstrap can take several minutes."
 
-# Use a simple SSH command to check if the guest is actually ready to accept logins
-SSH_CHECK_OPTS=(
-    "-i" "$DX_SSH_KEY"
-    "-p" "$DX_SSH_PORT"
-    "-o" "StrictHostKeyChecking=no"
-    "-o" "UserKnownHostsFile=/dev/null"
-    "-o" "IdentitiesOnly=yes"
-    "-o" "ConnectTimeout=$DX_SSH_CONNECT_TIMEOUT"
-    "-o" "BatchMode=yes"
-)
+# Use a simple SSH command to check if the guest is actually ready to accept
+# logins. Options come from the shared single source of truth
+# (bin/lib/dx-ssh-common.sh's dx_ssh_common_options), no longer a private
+# copy of the same literals (Branch 11 / Phase 5, qnap-dxe-plan.md DQ5;
+# docs/refactor/remote-aware-ssh.md section 3) -- plus this probe's own
+# BatchMode=yes, which the shared options do not set for every caller: a
+# polling readiness loop must never hang on a password/passphrase prompt,
+# which is specifically this probe's own concern, not every SSH caller's.
+SSH_CHECK_OPTS=() SSH_CHECK_OPT=""
+while IFS= read -r SSH_CHECK_OPT; do SSH_CHECK_OPTS+=("$SSH_CHECK_OPT"); done <<<"$(dx_ssh_common_options)"
+SSH_CHECK_OPTS+=("-o" "BatchMode=yes")
+# Resolved and checked explicitly, not inlined into the probe loop below:
+# this script's own "set -e" does not reliably catch a failing command
+# substitution used as one argument among several in a larger command, and
+# the loop below runs this destination on every iteration regardless.
+DX_WAIT_SSH_ENDPOINT="$(dx_ssh_endpoint)"
 
 # The last probe's stderr, so a timeout can say *why* the probe never
 # succeeded. Rewritten on every attempt, so it always holds the final failure.
@@ -70,7 +76,7 @@ print_container_logs() {
 # ssh probe -- rather than only the time we ourselves spent sleeping.
 SECONDS=0
 NEXT_PROGRESS="$PROGRESS_INTERVAL"
-while ! ssh "${SSH_CHECK_OPTS[@]}" dx@127.0.0.1 "bash -lc 'true'" 2>"$PROBE_STDERR"; do
+while ! ssh "${SSH_CHECK_OPTS[@]}" "$DX_WAIT_SSH_ENDPOINT" "bash -lc 'true'" 2>"$PROBE_STDERR"; do
     ELAPSED=$SECONDS
     if container_exists "$DX_CONTAINER_NAME" && ! container_is_running "$DX_CONTAINER_NAME"; then
         echo "Error: Container $DX_CONTAINER_NAME stopped before SSH became responsive." >&2

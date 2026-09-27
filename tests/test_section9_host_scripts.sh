@@ -497,6 +497,53 @@ else
     test_fail "shared SSH boundary transports a command body opaquely, apostrophes included (R4)"
 fi
 
+# --- Branch 11 / Phase 5 (qnap-dxe-plan.md DQ5): every entry point built on
+# this shared boundary dials dx_ssh_endpoint's resolved address. dx-ssh and
+# dx-herdr need no code change of their own (they already call
+# dx_ssh_run_guest_command/dx_run_interactive_ssh/dx_ssh_common_options
+# exclusively, per F10 above), so this proves the underlying shared
+# functions dial the correct destination directly, under both runtimes,
+# rather than through each entrypoint script separately. The fake ssh below
+# distinguishes the ONE call whose remote script is the Tailscale-address
+# discovery snippet (evaluated for real, so a real "tailscale"/"head"
+# resolve the planted address) from every other call (the actual guest
+# dial, logged but never evaluated -- evaluating a real "bash -l -c" locally
+# would source this host's own shell profile, which is not what this test
+# is about) --------------------------------------------------------------
+(
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_tool_write "$fake_dir" tailscale 'case "$*" in "ip -4") echo "100.64.4.4" ;; *) exit 99 ;; esac'
+    fake_tool_write "$fake_dir" ssh "
+for a in \"\$@\"; do printf '%s\n' \"\$a\" >> '$fake_dir/argv'; done
+printf '\f\n' >> '$fake_dir/argv'
+dx_fake_last=\"\"
+for dx_fake_arg in \"\$@\"; do dx_fake_last=\"\$dx_fake_arg\"; done
+case \"\$dx_fake_last\" in
+    *DXE_TAILSCALE_BIN*) eval \"\$dx_fake_last\" ;;
+    *) exit 0 ;;
+esac
+"
+    : > "$fake_dir/argv"
+    : > "$fake_dir/ssh-key"
+    (
+        source "$BASE_DIR/bin/lib/dx-config.sh"
+        source "$BASE_DIR/bin/lib/dx-host-util.sh"
+        source "$BASE_DIR/bin/lib/dx-runtime.sh"
+        source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
+        export PATH="$fake_dir:$PATH"
+        DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+        DX_SSH_KEY="$fake_dir/ssh-key" DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=15
+        unset DXE_RUNTIME_GUEST_SSH_ADDRESS
+        dx_ssh_run_guest_command "true" >/dev/null 2>&1
+    )
+    grep -qx 'dx@100.64.4.4' "$fake_dir/argv"
+)
+if [ "$?" -eq 0 ]; then
+    test_pass "dx_ssh_run_guest_command (docker-ssh) dials dx@<discovered Tailscale address>, never dx@127.0.0.1"
+else
+    test_fail "dx_ssh_run_guest_command (docker-ssh) dials dx@<discovered Tailscale address>, never dx@127.0.0.1"
+fi
+
 # --- SIGPIPE contract: a match must survive `set -o pipefail` ---
 #
 # `writer | grep -q PATTERN` reports a *successful* match as a failure under
@@ -975,6 +1022,31 @@ if [ "$docker_status_rc" -eq 0 ] \
     test_pass "dx-status (docker-ssh) renders the Image and Container sections instead of dying silently on their column-shape mismatches"
 else
     test_fail "dx-status (docker-ssh) renders the Image and Container sections instead of dying silently on their column-shape mismatches (rc=$docker_status_rc, got: $docker_status_out)"
+fi
+
+# Branch 11 / Phase 5 (DQ5): once the guest SSH address is known, the SSH
+# section probes and prints THAT address, never "localhost" -- pre-seeded
+# here to skip real Tailscale discovery (characterised directly against a
+# fake management ssh in tests/test_docker_runtime_adapter.sh, Section 33);
+# a real "nc -z <placeholder-tailscale-address> <port>" would not be fast
+# or deterministic in a CI sandbox, so nc is faked too, in the SAME fixture
+# directory as the docker-ssh case above.
+fake_tool_write "$docker_status_fixture" nc 'case "$*" in
+    "-z 100.64.1.2 2222") exit 0 ;;
+    *) exit 1 ;;
+esac'
+export DXE_RUNTIME_GUEST_SSH_ADDRESS=100.64.1.2
+set +e
+docker_status_out2="$(run_docker_status 2>&1)"
+docker_status_rc2=$?
+set -e
+unset DXE_RUNTIME_GUEST_SSH_ADDRESS
+if [ "$docker_status_rc2" -eq 0 ] \
+    && printf '%s\n' "$docker_status_out2" | stdin_matches -F -- "--- SSH (100.64.1.2:2222) ---" \
+    && printf '%s\n' "$docker_status_out2" | stdin_matches -F -- "SSH Port 2222 is OPEN on 100.64.1.2"; then
+    test_pass "dx-status (docker-ssh) probes and prints the guest's actual discovered SSH address, never localhost"
+else
+    test_fail "dx-status (docker-ssh) probes and prints the guest's actual discovered SSH address (rc=$docker_status_rc2, got: $docker_status_out2)"
 fi
 rm -rf "$docker_status_fixture"
 

@@ -31,6 +31,11 @@ else
 
     SSH_OPTS=() SSH_OPT=""
     while IFS= read -r SSH_OPT; do SSH_OPTS+=("$SSH_OPT"); done <<<"$(dx_ssh_common_options)"
+    # Resolved and checked explicitly (Branch 11 / Phase 5, DQ5) rather than
+    # inlined at the ssh call site below: this script's own "set -e" does
+    # not reliably catch a failing command substitution used as one
+    # argument among several in a larger command.
+    ENDPOINT="$(dx_ssh_endpoint)"
 
     # The workdir snippet belongs on the *decoded* user command, applied by
     # the inner login shell right before it runs -- exactly as before this
@@ -41,5 +46,5 @@ else
     USER_COMMAND="$(dx_guest_workdir_snippet)$*"
     ENCODED_COMMAND="$(printf '%s' "$USER_COMMAND" | base64 | tr -d '\n')"
     REMOTE_COMMAND="$(dx_guest_env_prefix "$HOST_TZ") bash -lc 'printf %s $ENCODED_COMMAND | base64 -d | bash -l'"
-    ssh "${SSH_OPTS[@]}" "$(dx_ssh_endpoint)" "$REMOTE_COMMAND"
+    ssh "${SSH_OPTS[@]}" "$ENDPOINT" "$REMOTE_COMMAND"
 fi
