@@ -10,11 +10,16 @@ start fresh:
    ```bash
    ./bin/dx-destroy
    ```
-2. **Delete and recreate the persistent Nix volume:**
+2. **Reset ONLY the Nix volume** (`/persist` is never touched):
    ```bash
-   container volume delete dx-nix
-   container volume create dx-nix
+   ./bin/dx-reset-nix-volume
    ```
+   This is the same volume-scoped recovery `store-trust-plan.md`'s own
+   refusals name — it refuses if a container still exists or the runtime
+   reports the volume in use, and (under `DX_RUNTIME=docker-ssh`) goes
+   through the same labelled-volume collision check every other volume
+   delete does, rather than a raw `container`/`docker volume delete` that
+   bypasses both.
 3. **Bring everything back up:**
    ```bash
    ./bin/dx
@@ -47,13 +52,24 @@ before the remount, failing with `did not materialise required bootstrap paths`
 and naming them. If you see that message instead, the guest stopped early on
 purpose and nothing is half-written.
 
+A related, narrower failure (store-trust-plan.md Problem 2): every required
+path can be present and still individually broken (a truncated or otherwise
+corrupted executable) — a bare presence check cannot see that.
+`verify_remount_prerequisites` runs immediately after the volume reaches its
+final place, actually executing (a harmless `--version`) each of the small
+set of tools the very next bootstrap steps depend on
+(readlink/mkdir/mktemp/rm/ln/chown/mv/setpriv/bash/nix), and refuses,
+naming the specific broken tool, rather than the guest dying on whichever
+one of them the next line happens to call first.
+
 Recovery, in order of cost:
 
 1. Run `./bin/dx` again. The guest waits for the host to publish before it
    executes anything, so a corrected payload from your working tree is picked up
    on that start. A generation that cannot boot is no longer self-perpetuating.
-2. If the volume itself is the problem, use the hard reset above — delete only
-   `dx-nix`. It costs a full Nix store download and nothing else.
+2. If the volume itself is the problem, use the hard reset above —
+   `./bin/dx-reset-nix-volume`. It costs a full Nix store download and
+   nothing else.
 
 Do not reach for `./bin/dx-factory-reset` here. It also destroys `/persist`,
 which holds the home directory and persisted state; a store rebuild does not.

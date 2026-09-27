@@ -169,13 +169,17 @@ assert_file_contains_literal "$BASE_DIR/docs/troubleshooting.md" 'written only a
 
 # A guest that will not boot is the one situation where the reader cannot get
 # into the guest to look things up, so the recovery has to be discoverable from
-# the host and it has to name the volume boundary. Deleting dx-nix costs a
+# the host and it has to name the volume boundary. Resetting dx-nix costs a
 # store rebuild; reaching for dx-factory-reset instead destroys /persist and
 # with it the home directory. Pin both, the way the Base Image Changeover
-# procedure above is pinned.
+# procedure above is pinned. Branch 12 (store-trust-plan.md) replaced the raw
+# "container volume delete dx-nix" instruction with the safe, runtime-neutral
+# ./bin/dx-reset-nix-volume (label-checked under docker-ssh, refuses while a
+# container still exists or the runtime reports the volume in use) -- pin
+# that command name instead of the raw one it superseded.
 TROUBLESHOOTING="$BASE_DIR/docs/troubleshooting.md"
 assert_file_contains_literal "$TROUBLESHOOTING" 'dx-bootstrap-essentials' "troubleshooting docs identify the missing-toolchain boot failure"
-assert_file_contains_literal "$TROUBLESHOOTING" 'container volume delete dx-nix' "troubleshooting docs give the store-only recovery command"
+assert_file_contains_literal "$TROUBLESHOOTING" 'dx-reset-nix-volume' "troubleshooting docs give the store-only recovery command"
 assert_file_contains "$TROUBLESHOOTING" 'dx-factory-reset' "troubleshooting docs warn which reset also destroys /persist"
 assert_file_contains "$TROUBLESHOOTING" 'dx-wait-ssh' "troubleshooting docs cover a healthy boot reported as a failure"
 assert_file_contains_literal "$TROUBLESHOOTING" 'banner exchange' "troubleshooting docs cover a host too loaded to complete the SSH banner exchange"

@@ -23,7 +23,11 @@ operations.
    To force a rebuild at any layer, destroy that layer first.
 6. **Persistent volumes are protected by construction.** `/nix` and `/persist`
    survive everything except `dx-factory-reset` (or an explicit
-   `dx-destroy-volumes`).
+   `dx-destroy-volumes`). `bin/dx-reset-nix-volume` is the one other
+   explicit, narrower exception: it removes only the Nix volume (never
+   `/persist` or the bootstrap volume), for the one case `dx-destroy-volumes`
+   is too broad for — recovering from a store-trust refusal
+   (`store-trust-plan.md`) without also discarding `/persist`.
 7. **The bootstrap payload is part of every start.** `dx-start-container`
    always runs `dx-sync-bootstrap` after ensuring the container is running, so edits to
    `home/*.nix` or `bootstrap.sh` land on the next `dx` without an image
@@ -124,6 +128,7 @@ or perform maintenance operations.
 | [`bin/dx-reclaim`](../bin/dx-reclaim) | Reclaims host disk space by deleting old Nix generations in the guest and trimming persistent filesystems. |
 | [`bin/dx-export`](../bin/dx-export) | Archives the container to a tar file. |
 | [`bin/dx-nix-disk`](../bin/dx-nix-disk) | Prepares a sparse Nix disk image; lifecycle-adjacent storage prep. |
+| [`bin/dx-reset-nix-volume`](../bin/dx-reset-nix-volume) | Removes ONLY the Nix volume (`/persist` and the bootstrap volume are untouched); refuses while the container still exists or the runtime reports the volume in use. The volume-scoped recovery path both `store-trust-plan.md` refusals (a collision at a pin bump, or a broken prerequisite right after the volume reaches its final place) name by command: run this, then `./bin/dx` to rebuild `/nix` from the image and re-seed it. Replaces the earlier "no valid procedure, full destroy-and-rebuild with salvage" pin-bump text in `docs/release-maintenance.md`. |
 | [`bin/dx-backup`](../bin/dx-backup) | Captures the at-risk contents of `/persist` into a Mac folder, incrementally. |
 | [`bin/dx-restore`](../bin/dx-restore) | Pushes a captured mirror (or a named subpath of it) back into a running guest's `/persist`. |
 | [`container/.../bootstrap.sh`](../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh) | Runs the ordered sourceable phases from the atomically published, leased bootstrap generation. |

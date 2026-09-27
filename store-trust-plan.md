@@ -2,9 +2,16 @@
 
 ## Status
 
-Open, **no design selected**, for either problem below. Neither is
-implemented on the lock-refresh commit stack, and no mechanism has been
-chosen for either.
+**Resolved (Branch 12, `fix/store-trust`, 2026-09-27).** Both problems now
+have a selected, implemented, tested design; see each problem's own status
+line below and `docs/refactor/store-trust-design.md` for the full design
+comparison (recommendation, rejected alternatives, and why) that preceded
+implementation. One authorised scope addition beyond the original two
+problems: `bin/dx-reset-nix-volume`, a real, tested, volume-scoped recovery
+entrypoint (removes only the Nix volume; `/persist` and the bootstrap
+volume are untouched) that both problems' refusals name by command, so
+"there is no valid procedure" never needs to be the answer either refusal
+gives.
 
 ## Shared invariant
 
@@ -21,23 +28,38 @@ records the constraints a solution must satisfy.
 ## Problem 1 — volume-reusing image-pin bump
 
 Created 2026-08-30 as the durable tracking artifact split out of the
-completed lock-refresh disposition (now removed; see Git history). This
-section records the blocker and the required safety properties only. No
-mechanism has been chosen and nothing here is implemented on the lock-refresh
-commit stack.
+completed lock-refresh disposition (now removed; see Git history).
 
-### The blocker
+**Status: resolved, Branch 12.** Design P1-A selected (Reading 1: the
+refusal is made deliberate and complete, covering both collision shapes
+found; it does not make a colliding bump *succeed* while reusing the
+volume — see "Not 'collision quarantine'" below, still true).
+Implemented as `nix_verify_no_bootstrap_path_collision`
+(`container/.../bootstrap/base-and-storage.sh`), called from
+`populate_prepared_nix_volume` before any transfer is attempted. Tested:
+`tests/test_section3_bootstrap.sh` (fixture, both shapes) and
+`tests/test_nix_store_import.sh` (real Nix, both shapes, Section 25's
+isolated runner). Recovery documented in `docs/release-maintenance.md`
+("Bumping the Nix image pin"): `./bin/dx-destroy` → `./bin/dx-reset-nix-
+volume` → `./bin/dx` — `/persist`-preserving, no salvage round-trip needed.
+The August alignment waiver is re-scoped (not closed): the mechanism now
+exists, but has not yet been applied to the primary. See
+`docs/refactor/store-trust-design.md` section 1 for the full design
+comparison and rejected alternatives.
 
-There is currently **no valid, volume-reusing pin-bump procedure**. The blocker
-is a store-path *content* collision between image versions, observed directly on
-2026-08-30 while bumping the isolated `dx-test` profile from `nixos/nix:2.34.7`
-to `2.34.8` with its `/nix` volume retained: the same store path resolved to two
-different content hashes. Recorded in `docs/release-maintenance.md`, "Bumping
-the Nix image pin".
+### The blocker (historical record)
 
-Until this is resolved, a pin-changing bump reaches the primary the same way the
-base changeover did — full destroy-and-rebuild with salvage — and never via
-`dx-recreate`.
+There was **no valid, volume-reusing pin-bump procedure** before this
+branch. The blocker is a store-path *content* collision between image
+versions, observed directly on 2026-08-30 while bumping the isolated
+`dx-test` profile from `nixos/nix:2.34.7` to `2.34.8` with its `/nix`
+volume retained: the same store path resolved to two different content
+hashes. Recorded in `docs/release-maintenance.md`, "Bumping the Nix image
+pin". `docs/refactor/store-trust-design.md` section 1.1 later found a
+SECOND, previously undocumented collision shape this same blocker
+encompasses: a destination that already validly holds different,
+self-consistent content under the same name, which `nix copy` silently
+skips rather than refuses — both shapes are now caught uniformly.
 
 ### Not "collision quarantine"
 
@@ -54,29 +76,48 @@ the guest is meant to trust. Record properties, not a solution.
 
 ### Definition of done
 
-- one design selected against the four properties, with rejected alternatives
-  and reasons recorded;
-- a reproducer for the observed collision, and a behavioral test that the chosen
-  design resolves it without executing mismatched content;
-- the procedure documented in `docs/release-maintenance.md`, replacing the
-  current "no valid procedure" text;
-- the alignment waiver in `docs/release-maintenance.md` closed or re-scoped as part
-  of the same change.
+- [x] one design selected against the four properties, with rejected
+      alternatives and reasons recorded (`docs/refactor/store-trust-design.md`
+      section 1);
+- [x] a reproducer for the observed collision, and a behavioral test that the
+      chosen design resolves it without executing mismatched content
+      (`tests/test_section3_bootstrap.sh` P11, `tests/test_nix_store_import.sh`);
+- [x] the procedure documented in `docs/release-maintenance.md`, replacing the
+      former "no valid procedure" text;
+- [x] the alignment waiver in `docs/release-maintenance.md` re-scoped (the
+      mechanism exists; live application to the primary is the remaining,
+      separately-gated step).
 
-**Revisit trigger: no later than the next required image-pin change.** The
-alignment waiver recorded in `docs/release-maintenance.md` expires into this item,
-so it cannot stay open-ended.
+**Revisit trigger (met): the next required image-pin change.** That is when
+the new procedure gets its first live application to the primary, closing
+the re-scoped waiver.
 
 ## Problem 2 — recovery blind spot for the post-remount trust root
 
 Created 2026-08-30 as the durable tracking artifact split out of Step 3 of
-the completed lock-refresh disposition (now removed; see Git history). Third
-priority: two newer defences sit in front of this path and it has never been
-reached. This section records scope and acceptance criteria only. It is not
-implemented on the lock-refresh commit stack, and no mechanism has been
-chosen.
+the completed lock-refresh disposition (now removed; see Git history).
 
-### The defect, stated accurately
+**Status: resolved, Branch 12.** Design 2-3 selected (deliberate,
+minimal presence/executability fail-fast for the named prerequisite tools;
+Design 2-1's stronger repair-and-continue property is recorded as a
+possible apple-image-only future complement, not built). Implemented as
+`verify_remount_prerequisites` (`container/.../bootstrap/common.sh`),
+called from `bootstrap_main` (`bootstrap.sh`) immediately after
+`populate_prepared_nix_volume`, strictly before
+`nix_restore_image_default_profile`. Means the same thing in both
+apple-image and direct-volume mode, since it has no dependency on a
+pre-remount window's existence (`docs/refactor/store-trust-design.md`
+section 2.5). Tested: `tests/test_section3_bootstrap.sh` P10 (every named
+tool missing, every named tool present-but-failing-to-exec, a broken
+`run_as_dx` boundary, an ordering assertion, and the healthy pass). No new
+exported steering state, no production test-mode branch, no new
+`bootstrapEssentials` member (every named tool was already available).
+Recovery documented alongside Problem 1's, naming
+`./bin/dx-reset-nix-volume` by command. See
+`docs/refactor/store-trust-design.md` section 2 for the full design
+comparison and rejected alternatives.
+
+### The defect, stated accurately (historical record; still accurate)
 
 `ensure_essentials_valid` is **not** dead code — an earlier framing said so and
 was wrong. It executes on every boot and can detect or repair damage in closure
@@ -166,12 +207,21 @@ published only after successful post-remount validation.
 
 ### Definition of done
 
-- one design selected, with the rejected alternatives and the reason recorded;
-- every row of the outcome table has a passing behavioral test at the right
-  layer;
-- the red reproducer and its recorded failure are in the history;
-- unit, coverage, and isolated live/destructive recovery gates green;
-- no new exported steering state and no production test-mode branch.
+- [x] one design selected, with the rejected alternatives and the reason
+      recorded (`docs/refactor/store-trust-design.md` section 2);
+- [x] every row of the outcome table has a passing behavioral test at the
+      right layer (Section 3 fixtures; presence/executability needs no
+      real-Nix layer, per Design 2-3's own minimal scope);
+- [x] the red reproducer and its recorded failure are in the history
+      (`docs/refactor/store-trust-design.md` section 2.1's captured output;
+      `tests/test_section3_bootstrap.sh` P10's red confirmed by stashing the
+      fix and re-running);
+- [x] unit and coverage gates green (this branch's own runs; the isolated
+      live/destructive recovery exercise is the coordinating session's
+      dx-test step, per the task's process);
+- [x] no new exported steering state and no production test-mode branch.
 
-Revisit trigger: any change to the post-remount bootstrap path, or the next
-boot failure that reaches `ensure_essentials_valid`.
+Revisit trigger (met, and stays live): any future change to the
+post-remount bootstrap path, or the next boot failure that reaches
+`ensure_essentials_valid`, should re-check `verify_remount_prerequisites`'s
+named tool list is still complete for what runs between it and that point.

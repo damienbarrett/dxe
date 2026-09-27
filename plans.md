@@ -44,6 +44,17 @@ Every plan document below is listed under exactly one of these.
   tmux-resurrect probe, a missing `dx-status` keyring line, `dx-restore
   --dry-run`'s scale at very large target sets, and undecided `dx-backup`
   deny-list additions.
+- [`store-trust-plan.md`](store-trust-plan.md) — **Resolved on
+  `fix/store-trust` (Branch 12), not yet landed to `main`.** Both problems
+  it tracked (a same-store-path/different-content collision at an image-pin
+  bump; recovery when post-remount verification tools themselves depend on
+  the persistent store being verified) have a selected, implemented, tested
+  design; see the plan's own Status section and
+  `docs/refactor/store-trust-design.md` for the comparison that preceded
+  implementation. Remaining before this line moves to "removed, history in
+  Git": land the branch (dual-target gate, live verification on `dx-test`)
+  and apply the new pin-bump procedure to the primary at least once
+  (re-scoped waiver in `docs/release-maintenance.md`).
 
 ## Open plans
 
@@ -78,12 +89,3 @@ Every plan document below is listed under exactly one of these.
 
   **Recorded conflict.** Phase 4's coverage-ratchet gate vs.
   `declarative-nix-plan-a.md` #12 remains live — see that entry above.
-- [`store-trust-plan.md`](store-trust-plan.md) — Folds the two former
-  store-trust stubs (`image-pin-collision-plan.md` and
-  `post-remount-trust-root-plan.md`) into one document: no design yet for
-  safely changing the Nix base-image pin while reusing `/nix` after a
-  same-store-path/different-content collision (requires pre-remount failure,
-  no mismatched execution, and a valid fresh-volume path), and no design yet
-  for recovery when post-remount verification tools themselves depend on the
-  persistent store being verified (defines failure outcomes, testing, and
-  recovery constraints).

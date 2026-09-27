@@ -62,9 +62,10 @@ nix flake update nixpkgs nixvim home-manager \
 # 3. Check the base-image alignment rule (below), then apply — MIND THE PIN:
 #    - if the recheck did NOT change the Nix image pin, dx-recreate (which
 #      reuses the /nix volume) is fine;
-#    - if it CHANGED the pin, volume reuse is currently INVALID (see "Bumping
-#      the Nix image pin" below) — do a full destroy-and-rebuild with salvage
-#      (Upgrade / Bump step 7), NOT dx-recreate.
+#    - if it CHANGED the pin, follow "Bumping the Nix image pin" below
+#      instead: dx-destroy -> dx-reset-nix-volume -> dx (NOT dx-recreate --
+#      a collision would still refuse deterministically if it hit one, but
+#      this procedure applies whether or not it does).
 ./bin/dx-recreate        # only when the Nix image pin is unchanged
 tests/run_all_tests.sh
 ```
@@ -147,12 +148,19 @@ clause. The major.minor requirement is *satisfied*: the candidate's locked
 | `linux/arm64` present for it | yes (`2.34.8-arm64`) |
 | Actually pinned | `2.34.7@sha256:bf1d938835ab…` |
 
-**Reason it cannot be satisfied.** Moving the pin to 2.34.8 requires the
-destroy-and-rebuild-with-salvage procedure, because of the store-path content
-collision recorded under "Bumping the Nix image pin" — observed directly on
-2026-08-30 bumping the isolated `dx-test` profile from 2.34.7 to 2.34.8 with
-its `/nix` volume retained. There is no valid volume-reusing pin bump today,
-and a lock refresh does not justify a destructive rebuild of the primary.
+**Reason it cannot be satisfied (re-scoped 2026-09-27, Branch 12).** Moving
+the pin to 2.34.8 hits the store-path content collision recorded under
+"Bumping the Nix image pin" — observed directly on 2026-08-30 bumping the
+isolated `dx-test` profile from 2.34.7 to 2.34.8 with its `/nix` volume
+retained. That section now documents a real, tested, `/persist`-preserving
+recovery (`dx-destroy` → `dx-reset-nix-volume` → `dx`) for exactly this
+case, so "there is no valid pin-bump procedure" is no longer the blocker.
+What remains open is narrower: that procedure has not yet been **executed
+against the primary** — doing so is a live, `/nix`-destructive action on
+the primary guest, gated the same way every other primary-affecting change
+is (dual-target gate, explicit go-ahead), not something a lock refresh by
+itself justifies. This waiver stays open until an operator actually runs
+the pin bump.
 
 **Evidence so far, stated as it stands.** The canary ran the refreshed lock on
 the 2.34.7 image, with the running generation proved from the PID-1 lease and
@@ -180,11 +188,13 @@ minor.
 
 **Decision maker.** Damien Barrett.
 
-**Expiry.** The next image-pin maintenance event, or the next stable-lock
-refresh, whichever comes first. Resolution is tracked in the open
-["volume-reusing image-pin bump" problem](../store-trust-plan.md) of
-`store-trust-plan.md`; this waiver must be closed or re-scoped as part of
-that work.
+**Expiry.** The next image-pin maintenance event, whenever an operator
+actually applies the now-documented pin-bump procedure to the primary
+(closing this waiver at that point), or the next stable-lock refresh,
+whichever comes first. `store-trust-plan.md`'s "volume-reusing image-pin
+bump" problem (Problem 1) is resolved as of Branch 12 — see its own status
+section — so this waiver is re-scoped rather than closed: the mechanism
+exists and is tested, only the live application to the primary remains.
 
 **Note on test enforcement.** `tests/test_section2_containerfile.sh` asserts
 the literal `FROM` line, so it stays green throughout this mismatch. It pins
@@ -200,12 +210,21 @@ container **and** image; `./bin/dx-factory-reset` additionally removes all
 three volumes and the SSH keypair (confirmation-gated, `--force` to skip).
 Both operate only on the resources the active profile resolves.
 
-### Bumping the Nix image pin — blocked by a store-path collision
+### Bumping the Nix image pin — a store-path collision, deliberately refused, with a real recovery path
 
-**There is currently no valid, volume-reusing pin-bump procedure.** The
-blocker is a store-path *content* collision between image versions. Observed
-directly on 2026-08-30, bumping the isolated `dx-test` profile from
-`nixos/nix:2.34.7` to `2.34.8` while retaining its `/nix` volume:
+**Status: resolved (Branch 12, `store-trust-plan.md` Problem 1, Design
+P1-A).** Earlier revisions of this section said there was no valid
+volume-reusing pin-bump procedure; that is no longer accurate. The
+underlying store-path *content* collision between image versions is still
+possible and is still refused — deliberately now, by
+`nix_verify_no_bootstrap_path_collision`, rather than incidentally by
+whichever of two different Nix behaviours a given collision happened to
+trip — but the recovery no longer requires salvaging and restoring
+`/persist`.
+
+The blocker that motivated this section: observed directly on 2026-08-30,
+bumping the isolated `dx-test` profile from `nixos/nix:2.34.7` to `2.34.8`
+while retaining its `/nix` volume:
 
 ```
 copying path '/nix/store/dy9skynmbyj7yc7dnn7qcgrfpwiy2yh6-base-system' to 'local://'...
@@ -216,25 +235,49 @@ Error: Nix could not import and register the image store closure.
 ```
 
 Both images ship a `base-system` path with the same store path name and
-different content. The volume holds the old one, registered, so importing
-the new one is a collision and Nix refuses it. This is inherent to reusing a
-store across images that disagree about a path's content; no amount of
-registration hygiene resolves it. Making a volume-reusing bump possible is a
-design change — the importer would have to quarantine or skip colliding
-image paths, and that has consequences for what the booted guest can then
-trust.
+different content. This is inherent to reusing a store across images that
+disagree about a path's content; no amount of registration hygiene resolves
+it. `docs/refactor/store-trust-design.md` section 1.1 characterises TWO
+distinct shapes this can take — the one above (a store whose own database
+disagrees with its own on-disk bytes), and a second, previously
+undocumented shape where the destination volume already validly holds
+different, self-consistent content under the same name, which Nix's own
+`nix copy` silently skips rather than refuses.
+`nix_verify_no_bootstrap_path_collision` (run inside
+`populate_prepared_nix_volume`, before any transfer is attempted) now
+catches both shapes uniformly: it refuses,
+names the offending path, and — per the required safety properties — this
+happens pre-remount, with the volume left untouched. Revert the pin,
+rebuild the image, and the guest comes back exactly as before — this part
+was already safe and remains unchanged.
 
-The failure is safe, and that is by design: it aborts before the `/nix`
-remount, names the offending path, and leaves the volume intact. Revert the
-pin, rebuild the image, and the guest comes back — verified on the same
-canary.
+**The pin-bump procedure, once a collision is (or might be) hit:**
 
-**The only safe way to bump the Nix image pin is a full destroy-and-rebuild
-with salvage** — the same one-time changeover procedure below (quiesce and
-salvage `/persist`, referrer-first inventoried cleanup, factory reset,
-rebuild, validate), not an in-place volume-reusing bump. What *is* safe to
-rely on today: the alignment rule above, this section's build-cache trap
-warning, and the digest re-query discipline.
+```bash
+# 1. Edit the pin as usual (Release and Pin Maintenance above).
+./bin/dx-destroy              # remove the container (and image); /nix, /persist untouched
+./bin/dx-reset-nix-volume     # remove ONLY the Nix volume; /persist is never touched
+./bin/dx                      # rebuild: fresh image, fresh /nix seeded from it, same /persist
+tests/run_all_tests.sh
+```
+
+This is **not** "make a colliding bump succeed while keeping the old
+volume" — `nix_verify_no_bootstrap_path_collision` still refuses that
+outright, deliberately, per `store-trust-plan.md`'s required safety
+properties. What changed is the *recovery*: `/nix` is rebuilt from scratch
+(as it always would be after any collision), but `/persist` — and
+everything in it: repos, credentials, Home Manager's own persisted state,
+`dx-ai`'s generation history — is never touched, so the quiesce/salvage/
+inventory/restore choreography the one-time [Base Image
+Changeover](#base-image-changeover-one-time) needs is not required here.
+`dx-ai` and Home Manager both rebuild their own state fresh against the new
+`/nix` on the next boot without a manual step (see
+`docs/evidence/` for the live verification once run; the mechanism is
+documented in `store-trust-plan.md`'s Branch 12 status and this repository's
+progress records).
+
+What *is* still safe to rely on: the alignment rule above, the build-cache
+trap warning, and the digest re-query discipline.
 
 Two earlier diagnoses were recorded here and have not survived testing. They
 are kept only so nobody re-derives them:
@@ -422,18 +465,22 @@ restart, and re-run until green:
 
 ### 7. Apply to the primary
 
-Because there is still **no valid volume-reusing pin-bump procedure** (see
-[Bumping the Nix image pin](#bumping-the-nix-image-pin--unresolved-pending-store-reuse-fixes)
-— blocked on the `setup_nix_volume` store-reuse defects), a pin-changing
-bump reaches the primary the same way the base changeover did: **full
-destroy-and-rebuild with salvage.** Follow
-[Base Image Changeover](#base-image-changeover-one-time) below verbatim —
-salvage `/persist` first (the `dx-get`/`dx-put` round-trip is now reliable),
-inventory referrer-first, `dx-factory-reset`, rebuild on the NEW commit,
-pass the old-base exclusion gate and the full suite, then re-establish
-`gh auth` / `dx-ai` / repos. (Only once the store-reuse fixes land, and only
-for a bump that does **not** change the Nix image pin, would an in-place
-`./bin/dx-recreate` become a valid volume-reusing alternative.)
+If this release bump did **not** change the Nix image pin (step 2 above),
+an in-place `./bin/dx-recreate` is a valid volume-reusing alternative —
+`nix_verify_no_bootstrap_path_collision` still runs and would refuse
+deterministically if it found a collision anyway, so this is never
+unsafe, only sometimes unnecessary caution.
+
+If it **did** change the Nix image pin, follow the pin-bump procedure in
+[Bumping the Nix image pin](#bumping-the-nix-image-pin--a-store-path-collision-deliberately-refused-with-a-real-recovery-path):
+`dx-destroy` → `dx-reset-nix-volume` → `dx` → the full suite. `/persist` is
+never touched, so the one-time [Base Image
+Changeover](#base-image-changeover-one-time)'s quiesce/salvage/inventory/
+restore choreography is not needed for a routine pin bump — that runbook
+remains for the one-time official-base cutover it was written for (and
+remains the right tool if something else independently calls for a full
+`/persist` salvage too). Re-establish `gh auth` / `dx-ai` only if `/persist`
+itself was separately touched; a Nix-volume-only reset does not require it.
 
 ### 8. After the bump
 
@@ -457,9 +504,17 @@ reproduces from the committed source (`flake.nix` + `flake.lock`), which
   `stateVersion`, and the renamed context directory together. Only once the
   source tree is back on OLD — so `DX_IMAGE`/`DX_CONTEXT_DIR` resolve to OLD
   again and OLD's context directory exists — run `dx-recreate` to rebuild.
-  `/nix` and `/persist` are preserved. This is the **only** rollback path
-  once the bump changed the Nix image pin (see "Bumping the Nix image pin"
-  above): there is no valid volume-reusing pin bump in either direction.
+  This reverted OLD image is itself now "a different image" relative to
+  whatever is currently registered on the volume from NEW, so the exact
+  same collision detection from [Bumping the Nix image
+  pin](#bumping-the-nix-image-pin--a-store-path-collision-deliberately-refused-with-a-real-recovery-path)
+  applies to a rollback too, in either direction — this is no longer a
+  contradiction now that a real recovery exists either way: `dx-recreate`
+  either succeeds with `/nix` (and always `/persist`) preserved, or
+  `nix_verify_no_bootstrap_path_collision` refuses deterministically, in
+  which case run `dx-destroy` → `dx-reset-nix-volume` → `dx` (source
+  already reverted to OLD) — `/persist` is preserved either way; only
+  whether `/nix` is reused or rebuilt from OLD differs.
 - **Fast, no-rebuild (pin unchanged, `/nix` not GC'd) — generation
   rollback.** When the bump did not change the Nix image pin, the previous
   Home Manager generation persists in `/nix`, so the environment can be

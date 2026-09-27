@@ -81,7 +81,7 @@ the next one may start.
 | 8 | `refactor/legacy-migration-cleanup` | Check that every guest has left the old base image, then delete the old-base guards. This finishes `refactor-plan.md` | S–M | Yes (inventory) | No | **Done** 2026-09-27 — evidence: `docs/evidence/20260926/legacy-guard-removal.md`; `refactor-plan.md` closed |
 | 10 | `feat/persist-backup` | "B1": incremental host backup and restore of the guest's `/persist` data | M | Yes | No (Q5 resolved) | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/persist-backup.md` |
 | 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 done except 8b/8c; Phase 1 done 2026-09-27 — evidence: `docs/evidence/20260927/runtime-boundary.md`. Phase 2 (docker-ssh adapter) done 2026-09-27, against fakes only, NAS untouched — evidence: `docs/evidence/20260927/docker-adapter.md`. Phase 3 (direct storage mode, `feat/qnap-direct-storage`) done on the branch against fakes only, NAS untouched — see `qnap-dxe-plan.md`'s Phase 3 status and `docs/refactor/direct-volume-storage.md`; not yet landed or live-gated. **Phases 4-7 not started** — see below |
-| 12 | `fix/store-trust` (may split in two) | Safe handling of the two Nix-store trust problems in `store-trust-plan.md` | L | Yes | No (Q6 resolved: fail fast) | Not started |
+| 12 | `fix/store-trust` | Safe handling of the two Nix-store trust problems in `store-trust-plan.md` | L | Yes | No (Q6 resolved: fail fast) | Implemented on the branch 2026-09-27, not yet landed — see Branch 12 section |
 | 13 | `refactor/bootstrap-v2`, `refactor/declarative-nix` | The two remaining large proposals. No branch until you accept one | L each | Yes | Q7 (still open) | Not started |
 | 14 | `fix/dx-ai-no-source-builds` | Stop `dx-ai` from silently compiling heavy AI tools from source when a `nixpkgs-unstable` refresh misses the binary cache | S–M | Yes (`dx-test`) | No | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/dx-ai-no-source-builds.md` |
 | 15 | `fix/keyring-bootstrap-recreate` | Make `dx-recreate` of an AI-opted-in guest work again | S | Yes (`dx-test`) | Policy B chosen 2026-09-27 | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/keyring-recreate.md`; superseded by Branch 16 |
@@ -189,22 +189,46 @@ guest) is required, not optional.
 
 ---
 
-## Branch 12 — `fix/store-trust` (size L; Q6 resolved; not started)
+## Branch 12 — `fix/store-trust` (size L; Q6 resolved; implemented, not yet landed)
 
-`store-trust-plan.md` has two problems with no design yet:
+`store-trust-plan.md` had two problems with no design:
 
 - **Pin collision:** changing the Nix base-image pin while reusing `/nix` can
   meet a store path with the same name but different content.
 - **Remount verification:** after a remount, the tools that verify the store
   themselves live in that store.
 
-1. Characterise each problem.
-2. Deliver one complete, verified failure-and-recovery path per problem. Use
-   separate branches if they don't share code; if they share a verifier, land
-   the shared piece first.
-3. Close the August alignment waiver in `docs/release-maintenance.md`, and
-   correct its conflicting rollback wording. It says a pin-change revert keeps
-   `/nix` and `/persist`, but also that no volume-reusing pin change is valid.
+**Status 2026-09-27:** both resolved on the branch, not yet landed to
+`main`. Design comparison in `docs/refactor/store-trust-design.md`;
+implementation is `nix_verify_no_bootstrap_path_collision` (Problem 1,
+Design P1-A) and `verify_remount_prerequisites` (Problem 2, Design 2-3),
+plus a new authorised-scope addition, `bin/dx-reset-nix-volume` (a real,
+tested, `/persist`-preserving volume-scoped recovery path both refusals
+name). One branch, as originally sequenced (no shared verifier was found
+between the two selected designs, but no isolation benefit to splitting
+either). The August alignment waiver in `docs/release-maintenance.md` is
+re-scoped (mechanism exists; awaiting live application to the primary),
+and the conflicting rollback wording (a pin-change revert claiming both
+"`/nix` and `/persist` are preserved" and "no volume-reusing pin change is
+valid") is corrected: a rollback is a pin change like any other, so it goes
+through the same collision check and, if refused, the same
+`dx-reset-nix-volume` recovery.
+
+1. ~~Characterise each problem.~~ Done — `docs/refactor/store-trust-design.md`.
+2. ~~Deliver one complete, verified failure-and-recovery path per problem.~~
+   Done, one branch (no shared verifier; no isolation benefit found to
+   splitting).
+3. ~~Close the August alignment waiver..., and correct its conflicting
+   rollback wording.~~ Re-scoped (not fully closed — awaiting live
+   application); rollback wording corrected.
+
+**Remaining before this branch lands:** the dual-target gate (Apple
+`dx-test` live tier; QNAP non-regression per Appendix C, no QNAP guest
+exists yet so this reduces to `tests/qnap/` + Section 27 staying green) and
+the live/destructive recovery exercise on `dx-test` (reset the Nix volume,
+keep `/persist`, bootstrap, verify tools return and the persisted home is
+intact) — see this branch's own progress file / final report for the exact
+steps.
 
 **Needed before any base-image pin change and before refactor v2.**
 
