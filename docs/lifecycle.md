@@ -55,8 +55,13 @@ operations.
    automated audit (`tests/test_runtime_boundary_audit.sh`) fails the build
    if a raw `container` call, or a call into either adapter's own
    `dx_runtime_apple_*`/`dx_runtime_docker_*` namespace, reappears outside
-   the two adapter files (`bin/dx-lock` and `bin/dx-status`'s read-only
-   lock helpers are the one documented, narrowly-scoped exception). See
+   the two adapter files. Two narrowly-scoped exceptions are documented in
+   the audit itself: `bin/dx-lock` and `bin/dx-status`'s read-only lock
+   helpers, and `bin/lib/dx-container.sh`'s whole-operation destructive
+   ownership proof (Branch 11 / Phase 6, `dx_destructive_plan_and_verify`)
+   — both call into the Docker adapter directly because neither locking
+   nor a multi-resource ownership plan is a `dx_runtime_<op>` the Apple
+   side has an equivalent for. See
    [`docs/refactor/runtime-boundary.md`](refactor/runtime-boundary.md).
 10. **Storage mode is explicit, not inferred.** `DX_NIX_STORAGE_MODE`
     (`apple-image` default | `direct-volume`) tells the guest bootstrap
@@ -260,6 +265,43 @@ of them request a TTY.
 verified non-empty, renamed into place only on success; a trap removes
 the partial on any other exit path (failure or interruption), on both
 runtimes.
+
+### Operating a QNAP guest
+
+Install, preflight, day-to-day operation, update, backup, restore, and
+removal for a `docker-ssh` guest are covered end to end in
+[`docs/qnap-runbook.md`](qnap-runbook.md); this section only records what
+Branch 11 / Phase 6 (`qnap-dxe-plan.md`) added to the shared lifecycle
+model rather than repeating the runbook's own walkthrough:
+
+- **Health reporting.** `dx-status`'s SSH section now distinguishes two
+  states a bare "port open"/"port closed" line could not: the port not
+  open yet while the container is running (shows the guest's most recent
+  bootstrap-progress marker instead of nothing) and the port open but the
+  guest not actually answering a login shell (shows the probe's own
+  error). `dx-wait-ssh`'s progress tick prints the same two pieces of
+  information on every 30-second tick, not only at final timeout. Both
+  reuse existing sources (the guest's own log, the shared SSH option
+  builder) — no new `dx_runtime_<op>` contract operation.
+- **Container Station display.** A container created under `DX_RUNTIME=
+  docker-ssh` optionally carries a Docker `HEALTHCHECK`
+  (`dx_runtime_capability container_healthcheck`: no for Apple, yes for
+  docker-ssh) whose probe command is SSH-independent — it checks the
+  guest's own execution-lease/`current`-symlink state through the same
+  `docker exec` plane Container Station's own UI already reads from,
+  never the guest's network path.
+- **Destructive operations.** `dx-factory-reset` and `dx-destroy-volumes`
+  now print an immutable ownership plan and refuse the *whole* operation
+  — zero delete calls issued — if any targeted resource under
+  `DX_RUNTIME=docker-ssh` fails its DQ6 label check, rather than a
+  resource-by-resource partial destroy. See principle 9 above for where
+  this lives in the runtime-boundary audit's exception list. Apple's
+  behaviour is unaffected: it has no DQ6 labels to check at all.
+- **Restart policy and restart ordering** (`DX_CONTAINER_RESTART_POLICY`,
+  item 9's NAS-boot/Container-Station-restart/Tailscale-restart ordering)
+  are still being finalised against live observations from the NAS's own
+  maintenance window; see `qnap-dxe-plan.md`'s Phase 6 status for the
+  current state, and the runbook once that guidance lands.
 
 ### Backing up and restoring /persist
 

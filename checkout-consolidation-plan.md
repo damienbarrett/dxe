@@ -51,10 +51,12 @@ Updated 2026-09-27, after this trim.
   `docs/evidence/20260928/arch-neutral-guest.md`). Phase 5 (remote-aware
   SSH and workflows) landed 2026-09-28 the same way: the disposable guest
   was reached directly on the NAS's Tailscale address from the controller
-  (evidence: `docs/evidence/20260928/remote-aware-ssh.md`). Phases 6-7
-  (lifecycle hardening, and promotion to a real QNAP profile) are not
-  started. Phase 0's own maintenance-window items, 8b/8c, are also still
-  open, deferred into Phase 6.
+  (evidence: `docs/evidence/20260928/remote-aware-ssh.md`). **Phase 6**
+  (lifecycle hardening) is in progress on `feat/qnap-lifecycle`, items
+  1/2/4/5/6/7/8 implemented against fakes only, items 3/9 waiting on the
+  coordinating session's maintenance window against the real NAS (which
+  also covers Phase 0's own still-open 8b/8c items); **Phase 7**
+  (promotion to a real QNAP profile) is not started.
 - **Remaining work:** Branch 11 Phases 6-7 (below) and Branch 13 (the two
   large proposals, Q7 -- still open, not urgent). Branch 12
   (`fix/store-trust`) and the four small follow-ups (`fix/test-hardening`)
@@ -86,7 +88,7 @@ the next one may start.
 | 7 | `test/herdr-acceptance` | Two missing Herdr tests: bad-snapshot recovery and pane-history deletion | S | Yes (`dx-test`) | No (Q3 resolved) | **Done** 2026-09-26 — evidence: `docs/evidence/20260926/herdr-acceptance.md` |
 | 8 | `refactor/legacy-migration-cleanup` | Check that every guest has left the old base image, then delete the old-base guards. This finishes `refactor-plan.md` | S–M | Yes (inventory) | No | **Done** 2026-09-27 — evidence: `docs/evidence/20260926/legacy-guard-removal.md`; `refactor-plan.md` closed |
 | 10 | `feat/persist-backup` | "B1": incremental host backup and restore of the guest's `/persist` data | M | Yes | No (Q5 resolved) | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/persist-backup.md` |
-| 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 done except 8b/8c; Phase 1 done 2026-09-27 — evidence: `docs/evidence/20260927/runtime-boundary.md`. Phase 2 (docker-ssh adapter) done 2026-09-27, against fakes only, NAS untouched — evidence: `docs/evidence/20260927/docker-adapter.md`. Phase 3 (direct storage mode, `feat/qnap-direct-storage`) done on the branch against fakes only, NAS untouched — see `qnap-dxe-plan.md`'s Phase 3 status and `docs/refactor/direct-volume-storage.md`; not yet landed or live-gated. **Phases 4-7 not started** — see below |
+| 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 done except 8b/8c (deferred into Phase 6's maintenance window). Phases 1-5 landed on `main` (arch-neutral guest, remote-aware SSH over the NAS's own Tailscale address) — see the Branch 11 section below for each phase's evidence record. **Phase 6 (lifecycle, reboot, operational hardening) in progress on `feat/qnap-lifecycle`**, items 1/2/4/5/6/7/8 implemented against fakes only, items 3/9 waiting on the maintenance window; **Phase 7 not started** — see below |
 | 12 | `fix/store-trust` | Safe handling of the two Nix-store trust problems in `store-trust-plan.md` | L | Yes | No (Q6 resolved: fail fast) | Implemented on the branch 2026-09-27, not yet landed — see Branch 12 section |
 | 13 | `refactor/bootstrap-v2`, `refactor/declarative-nix` | The two remaining large proposals. No branch until you accept one | L each | Yes | Q7 (still open) | Not started |
 | 14 | `fix/dx-ai-no-source-builds` | Stop `dx-ai` from silently compiling heavy AI tools from source when a `nixpkgs-unstable` refresh misses the binary cache | S–M | Yes (`dx-test`) | No | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/dx-ai-no-source-builds.md` |
@@ -201,6 +203,13 @@ kept on the second; both refusals before any remote change; removed with
 nothing labelled left). See `docs/evidence/20260928/remote-aware-ssh.md`;
 the gate scripts, not the branch, needed three fixes. The exit gate's
 "from an external network" run is the user's own check, still to come.
+**Phase 6 (QNAP lifecycle, reboot, and operational hardening,
+`feat/qnap-lifecycle`) is in progress, not landed** -- items 1, 2, 4, 5,
+6, 7, and 8 implemented against fakes only (design:
+`docs/refactor/qnap-lifecycle.md`); items 3 and 9 (restart policy, restart
+ordering) wait on the coordinating session's own maintenance window
+against the real NAS. See `qnap-dxe-plan.md`'s own Phase 6 status for the
+detail; no live gate has run for this phase yet.
 
 **Target:** QNAP TVS-h674T. Its Intel Core 12th-gen CPU means **x86_64**
 (confirmed by Phase 0's `uname -m`). On `main` (before this branch lands)

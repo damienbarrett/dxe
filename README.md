@@ -126,6 +126,7 @@ show the configured prefix-key help.
 - [Guest bootstrap, persistence, optional AI tools, NixVim, and theming](docs/guest.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Release, pin, upgrade, and base-image changeover procedures](docs/release-maintenance.md)
+- [QNAP operator runbook](docs/qnap-runbook.md)
 - [Test and validation tiers](docs/refactor/validation-matrix.md)
 - [Current refactor decisions and migration gates](docs/refactor/migration-gates.md)
 

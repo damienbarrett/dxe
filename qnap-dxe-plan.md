@@ -855,6 +855,33 @@ sentence rather than left to default inference.
 
 ## Phase 6 — QNAP lifecycle, reboot, and operational hardening
 
+**Status (2026-09-28, `feat/qnap-lifecycle`, in progress -- not landed):**
+design note `docs/refactor/qnap-lifecycle.md` reviewed and accepted.
+Items 1, 2, 4, 5, 6, 7, and 8 implemented against fakes only and
+documented: item 1's runbook is `docs/qnap-runbook.md`; item 2's 8G/4CPU
+defaults (already decided Phase 4) are documented with their NAS-workload
+rationale in the runbook and `tests/profiles/qnap-example.env`; item 4's
+Container Station display gained an optional, SSH-independent
+`container_healthcheck` capability; item 5's health reporting gave
+`dx-status`/`dx-wait-ssh` two new observable states (port not open yet vs.
+port open but the guest not answering); item 6's update-survival procedure
+(documented backup first, never an update solely to test) and item 8's
+emergency-access procedure (LAN SSH to the NAS itself, `docker exec` into
+the guest, no fallback public/LAN publish of guest SSH) are both in the
+runbook; item 7's destructive-operation ownership proof now refuses whole
+QNAP factory-reset/volume-destroy operations -- zero delete calls -- on
+any one resource's DQ6 label mismatch, proven by call count against fakes.
+**Items 3 and 9 are still pending** the coordinating session's maintenance
+window on the real NAS (a container restart, a Container Station restart,
+and a NAS reboot against a disposable `dx-qnap-spike` guest with
+`DX_CONTAINER_RESTART_POLICY=unless-stopped`) -- see
+`docs/refactor/qnap-lifecycle.md` section B for the three ordering
+alternatives compared and the exact observations that window must produce
+to pick one; nothing here guesses at that answer. The exit gate below has
+not been evaluated: it needs those observations, the resulting decision
+recorded, and both live gates (Apple `dx-test`, and the destructive tier
+against a disposable QNAP guest) run by the coordinating session.
+
 1. Add the QNAP profile example and an operator runbook covering install,
    preflight, normal operation, update, backup, restore, and removal.
 2. Choose CPU and memory defaults from Phase 0 observations and document how

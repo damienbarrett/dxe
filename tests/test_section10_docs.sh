@@ -8,7 +8,7 @@ test_section "Section 10: Documentation Contracts"
 
 assert_file_exists "$README" "README exists"
 if [ "$(wc -l < "$README")" -lt 250 ]; then test_pass "README is a focused quick start and index"; else test_fail "README is a focused quick start and index"; fi
-for doc in lifecycle configuration guest troubleshooting release-maintenance; do
+for doc in lifecycle configuration guest troubleshooting release-maintenance qnap-runbook; do
     assert_file_exists "$BASE_DIR/docs/$doc.md" "focused $doc documentation exists"
     assert_file_contains_literal "$README" "docs/$doc.md" "README links $doc documentation"
 done
@@ -109,7 +109,7 @@ done <"$OPEN_PLAN_LINKS"
 
 rm -f "$OPEN_PLAN_LINKS"
 
-all_docs="$README $BASE_DIR/docs/lifecycle.md $CONFIG_DOC $BASE_DIR/docs/guest.md $BASE_DIR/docs/troubleshooting.md $BASE_DIR/docs/release-maintenance.md"
+all_docs="$README $BASE_DIR/docs/lifecycle.md $CONFIG_DOC $BASE_DIR/docs/guest.md $BASE_DIR/docs/troubleshooting.md $BASE_DIR/docs/release-maintenance.md $BASE_DIR/docs/qnap-runbook.md"
 for command in "$BASE_DIR"/bin/dx*; do
     [ -f "$command" ] || continue
     name="$(basename "$command")"
