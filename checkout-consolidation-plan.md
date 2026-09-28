@@ -539,8 +539,13 @@ Phase 5: container-only recreate with an unchanged create argv, so the
 primary guest now runs on the shared remote-aware SSH builder, the atomic
 `dx-export` and the capability refusals; backup current beforehand,
 `/persist` file count identical, SSH ready 56 s after the stop, keyring
-`stale` then `live` after a cold `dx-ai`). `dx-host` is current; the next
-promotion follows the next runtime-affecting landing.
+`stale` then `live` after a cold `dx-ai`), and `main` `3606cd9` (2026-09-28,
+Phase 6: container-only recreate; the primary guest now has the health
+lines in `dx-status` and `dx-wait-ssh` and the Apple-discarded health
+flags in its create argv; the guest was idle beforehand, backup current,
+`/persist` file count identical, keyring `stale` then `live` after a cold
+`dx-ai`, no health line fired on the healthy guest). `dx-host` is current;
+the next promotion follows the next runtime-affecting landing.
 
 **Before promoting:**
 
