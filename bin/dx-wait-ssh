@@ -17,24 +17,13 @@ dx_require_positive_integer DX_SSH_PROGRESS_INTERVAL "$PROGRESS_INTERVAL"
 WAIT_MINUTES=$(( (WAIT_TIMEOUT + 59) / 60 ))
 echo "Bootstrap wait limit: ${WAIT_TIMEOUT}s (approximately ${WAIT_MINUTES} minutes). A fresh factory-reset bootstrap can take several minutes."
 
-# Use a simple SSH command to check if the guest is actually ready to accept
-# logins. Options come from the shared single source of truth
-# (bin/lib/dx-ssh-common.sh's dx_ssh_common_options), no longer a private
-# copy of the same literals (Branch 11 / Phase 5, qnap-dxe-plan.md DQ5;
-# docs/refactor/remote-aware-ssh.md section 3) -- plus this probe's own
-# BatchMode=yes, which the shared options do not set for every caller: a
-# polling readiness loop must never hang on a password/passphrase prompt,
-# which is specifically this probe's own concern, not every SSH caller's.
-SSH_CHECK_OPTS_STREAM="$(dx_ssh_common_options)"
-SSH_CHECK_OPTS=() SSH_CHECK_OPT=""
-while IFS= read -r SSH_CHECK_OPT; do SSH_CHECK_OPTS+=("$SSH_CHECK_OPT"); done <<<"$SSH_CHECK_OPTS_STREAM"
-SSH_CHECK_OPTS+=("-o" "BatchMode=yes")
-# Resolved and checked explicitly, not inlined into the probe loop below:
-# this script's own "set -e" does not reliably catch a failing command
-# substitution used as one argument among several in a larger command, and
-# the loop below runs this destination on every iteration regardless.
-DX_WAIT_SSH_ENDPOINT="$(dx_ssh_endpoint)"
-
+# The one-shot login-shell probe (options, BatchMode=yes, endpoint, the
+# "bash -lc 'true'" command) is bin/lib/dx-ssh-common.sh's
+# dx_ssh_probe_login_shell now (Branch 11 / Phase 6, qnap-dxe-plan.md
+# Phase 6 item 5) -- the same single source of truth bin/dx-status's SSH
+# section also calls, so the two never drift into two copies of the same
+# option-array assembly again.
+#
 # The last probe's stderr, so a timeout can say *why* the probe never
 # succeeded. Rewritten on every attempt, so it always holds the final failure.
 PROBE_STDERR="$(mktemp "${TMPDIR:-/tmp}/dx-wait-ssh-probe.XXXXXX")"
@@ -77,7 +66,7 @@ print_container_logs() {
 # ssh probe -- rather than only the time we ourselves spent sleeping.
 SECONDS=0
 NEXT_PROGRESS="$PROGRESS_INTERVAL"
-while ! ssh "${SSH_CHECK_OPTS[@]}" "$DX_WAIT_SSH_ENDPOINT" "bash -lc 'true'" 2>"$PROBE_STDERR"; do
+while ! dx_ssh_probe_login_shell "$PROBE_STDERR"; do
     ELAPSED=$SECONDS
     if container_exists "$DX_CONTAINER_NAME" && ! container_is_running "$DX_CONTAINER_NAME"; then
         echo "Error: Container $DX_CONTAINER_NAME stopped before SSH became responsive." >&2
@@ -106,7 +95,7 @@ while ! ssh "${SSH_CHECK_OPTS[@]}" "$DX_WAIT_SSH_ENDPOINT" "bash -lc 'true'" 2>"
         # output, losing the diagnosis until reproduced separately. Printed
         # on every tick, not only at the final timeout (print_probe_diagnosis
         # below still runs then, for the fuller two-pattern-specific text).
-        DX_WAIT_LAST_PHASE="$(dx_runtime_logs "$DX_CONTAINER_NAME" 2>/dev/null | { grep -E 'Bootstrap phase:|Using bootstrap generation|Waiting for bootstrap payload' || true; } | tail -1)"
+        DX_WAIT_LAST_PHASE="$({ dx_runtime_logs "$DX_CONTAINER_NAME" 2>/dev/null || true; } | { grep -E 'Bootstrap phase:|Using bootstrap generation|Waiting for bootstrap payload' || true; } | tail -1)"
         [ -z "$DX_WAIT_LAST_PHASE" ] || printf 'Last bootstrap progress: %s\n' "$DX_WAIT_LAST_PHASE"
         DX_WAIT_LAST_PROBE_ERROR="$(tail -n 1 "$PROBE_STDERR" 2>/dev/null)"
         [ -z "$DX_WAIT_LAST_PROBE_ERROR" ] || printf 'Last probe error: %s\n' "$DX_WAIT_LAST_PROBE_ERROR"

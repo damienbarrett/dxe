@@ -504,6 +504,28 @@ DX_SSH_PORT=2222; dx_ssh_endpoint >/dev/null; dx_bootstrap_launch_command >/dev/
     case "$err" in *"$osc"*) ;; *) exit 1 ;; esac
 )
 
+# dx_ssh_probe_login_shell (Branch 11 / Phase 6, qnap-dxe-plan.md Phase 6
+# item 5): the shared one-shot readiness probe bin/dx-wait-ssh's poll loop
+# and bin/dx-status's SSH section both call now, instead of each building
+# its own option array. `ssh` shadowed with a plain shell function,
+# consistent with every other external-command fake in this file -- no
+# real connection is ever attempted. Proves the probe's own stderr lands
+# in the caller-supplied file (not swallowed, not printed to the probe's
+# own stdout/stderr) and that ssh's exit status passes through unmodified.
+(
+    DX_SSH_KEY="$fixture/ssh-probe-key"; : > "$DX_SSH_KEY"
+    DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=1
+    export DX_SSH_KEY DX_SSH_PORT DX_SSH_CONNECT_TIMEOUT
+    ssh() { echo "probe stderr line" >&2; return 0; }
+    stderr_file="$fixture/probe-stderr"
+    dx_ssh_probe_login_shell "$stderr_file" >/dev/null
+    grep -qF "probe stderr line" "$stderr_file"
+    ssh() { echo "probe failed" >&2; return 5; }
+    rc=0; dx_ssh_probe_login_shell "$stderr_file" >/dev/null 2>&1 || rc=$?
+    [ "$rc" -eq 5 ]
+    grep -qF "probe failed" "$stderr_file"
+)
+
 # Known-hosts pinning for docker-ssh (Branch 11 / Phase 5, item 8):
 # dx_ssh_common_options's docker-ssh branch, and the three pin-directory
 # helpers it calls (dx_ssh_known_hosts_dir/_path/_prepare), which nothing

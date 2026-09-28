@@ -193,6 +193,36 @@ dx_ssh_run_guest_command() {
     ssh "${ssh_opts[@]}" "$endpoint" "$(dx_guest_bash_command "$host_tz" "$remote_cmd_body")"
 }
 
+# Single source of truth for the one-shot login-shell readiness probe
+# bin/dx-wait-ssh's poll loop and bin/dx-status's SSH section both need
+# (Branch 11 / Phase 6, qnap-dxe-plan.md Phase 6 item 5): the same option
+# array dx_ssh_common_options always builds, plus this probe's own
+# BatchMode=yes (a readiness probe must never hang on a password/
+# passphrase prompt -- specifically this probe's concern, not every SSH
+# caller's), dialling dx_ssh_endpoint and running "bash -lc 'true'" -- the
+# exact command text both callers already sent inline before this
+# extraction, kept unchanged so neither caller's observable behaviour
+# moves. $1 is a caller-supplied file path for the probe's stderr
+# (overwritten every call, never appended), matching bin/dx-wait-ssh's own
+# pre-existing PROBE_STDERR convention, so both callers can print/tail it
+# identically. Returns ssh's own exit status; 255 (ssh's own transport-
+# failure convention, matching dx_ssh_run_guest_command above) if the
+# endpoint or options cannot even be built.
+dx_ssh_probe_login_shell() {
+    local stderr_file="$1"
+
+    local endpoint
+    endpoint="$(dx_ssh_endpoint)" || return 255
+
+    local opts_stream
+    opts_stream="$(dx_ssh_common_options)" || return 255
+    local opts=() opt
+    while IFS= read -r opt; do opts+=("$opt"); done <<<"$opts_stream"
+    opts+=("-o" "BatchMode=yes")
+
+    ssh "${opts[@]}" "$endpoint" "bash -lc 'true'" >/dev/null 2>"$stderr_file"
+}
+
 # Restore the guest's persisted colour scheme before the session's real
 # program starts. Ordering is the whole design: this runs while the outer
 # terminal is still directly attached to the SSH pty, with no multiplexer in

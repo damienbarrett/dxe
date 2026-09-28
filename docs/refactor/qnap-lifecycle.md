@@ -382,6 +382,20 @@ Verified with fakes only (`docker inspect --format '{{json
 .Config.Healthcheck}}'` on a fake, asserting the rendered argv); no live
 Container Station screenshot is this subagent's to take.
 
+**Live confirmation (coordinating session, disposable QNAP guest,
+read-only):** the exact probe command Increment 2 shipped
+(`cur=$(readlink "$DX_BOOTSTRAP_PATH/current" 2>/dev/null) || exit 1;
+gen=${cur#generations/}; [ -n "$gen" ] || exit 1; ls
+"$DX_BOOTSTRAP_PATH"/.locks/leases/"$gen".* >/dev/null 2>&1`) was run live
+via `docker exec ... /bin/sh -c '<probe>'` -- `/bin/sh` exists on the
+guest (a symlink to the Nix-provided bash, confirming the probe's shell
+form is safe there, not only under a fake) -- and exited 0, with `current
+-> generations/<id>` and that generation's lease present. This is the one
+thing fakes could not give (a real guest's `/bin/sh` resolving and the
+real lease/`current` state existing at all); it does not change the
+design or the code, only confirms the probe as shipped works unmodified
+against the real guest filesystem layout.
+
 `docker logs` already shows the full bootstrap phase sequence followed by
 `sshd`'s own foreground output, confirmed by bootstrap.sh's structure
 (`exec sshd -D -e -p 2222` as the last step of `bootstrap_main`, so nothing
@@ -561,10 +575,29 @@ beyond the shared health layers in `dx-status`.
   for docker-ssh, absent/no-op for Apple, via fakes; a characterisation test
   that `docker logs`'s fake output contains the full phase sequence plus the
   point where `sshd` output would follow.
-- **Increment 3** (destructive operations): the all-or-nothing plan-and-verify
-  helper's fake-based cases above (zero-delete-on-any-mismatch, full-success,
-  nonexistent-vs-mislabelled, Apple byte-identical); no change to
-  `tests/run-tier.sh`'s destructive tier itself.
+- **Increment 3** (destructive operations, as built): the plan-and-verify
+  helper lives in two parts, matching the runtime boundary
+  (`docs/lifecycle.md` principle 9): `dx_runtime_docker_destructive_plan_and_verify`
+  in `bin/lib/dx-runtime-docker.sh` (existence + label fetch + verify +
+  plan printing, all docker-ssh-internal) behind
+  `bin/lib/dx-container.sh`'s runtime-neutral `dx_destructive_plan_and_verify`
+  (a no-op returning success immediately under `DX_RUNTIME=apple`). The one
+  call from `dx-container.sh` into the adapter's own `dx_runtime_docker_*`
+  namespace needed a narrow, reasoned `tests/test_runtime_boundary_audit.sh`
+  exception, the same shape already granted to `bin/dx-lock`/`bin/dx-status`'s
+  read-only lock view (Section 32 stays green: 13/0, its own red/green
+  self-tests unaffected). `bin/dx-destroy-volumes` and `bin/dx-factory-reset`
+  each call it before their existing typed confirmation, unchanged
+  otherwise. Fake-based cases (Section 33 direct-unit: full-success,
+  one-mislabelled-among-several, nonexistent-vs-mislabelled, Apple no-op;
+  Section 33 entrypoint-level with call-count-by-fake: `dx-destroy-volumes`
+  zero-`volume-rm`-calls on one mislabelled volume among three,
+  three-calls-exactly on full success, `dx-factory-reset` zero-delete-calls
+  on a mislabelled container distinguished from the old per-resource-only
+  behaviour by asserting the new "Immutable plan" text specifically, not
+  just the shared "collision" error text both paths produce; Section 9:
+  Apple no-op regression guard). No change to `tests/run-tier.sh`'s
+  destructive tier itself.
 - **Increment 4** (restart policy / ordering docs): none beyond documentation
   assertions already covered by Section 10 (below) — this increment is
   prose plus whichever alternative the observations settle, not new

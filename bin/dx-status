@@ -111,18 +111,15 @@ if dx_status_ssh_addr="$(dx_runtime_guest_ssh_address 2>&1)"; then
         # evidence (2026-09-28, docs/refactor/qnap-lifecycle.md's appendix)
         # found sshd already listening while a login-shell probe kept
         # failing for minutes under host contention -- a bare "OPEN" line
-        # would have read as healthy throughout. One-shot login-shell probe,
-        # the same shared option builder dx-wait-ssh's own poll loop uses
-        # (dx_ssh_common_options), so the option list is never duplicated;
-        # this is a plain ssh call, not a new dx_runtime_* contract op.
-        # Failure prints the probe's own stderr instead of leaving "OPEN" to
-        # imply the guest is actually reachable.
-        dx_status_probe_opts_stream="$(dx_ssh_common_options)"
-        dx_status_probe_opts=() dx_status_probe_opt=""
-        while IFS= read -r dx_status_probe_opt; do dx_status_probe_opts+=("$dx_status_probe_opt"); done <<<"$dx_status_probe_opts_stream"
-        dx_status_probe_opts+=("-o" "BatchMode=yes")
+        # would have read as healthy throughout. dx_ssh_probe_login_shell
+        # (bin/lib/dx-ssh-common.sh) is the single source of truth for this
+        # exact probe, shared with bin/dx-wait-ssh's own poll loop, so the
+        # option-array assembly is never duplicated; this is a plain ssh
+        # call, not a new dx_runtime_* contract op. Failure prints the
+        # probe's own stderr instead of leaving "OPEN" to imply the guest is
+        # actually reachable.
         dx_status_probe_err="$(mktemp "${TMPDIR:-/tmp}/dx-status-probe.XXXXXX")"
-        if ! ssh "${dx_status_probe_opts[@]}" "dx@$dx_status_ssh_addr" "bash -lc 'true'" >/dev/null 2>"$dx_status_probe_err"; then
+        if ! dx_ssh_probe_login_shell "$dx_status_probe_err"; then
             echo "Login shell is not answering: $(tail -n 1 "$dx_status_probe_err" 2>/dev/null)"
         fi
         rm -f "$dx_status_probe_err"
@@ -135,7 +132,7 @@ if dx_status_ssh_addr="$(dx_runtime_guest_ssh_address 2>&1)"; then
         # useful thing to show instead of a bare "CLOSED" that reads the
         # same whether the guest is seconds or minutes away.
         if container_exists "$DX_CONTAINER_NAME" && container_is_running "$DX_CONTAINER_NAME"; then
-            dx_status_last_phase="$(dx_runtime_logs "$DX_CONTAINER_NAME" 2>/dev/null | { grep -E 'Bootstrap phase:|Using bootstrap generation|Waiting for bootstrap payload' || true; } | tail -1)"
+            dx_status_last_phase="$({ dx_runtime_logs "$DX_CONTAINER_NAME" 2>/dev/null || true; } | { grep -E 'Bootstrap phase:|Using bootstrap generation|Waiting for bootstrap payload' || true; } | tail -1)"
             [ -z "$dx_status_last_phase" ] || echo "Still bootstrapping: $dx_status_last_phase"
         fi
     fi
