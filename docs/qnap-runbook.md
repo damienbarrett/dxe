@@ -240,7 +240,10 @@ Tailscale address at port **2222**,
 this NAS in Phase 6's maintenance window), **8 GB / 2 CPU** — the user's
 own choice for the canary only, not a new default (see
 [`tests/profiles/qnap-canary-example.env`](../tests/profiles/qnap-canary-example.env)).
-Acceptance period: **one week** of real daily use.
+Acceptance period: **one week** of real daily use. **Pre-approved
+(2026-09-28):** the canary is created as soon as Phase 7's code lands on
+`main`; the one-week acceptance period starts on that creation day, not
+on some later date.
 
 ### 9.1 Daily-use exercise list
 
@@ -337,6 +340,11 @@ Phase 6's exit gate carried over (item 3). The second profile is
 **disposable**: name `dx-qnap-drill`, port **2224**, its own volumes and
 keys, created and destroyed during the canary week (never reused, never
 confused with the canary or the eventual production profile).
+**Pre-approved (2026-09-28)** to be created and destroyed during the
+canary week — but the operator is still warned before each of those two
+steps (creation and destruction), not created or torn down silently: say
+so at the time, name the exact commands about to run, and confirm before
+running them.
 
 ```sh
 # 1. Fresh backup of the canary.
@@ -382,7 +390,9 @@ intended pair of profiles.
                                                 # path's mode on the canary
 ```
 
-Once the drill is done, tear it down (it was always disposable):
+Once the drill is done, tear it down (it was always disposable) — warn
+the operator before running this, the same as before the drill's own
+creation above:
 
 ```sh
 ./bin/dx-profile dx-qnap-drill ./bin/dx-factory-reset --force
@@ -392,14 +402,17 @@ Once the drill is done, tear it down (it was always disposable):
 
 Once the week passes with no unresolved checklist failure and the
 restore drill above counts as the verified backup, the user creates the
-production profile. Proposed identifiers (the user's own decision, not
-this document's):
+production profile. Identifiers (the user's own decision, not this
+document's — see
+[`tests/profiles/qnap-example.env`](../tests/profiles/qnap-example.env)):
 `DX_CONTAINER_NAME=dx-qnap` (already `qnap-example.env`'s own value),
-port **2223** — proposed, distinct from the canary's 2222 so both can
-run concurrently during the cutover if wanted; **still a proposal until
-the production profile is actually created**, not a value already in
-effect — 8 GB / 4 CPU and `unless-stopped` from creation (both already
-`qnap-example.env`'s own documented values).
+**port 2223 — DECIDED (2026-09-28), not merely proposed,** distinct from
+the canary's 2222 so both can run concurrently during the cutover. This
+is **explicitly temporary**: 2223 is the port for the cutover period
+only, and the production profile may move back to 2222 once the canary
+is retired and the port is free again — 8 GB / 4 CPU and
+`unless-stopped` from creation (both already `qnap-example.env`'s own
+documented values).
 
 `dx-host` (the Apple DXE) receives no destroy, no factory-reset, no
 volume change, until **both** the canary has completed its full
