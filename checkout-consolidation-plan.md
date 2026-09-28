@@ -503,7 +503,12 @@ current beforehand, `/persist` file count identical, keyring `stale` then
 the hardening branch and Phase 4: container-only recreate for the third
 create-time env token; backup current beforehand, `/persist` file count
 identical, the new store-trust checks passed on the primary's real volume,
-`dx-status` now shows the keyring line). `dx-host` is current; the next
+`dx-status` now shows the keyring line), and `main` `1cceb58` (2026-09-28,
+Phase 5: container-only recreate with an unchanged create argv, so the
+primary guest now runs on the shared remote-aware SSH builder, the atomic
+`dx-export` and the capability refusals; backup current beforehand,
+`/persist` file count identical, SSH ready 56 s after the stop, keyring
+`stale` then `live` after a cold `dx-ai`). `dx-host` is current; the next
 promotion follows the next runtime-affecting landing.
 
 **Before promoting:**
