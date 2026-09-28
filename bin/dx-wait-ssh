@@ -96,7 +96,21 @@ while ! ssh "${SSH_CHECK_OPTS[@]}" "$DX_WAIT_SSH_ENDPOINT" "bash -lc 'true'" 2>"
     fi
 
     if [ "$ELAPSED" -ge "$NEXT_PROGRESS" ]; then
-        printf "\nBootstrap still running (%ss elapsed). Latest guest logs:\n" "$ELAPSED"
+        printf "\nBootstrap still running (%ss elapsed).\n" "$ELAPSED"
+        # Branch 11 / Phase 6 (qnap-dxe-plan.md Phase 6 item 5): named,
+        # rather than left for the operator to spot inside the raw log tail
+        # below. Live evidence (2026-09-28,
+        # docs/refactor/qnap-lifecycle.md's appendix): sshd was already
+        # listening while this very probe kept failing for minutes under
+        # host contention, and the gate script that hit it discarded this
+        # output, losing the diagnosis until reproduced separately. Printed
+        # on every tick, not only at the final timeout (print_probe_diagnosis
+        # below still runs then, for the fuller two-pattern-specific text).
+        DX_WAIT_LAST_PHASE="$(dx_runtime_logs "$DX_CONTAINER_NAME" 2>/dev/null | { grep -E 'Bootstrap phase:|Using bootstrap generation|Waiting for bootstrap payload' || true; } | tail -1)"
+        [ -z "$DX_WAIT_LAST_PHASE" ] || printf 'Last bootstrap progress: %s\n' "$DX_WAIT_LAST_PHASE"
+        DX_WAIT_LAST_PROBE_ERROR="$(tail -n 1 "$PROBE_STDERR" 2>/dev/null)"
+        [ -z "$DX_WAIT_LAST_PROBE_ERROR" ] || printf 'Last probe error: %s\n' "$DX_WAIT_LAST_PROBE_ERROR"
+        echo "Latest guest logs:"
         print_container_logs 5
         while [ "$NEXT_PROGRESS" -le "$ELAPSED" ]; do
             NEXT_PROGRESS=$((NEXT_PROGRESS + PROGRESS_INTERVAL))

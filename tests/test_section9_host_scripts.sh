@@ -845,6 +845,11 @@ case "$1" in
         ;;
     *) exit 1 ;;
 esac'
+# Branch 11 / Phase 6 (item 5): default CLOSED, matching what a real "nc -z
+# 127.0.0.1 <port>" already did unmodified in every test above this one
+# (nothing really listens on the configured port in this fixture) --
+# opt-in OPEN via DX_FAKE_PORT_OPEN, deterministic either way.
+fake_tool_write "$status_fixture/bin" nc '[ "${DX_FAKE_PORT_OPEN:-0}" = 1 ] && exit 0; exit 1'
 trap 'rm -rf "$status_fixture"' EXIT
 
 run_status() {
@@ -899,6 +904,29 @@ if printf '%s\n' "$status_out" | sed -n '/--- Bootstrap Generation ---/,+1p' | s
     test_pass "dx-status reports no bootstrap generation section for a container that does not exist"
 else
     test_fail "dx-status reports no bootstrap generation section for a container that does not exist (got: $status_out)"
+fi
+
+# --- Branch 11 / Phase 6 (item 5): dx-status distinguishes "container
+# running, port not open yet" from a bare, unqualified CLOSED line, by
+# showing the most recent bootstrap-progress marker from the guest's own
+# log -- the same log the dead-guest branch above already reads, just
+# while the container is still alive. Real evidence (2026-09-28,
+# docs/refactor/qnap-lifecycle.md's appendix): a restart can leave the
+# guest boot itself fast while an operator's own readiness probe still
+# fails for minutes under host contention, so this closes the ambiguity
+# for the (rarer) case where the port itself has not opened yet either.
+log_file="$status_fixture/still-booting.log"
+{
+    printf 'Waiting for bootstrap payload in /guest-bootstrap...\n'
+    printf 'Using bootstrap generation gen-live\n'
+    printf 'Bootstrap phase: essentials installation completed in 1s.\n'
+} > "$log_file"
+status_out="$(DX_FAKE_EXISTS=1 DX_FAKE_RUNNING=1 DX_FAKE_CURRENT=generations/gen-live DX_FAKE_LEASES='gen-live.1' DX_FAKE_LOG_FILE="$log_file" DX_FAKE_PORT_OPEN=0 run_status 2>&1)"
+if printf '%s\n' "$status_out" | stdin_matches -F -- 'is CLOSED' \
+    && printf '%s\n' "$status_out" | stdin_matches -F -- 'Still bootstrapping: Bootstrap phase: essentials installation completed in 1s.'; then
+    test_pass "dx-status names the guest's last bootstrap-progress line while the container is running but SSH has not opened yet"
+else
+    test_fail "dx-status names the guest's last bootstrap-progress line while the container is running but SSH has not opened yet (got: $status_out)"
 fi
 
 # --- Item 4 (fix/test-hardening): dx-status has no "keyring: not running" -
@@ -1101,6 +1129,142 @@ else
     test_fail "dx-status (docker-ssh) probes and prints the guest's actual discovered SSH address (rc=$docker_status_rc2, got: $docker_status_out2)"
 fi
 rm -rf "$docker_status_fixture"
+
+# --- Branch 11 / Phase 6 (item 5), docker-ssh: same third-state
+# distinction as the Apple fixture above, plus the login-shell-probe case
+# real evidence found -- sshd listening, login shell not answering for
+# minutes under host contention (docs/refactor/qnap-lifecycle.md's
+# appendix). Both through the existing SSH section; no new dx_runtime_*
+# contract op -- a plain ssh call, the same shared option builder
+# dx-wait-ssh's own poll loop uses.
+thirdstate_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-status-thirdstate.XXXXXX")"
+fake_tool_write "$thirdstate_fixture" uname 'case "$1" in -m) echo aarch64 ;; esac'
+fake_tool_write "$thirdstate_fixture" docker '
+case "$1" in
+    version) [ "$2" = --format ] && echo "27.0.0" ;;
+    info)    [ "$2" = --format ] && echo "sha256:fake|qnap-dxe|aarch64|linux" ;;
+    image)
+        case "$2" in
+            inspect) exit 0 ;;
+            ls)
+                printf "REPOSITORY\tTAG\tIMAGE ID\tCREATED\tSIZE\n"
+                printf "dx-qnap-thirdstate\tlatest\tabc123\t1 day ago\t500MB\n"
+                ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    container)
+        case "$2" in
+            inspect)
+                shift 2
+                if [ "$1" = --format ]; then
+                    case "$2" in
+                        *".State.Running"*)
+                            if [ "${DX_FAKE_RUNNING3:-1}" = 1 ]; then echo true; else echo false; fi
+                            ;;
+                        *) exit 1 ;;
+                    esac
+                else
+                    exit 0
+                fi
+                ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    ps)
+        printf "NAMES\tIMAGE\tSTATUS\tsystem\n"
+        printf "dxe-status-fixture\tfake-image\tUp 1 second\tx86_64-linux\n"
+        ;;
+    logs)
+        cat "${DX_FAKE_LOG_FILE:-/dev/null}" 2>/dev/null
+        ;;
+    exec)
+        # Answers dx-status'"'"'s Guest Environment section (Tools/Persist,
+        # tmux, keyring), reached whenever DX_FAKE_RUNNING3=1 -- not this
+        # test'"'"'s own concern, only here so it does not abort under set -e.
+        shift
+        [ "${1:-}" = "-u" ] && shift 2
+        shift
+        printf "Tools: fake\nPersist: fake\n"
+        exit 0
+        ;;
+    *) exit 1 ;;
+esac'
+# Distinct from fake_qnap_ssh_write (tests/lib/fake-tools.sh): that shared
+# helper's eval-the-trailing-argument shape is reused verbatim for every
+# OTHER call (management-plane docker/uname commands), but this fixture
+# also needs to distinguish dx-status's new GUEST-plane login-shell probe
+# ("bash -lc 'true'", the exact string bin/dx-wait-ssh's own probe already
+# sends) from those, which the shared helper has no reason to know about.
+fake_tool_write "$thirdstate_fixture" ssh '
+dx_fake_last=""
+for dx_fake_arg in "$@"; do dx_fake_last="$dx_fake_arg"; done
+if [ "$dx_fake_last" = "bash -lc '"'"'true'"'"'" ]; then
+    if [ "${DX_FAKE_LOGIN_OK:-1}" = 1 ]; then
+        exit 0
+    fi
+    echo "kex_exchange_identification: Connection closed by remote host" >&2
+    exit 255
+fi
+eval "$dx_fake_last"
+'
+fake_tool_write "$thirdstate_fixture" nc '[ "${DX_FAKE_PORT_OPEN3:-1}" = 1 ] && exit 0; exit 1'
+run_thirdstate_status() {
+    (
+        unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION DX_PROJECT_ROOT
+        for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+        export PATH="$thirdstate_fixture:/usr/bin:/bin"
+        export HOME="$thirdstate_fixture/home"
+        export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DXE_RUNTIME_DOCKER_BIN=docker
+        export DX_CONTAINER_NAME=dxe-status-fixture DX_IMAGE=dx-qnap-thirdstate
+        export DXE_RUNTIME_GUEST_SSH_ADDRESS="$(printf '%s.%s.%s.%s' 100 64 1 3)"
+        "$BASE_DIR/bin/dx-status"
+    )
+}
+
+thirdstate_log="$thirdstate_fixture/still-booting.log"
+{
+    printf 'Waiting for bootstrap payload in /guest-bootstrap...\n'
+    printf 'Using bootstrap generation gen-live\n'
+    printf 'Bootstrap phase: Nix volume prepare/mount completed in 0s.\n'
+} > "$thirdstate_log"
+set +e
+status_out="$(DX_FAKE_RUNNING3=1 DX_FAKE_PORT_OPEN3=0 DX_FAKE_LOG_FILE="$thirdstate_log" run_thirdstate_status 2>&1)"
+status_rc=$?
+set -e
+if [ "$status_rc" -eq 0 ] \
+    && printf '%s\n' "$status_out" | stdin_matches -F -- 'is CLOSED' \
+    && printf '%s\n' "$status_out" | stdin_matches -F -- 'Still bootstrapping: Bootstrap phase: Nix volume prepare/mount completed in 0s.'; then
+    test_pass "dx-status (docker-ssh) names the last bootstrap-progress line while the port is still closed"
+else
+    test_fail "dx-status (docker-ssh) names the last bootstrap-progress line while the port is still closed (rc=$status_rc, got: $status_out)"
+fi
+
+set +e
+status_out="$(DX_FAKE_RUNNING3=1 DX_FAKE_PORT_OPEN3=1 DX_FAKE_LOGIN_OK=0 run_thirdstate_status 2>&1)"
+status_rc=$?
+set -e
+if [ "$status_rc" -eq 0 ] \
+    && printf '%s\n' "$status_out" | stdin_matches -F -- 'is OPEN' \
+    && printf '%s\n' "$status_out" | stdin_matches -F -- 'Login shell is not answering' \
+    && printf '%s\n' "$status_out" | stdin_matches -F -- 'kex_exchange_identification'; then
+    test_pass "dx-status (docker-ssh) reports the login-shell probe's own error when the port is open but the guest is not answering"
+else
+    test_fail "dx-status (docker-ssh) reports the login-shell probe's own error when the port is open but the guest is not answering (rc=$status_rc, got: $status_out)"
+fi
+
+set +e
+status_out="$(DX_FAKE_RUNNING3=1 DX_FAKE_PORT_OPEN3=1 DX_FAKE_LOGIN_OK=1 run_thirdstate_status 2>&1)"
+status_rc=$?
+set -e
+if [ "$status_rc" -eq 0 ] \
+    && printf '%s\n' "$status_out" | stdin_matches -F -- 'is OPEN' \
+    && ! printf '%s\n' "$status_out" | stdin_matches -F -- 'Login shell is not answering'; then
+    test_pass "dx-status (docker-ssh) prints nothing extra when the login shell answers normally"
+else
+    test_fail "dx-status (docker-ssh) prints nothing extra when the login shell answers normally (rc=$status_rc, got: $status_out)"
+fi
+rm -rf "$thirdstate_fixture"
 
 # --- dx-reset-nix-volume (Branch 12, store-trust-plan.md): the real,
 # volume-scoped recovery path both store-trust refusals point at by name.

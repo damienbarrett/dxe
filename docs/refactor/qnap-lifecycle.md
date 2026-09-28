@@ -88,23 +88,35 @@ Increment 5).
 all — no `dx-start-container`, no `dx-sync-bootstrap`) must guarantee:**
 
 1. **The existing-current-generation bootstrap path completes with no
-   controller present.** This is already implemented and live-verified
+   controller present.** The mechanism already exists
    (`docs/refactor/decisions/D7-start-generation.md`, "Candidate mechanisms"
-   §1, "already implemented"): the guest's own launcher
-   (`dx_bootstrap_launch_command`, `bin/lib/dx-ssh-common.sh`) removes
-   `.dx-bootstrap-ready` on every boot, waits up to
-   `DX_BOOTSTRAP_PUBLISH_GRACE` (default 30s) for a host publisher that will
-   never arrive, then falls back to booting `current` with a stderr
-   warning — this is precisely requirement 2 from `dx-start-plan.md`'s
-   six requirements ("a start with no host sync ... must not hang waiting
-   for a publisher that will never arrive"), already live-verified across
-   both start paths. `dx-start-container`'s own confirm-timeout check
-   (`DX_BOOTSTRAP_CONFIRM_TIMEOUT`, D7 option 3) never runs on this path
-   either, because nothing calls `dx-start-container` — a Docker restart
-   policy restarts the container process directly. Item 3 needs no new
-   mechanism here, only the observation (below) that this holds under
-   Docker's own restart supervision, not only under `dx-stop-container`/
-   `dx-start-container`.
+   §1): the guest's own launcher (`dx_bootstrap_launch_command`,
+   `bin/lib/dx-ssh-common.sh`) removes `.dx-bootstrap-ready` on every boot,
+   waits up to `DX_BOOTSTRAP_PUBLISH_GRACE` (default 30s) for a host
+   publisher that will never arrive, then falls back to booting `current`
+   with a stderr warning — this is precisely requirement 2 from
+   `dx-start-plan.md`'s six requirements ("a start with no host sync ...
+   must not hang waiting for a publisher that will never arrive"). This
+   exact no-publisher path is live-verified, but only on Apple and only via
+   `container stop`/`container start` (not a Docker restart policy):
+   `docs/evidence/20260926/start-generation-red.md`, "Requirement 2
+   (no-publisher start must still work, bounded)" — with generation `7438`
+   already current, `container stop dx-test` then `container start dx-test`
+   directly, the guest logged `Warning: no publication signal after 30s;
+   using the generation already current.` and reached SSH normally. That
+   record explicitly calls this "the manual-start / reboot / 'runtime
+   restarts the container' case," i.e. it stands in for exactly what an
+   unattended `unless-stopped` restart does (no `dx-start-container`
+   involved), but the trial itself ran under Apple's `container` binary,
+   not Docker's restart-policy supervisor. `dx-start-container`'s own
+   confirm-timeout check (`DX_BOOTSTRAP_CONFIRM_TIMEOUT`, D7 option 3) never
+   runs on this path either way, because nothing calls
+   `dx-start-container`. Item 3 therefore needs no new mechanism — the
+   guest-side code is identical on both runtimes — but item 3's own live
+   gate (the coordinating session's, not this subagent's) still needs to
+   confirm this specific evidence, gathered on Apple, reproduces under
+   Docker's restart supervision on the actual NAS; this design note does not
+   claim that half is already proven.
 2. **The port binds the Tailscale address.** Already true structurally
    (`dx_runtime_guest_ssh_address` + the adapter's address-prefixed
    `--publish`, Phase 5). What is *not* yet proven is whether it binds
@@ -193,9 +205,11 @@ coordinating session to collect against `dx-qnap-spike`,
    binding (a transient DQ5 violation would matter even if short-lived)?
 4. **Existing-current-generation bootstrap path**: on the NAS-reboot case,
    does the guest's own launcher (section A) complete its 30s-grace
-   fallback and boot `current` correctly with no controller present, same
-   as the Apple case already live-verifies structurally? Confirms section
-   A's guarantee 1 under the one restart kind not yet live-tested this way.
+   fallback and boot `current` correctly with no controller present, the
+   same behaviour `docs/evidence/20260926/start-generation-red.md` recorded
+   for Apple's `container stop`/`container start`? Confirms section A's
+   guarantee 1 under Docker's restart supervision and under a full NAS
+   reboot, neither of which that evidence record covers.
 5. **Timing budget**: do any of these windows exceed `DX_SSH_WAIT_TIMEOUT`'s
    existing default, and if a real operator's `dx-wait-ssh`/`dx-status`
    would time out or read as "down" during a NAS reboot that is actually
@@ -256,52 +270,91 @@ arrived and does Increment 5 first (per the task's own instruction).
    plain `docker inspect` query, same shape as every other adapter query
    (`docs/refactor/docker-adapter-mapping.md` section 1).
 
-### Interrupted-boot investigation plan (Increment 1's job; recorded here so
-the coordinating session can see the plan before Increment 1 runs it)
+### Interrupted-boot investigation: appendix (resolved, Increment 1)
 
-Observed fact (user decision 3, not yet reproduced or explained): on
-`dx-test`, a cold stop 23s into a boot, followed by a start, took ~10
-minutes to become SSH-ready (vs. ~20s for a normal cold start —
-`docs/evidence/20260928/remote-aware-ssh.md`'s Apple live-gate table);
-guest healthy afterward.
+Observed fact (user decision 3): on `dx-test`, a cold stop 23s into a boot,
+followed by a start, took ~10 minutes to become SSH-ready (vs. ~20s for a
+normal cold start — `docs/evidence/20260928/remote-aware-ssh.md`'s Apple
+live-gate table); guest healthy afterward. This section originally proposed
+an O(store-size) bootstrap-phase hypothesis (an interrupted volume-prepare
+or essentials-repair pass walking a real, populated store) and a Section
+3-style fixture to characterise it. **That hypothesis is withdrawn** — the
+coordinating session is off-limits to subagents for any live run against
+`dx-test` (no live-gate access for subagents, without exception; the
+original text above wrongly assumed one), so the coordinating session
+gathered the evidence directly instead, and it rules the hypothesis out.
 
-1. **Identify candidate O(store-size) phases.** Of the named `Bootstrap
-   phase: ...` markers, three read/write more than a fixed amount of state
-   and are the likely culprits: "essentials verification/repair"
-   (`bootstrap/common.sh`), "Nix ownership check/migration"
-   (`bootstrap/activation.sh`), and "Nix volume prepare/mount"
-   (`bootstrap/base-and-storage.sh`, `prepare_nix_volume_impl` /
-   `prepare_nix_volume_direct_impl`). A boot interrupted mid-populate (23s
-   in, plausibly during volume preparation or essentials installation) could
-   leave `/nix` or `/persist` in a state that one of these phases treats as
-   "needs repair" rather than "already done," and a repair pass that walks
-   or re-verifies a real, populated store is not O(1) the way a fixture's
-   tiny store is.
-2. **Reproduce under a fixture, not the real store.** Build a Section-3-
-   style fixture (per the task's "with a Section 3 fixture if possible")
-   that interrupts `bootstrap_main` partway through one of these phases
-   (`kill` the phase's own subshell, or truncate a marker file it depends
-   on) and re-runs it against the same on-disk state, asserting which phase
-   takes the repair path instead of the skip path, and why — this
-   characterises the *mechanism*, not the *wall-clock scale*, the same
-   distinction `store-trust-design.md` section 1.1 draws for its own
-   incident reproduction.
-3. **Correlate against the real trial.** If the coordinating session's
-   `dx-test` timestamps (`docker logs`/`container logs` with the per-phase
-   "completed in Ns" lines) are available, one phase's own duration should
-   account for most of the ~10 minutes; if that log was not retained,
-   Increment 1 asks the coordinating session for it or reproduces the
-   interruption directly on `dx-test` under the live-gate authorisation
-   already granted for this phase.
-4. **Feed the result into C, not into changing bootstrap's behaviour.**
-   The task explicitly asks health reporting to make the state
-   *observable*, not to make the phase faster or skip it — nothing in `##
-   G. Not in this phase` or the increments list proposes changing bootstrap
-   semantics. The deliverable is: `dx-status`/`dx-wait-ssh` name the
-   specific phase and its elapsed time, and the runbook (section F)
-   documents that a restart can legitimately take minutes, not seconds,
-   depending on what state the previous stop interrupted, so an operator
-   does not treat a slow-but-healthy restart as a failure.
+**Evidence 1 — the captured log.** The coordinating session captured
+`dx-test`'s container log from the actual interrupted-boot trial
+(`/Users/damien/dxe-recovery/progress/logs/dx-test-interrupted-boot-2026-09-28.log`,
+outside the repository). Every `Bootstrap phase: ... completed in Ns` line
+in it reads **0s or 1s** ("essentials installation completed in 0s", "Nix
+volume prepare/mount completed in 0s", "Nix ownership check/migration
+completed in 0s", "Home Manager activation completed in 1s", ...), and
+`sshd` reaches `Server listening on 0.0.0.0 port 2222.` within about two
+seconds of the restart. No phase is slow. The remaining ~115 lines are
+`Connection closed by authenticating user dx ... [preauth]` entries — sshd
+observing the *client* (the readiness probe) disconnect during
+authentication, repeated roughly every 5s (`DX_SSH_POLL_INTERVAL`'s
+default) for the rest of the window, until whatever finally let one
+succeed.
+
+**Evidence 2 — two live reproduction attempts, neither reproduced it.** The
+coordinating session ran the trial's exact sequence twice more on
+`dx-test` (start; two failing no-tty `dx-enter` attempts; `dx-status`; stop
+at 23s; a 45s gap; start again). Both came back fast: `dx-start-container`
+in ~2s, `dx-wait-ssh` in 18-20s, the port open at +3s, both a raw `ssh` and
+a login-shell `ssh` succeeding at +22s. Together with Evidence 1, this rules
+out both the guest's boot sequence and the interruption itself as the
+cause — the mechanism is not reproducible from the guest side at all.
+
+**Conclusion — controller-side contention, not a guest-side mechanism.**
+What differed on the original occasion: the controller was simultaneously
+running the kcov coverage container, a throwaway Ubuntu container executing
+the whole test suite, and the native macOS suite. The likeliest cause is
+host contention starving either the `dx-test` VM or the readiness probe
+itself — exactly the failure mode `dx-wait-ssh`'s own `print_probe_diagnosis`
+already names (TCP answered, banner exchange or authentication not
+finished within budget) — and the gate script that hit the real trial
+discarded `dx-wait-ssh`'s own output, which is why the diagnosis was lost
+in the moment rather than shown live. Treat the cause as **"unexplained;
+controller-side contention suspected,"** not as a bootstrap phase, and nothing
+here proposes changing bootstrap's behaviour (`## G. Not in this phase`
+already excludes that; this finding does not reopen it).
+
+**What changed in the design because of this finding (both approved,
+implemented in Increment 1, no new `dx_runtime_*` contract op):**
+
+1. `dx-wait-ssh`'s 30s progress tick now also prints the last bootstrap-
+   progress marker (the same `Bootstrap phase: ...`/`Using bootstrap
+   generation ...`/`Waiting for bootstrap payload ...` grep the dead-guest
+   branch already uses) and the **last probe error** — `PROBE_STDERR`'s own
+   content, which the script already captures every attempt but previously
+   surfaced only at final timeout — so an operator watching a slow wait
+   sees "connection refused" vs. "banner exchange timeout" vs. an
+   authentication-phase close during the wait itself, not only after the
+   full budget elapses.
+2. `dx-status`'s third state now distinguishes two cases via the *existing*
+   SSH section, both through sources that already exist: **(a)** container
+   running, port not open yet — shows the last bootstrap-progress marker
+   from `dx_runtime_logs`, exactly as originally designed; **(b)** port
+   *open* but the login-shell probe itself fails — a new one-shot probe (the
+   same shared `dx_ssh_common_options` builder `dx-wait-ssh` uses, not a
+   new contract operation) prints its own stderr. Case (b) is what the real
+   incident actually was: `dx-status` would have reported the port OPEN
+   throughout, which is exactly the ambiguity the coordinator's trial hit
+   (`dx-status` said OPEN "right afterwards" while the wait had already
+   failed for ten minutes).
+3. The runbook (Increment 5) documents that a slow-but-healthy restart under
+   host load is expected and names the diagnosis text above as the first
+   thing to read; the remedy is patience or freeing up the controller, never
+   a guest rebuild.
+
+No fixture characterises a "mechanism" here because there no longer is a
+guest-side mechanism to characterise — the two reproduction attempts and
+the phase-by-phase log both point at the controller, not the guest, and
+Increment 1's tests instead prove the two new `dx-status`/`dx-wait-ssh`
+observability paths directly against fakes (see "Test list" below).
 
 ## D. Container Station display (item 4)
 
@@ -496,11 +549,14 @@ beyond the shared health layers in `dx-status`.
 
 ## Test list by increment
 
-- **Increment 1** (health layers): `dx-status` third bootstrap state (running,
-  not yet SSH-ready) for both runtimes via fakes; `dx-wait-ssh` progress line
-  naming the last bootstrap phase; the interrupted-boot fixture (Section
-  3-style) characterising which phase takes the repair path after an
-  interruption.
+- **Increment 1** (health layers): `dx-status`'s two third-state cases
+  (container running + port not yet open, shown via the last bootstrap-
+  progress marker; port open + login-shell probe failing, shown via the
+  probe's own stderr) for both runtimes via fakes (`tests/test_section9_host_scripts.sh`,
+  a new fake `nc`/`ssh` on the Apple and docker-ssh fixtures respectively);
+  `dx-wait-ssh`'s progress tick naming the last bootstrap-progress marker
+  and the last probe error. No interrupted-boot fixture: the appendix above
+  found no guest-side mechanism to characterise.
 - **Increment 2** (Container Station display): `HEALTHCHECK` flag rendered
   for docker-ssh, absent/no-op for Apple, via fakes; a characterisation test
   that `docker logs`'s fake output contains the full phase sequence plus the
