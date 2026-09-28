@@ -279,9 +279,17 @@ dx_get_host_timezone >/dev/null
     dx_runtime_volume_exists vol >/dev/null
     dx_runtime_volume_create vol >/dev/null
     dx_runtime_volume_delete vol >/dev/null
+    # --health-cmd/--health-interval/--health-retries (Branch 11 / Phase 6
+    # item 4): Apple discards all three (dx_runtime_apple_container_create's
+    # own parse loop does a bare "shift 2" for each), so the fake's expected
+    # rendered argv above is unaffected byte for byte -- these three flags
+    # exist here purely to execute that discard path under this 100%-line-
+    # coverage gate, which does not run tests/test_docker_runtime_adapter.sh
+    # (Section 33), where the same three lines are otherwise unreached.
     dx_runtime_container_create --name side --image img \
         --volume nix:nixvol:rw --volume persist:persistvol:/persist:rw --volume bootstrap:bootvol:/guest-bootstrap:rw \
         --env FOO=bar --memory 1G --cpus 2 --publish 2222:2222 --restart-policy no \
+        --health-cmd 'ls /guest-bootstrap/.locks/leases/*' --health-interval 10s --health-retries 3 \
         --entrypoint-cmd 'echo hi' --entrypoint-arg /guest-bootstrap >/dev/null
     dx_runtime_container_start side >/dev/null
     dx_runtime_container_stop side >/dev/null
@@ -571,6 +579,29 @@ else
     known_hosts_coverage_real_state_after=""
 fi
 [ "$known_hosts_coverage_real_state_before" = "$known_hosts_coverage_real_state_after" ]
+
+# dx_runtime_docker_destructive_plan_and_verify (Branch 11 / Phase 6, item
+# 7): two branches nothing above reaches -- a CONTAINER-kind resource that
+# does not exist (distinct from the volume-kind "does not exist" case
+# tests/test_docker_runtime_adapter.sh, Section 33, already covers) and an
+# unrecognised kind, which returns before any docker/ssh call is even
+# attempted. DXE_RUNTIME_DOCKER_BIN is pre-seeded (same idiom the
+# known-hosts block above uses via DXE_RUNTIME_DOCKER_DAEMON_ID) so
+# dx_runtime_docker_require_bin resolves without any real ssh round trip;
+# `ssh` is shadowed with a plain shell function for the one call the
+# container-kind branch does make, consistent with every other
+# external-command fake in this file -- no real connection is attempted.
+(
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dxe-coverage
+    DXE_RUNTIME_DOCKER_BIN=docker
+    ssh() { case "$*" in *"container inspect"*) return 1 ;; *) return 0 ;; esac; }
+    out="$(dx_runtime_docker_destructive_plan_and_verify container:dxe-coverage-missing:container 2>&1)"
+    printf '%s\n' "$out" | stdin_matches -F -- 'does not exist'
+    rc=0
+    out2="$(dx_runtime_docker_destructive_plan_and_verify bogus:name:role 2>&1)" || rc=$?
+    [ "$rc" -eq 1 ]
+    printf '%s\n' "$out2" | stdin_matches -F -- 'unknown kind'
+)
 
 # Remaining mount codec error and escape paths.
 for encoded in "\$'a\\ab'" "\$'a\\bb'" "\$'a\\nb'" "\$'a\\rb'" "\$'a\\tb'" "\$'a\\eb'" "\$'a\\Eb'" "\$'a\\fb'" "\$'a\\vb'" "\$'a\\\\b'" "\$'a\\\"b'" "\$'a\\'b'"; do dx_mount_legacy_decode_value "$encoded" >/dev/null; done
