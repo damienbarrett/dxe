@@ -1217,7 +1217,8 @@ run_thirdstate_status() {
         export HOME="$thirdstate_fixture/home"
         export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DXE_RUNTIME_DOCKER_BIN=docker
         export DX_CONTAINER_NAME=dxe-status-fixture DX_IMAGE=dx-qnap-thirdstate
-        export DXE_RUNTIME_GUEST_SSH_ADDRESS="$(printf '%s.%s.%s.%s' 100 64 1 3)"
+        DXE_RUNTIME_GUEST_SSH_ADDRESS="$(printf '%s.%s.%s.%s' 100 64 1 3)"
+        export DXE_RUNTIME_GUEST_SSH_ADDRESS
         "$BASE_DIR/bin/dx-status"
     )
 }
@@ -1397,7 +1398,8 @@ set +e
 factory_reset_apple_out="$(
     unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION DX_PROJECT_ROOT
     for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
-    export HOME="$(mktemp -d "${TMPDIR:-/tmp}/dxe-factory-reset-apple.XXXXXX")"
+    HOME="$(mktemp -d "${TMPDIR:-/tmp}/dxe-factory-reset-apple.XXXXXX")"
+    export HOME
     "$BASE_DIR/bin/dx-factory-reset" < /dev/null 2>&1
 )"
 factory_reset_apple_rc=$?
