@@ -376,8 +376,7 @@ gathered the evidence directly instead, and it rules the hypothesis out.
 
 **Evidence 1 — the captured log.** The coordinating session captured
 `dx-test`'s container log from the actual interrupted-boot trial
-(`/Users/damien/dxe-recovery/progress/logs/dx-test-interrupted-boot-2026-09-28.log`,
-outside the repository). Every `Bootstrap phase: ... completed in Ns` line
+(kept in the coordinating session's private logs, outside the repository). Every `Bootstrap phase: ... completed in Ns` line
 in it reads **0s or 1s** ("essentials installation completed in 0s", "Nix
 volume prepare/mount completed in 0s", "Nix ownership check/migration
 completed in 0s", "Home Manager activation completed in 1s", ...), and
@@ -615,7 +614,7 @@ interaction with NAS workloads in repo-safe generic terms only ("size to
 leave headroom for the NAS's existing services and other Container Station
 workloads; see the private target note for this NAS's actual measured
 headroom" — per the brief's rule that full inventory/spike reports live
-outside the repo, `/Users/damien/dxe-recovery/qnap/`, not inside it).
+outside the repo, in the coordinating session's private notes, not inside it).
 
 **Update-survival procedure (item 6):** document backup-first
 (`dx-backup`), then the QTS/Container Station update itself is the
