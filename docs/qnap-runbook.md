@@ -224,3 +224,187 @@ exactly the escape DQ5 forbids). The only supported path is:
 Never open a permanent public ingress, and never temporarily republish the
 guest's SSH port to the LAN or `0.0.0.0` "just for this" — restore
 Tailscale connectivity and resume the normal path above instead.
+
+## 9. Promotion (canary acceptance)
+
+Promoting the QNAP runtime from proof-of-concept to daily use
+(`qnap-dxe-plan.md` Phase 7; design:
+[`docs/refactor/qnap-promotion.md`](refactor/qnap-promotion.md)). Every
+step below is the coordinating session's own action, each after the
+user's explicit go — this section is a checklist and reference, not
+something a subagent runs.
+
+**Identity.** The canary: `dx-qnap-canary`, guest SSH on the NAS's
+Tailscale address at port **2222**,
+`DX_CONTAINER_RESTART_POLICY=unless-stopped` from creation (proven on
+this NAS in Phase 6's maintenance window), **8 GB / 2 CPU** — the user's
+own choice for the canary only, not a new default (see
+[`tests/profiles/qnap-canary-example.env`](../tests/profiles/qnap-canary-example.env)).
+Acceptance period: **one week** of real daily use.
+
+### 9.1 Daily-use exercise list
+
+Exercise each of the following at least once during the week (not a
+fixed daily order): `git` (clone/commit/push/pull inside the guest);
+Nix (a rebuild that changes a generation, `dx-status` showing the new
+generation active); `tmux` (a session that survives a `dx-ssh`
+disconnect/reconnect); at least one editor; `dx-ai`/Herdr or another AI
+tool; `dx-forward`/`dx-reverse` (one tunnel each way); controller
+suspend/reconnect (close the laptop lid mid-session, reopen, confirm
+`dx-status`/`dx-ssh` recover without guest-side action); an ordinary
+controller network change (Wi-Fi to a different network, or Wi-Fi to a
+hotspot); and the relay-fallback observation below, which needs its own
+deliberate pass.
+
+**Relay-fallback observation.** The one item 1 check Phase 6's exit gate
+carried over: a guest stays reachable when the direct Tailscale path
+fails and traffic relays. Force the controller's *direct* path to the
+NAS to fail — reaching a network known to block UDP hole-punching (a
+restrictive Wi-Fi network or hotspot) is the preferred way to produce
+this; a controller-side firewall rule blocking outbound UDP is an
+acceptable substitute **only as a fallback, if no such restrictive
+network turns up during the week** — never anything on the NAS side
+either way. Before: `tailscale status` (the NAS's peer line) and
+`tailscale ping <NAS's tailscale address>`, both showing a direct
+endpoint. Force the change; after: the same two commands now showing the
+peer routed `via` a DERP relay. While relayed: `dx-status`/`dx-ssh`
+against `dx-qnap-canary` still succeed, unchanged — this is the actual
+proof (plain SSH over whatever Tailscale routes underneath; the
+published `<tailscale address>:2222` bind never changes). Record all
+four outputs, sanitized (no real address in the evidence record).
+
+**Evidence.** Record a dated, sanitized entry per exercised item under
+`docs/evidence/<date>/qnap-promotion.md` — the exact `dx-*` command run
+(generic host alias `qnap-dxe` only, never a real address) and the
+observed result; the relay-fallback entry additionally carries the four
+`tailscale status`/`ping` before/after lines, sanitized the same way
+`docs/refactor/qnap-lifecycle.md`'s own evidence record is. Also record,
+once, for the week's own final validation: the NixOS release pin
+(`flake.nix`'s three branch refs), the base image tag + digest
+(`docs/release-maintenance.md`'s alignment rule), and
+`DX_IMAGE_IDENTITY` before/after the rebuild below.
+
+### 9.2 Image rebuild + recreate, preserving volumes
+
+Follow [`docs/release-maintenance.md`](release-maintenance.md)'s existing
+procedure — no new procedure for QNAP. Against the live canary:
+
+```sh
+./bin/dx-profile dx-qnap-canary ./bin/dx-recreate
+```
+
+(If this coincides with an actual release-pin bump, follow
+`docs/release-maintenance.md`'s "MIND THE PIN" branch instead —
+`dx-destroy -> dx-reset-nix-volume -> dx` — since a changed Nix image
+pin is a store-trust event, not a plain recreate; either branch
+preserves `/persist` and the SSH identity.)
+
+Record before/after, via `dx-status`/`dx-backup --dry-run`, no new
+tooling:
+
+- `DX_IMAGE_IDENTITY` changed (new build), and the guest's bootstrap log
+  shows it noticed the change.
+- `/persist` content unchanged: `dx-backup --dry-run` immediately before
+  and immediately after reports the same at-risk selection (ideally "0
+  files ... transferred" on the after-run if a backup was taken just
+  before recreating).
+- SSH host identity: the per-profile known-hosts pin is **expected** to
+  need no `ssh-keygen -R` (a QNAP guest's host key lives on the
+  `/persist`-adjacent state `direct-volume` mode preserves across a
+  recreate) — this is an expectation, not a given; **verify it in the
+  evidence record** by confirming `dx-ssh` connects with no host-key
+  mismatch warning immediately after the recreate.
+- Labels, port, and restart policy unchanged (`docker inspect` /
+  `dx-status`).
+
+### 9.3 Destructive lifecycle on disposables only
+
+Reaffirms, does not redesign, Phase 6's already-proven procedure
+(`dx-destroy-volumes`/`dx-factory-reset`'s immutable ownership plan,
+whole-operation refusal on any label mismatch) — now run with the canary
+concurrently live, a stronger proof than Phase 6's spike-only
+environment. Create a fresh `dx-qnap-spike*`-labelled disposable guest,
+run `dx-destroy-volumes --force`/`dx-factory-reset --force` against it,
+and separately confirm refusal against a deliberately mislabelled or
+misnamed target resembling the canary (zero delete calls). **Never** run
+any destructive command against `dx-qnap-canary` itself, its volumes, or
+its keys.
+
+### 9.4 Restore drill (a second isolated profile)
+
+Demonstrates a full backup + restore on a QNAP guest — the other item
+Phase 6's exit gate carried over (item 3). The second profile is
+**disposable**: name `dx-qnap-drill`, port **2224**, its own volumes and
+keys, created and destroyed during the canary week (never reused, never
+confused with the canary or the eventual production profile).
+
+```sh
+# 1. Fresh backup of the canary.
+./bin/dx-profile dx-qnap-canary ./bin/dx-backup
+
+# 2. Bring up the disposable drill profile (its own local, git-ignored
+#    profile, own keys, own volumes -- port 2224 so it can run alongside
+#    the still-live canary).
+./bin/dx-profile dx-qnap-drill ./bin/dx-create-keys
+./bin/dx-profile dx-qnap-drill ./bin/dx
+
+# 3. Restore the CANARY's backup into the DRILL guest -- dry-run first.
+./bin/dx-profile dx-qnap-drill ./bin/dx-restore --source-container=dx-qnap-canary --dry-run
+./bin/dx-profile dx-qnap-drill ./bin/dx-restore --source-container=dx-qnap-canary
+```
+
+`--source-container=dx-qnap-canary` overrides only which mirror
+`dx-restore` reads *from*; it always pushes into the profile actually
+running the command (here, `dx-qnap-drill`) — a plain `dx-restore` run
+under `dx-qnap-drill` with no flag would refuse instead (no backup
+mirror), exactly as it does for any fresh profile; the flag is the only
+way to cross profiles, and it never happens by accident. `dx-restore`
+prints `Restoring dx-qnap-canary's backup into dx-qnap-drill
+(cross-profile restore).` whenever the flag is given, including under
+`--dry-run` — check for that line before trusting the run touched the
+intended pair of profiles.
+
+**Verify content and permissions:**
+
+```sh
+# Content: re-run the dry-run after the real push -- every target should
+# now report "already identical" (sha256-based, the same classification
+# dx-restore always uses).
+./bin/dx-profile dx-qnap-drill ./bin/dx-restore --source-container=dx-qnap-canary --dry-run
+
+# Permissions: dx-restore always restores dx:dx ownership and preserves
+# mode from the mirror -- spot-check both explicitly, since neither the
+# manifest nor the guest listing carries mode/owner bits on their own.
+./bin/dx-profile dx-qnap-drill ./bin/dx-enter -- \
+    find /persist -not \( -user dx -a -group dx \) -print   # expect empty
+./bin/dx-profile dx-qnap-drill ./bin/dx-enter -- \
+    stat -c '%a %n' /persist/<a known path>   # compare against the same
+                                                # path's mode on the canary
+```
+
+Once the drill is done, tear it down (it was always disposable):
+
+```sh
+./bin/dx-profile dx-qnap-drill ./bin/dx-factory-reset --force
+```
+
+### 9.5 Production profile and `dx-host`
+
+Once the week passes with no unresolved checklist failure and the
+restore drill above counts as the verified backup, the user creates the
+production profile. Proposed identifiers (the user's own decision, not
+this document's):
+`DX_CONTAINER_NAME=dx-qnap` (already `qnap-example.env`'s own value),
+port **2223** — proposed, distinct from the canary's 2222 so both can
+run concurrently during the cutover if wanted; **still a proposal until
+the production profile is actually created**, not a value already in
+effect — 8 GB / 4 CPU and `unless-stopped` from creation (both already
+`qnap-example.env`'s own documented values).
+
+`dx-host` (the Apple DXE) receives no destroy, no factory-reset, no
+volume change, until **both** the canary has completed its full
+acceptance period with no unresolved failure, and `/persist`'s
+irreplaceable content has a **verified** backup (restored-and-checked —
+section 9.4's drill is the qualifying event). Destroying or retiring
+`dx-host` is never scheduled by this document; it stays the user's own
+separate, later, explicit call.
