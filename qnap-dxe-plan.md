@@ -347,7 +347,7 @@ Docker being unreachable, and a full NAS reboot (404s of NAS SSH downtime)
 left the guest already running, on the same bind, by the time SSH
 answered again — no `0.0.0.0` exposure at any point in either case. Full
 detail: `docs/refactor/qnap-lifecycle.md` section A's "Live confirmation"
-and the coordinating session's own landing evidence. Item 8's own text
+and `docs/evidence/20260928/qnap-lifecycle.md`. Item 8's own text
 below is left unchanged as the historical record of what was asked for.
 
 Do not modify production resources during this phase.
@@ -917,10 +917,16 @@ now implemented and/or decided:
 Phase 0's own 8b/8c (Container Station restart, NAS reboot) closed by the
 same maintenance window -- see Phase 0's own status above.
 
-The exit gate below still needs the coordinating session's own landing
-checks (the Apple `dx-test` live tier; backup/restore demonstrated live,
-if not already covered by the maintenance window's own cleanup) before
-Phase 6 is declared landed.
+**Landed 2026-09-28** after the Apple `dx-test` live tier passed on the
+final tip (evidence: `docs/evidence/20260928/qnap-lifecycle.md`). Of the
+exit gate below: the NAS reboot and the Container Station restart lost no
+state and the guest resumed its last complete generation with no
+controller; the controller changed networks during the phase without
+effect on the guest; the factory reset's ownership proof was shown live
+against an unrelated (unlabelled) resource. Still open and carried into
+Phase 7 with the real profile: the failed-direct-Tailscale-path relay
+fallback, and a full backup and restore demonstrated on a QNAP guest
+(`dx-backup` itself runs live before every `dx-host` promotion).
 
 1. Add the QNAP profile example and an operator runbook covering install,
    preflight, normal operation, update, backup, restore, and removal.

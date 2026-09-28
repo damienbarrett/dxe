@@ -172,7 +172,7 @@ operation ownership proof): `dx-factory-reset --force` printed the
 immutable plan and destroyed only the labelled resources; a
 deliberately-unlabelled same-name volume made `dx-destroy-volumes --force`
 refuse with zero deletions. Full evidence record: the coordinating
-session's own landing evidence (not this document).
+session's landing evidence, `docs/evidence/20260928/qnap-lifecycle.md` (not this document).
 
 ## B. Restart ordering (item 9) — decided: alternative (a)
 

@@ -38,14 +38,11 @@ Every plan document below is listed under exactly one of these.
   resolved; only the rest of Q7 (the two large refactor proposals) remains
   open and is not urgent. Trimmed to remaining work only on 2026-09-27, per
   the plan's own retirement step (history: `git log` and `docs/evidence/`).
-  Remaining: Branch 11 Phases 2-7 (the QNAP Docker adapter and x86_64 guest),
-  Branch 12 (`fix/store-trust`), and Branch 13 (the two large proposals, Q7).
-  Four small follow-ups are not yet branches: a flaky Section 6
-  tmux-resurrect probe, a missing `dx-status` keyring line, `dx-restore
-  --dry-run`'s scale at very large target sets, and undecided `dx-backup`
-  deny-list additions.
+  Remaining: Branch 11 Phase 7 (promotion to a real QNAP profile) and
+  Branch 13 (the two large proposals, Q7). Branch 12 (`fix/store-trust`)
+  and the four small follow-ups (`fix/test-hardening`) landed 2026-09-28.
 - [`store-trust-plan.md`](store-trust-plan.md) — **Resolved on
-  `fix/store-trust` (Branch 12), not yet landed to `main`.** Both problems
+  `fix/store-trust` (Branch 12), landed on `main` 2026-09-28.** Both problems
   it tracked (a same-store-path/different-content collision at an image-pin
   bump; recovery when post-remount verification tools themselves depend on
   the persistent store being verified) have a selected, implemented, tested
@@ -63,11 +60,10 @@ Every plan document below is listed under exactly one of these.
   It preserves the Apple runtime as the default, adds an explicit remote-Docker
   adapter and direct `/nix` volume mode, handles native ARM64/x86_64 selection,
   and defines isolated live, reboot, backup/restore, and destructive gates.
-  Phases 0-5 have landed on `main`; Phase 6 (lifecycle, reboot, and
-  operational hardening) is implemented and decided on `feat/qnap-lifecycle`
-  (its own maintenance window proved the reboot/restart behaviour and
-  settled the restart-ordering decision against the real NAS,
-  2026-09-28), not yet landed; Phase 7 (promotion) is not started.
+  Phases 0-6 have landed on `main` (Phase 6 on 2026-09-28: its own
+  maintenance window proved the reboot/restart behaviour and settled the
+  restart-ordering decision against the real NAS); Phase 7 (promotion) is
+  not started.
   Accepted for implementation on
   2026-09-26 (see `checkout-consolidation-plan.md`, Branch 11), and sequenced
   after the start-generation fix and the `/persist` backup land. Revisit
