@@ -580,8 +580,12 @@ Phase 6: container-only recreate; the primary guest now has the health
 lines in `dx-status` and `dx-wait-ssh` and the Apple-discarded health
 flags in its create argv; the guest was idle beforehand, backup current,
 `/persist` file count identical, keyring `stale` then `live` after a cold
-`dx-ai`, no health line fired on the healthy guest). `dx-host` is current;
-the next promotion follows the next runtime-affecting landing.
+`dx-ai`, no health line fired on the healthy guest), and `main` `8fba879`
+(2026-09-29, Phase 7's code: container-only recreate with an unchanged create
+argv; the primary guest now carries the cross-profile restore flag; guest idle
+beforehand, backup current, `/persist` file count identical, keyring `stale`
+then `live` after a cold `dx-ai`). `dx-host` is current; the next promotion
+follows the next runtime-affecting landing.
 
 **Before promoting:**
 

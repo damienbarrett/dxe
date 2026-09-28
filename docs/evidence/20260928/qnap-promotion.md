@@ -109,5 +109,23 @@ restore drill into `dx-qnap-drill`; 5 the destructive lifecycle on
 `dx-qnap-spike2`; 6 the production profile once the week passes; 7
 `dx-host` intact throughout.
 
-(Nothing yet: the canary is created right after this landing; each live
-step is appended here, dated and sanitised, as it happens.)
+### Step 1 — canary created (2026-09-29, day 1 of the acceptance week)
+
+Created from the landed code (`main` `8fba879`) with the local profile
+copied from `tests/profiles/qnap-canary-example.env` and a key pair
+generated for it; nothing of ours existed on the NAS beforehand (the
+managed-label filters were empty).
+
+| Check | Result |
+| --- | --- |
+| first boot to SSH | 160 s (native x86_64 bootstrap) |
+| container | running, restart count 0, policy `unless-stopped`, 2 CPU / 8 GB, health check configured |
+| binding | `2222/tcp` on `<tailnet address>` only; NAS listener on that address only; a LAN-side connect from the NAS to `<LAN address>:2222` refused |
+| `dx-ssh` | `SSH_OK`, `x86_64`, user `dx`; running generation equals published |
+| `dx-status` | SSH section on the tailnet address; `keyring: not running` (fresh guest, expected) |
+| Docker health after one minute | `healthy` (Phase 6's health check, live for the first time on a real guest) |
+
+The week's exercise list is `docs/qnap-runbook.md` section 9; entries for
+the exercised items, the relay-fallback observation, the rebuild and
+recreate, the restore drill and the spike lifecycle follow below as they
+happen.
