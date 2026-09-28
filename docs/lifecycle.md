@@ -297,11 +297,21 @@ model rather than repeating the runbook's own walkthrough:
   resource-by-resource partial destroy. See principle 9 above for where
   this lives in the runtime-boundary audit's exception list. Apple's
   behaviour is unaffected: it has no DQ6 labels to check at all.
-- **Restart policy and restart ordering** (`DX_CONTAINER_RESTART_POLICY`,
-  item 9's NAS-boot/Container-Station-restart/Tailscale-restart ordering)
-  are still being finalised against live observations from the NAS's own
-  maintenance window; see `qnap-dxe-plan.md`'s Phase 6 status for the
-  current state, and the runbook once that guidance lands.
+- **Restart policy and restart ordering** — settled 2026-09-28. A
+  maintenance window against a disposable guest proved
+  `DX_CONTAINER_RESTART_POLICY=unless-stopped` across a container restart,
+  a Container Station restart, and a full NAS reboot on the production
+  NAS: state, generation, and the Tailscale-only bind all survived every
+  restart kind, with no controller present. Item 9's restart ordering is
+  decided as relying on Docker's own restart policy (no NAS-side hook):
+  on this NAS `tailscale0` is addressed before Container Station starts
+  any container, so the race item 9 exists to handle never occurred; a
+  NAS-side autorun hook remains a documented fallback design, never
+  implemented without the user's explicit word. The default stays `no` —
+  see [the runbook](qnap-runbook.md) for the guardrail on when to opt in,
+  and `qnap-dxe-plan.md`'s Phase 6 status and
+  `docs/refactor/qnap-lifecycle.md` section B for the full evidence and
+  reasoning.
 
 ### Backing up and restoring /persist
 

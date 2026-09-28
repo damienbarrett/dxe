@@ -112,11 +112,12 @@ all — no `dx-start-container`, no `dx-sync-bootstrap`) must guarantee:**
    confirm-timeout check (`DX_BOOTSTRAP_CONFIRM_TIMEOUT`, D7 option 3) never
    runs on this path either way, because nothing calls
    `dx-start-container`. Item 3 therefore needs no new mechanism — the
-   guest-side code is identical on both runtimes — but item 3's own live
-   gate (the coordinating session's, not this subagent's) still needs to
-   confirm this specific evidence, gathered on Apple, reproduces under
-   Docker's restart supervision on the actual NAS; this design note does not
-   claim that half is already proven.
+   guest-side code is identical on both runtimes. **Now confirmed under
+   Docker's own restart supervision on the actual NAS** by the
+   maintenance window below (2026-09-28): the same no-publisher fallback
+   completed with no controller present across a container restart, a
+   Container Station restart, and a full NAS reboot alike — see "Live
+   confirmation" below for the exact results.
 2. **The port binds the Tailscale address.** Already true structurally
    (`dx_runtime_guest_ssh_address` + the adapter's address-prefixed
    `--publish`, Phase 5). What is *not* yet proven is whether it binds
@@ -144,7 +145,36 @@ nothing prevents setting the field early, but the runbook must say so
 explicitly, per DQ3's own "after the reboot behaviour passes the live gate"
 wording.
 
-## B. Restart ordering (item 9) — alternatives, decided after observations
+**Live confirmation (coordinating session, disposable `dx-qnap-spike`,
+8 GB / 4 CPU x86_64, `DX_CONTAINER_RESTART_POLICY=unless-stopped`,
+2026-09-28) — the reboot behaviour this section asked for has now passed
+the live gate on this NAS, closing the gap point 1 above left open:**
+
+| Restart kind | Result | `dx-wait-ssh` ready | Generation |
+| --- | --- | --- | --- |
+| Container restart (`docker restart`) | Back to `Running`, `RestartCount 0`, port bound to the Tailscale address unchanged | 36s | Running == published (no controller) |
+| Container Station restart (`/etc/init.d/container-station.sh restart`) | Docker daemon unreachable ~40s, then the container came back **by itself** (`unless-stopped` honoured), `RestartPolicy` preserved, `RestartCount 0` (a fresh daemon start, not a policy retry), bind unchanged; `tailscale0` kept its address throughout (tells us nothing about the race — see section B) | 35s | unchanged (no controller) |
+| NAS reboot (`sudo reboot`) | NAS SSH down 404s; at the moment SSH answered again, `tailscale0` already had its address (+0s), Docker accepted connections (+2s), the container was already `Running` (+3s), `RestartCount 0`, `State.Error` empty, port bound to the Tailscale address only (`docker port`/NAS-side `netstat`; a LAN-side self-connect was refused) | 29s | unchanged (no controller) |
+
+In every case the existing-current-generation bootstrap path (guarantee 1
+above) completed with no controller present, confirming
+`docs/evidence/20260926/start-generation-red.md`'s Apple-only finding
+reproduces under Docker's restart supervision and under a full NAS
+reboot, which that record did not cover. Timing budget: the longest wait
+an operator would see is the reboot's own NAS-down window (~7 minutes)
+plus ~30s for the guest; `dx-wait-ssh`'s default limit is not approached.
+`unless-stopped` is proven for this NAS across all three restart kinds —
+the default stays `no`, this is opt-in evidence for the runbook and the
+example profile (section F), not a new default.
+
+Also live-confirmed at the same window's cleanup (section E's whole-
+operation ownership proof): `dx-factory-reset --force` printed the
+immutable plan and destroyed only the labelled resources; a
+deliberately-unlabelled same-name volume made `dx-destroy-volumes --force`
+refuse with zero deletions. Full evidence record: the coordinating
+session's own landing evidence (not this document).
+
+## B. Restart ordering (item 9) — decided: alternative (a)
 
 `qnap-dxe-plan.md` item 9's requirement: since guest SSH publishes to the
 NAS's Tailscale address (DQ5), the container must start only after
@@ -154,24 +184,31 @@ publishing a port that silently binds nothing reachable.
 
 | # | Alternative | NAS boot | Container Station restart | Tailscale service restart | DQ5 risk |
 | --- | --- | --- | --- | --- | --- |
-| (a) | Rely on Docker's own restart-policy backoff to retry a failed port bind until `tailscale0` has an address | Depends on whether Docker's restart-policy backoff re-attempts the *port bind*, not just the process, after a bind failure at container start — **unverified, see observations below** | Same mechanism, shorter window (Tailscale is usually already up unless the restart also bounces `tailscaled`) | Same mechanism | None if Docker's own retry never falls back to `0.0.0.0`/all-interfaces on retry (it won't — the bind spec is fixed at container-create time); the risk is purely "never becomes reachable," not "reachable on the wrong interface" |
+| (a) **— DECIDED, 2026-09-28** | Rely on Docker's own restart-policy backoff to retry a failed port bind until `tailscale0` has an address | Chosen. On this NAS `tailscale0` is already addressed before Container Station starts any container (observed across all three restart kinds — see below), so Docker's own retry was never actually exercised; the design still holds it as the mechanism of record because the alternative it must beat, a NAS-side hook, has no evidence it is needed here | Same mechanism, shorter window (Tailscale is usually already up unless the restart also bounces `tailscaled`) | Same mechanism | None observed: never `0.0.0.0`, never a transient wrong-interface bind, in any of the three restart kinds |
 | (b) | A NAS-side start hook (QTS autorun, or a Container Station "application") that starts the guest only after Tailscale reports an address | Guarantees ordering by construction | Only helps if Container Station restart re-triggers the hook, which a plain container restart-policy does not | Only helps if the hook is wired to the Tailscale service's own restart, not just boot | Lowest technical risk to DQ5, but is NAS-side automation outside Container Station's own restart-policy field — **an autorun hook is a design option to describe here, not to implement without the user's explicit word** (SUBAGENT-BRIEF "Decisions are not yours"; task's own "Decisions are not yours" list names this exact case) |
 | (c) | A guest- or adapter-side wait that fails fast with a clear diagnostic and leaves the retry to the operator/`dx-start-container` | Guest already waits (30s grace, section A) but that wait is for a *publisher*, not for the *network*; a bind failure at container-create/start time is a different failure mode this alternative would need to detect and report, not silently retry | Same | Same | Safest for DQ5 (no automatic fallback path that could widen the bind), but does not satisfy item 9's "the container must start only after ... alike" wording on its own unless paired with (a) actually working, since this alternative's whole point is failing loudly rather than recovering unattended |
 
-**Why the port-bind failure mode matters (unresolved without the live
-observations):** `docker create ... -p <tailscale-ip>:2222:2222` requires
-Docker to resolve `<tailscale-ip>` to a *routable local address* at bind
-time. If `tailscale0` has no address yet, the most likely Docker behaviour
-is that the initial `docker start` (or the daemon's own restart-policy
-retry) fails outright with an address-not-available error, and whether the
-restart-policy's own backoff (`no`/`unless-stopped` only takes an interval,
-no dedicated "retry until bindable" semantics) re-attempts that specific
-failure the same way it retries a crashed process is not established by
-anything already read from Phase 0/2/3/5 — hence the observation list.
+**Why the port-bind failure mode mattered going in:** `docker create ...
+-p <tailscale-ip>:2222:2222` requires Docker to resolve `<tailscale-ip>`
+to a *routable local address* at bind time. If `tailscale0` has no
+address yet, the most likely Docker behaviour is that the initial `docker
+start` (or the daemon's own restart-policy retry) fails outright with an
+address-not-available error, and whether the restart-policy's own backoff
+(`no`/`unless-stopped` only takes an interval, no dedicated "retry until
+bindable" semantics) re-attempts that specific failure the same way it
+retries a crashed process was not established by anything already read
+from Phase 0/2/3/5 — hence the observation list below. **Resolved by the
+observations: the question never arose on this NAS** (`tailscale0` is
+always addressed before Container Station starts any container), so
+Docker's bind-retry behaviour specifically remains untested — but since
+the ordering DQ5/item 9 actually cares about held throughout, this does
+not block the decision; see "What the maintenance window actually
+produced" below.
 
-**Exact observations the maintenance window must produce (for the
+**Exact observations the maintenance window was asked to produce (for the
 coordinating session to collect against `dx-qnap-spike`,
-`DX_CONTAINER_RESTART_POLICY=unless-stopped`):**
+`DX_CONTAINER_RESTART_POLICY=unless-stopped`) — kept verbatim as the
+request; results follow in the next section:**
 
 1. **Container restart** (`docker restart dx-qnap-spike`, or the OS-level
    equivalent of a crash): does the container return to `Running` with
@@ -215,19 +252,72 @@ coordinating session to collect against `dx-qnap-spike`,
    would time out or read as "down" during a NAS reboot that is actually
    still in progress — feeds section C's health-layer design directly.
 
-**Decision rule (for the coordinating session once observations arrive):**
-if (a) alone reaches a Tailscale-bound, reachable port on every one of the
-three restart kinds within a reasonable multiple of `DX_SSH_WAIT_TIMEOUT`,
-prefer (a) — zero new moving parts, nothing beyond Container Station. If
-Docker's retry never re-attempts a failed bind (observation 3b/3c answers
-this), (b) is the next candidate but needs the user's explicit go before any
-NAS-side hook is written, per the brief's "Decisions are not yours" and this
-task's own list. (c) is the fallback that requires no NAS-side automation at
-all but, on its own, does not satisfy item 9's "must start only after ...
-alike" wording — it would need to be paired with (a) or (b) rather than
-replace them. This document does not pick a winner; Increment 4 documents
-whichever the observations settle, or says the observations have not
-arrived and does Increment 5 first (per the task's own instruction).
+**What the maintenance window actually produced (coordinating session,
+disposable `dx-qnap-spike`, 8 GB / 4 CPU x86_64,
+`DX_CONTAINER_RESTART_POLICY=unless-stopped`, 2026-09-28):**
+
+1. **Container restart** (`docker restart`): back to `Running`,
+   `RestartCount 0`, `2222/tcp` still bound to the Tailscale address only,
+   `dx-wait-ssh` ready 36s after, running generation == published
+   (existing-current-generation path, no controller publish).
+2. **Container Station restart** (`/etc/init.d/container-station.sh
+   restart`, typed by the user): Docker daemon unreachable for ~40s; the
+   container came back **by itself** (`unless-stopped` honoured),
+   `RestartPolicy` preserved as `unless-stopped`, `RestartCount 0` (a
+   fresh daemon start, not a policy retry), bind unchanged (Tailscale
+   address only), `tailscale0` kept its address throughout — so, exactly
+   as predicted above, this case says nothing about the race. `dx-wait-ssh`
+   ready 35s after, generation unchanged.
+3. **NAS reboot** (`sudo reboot`, typed by the user): NAS SSH down for
+   404s. At the moment SSH answered again: `tailscale0` already had its
+   address (+0s), Docker accepted connections +2s later, and the
+   container was already running +3s after that, `RestartCount 0`,
+   `State.Error` empty, `docker port` showing `2222/tcp -> <Tailscale
+   address>:2222`. NAS-side `netstat` listener: the Tailscale address
+   only, never `0.0.0.0`; a LAN-side connect from the NAS to its own LAN
+   address:2222 was refused. `dx-wait-ssh` ready 29s later; generation
+   unchanged, no controller. **On this NAS, Tailscale is up before
+   Container Station starts the guest: no bind failure occurred, hence no
+   retry was exercised (observations 3b/3c unobservable here), and no
+   transient `0.0.0.0` exposure at any point (observation 3d).**
+4. **Existing-current-generation bootstrap path** completed with no
+   controller present in all three cases.
+5. **Timing budget**: the longest wait an operator would see is the
+   reboot's own NAS-down window (~7 minutes) plus ~30s for the guest;
+   `dx-wait-ssh`'s default limit is not approached.
+
+**Decision (the coordinating session's, per this document's own decision
+rule): alternative (a).** Rely on Docker's own restart policy; no NAS-side
+hook.
+
+- **(i) The observed ordering is the load-bearing fact, not Docker's own
+  retry behaviour** (which was never exercised): on QTS/QuTS hero with the
+  Tailscale qpkg, `tailscale0` is addressed before Container Station
+  starts any container, on every restart kind tested. Alternative (a)
+  "works" here because the race it exists to handle does not occur on
+  this NAS, not because Docker's bind-retry was proven to recover from
+  one.
+- **(ii) Fail-loud behaviour if that ordering ever changes** (a future
+  QTS/QuTS release, a different NAS model, or a Tailscale service that
+  starts later): Docker would leave the container exited with a bind
+  error, visible in `docker ps`/Container Station and in `dx-status`'s
+  third state (section C) exactly as any other failed start already shows
+  up. The remedy is a plain `dx-start-container` once `tailscale0` has its
+  address — alternative (c)'s diagnostic wording, reused as-is. No
+  automatic widening of the bind is ever added; DQ5's invariant holds
+  regardless of what a future NAS does.
+- **(iii) Alternative (b) (a NAS-side autorun hook) is recorded as not
+  needed** for this NAS, kept in the table above as the fallback design if
+  a future NAS shows the race this window did not — never implemented
+  without the user's explicit word, per the brief's "Decisions are not
+  yours" and unchanged by this decision.
+
+Also live-confirmed at the same window's cleanup: `dx-factory-reset
+--force` printed the immutable plan and destroyed only the labelled
+resources; a deliberately-unlabelled same-name volume made
+`dx-destroy-volumes --force` refuse with zero deletions (section E's
+whole-operation ownership proof, proven against the real NAS, not only
+fakes).
 
 ## C. Health reporting (item 5) — layered, runtime-neutral where possible
 
@@ -598,10 +688,19 @@ beyond the shared health layers in `dx-status`.
   just the shared "collision" error text both paths produce; Section 9:
   Apple no-op regression guard). No change to `tests/run-tier.sh`'s
   destructive tier itself.
-- **Increment 4** (restart policy / ordering docs): none beyond documentation
-  assertions already covered by Section 10 (below) — this increment is
-  prose plus whichever alternative the observations settle, not new
-  production code.
+- **Increment 4** (restart policy / ordering docs, done after Increment 5
+  once the coordinator's maintenance-window observations arrived, per the
+  task's own fallback instruction): no new tests — docs only, no
+  production or test code touched. Section B's alternatives table, the
+  observation results, and the decision (alternative (a), item 9) are all
+  recorded directly in this design note; `qnap-dxe-plan.md`'s Phase 6
+  status paragraph and Phase 0's own status record the same outcome
+  (8b/8c closed); `docs/qnap-runbook.md` and
+  `tests/profiles/qnap-example.env` gain the "reboot behaviour passed the
+  live gate on 2026-09-28" guidance for `unless-stopped`. Existing
+  Section 10 assertions (below) continue to cover documentation
+  discoverability; nothing new needed there since no new doc file was
+  added.
 - **Increment 5** (docs): Section 10 (`tests/test_section10_docs.sh`) extended
   to include `docs/qnap-runbook.md` in its checked document list (it
   currently checks `lifecycle`, `configuration`, `guest`, `troubleshooting`,

@@ -120,14 +120,34 @@ action on production infrastructure). After the update, run preflight
 `dx-status` still reports a healthy generation and the guest's SSH address
 unchanged.
 
-Restart-policy guidance (`DX_CONTAINER_RESTART_POLICY=unless-stopped`, and
-the restart-ordering behaviour across a container restart, a Container
-Station restart, and a NAS reboot) is being finalised against live
-observations from the NAS's own maintenance window and will be added here
-once settled — see `qnap-dxe-plan.md`'s Phase 6 status for the current
-state. Until then, leave `DX_CONTAINER_RESTART_POLICY` at its default
-(`no`) and start the guest back up yourself
-(`./bin/dx-profile <your-profile-name> ./bin/dx`) after any restart.
+**Restart policy and restart ordering — settled 2026-09-28.** A
+maintenance window against a disposable guest (`dx-qnap-spike`, 8 GB /
+4 CPU x86_64) on this NAS proved `DX_CONTAINER_RESTART_POLICY=unless-stopped`
+across all three restart kinds: a container restart, a Container Station
+restart (Docker unreachable for ~40s, the guest came back on its own,
+`RestartPolicy` preserved), and a full NAS reboot (the NAS unreachable
+over SSH for ~7 minutes; the guest was already running, on the same
+Tailscale-only bind, by the time SSH answered again). In every case the
+guest resumed the last published bootstrap generation with no controller
+present, and `dx-wait-ssh` was ready within about 30-40s of the guest
+itself becoming reachable. No state was lost; the port never bound
+`0.0.0.0`, not even transiently. This is per-NAS evidence, not a
+guarantee about every QNAP model or QTS/QuTS release: it relies on
+`tailscale0` already being addressed before Container Station starts any
+container, which held throughout this window.
+
+**Default stays `no`.** Set `DX_CONTAINER_RESTART_POLICY=unless-stopped`
+in your own profile only after your own guest has completed at least one
+full, successful bootstrap and `dx-status` shows a healthy generation
+(section 1's guardrail) — this proof does not carry over to a NAS you
+have not tested it on yourself. If you have not run this same check on
+your own NAS, leave the default (`no`) and start the guest back up
+yourself (`./bin/dx-profile <your-profile-name> ./bin/dx`) after any
+restart. If the guest ever fails to come back after a restart with
+`unless-stopped` set, `dx-status`/`docker ps`/Container Station will show
+it exited with a bind error rather than silently publishing on the wrong
+address (DQ5's invariant always holds); the remedy is the same manual
+start once `tailscale0` has its address again, never a wider publish.
 
 ## 5. Backup
 

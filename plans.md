@@ -64,8 +64,11 @@ Every plan document below is listed under exactly one of these.
   adapter and direct `/nix` volume mode, handles native ARM64/x86_64 selection,
   and defines isolated live, reboot, backup/restore, and destructive gates.
   Phases 0-5 have landed on `main`; Phase 6 (lifecycle, reboot, and
-  operational hardening) is in progress on `feat/qnap-lifecycle`, not yet
-  landed; Phase 7 (promotion) is not started. Accepted for implementation on
+  operational hardening) is implemented and decided on `feat/qnap-lifecycle`
+  (its own maintenance window proved the reboot/restart behaviour and
+  settled the restart-ordering decision against the real NAS,
+  2026-09-28), not yet landed; Phase 7 (promotion) is not started.
+  Accepted for implementation on
   2026-09-26 (see `checkout-consolidation-plan.md`, Branch 11), and sequenced
   after the start-generation fix and the `/persist` backup land. Revisit
   trigger: when Phase 6 lands, or when Phase 7 (promotion) is scheduled.
