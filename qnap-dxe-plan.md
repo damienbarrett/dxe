@@ -966,8 +966,9 @@ fallback, and a full backup and restore demonstrated on a QNAP guest
 
 Promote a non-default canary profile before creating the production QNAP DXE.
 
-**Status (2026-09-28, `feat/qnap-promotion`):** design note
-`docs/refactor/qnap-promotion.md` reviewed and accepted. **Designed and
+**Status (2026-09-28, `feat/qnap-promotion`, code landed the same day):**
+design note `docs/refactor/qnap-promotion.md` reviewed and accepted;
+landing evidence and the live-step log: `docs/evidence/20260928/qnap-promotion.md`. **Designed and
 code-proven on the branch:** item 3's restore isolation
 (`dx-restore --source-container=NAME`, `bin/lib/dx-backup.sh`/
 `bin/dx-restore`, proven against fakes only, red before green); the

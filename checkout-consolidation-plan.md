@@ -60,18 +60,18 @@ Updated 2026-09-27, after this trim.
   Phase 0's own 8b/8c the same way, and live-tested the destructive
   ownership proof; the Apple `dx-test` live tier passed (evidence:
   `docs/evidence/20260928/qnap-lifecycle.md`). **Phase 7** (promotion and
-  maintenance proof) is designed and code-proven on branch
-  `feat/qnap-promotion` -- the restore-isolation flag
-  (`dx-restore --source-container=NAME`), the canary acceptance checklist
-  (`docs/qnap-runbook.md` section 9) and its checked-in example profile
-  (`tests/profiles/qnap-canary-example.env`) -- but **not yet landed on
-  `main`**, and every live step (creating the canary, the restore drill,
-  the disposable-spike destructive-lifecycle reaffirmation, the canary's
-  own rebuild + recreate, and eventually the production profile) is still
-  ahead, each after the user's own go; see `qnap-dxe-plan.md`'s Phase 7
-  status for the pre-approved order.
-- **Remaining work:** land Branch 11 Phase 7 (`feat/qnap-promotion`,
-  above), then its live steps against the real NAS, and Branch 13 (the
+  maintenance proof) **landed its code on `main` 2026-09-28** -- the
+  restore-isolation flag (`dx-restore --source-container=NAME`), the
+  canary acceptance checklist (`docs/qnap-runbook.md` section 9) and its
+  checked-in example profile (`tests/profiles/qnap-canary-example.env`;
+  evidence: `docs/evidence/20260928/qnap-promotion.md`). Its live steps
+  (the canary and its acceptance week, the restore drill, the
+  disposable-spike destructive-lifecycle reaffirmation, the canary's own
+  rebuild + recreate, and eventually the production profile) run against
+  the real NAS in the pre-approved order `qnap-dxe-plan.md`'s Phase 7
+  status records, appended to that evidence record as they happen.
+- **Remaining work:** Branch 11 Phase 7's live steps against the real
+  NAS (code landed 2026-09-28, above), and Branch 13 (the
   two large proposals, Q7 -- still open, not urgent). Branch 12
   (`fix/store-trust`) and the four small follow-ups (`fix/test-hardening`)
   landed 2026-09-28.
@@ -102,7 +102,7 @@ the next one may start.
 | 7 | `test/herdr-acceptance` | Two missing Herdr tests: bad-snapshot recovery and pane-history deletion | S | Yes (`dx-test`) | No (Q3 resolved) | **Done** 2026-09-26 — evidence: `docs/evidence/20260926/herdr-acceptance.md` |
 | 8 | `refactor/legacy-migration-cleanup` | Check that every guest has left the old base image, then delete the old-base guards. This finishes `refactor-plan.md` | S–M | Yes (inventory) | No | **Done** 2026-09-27 — evidence: `docs/evidence/20260926/legacy-guard-removal.md`; `refactor-plan.md` closed |
 | 10 | `feat/persist-backup` | "B1": incremental host backup and restore of the guest's `/persist` data | M | Yes | No (Q5 resolved) | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/persist-backup.md` |
-| 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 done, including 8b/8c (closed by Phase 6's maintenance window). Phases 1-5 landed on `main` (arch-neutral guest, remote-aware SSH over the NAS's own Tailscale address) — see the Branch 11 section below for each phase's evidence record. **Phase 6 (lifecycle, reboot, operational hardening) landed 2026-09-28, items 1-9 all done or decided** (maintenance window 2026-09-28: `unless-stopped` proven across all three restart kinds, item 9 decided as alternative (a), destructive ownership proof live-tested; Apple `dx-test` live tier passed); **Phase 7 (promotion, `feat/qnap-promotion`) designed and code-proven, ready for live steps -- not yet landed** — see below |
+| 11 | `feat/qnap-runtime` (several branches) | Run DXE on the QNAP (TVS-h674T, x86_64) via Docker over SSH | L | Yes, plus the QNAP | No (accepted 2026-09-26) | Phase 0 done, including 8b/8c (closed by Phase 6's maintenance window). Phases 1-5 landed on `main` (arch-neutral guest, remote-aware SSH over the NAS's own Tailscale address) — see the Branch 11 section below for each phase's evidence record. **Phase 6 (lifecycle, reboot, operational hardening) landed 2026-09-28, items 1-9 all done or decided** (maintenance window 2026-09-28: `unless-stopped` proven across all three restart kinds, item 9 decided as alternative (a), destructive ownership proof live-tested; Apple `dx-test` live tier passed); **Phase 7 (promotion) code landed 2026-09-28; live steps (canary week, restore drill, spike lifecycle, canary recreate, production profile) in progress** — see below |
 | 12 | `fix/store-trust` | Safe handling of the two Nix-store trust problems in `store-trust-plan.md` | L | Yes | No (Q6 resolved: fail fast) | Implemented on the branch 2026-09-27, not yet landed — see Branch 12 section |
 | 13 | `refactor/bootstrap-v2`, `refactor/declarative-nix` | The two remaining large proposals. No branch until you accept one | L each | Yes | Q7 (still open) | Not started |
 | 14 | `fix/dx-ai-no-source-builds` | Stop `dx-ai` from silently compiling heavy AI tools from source when a `nixpkgs-unstable` refresh misses the binary cache | S–M | Yes (`dx-test`) | No | **Done** 2026-09-27 — evidence: `docs/evidence/20260927/dx-ai-no-source-builds.md` |
@@ -113,8 +113,8 @@ the next one may start.
 
 **Remaining order:** Branch 11 Phase 7 has no outstanding
 prerequisites -- Phases 0-6, Branch 12 (store trust) and the four small
-follow-ups (`fix/test-hardening`) are all on `main`. Phase 7 itself is
-designed and code-proven on `feat/qnap-promotion`, ready to land; the
+follow-ups (`fix/test-hardening`) are all on `main`. Phase 7's code
+landed on `main` 2026-09-28; the
 live steps (canary creation, the restore drill, the disposable-spike
 destructive-lifecycle reaffirmation, the canary's own rebuild + recreate,
 and the production profile) follow landing, each after the user's own
@@ -247,9 +247,10 @@ tests, 0 failures; the new health lines silent on a healthy guest, the
 Apple destroy refusal unchanged), and every container-free gate passed on
 a fresh Linux clone before the fast-forward.
 
-**Phase 7 (promotion and maintenance proof, `feat/qnap-promotion`) is
-designed and code-proven on the branch, not yet landed** (design:
-`docs/refactor/qnap-promotion.md`, reviewed and accepted). Item 3's
+**Phase 7 (promotion and maintenance proof, `feat/qnap-promotion`)
+landed its code on `main` 2026-09-28** (design:
+`docs/refactor/qnap-promotion.md`, reviewed and accepted; landing
+evidence and the live-step log: `docs/evidence/20260928/qnap-promotion.md`). Item 3's
 restore isolation (`dx-restore --source-container=NAME`, fakes only, red
 before green), the canary acceptance checklist and evidence shape
 (`docs/qnap-runbook.md` section 9), and the canary's own checked-in
@@ -462,7 +463,7 @@ For each proposal:
 | --- | --- | --- |
 | Bootstrap refactor v2 | **Park** until Branch 12 is done, then re-decide | Its phases assume today's code. The store-trust fix will change that code, so it would need rebaselining anyway. |
 | Declarative Nix audit | **Reject as a single programme; accept its items one at a time** as small branches, alongside other work | Each conversion (for example SSH or sudo config into Home Manager) is independently useful and small. A big-bang migration conflicts with limiting work in progress. |
-| QNAP runtime | **Resolved 2026-09-26: accepted** as Branch 11. Phases 0-6 landed (Phase 4 on 2026-09-28: the first native x86_64 guest bootstrapped on the QNAP; Phase 5 the same day: that guest reached directly on the NAS's Tailscale address from the controller; Phase 6: lifecycle/reboot/operational hardening); Phase 7 (promotion) designed and code-proven on `feat/qnap-promotion`, live steps ahead | The target is a TVS-h674T (x86_64, confirmed in Phase 0); Phase 4's per-system flake outputs and keyed Antigravity pin let the guest build natively there; Phase 5 reaches it directly on the NAS's own Tailscale address instead of a jump host. |
+| QNAP runtime | **Resolved 2026-09-26: accepted** as Branch 11. Phases 0-6 landed (Phase 4 on 2026-09-28: the first native x86_64 guest bootstrapped on the QNAP; Phase 5 the same day: that guest reached directly on the NAS's Tailscale address from the controller; Phase 6: lifecycle/reboot/operational hardening); Phase 7 (promotion) code landed 2026-09-28, live steps in progress against the real NAS | The target is a TVS-h674T (x86_64, confirmed in Phase 0); Phase 4's per-system flake outputs and keyed Antigravity pin let the guest build natively there; Phase 5 reaches it directly on the NAS's own Tailscale address instead of a jump host. |
 
 **Coverage metric conflict:** only relevant if you accept both v2 and the Nix
 audit's item #12. That item replaces the coverage ratio with a ceiling on
