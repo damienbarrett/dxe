@@ -9,25 +9,46 @@ source "$SCRIPT_DIR/lib/dx-backup.sh"
 
 DRY_RUN=false
 FORCE=false
+SOURCE_CONTAINER=""
 PATHS=()
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=true ;;
         --force) FORCE=true ;;
+        --source-container=*) SOURCE_CONTAINER="${arg#--source-container=}" ;;
         --help)
-            echo "Usage: dx-restore [--dry-run] [--force] [PATH...]"
+            echo "Usage: dx-restore [--dry-run] [--force] [--source-container=NAME] [PATH...]"
             echo "Push DX_BACKUP_DIR's current/ mirror (or the named PATHs within it) back into a running guest's /persist."
+            echo "  --source-container=NAME  read a DIFFERENT profile's mirror (by its DX_CONTAINER_NAME), still"
+            echo "                           pushing into THIS profile's own running guest. Never the default; a"
+            echo "                           plain 'dx-restore' never crosses profiles (qnap-dxe-plan.md Phase 7)."
             exit 0
             ;;
-        --*) echo "Error: unrecognized option '$arg'. Usage: dx-restore [--dry-run] [--force] [PATH...]" >&2; exit 64 ;;
+        --*) echo "Error: unrecognized option '$arg'. Usage: dx-restore [--dry-run] [--force] [--source-container=NAME] [PATH...]" >&2; exit 64 ;;
         *) PATHS+=("$arg") ;;
     esac
 done
 
+# --source-container=NAME (docs/refactor/qnap-promotion.md section B): fail
+# closed on an invalid identifier before touching the filesystem or the
+# guest, reusing DX_CONTAINER_NAME's own validator -- no new character-class
+# rule. An explicit, correctly-shaped NAME is the only way to cross
+# profiles; there is no fallback search and no "closest match."
+if [ -n "$SOURCE_CONTAINER" ]; then
+    dx_config_validate_value DX_CONTAINER_NAME "$SOURCE_CONTAINER" || { echo "Error: invalid --source-container value '$SOURCE_CONTAINER'." >&2; exit 64; }
+fi
+
 container_exists "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME does not exist. Run ./bin/dx-create-container first." >&2; exit 1; }
 container_is_running "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME is not running. dx-restore needs a running guest to push into." >&2; exit 1; }
 
-BACKUP_DIR="$(dx_backup_resolve_dir)"
+# The cross-profile banner prints whenever the flag is given, before doing
+# anything else (including under --dry-run) -- never silent about reading
+# another profile's mirror (docs/refactor/qnap-promotion.md section B2).
+if [ -n "$SOURCE_CONTAINER" ]; then
+    echo "Restoring ${SOURCE_CONTAINER}'s backup into ${DX_CONTAINER_NAME} (cross-profile restore)."
+fi
+
+BACKUP_DIR="$(dx_backup_resolve_dir "$SOURCE_CONTAINER")"
 [ -d "$BACKUP_DIR/current" ] || { echo "Error: no backup mirror at $BACKUP_DIR/current. Run dx-backup first." >&2; exit 1; }
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dx-restore.XXXXXX")"

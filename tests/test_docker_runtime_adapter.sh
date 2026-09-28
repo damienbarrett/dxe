@@ -1822,6 +1822,33 @@ esac'
 )
 [ "$?" -eq 0 ] && test_pass "dx_backup_resolve_dir: docker-ssh gains a runtime+daemon-ID path segment, never mixing two NASs' backups" || test_fail "dx_backup_resolve_dir: docker-ssh gains a runtime+daemon-ID path segment, never mixing two NASs' backups"
 
+# dx_backup_resolve_dir: an explicit override argument (qnap-dxe-plan.md
+# Phase 7 / docs/refactor/qnap-promotion.md section B -- dx-restore's
+# --source-container=NAME) replaces ONLY the container-name segment; with
+# no argument, both cases above already prove nothing changed. Apple's
+# shape composes the override the same simple way.
+(
+    export DX_RUNTIME=apple DX_CONTAINER_NAME=dx-host DX_BACKUP_DIR=/tmp/dxe-rtb-backups
+    [ "$(dx_backup_resolve_dir other-profile)" = "/tmp/dxe-rtb-backups/other-profile" ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_backup_resolve_dir: an override argument replaces the container-name segment under apple too" || test_fail "dx_backup_resolve_dir: an override argument replaces the container-name segment under apple too"
+
+# dx_backup_resolve_dir: under docker-ssh, an override argument replaces
+# only the container-name segment -- the identity segment still always
+# comes from the CURRENT profile's own DX_REMOTE_HOST/daemon, never the
+# override, proving a cross-profile restore can only ever be same-NAS
+# (docs/refactor/qnap-promotion.md section B2's "known limitation").
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '[ "$1 $2" = "info --format" ] && echo "abc123def|qnap-fake|x86_64|linux"'
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap-b DX_BACKUP_DIR=/tmp/dxe-rtb-backups
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
+    [ "$(dx_backup_resolve_dir dx-qnap-canary)" = "/tmp/dxe-rtb-backups/dx-qnap-canary/docker-ssh_qnap-dxe_abc123def" ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_backup_resolve_dir: an override argument replaces only the container-name segment; the identity segment still comes from the CURRENT profile" || test_fail "dx_backup_resolve_dir: an override argument replaces only the container-name segment; the identity segment still comes from the CURRENT profile"
+
 # --- Diagnostics taxonomy (item 8) --------------------------------------
 
 # The classifier itself: each named class from

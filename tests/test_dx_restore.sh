@@ -523,5 +523,152 @@ else
 fi
 rm -rf "$ABSENT_FIXTURE"
 
+# --- Branch 11 / Phase 7 (docs/refactor/qnap-promotion.md section B):
+# dx-restore --source-container=NAME, proven in a fresh sub-fixture so it
+# does not depend on (or disturb) this file's own long-lived mirror state
+# above. The DESTINATION guest is always test-container (the only name
+# this file's fake `container list` reports as existing/running, unchanged
+# throughout this file); only the SOURCE mirror directory varies -- exactly
+# what the flag is designed to do: change where bytes are read FROM, never
+# the guest actually written to.
+SRC_BASE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dx-restore-source-container.XXXXXX")"
+export DX_BACKUP_DIR="$SRC_BASE/backups"
+
+# Reset the `container` fake to the plain passthrough from the top of this
+# file (the last one installed above was the ARG_MAX ship-exec-FAILURE fake,
+# which exits 42 for any exec whose real command is literally `sh` -- this
+# block's real dx_backup_restore_push calls DO include a guest `sh -c`
+# directory-precreation step (see bin/lib/dx-backup.sh), which must pass
+# through normally here.
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$FIXTURE"'/persist"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :;
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+
+# A second, unrelated profile's mirror, seeded directly on disk --
+# dx_backup_restore_targets reads BACKUP_DIR/current from the filesystem,
+# never through the guest, so no second fake container or real dx-backup
+# run under a different name is needed to set this up.
+mkdir -p "$DX_BACKUP_DIR/other-profile/current/home/dx"
+printf 'other-profile-content\n' > "$DX_BACKUP_DIR/other-profile/current/home/dx/mirrored.txt"
+
+# --- 1. Negative/regression: with no flag, a fresh profile never reads a
+# neighboring profile's mirror by default, even though it sits right next
+# to it under the same DX_BACKUP_DIR (test-container's own mirror does not
+# exist yet under this fresh DX_BACKUP_DIR). ---
+if "$BASE_DIR/bin/dx-restore" >/dev/null 2>&1; then
+    test_fail "dx-restore --source-container: with no flag, a fresh profile never reads a neighboring profile's mirror by default"
+else
+    test_pass "dx-restore --source-container: with no flag, a fresh profile never reads a neighboring profile's mirror by default"
+fi
+
+# --- 2. Positive: --source-container=other-profile reads THAT mirror and
+# pushes into the CURRENT profile's own guest, printing the cross-profile
+# banner; the source mirror itself is left unchanged (read-only). ---
+rm -rf "${FIXTURE:?}/persist"/*
+src_out="$("$BASE_DIR/bin/dx-restore" --source-container=other-profile 2>&1)"
+if printf '%s\n' "$src_out" | stdin_matches -F "Restoring other-profile's backup into test-container (cross-profile restore)."; then
+    test_pass "dx-restore --source-container: prints the cross-profile banner"
+else
+    test_fail "dx-restore --source-container: prints the cross-profile banner (got: $src_out)"
+fi
+if [ "$(cat "$FIXTURE/persist/home/dx/mirrored.txt" 2>/dev/null)" = other-profile-content ]; then
+    test_pass "dx-restore --source-container: pushes the named source profile's content into the current profile's guest"
+else
+    test_fail "dx-restore --source-container: pushes the named source profile's content into the current profile's guest"
+fi
+if [ "$(cat "$DX_BACKUP_DIR/other-profile/current/home/dx/mirrored.txt")" = other-profile-content ]; then
+    test_pass "dx-restore --source-container: the source profile's own mirror is left unchanged (read-only)"
+else
+    test_fail "dx-restore --source-container: the source profile's own mirror is left unchanged (read-only)"
+fi
+
+# --- Interaction with --force: a conflicting target refuses without
+# --force, exactly like the default (no-flag) case, and --force overwrites
+# from the overridden source, same as always. ---
+printf 'guest-diverged\n' > "$FIXTURE/persist/home/dx/mirrored.txt"
+set +e
+conflict_src_out="$("$BASE_DIR/bin/dx-restore" --source-container=other-profile 2>&1)"
+conflict_src_rc=$?
+set -e
+if [ "$conflict_src_rc" -ne 0 ] && printf '%s\n' "$conflict_src_out" | stdin_matches -F 'home/dx/mirrored.txt'; then
+    test_pass "dx-restore --source-container: a conflicting target refuses without --force, same as the default case"
+else
+    test_fail "dx-restore --source-container: a conflicting target refuses without --force, same as the default case (got: $conflict_src_out)"
+fi
+"$BASE_DIR/bin/dx-restore" --source-container=other-profile --force >/dev/null
+if [ "$(cat "$FIXTURE/persist/home/dx/mirrored.txt")" = other-profile-content ]; then
+    test_pass "dx-restore --source-container: --force overwrites a conflicting target from the overridden source"
+else
+    test_fail "dx-restore --source-container: --force overwrites a conflicting target from the overridden source"
+fi
+
+# --- 3. Fail-closed: a nonexistent source name errors exactly like the
+# default missing-mirror case, no partial state, guest untouched. ---
+rm -rf "${FIXTURE:?}/persist"/*
+set +e
+missing_out="$("$BASE_DIR/bin/dx-restore" --source-container=does-not-exist 2>&1)"
+missing_rc=$?
+set -e
+if [ "$missing_rc" -ne 0 ] && printf '%s\n' "$missing_out" | stdin_matches -F 'no backup mirror'; then
+    test_pass "dx-restore --source-container: a nonexistent source name fails closed with the same 'no backup mirror' error"
+else
+    test_fail "dx-restore --source-container: a nonexistent source name fails closed with the same 'no backup mirror' error (got: $missing_out)"
+fi
+if [ -z "$(find "$FIXTURE/persist" -mindepth 1 2>/dev/null)" ]; then
+    test_pass "dx-restore --source-container: a fail-closed nonexistent source leaves the guest untouched"
+else
+    test_fail "dx-restore --source-container: a fail-closed nonexistent source leaves the guest untouched"
+fi
+
+# --- 4. Validation: an invalid identifier is rejected (exit 64, a usage
+# error) before touching the filesystem or the guest -- the same character
+# class DX_CONTAINER_NAME itself is validated against, reused directly. ---
+for bad in '.leading-dot' '-leading-dash' 'has spaces' 'semi;colon'; do
+    set +e
+    bad_out="$("$BASE_DIR/bin/dx-restore" --source-container="$bad" 2>&1)"
+    bad_rc=$?
+    set -e
+    if [ "$bad_rc" -eq 64 ]; then
+        test_pass "dx-restore --source-container: rejects invalid identifier '$bad'"
+    else
+        test_fail "dx-restore --source-container: rejects invalid identifier '$bad' (rc=$bad_rc, out: $bad_out)"
+    fi
+done
+
+# --- 5. Interaction with --dry-run: classifies against the OVERRIDDEN
+# source correctly, and still touches nothing. ---
+rm -rf "${FIXTURE:?}/persist"/*
+dry_src_out="$("$BASE_DIR/bin/dx-restore" --source-container=other-profile --dry-run 2>&1)"
+if printf '%s\n' "$dry_src_out" | stdin_matches -F 'would create: home/dx/mirrored.txt'; then
+    test_pass "dx-restore --source-container: --dry-run classifies against the overridden source correctly"
+else
+    test_fail "dx-restore --source-container: --dry-run classifies against the overridden source correctly (got: $dry_src_out)"
+fi
+if [ -z "$(find "$FIXTURE/persist" -mindepth 1 2>/dev/null)" ]; then
+    test_pass "dx-restore --source-container: --dry-run with the flag still touches nothing"
+else
+    test_fail "dx-restore --source-container: --dry-run with the flag still touches nothing"
+fi
+
+rm -rf "$SRC_BASE"
+
 print_summary
 exit_with_code

@@ -47,13 +47,27 @@ DX_BACKUP_GUEST_ROOT=/persist
 # data-integrity hazard, not just a minor mixup. Apple's own path is
 # BYTE-FOR-BYTE unchanged (there is only ever one local Apple runtime, so
 # it never needed disambiguating).
+#
+# Optional $1 (qnap-dxe-plan.md Phase 7 / docs/refactor/qnap-promotion.md
+# section B): a container-name OVERRIDE for the segment above, used ONLY by
+# dx-restore's --source-container=NAME flag to read a DIFFERENT profile's
+# mirror on purpose. Omitted (the only way every other caller, and every
+# call before this flag existed, ever uses this function), it is exactly
+# ${DX_CONTAINER_NAME:?} -- byte-for-byte the prior behaviour. The identity
+# segment (docker-ssh only) is NEVER overridden by $1: it still always
+# comes from the CURRENT profile's own resolved DX_REMOTE_HOST, so this can
+# only ever cross profiles on the SAME NAS (a name that only exists under a
+# different NAS's identity segment fails closed as "no backup mirror",
+# never a wrong-host read -- see the design note for why that limitation is
+# accepted rather than solved here).
 dx_backup_resolve_dir() {
+    local container_name="${1:-${DX_CONTAINER_NAME:?}}"
     if [ "${DX_RUNTIME:-apple}" = docker-ssh ]; then
         local identity
         identity="$(dx_runtime_host_identity)"
-        printf '%s/%s/%s\n' "${DX_BACKUP_DIR:?}" "${DX_CONTAINER_NAME:?}" "${identity//:/_}"
+        printf '%s/%s/%s\n' "${DX_BACKUP_DIR:?}" "$container_name" "${identity//:/_}"
     else
-        printf '%s/%s\n' "${DX_BACKUP_DIR:?}" "${DX_CONTAINER_NAME:?}"
+        printf '%s/%s\n' "${DX_BACKUP_DIR:?}" "$container_name"
     fi
 }
 
