@@ -112,6 +112,19 @@ audit_bin_tree() {
                 *dx_runtime_docker_lock_audit*|*dx_runtime_docker_lock_release*)
                     case "$file" in */dx-lock|*/dx-status) continue ;; esac
                     ;;
+                # Branch 11 / Phase 6 (qnap-dxe-plan.md Phase 6 item 7;
+                # coordinating session's design review of
+                # docs/refactor/qnap-lifecycle.md, 8894d1e): the
+                # whole-operation destructive ownership proof is docker-ssh
+                # only (Apple has no DQ6 labels at all), and there is no
+                # dx_runtime_<op> contract equivalent to route through
+                # without inventing a new contract operation -- only one
+                # (unrelated) create-time health flag was pre-authorised
+                # for this phase. Same reasoning as the lock exception just
+                # above; scoped to exactly the one file that calls it.
+                *dx_runtime_docker_destructive_plan_and_verify*)
+                    case "$file" in */lib/dx-container.sh) continue ;; esac
+                    ;;
             esac
             matches="$matches$file:$line"$'\n'
         done < <(grep -nE "$VERB_PATTERN|$RUNTIME_PREFIX_PATTERN" "$file" 2>/dev/null)

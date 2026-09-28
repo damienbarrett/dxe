@@ -1384,5 +1384,31 @@ else
     fi
 fi
 
+# --- dx-factory-reset (Apple), Branch 11 / Phase 6 item 7: the new
+# whole-operation ownership proof (bin/lib/dx-container.sh's
+# dx_destructive_plan_and_verify) is a no-op under DX_RUNTIME=apple (Apple
+# has no DQ6 labels at all) -- proven by running the real entrypoint with
+# stdin closed and no --force, which the ORIGINAL script already refuses
+# (unchanged message, unchanged exit code) before any subscript runs. No
+# "Immutable plan" text appears, and nothing on PATH here answers a
+# docker/ssh call at all, so a real container/ssh binary is never reached
+# either way.
+set +e
+factory_reset_apple_out="$(
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION DX_PROJECT_ROOT
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    export HOME="$(mktemp -d "${TMPDIR:-/tmp}/dxe-factory-reset-apple.XXXXXX")"
+    "$BASE_DIR/bin/dx-factory-reset" < /dev/null 2>&1
+)"
+factory_reset_apple_rc=$?
+set -e
+if [ "$factory_reset_apple_rc" -ne 0 ] \
+    && printf '%s\n' "$factory_reset_apple_out" | stdin_matches -F -- "Refusing to factory-reset without --force when stdin is not a tty" \
+    && ! printf '%s\n' "$factory_reset_apple_out" | stdin_matches -F -- "Immutable plan"; then
+    test_pass "dx-factory-reset (apple): the new ownership-proof step is a no-op, unchanged refusal behaviour"
+else
+    test_fail "dx-factory-reset (apple): the new ownership-proof step is a no-op, unchanged refusal behaviour (rc=$factory_reset_apple_rc, got: $factory_reset_apple_out)"
+fi
+
 print_summary
 exit_with_code

@@ -800,6 +800,72 @@ dx_runtime_docker_volume_delete() {
     dx_runtime_docker_ssh_exec "$bin" volume rm "$@"
 }
 
+# --- Whole-operation destructive plan (Branch 11 / Phase 6, item 7) -------
+#
+# The two functions above already verify DQ6 labels per resource, at
+# DELETE time -- a collision refuses that one call, but a factory reset or
+# volume-destroy sequence issuing several delete calls in a row could still
+# destroy some resources successfully before refusing on a later one: a
+# partial destroy, and the operator's typed confirmation was never shown
+# the per-resource label state at all. qnap-dxe-plan.md Phase 6 item 7
+# asks for more: an IMMUTABLE PLAN printed before ANY deletion, and the
+# WHOLE operation refused -- zero delete calls reached -- if ANY one
+# targeted resource fails its check.
+#
+# bin/dx-factory-reset and bin/dx-destroy-volumes reach this through
+# bin/lib/dx-container.sh's runtime-neutral dx_destructive_plan_and_verify
+# (a no-op under DX_RUNTIME=apple -- Apple has no DQ6 labels to check at
+# all), rather than duplicating this file's own label-query internals
+# outside the adapter boundary; that one call site is a narrow, reasoned
+# exception in tests/test_runtime_boundary_audit.sh, the same shape
+# already granted to bin/dx-lock/bin/dx-status's own read-only lock view --
+# there is no dx_runtime_<op> contract equivalent to route through without
+# inventing a new contract operation, which only the one (unrelated)
+# health flag was pre-authorised for this phase.
+#
+# Args: one "kind:name:role" triple per target resource (kind is
+# "container" or "volume", matching the labels above's own role values).
+# Prints the plan to stdout for every resource, existing or not, before
+# returning -- a resource that does not exist at all is named but never
+# label-checked (nothing to verify or delete, distinct from one that
+# exists but is mislabelled). Returns non-zero, with every resource's
+# state already printed and NO delete call issued by this function or its
+# caller, if any EXISTING resource fails its label check.
+dx_runtime_docker_destructive_plan_and_verify() {
+    local bin spec kind rest name role fields ok=0
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    echo "Immutable plan (docker-ssh ownership proof, qnap-dxe-plan.md DQ6):"
+    for spec in "$@"; do
+        kind="${spec%%:*}"
+        rest="${spec#*:}"
+        name="${rest%%:*}"
+        role="${rest#*:}"
+        case "$kind" in
+            container)
+                if ! dx_runtime_docker_container_exists "$name"; then
+                    echo "  container $name: does not exist -- nothing to verify or delete"
+                    continue
+                fi
+                fields="$(dx_runtime_docker_container_labels "$bin" "$name")" || fields=""
+                ;;
+            volume)
+                if ! dx_runtime_docker_volume_exists "$name"; then
+                    echo "  volume $name: does not exist -- nothing to verify or delete"
+                    continue
+                fi
+                fields="$(dx_runtime_docker_volume_labels "$bin" "$name")" || fields=""
+                ;;
+            *)
+                echo "Error: dx_runtime_docker_destructive_plan_and_verify: unknown kind '$kind' (expected container or volume)." >&2
+                return 1
+                ;;
+        esac
+        echo "  $kind $name: labels=${fields:-<unreadable>}"
+        dx_runtime_docker_verify_labels "$kind" "$name" "$role" "$fields" || ok=1
+    done
+    return "$ok"
+}
+
 # Branch 11 / Phase 3 (qnap-dxe-plan.md Phase 3 item 5): a capability-aware
 # size report for bin/dx-reclaim. Docker has no host-side sparse image to
 # measure (DQ4); `docker system df -v` is the structured, Docker-native

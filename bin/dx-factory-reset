@@ -21,6 +21,25 @@ for arg in "$@"; do
     esac
 done
 
+# Branch 11 / Phase 6 (qnap-dxe-plan.md Phase 6 item 7): the whole-operation
+# ownership proof, printed and verified before any prompt or deletion --
+# refuses the WHOLE factory reset (nothing touched) if the container or any
+# EXISTING volume fails its DQ6 label check, rather than a partial destroy
+# part-way through the sequence below. Images have no DQ6 labels at all
+# (documented adapter limitation: Docker's `tag` cannot attach one), so
+# dx-destroy-image's own exact-name addressing is the only protection there,
+# unchanged. A no-op under DX_RUNTIME=apple (Apple has no DQ6 labels at
+# all), so Apple's behaviour below is unaffected, byte for byte.
+dx_destructive_plan_and_verify \
+    "container:$DX_CONTAINER_NAME:container" \
+    "volume:$DX_NIX_VOLUME:nix" \
+    "volume:$DX_PERSIST_VOLUME:persist" \
+    "volume:$DX_BOOTSTRAP_VOLUME:bootstrap" \
+    || {
+        echo "Error: refusing to factory-reset: the plan above found a resource that does not belong to this profile (qnap-dxe-plan.md DQ6)." >&2
+        exit 1
+    }
+
 if [ "$force" -ne 1 ]; then
     if [ ! -t 0 ]; then
         echo "Error: Refusing to factory-reset without --force when stdin is not a tty." >&2

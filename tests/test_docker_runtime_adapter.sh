@@ -1229,6 +1229,99 @@ esac'
 )
 [ "$?" -eq 0 ] && test_pass "volume_delete: refuses an unrecognized volume name" || test_fail "volume_delete: refuses an unrecognized volume name"
 
+# --- dx_runtime_docker_destructive_plan_and_verify (Branch 11 / Phase 6,
+# item 7): the whole-operation ownership proof bin/dx-factory-reset and
+# bin/dx-destroy-volumes both reach through bin/lib/dx-container.sh's
+# runtime-neutral dx_destructive_plan_and_verify. Direct unit coverage of
+# the docker-ssh function itself; the entrypoint-level, call-count-by-fake
+# proof (the actual "zero delete calls on any mismatch" property) is
+# further down, alongside the other dx-destroy-volumes/dx-destroy-container
+# docker-ssh entrypoint tests.
+
+# All resources correctly labelled: prints the plan for both, passes.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+# "$3" is only the name for the plain existence check (container/volume
+# inspect NAME); the label query sends "inspect --format TEMPLATE NAME"
+# instead, so NAME is $4 there -- matched against the whole argv ("$*")
+# instead of a fixed position, so both shapes answer correctly (fakes
+# cannot see Go templates -- this is the same pitfall, worked around the
+# same way the coverage docs already note elsewhere in this file).
+case "$1 $2" in
+    "container inspect")
+        case "$*" in *dx-qnap*) echo "true|1|qnap-dxe__dx-qnap|container"; exit 0 ;; esac
+        exit 1
+        ;;
+    "volume inspect")
+        case "$*" in *dx-qnap-nix*) echo "true|1|qnap-dxe__dx-qnap|nix"; exit 0 ;; esac
+        exit 1
+        ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_docker_destructive_plan_and_verify "container:dx-qnap:container" "volume:dx-qnap-nix:nix" 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "container dx-qnap: labels=true|1|qnap-dxe__dx-qnap|container" \
+        && printf '%s\n' "$out" | stdin_matches -F -- "volume dx-qnap-nix: labels=true|1|qnap-dxe__dx-qnap|nix"
+)
+[ "$?" -eq 0 ] && test_pass "destructive_plan_and_verify: prints the plan and passes when every resource is correctly labelled" || test_fail "destructive_plan_and_verify: prints the plan and passes when every resource is correctly labelled"
+
+# One of two resources mislabelled: the plan still names BOTH (printed in
+# full before any failure is decided), and the function refuses overall.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "container inspect")
+        case "$*" in *dx-qnap*) echo "true|1|qnap-dxe__dx-qnap|container"; exit 0 ;; esac
+        exit 1
+        ;;
+    "volume inspect")
+        case "$*" in *dx-qnap-nix*) echo "<no value>|<no value>|<no value>|<no value>"; exit 0 ;; esac
+        exit 1
+        ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_docker_destructive_plan_and_verify "container:dx-qnap:container" "volume:dx-qnap-nix:nix" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "container dx-qnap: labels=true|1|qnap-dxe__dx-qnap|container" \
+        && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "destructive_plan_and_verify: names every resource even when only one is mislabelled, and refuses" || test_fail "destructive_plan_and_verify: names every resource even when only one is mislabelled, and refuses"
+
+# A resource that does not exist at all: named in the plan, never
+# label-checked, and never counted as a failure on its own.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "volume inspect") exit 1 ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_docker_destructive_plan_and_verify "volume:dx-qnap-bootstrap:bootstrap" 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "does not exist"
+)
+[ "$?" -eq 0 ] && test_pass "destructive_plan_and_verify: a nonexistent resource is named but never label-checked or refused on its own" || test_fail "destructive_plan_and_verify: a nonexistent resource is named but never label-checked or refused on its own"
+
+# Apple: unconditionally a no-op through the runtime-neutral wrapper
+# (bin/lib/dx-container.sh's dx_destructive_plan_and_verify), regardless of
+# arguments -- Apple has no DQ6 labels at all.
+(
+    DX_RUNTIME=apple
+    dx_destructive_plan_and_verify "container:whatever:container"
+)
+[ "$?" -eq 0 ] && test_pass "destructive_plan_and_verify: unconditional no-op under DX_RUNTIME=apple" || test_fail "destructive_plan_and_verify: unconditional no-op under DX_RUNTIME=apple"
+
 # exec: argv-verbatim AND stdin passthrough (piped and file-redirected),
 # exit status unchanged under `set -o pipefail`, no intermediate cat/subshell
 # -- the same explicit proof shape test_sourceable_coverage.sh uses for Apple.
@@ -2246,6 +2339,144 @@ echo "UNMATCHED: $*" >&2; exit 99'
     [ "$(cat "$rn_log" 2>/dev/null)" = dxe-p3-nix ] && printf '%s\n' "$out" | stdin_matches -F './bin/dx'
 )
 [ "$?" -eq 0 ] && test_pass "dx-reset-nix-volume (docker-ssh): a correctly-labelled volume is deleted by exact name, naming the ./bin/dx next step" || test_fail "dx-reset-nix-volume (docker-ssh): a correctly-labelled volume is deleted by exact name, naming the ./bin/dx next step"
+
+# --- dx-destroy-volumes (docker-ssh), Branch 11 / Phase 6 item 7: the
+# whole-operation ownership proof (bin/lib/dx-container.sh's
+# dx_destructive_plan_and_verify) refuses the WHOLE destroy -- proven by
+# CALL COUNT on the fake, not merely by exit status -- when even one of
+# the three volumes fails its DQ6 label check, never a resource-by-
+# resource partial destroy.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    rm_log="$dir/volume-rm-calls.log"
+    : > "$rm_log"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "volume inspect")
+        case "$*" in
+            *dxe-p6-nix*) echo "true|1|qnap-dxe__dx-qnap|nix"; exit 0 ;;
+            *dxe-p6-persist*) echo "<no value>|<no value>|<no value>|<no value>"; exit 0 ;;
+            *dxe-p6-bootstrap*) echo "true|1|qnap-dxe__dx-qnap|bootstrap"; exit 0 ;;
+        esac
+        exit 1
+        ;;
+esac
+case "$1" in
+    volume) if [ "$2" = rm ]; then shift 2; printf "%s\n" "$@" >> "'"$rm_log"'"; exit 0; fi ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+        DX_CONTAINER_NAME=dx-qnap \
+        DX_NIX_VOLUME=dxe-p6-nix DX_PERSIST_VOLUME=dxe-p6-persist DX_BOOTSTRAP_VOLUME=dxe-p6-bootstrap \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-destroy-volumes" --force 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] \
+        && [ ! -s "$rm_log" ] \
+        && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate" \
+        && printf '%s\n' "$out" | stdin_matches -F -- "dxe-p6-nix" \
+        && printf '%s\n' "$out" | stdin_matches -F -- "dxe-p6-persist" \
+        && printf '%s\n' "$out" | stdin_matches -F -- "dxe-p6-bootstrap"
+)
+[ "$?" -eq 0 ] && test_pass "dx-destroy-volumes (docker-ssh): refuses the WHOLE destroy with zero volume-rm calls when one of three volumes is mislabelled" || test_fail "dx-destroy-volumes (docker-ssh): refuses the WHOLE destroy with zero volume-rm calls when one of three volumes is mislabelled"
+
+# All three correctly labelled: the plan passes, and exactly three
+# "volume rm" calls are reached, one per configured volume.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    rm_log="$dir/volume-rm-calls.log"
+    : > "$rm_log"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "volume inspect")
+        case "$*" in
+            *dxe-p6-nix*) echo "true|1|qnap-dxe__dx-qnap|nix"; exit 0 ;;
+            *dxe-p6-persist*) echo "true|1|qnap-dxe__dx-qnap|persist"; exit 0 ;;
+            *dxe-p6-bootstrap*) echo "true|1|qnap-dxe__dx-qnap|bootstrap"; exit 0 ;;
+        esac
+        exit 1
+        ;;
+esac
+case "$1" in
+    volume) if [ "$2" = rm ]; then shift 2; printf "%s\n" "$@" >> "'"$rm_log"'"; exit 0; fi ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+        DX_CONTAINER_NAME=dx-qnap \
+        DX_NIX_VOLUME=dxe-p6-nix DX_PERSIST_VOLUME=dxe-p6-persist DX_BOOTSTRAP_VOLUME=dxe-p6-bootstrap \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-destroy-volumes" --force 2>&1)"; rc=$?
+    deleted="$(tr '\n' ' ' < "$rm_log")"
+    [ "$rc" -eq 0 ] \
+        && [ "$(wc -l < "$rm_log" | tr -d ' ')" -eq 3 ] \
+        && printf '%s\n' "$deleted" | stdin_matches -F -- "dxe-p6-nix" \
+        && printf '%s\n' "$deleted" | stdin_matches -F -- "dxe-p6-persist" \
+        && printf '%s\n' "$deleted" | stdin_matches -F -- "dxe-p6-bootstrap"
+)
+[ "$?" -eq 0 ] && test_pass "dx-destroy-volumes (docker-ssh): all three volumes correctly labelled -> exactly three volume-rm calls" || test_fail "dx-destroy-volumes (docker-ssh): all three volumes correctly labelled -> exactly three volume-rm calls"
+
+# --- dx-factory-reset (docker-ssh), Branch 11 / Phase 6 item 7: the same
+# whole-operation proof, one level up -- a mislabelled CONTAINER refuses
+# the entire factory reset before dx-destroy-container/dx-destroy-image/
+# dx-destroy-volumes/dx-destroy-keys are even invoked, proven by call
+# count: neither a container "rm" nor any "volume rm" is ever reached.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    rm_log="$dir/delete-calls.log"
+    : > "$rm_log"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "container inspect")
+        case "$*" in *dx-qnap*) echo "<no value>|<no value>|<no value>|<no value>"; exit 0 ;; esac
+        exit 1
+        ;;
+    "volume inspect")
+        case "$*" in
+            *dxe-p6-nix*) echo "true|1|qnap-dxe__dx-qnap|nix"; exit 0 ;;
+            *dxe-p6-persist*) echo "true|1|qnap-dxe__dx-qnap|persist"; exit 0 ;;
+            *dxe-p6-bootstrap*) echo "true|1|qnap-dxe__dx-qnap|bootstrap"; exit 0 ;;
+        esac
+        exit 1
+        ;;
+esac
+case "$1" in
+    rm) printf "container %s\n" "$*" >> "'"$rm_log"'"; exit 0 ;;
+    volume) if [ "$2" = rm ]; then printf "volume %s\n" "$*" >> "'"$rm_log"'"; exit 0; fi ;;
+    image) if [ "$2" = rm ]; then printf "image %s\n" "$*" >> "'"$rm_log"'"; exit 0; fi ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+        DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos \
+        DX_NIX_VOLUME=dxe-p6-nix DX_PERSIST_VOLUME=dxe-p6-persist DX_BOOTSTRAP_VOLUME=dxe-p6-bootstrap \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-factory-reset" --force 2>&1)"; rc=$?
+    # The "Immutable plan" text and the per-resource plan lines come ONLY
+    # from dx_destructive_plan_and_verify's own new whole-operation check --
+    # never from dx-destroy-container's pre-existing per-resource check
+    # alone, which would ALSO refuse on this same mislabelled container
+    # (with the same "collision" text) without ever printing a plan at all.
+    # Asserting the plan text specifically is what makes this genuinely
+    # distinguish the new behaviour, since the volumes here are all
+    # correctly labelled -- a red run against the old code proved this
+    # (see the progress file's Increment 3 entry).
+    [ "$rc" -ne 0 ] \
+        && [ ! -s "$rm_log" ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "Immutable plan (docker-ssh ownership proof" \
+        && printf '%s\n' "$out" | stdin_matches -F -- "container dx-qnap: labels=" \
+        && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "dx-factory-reset (docker-ssh): refuses the WHOLE reset with zero delete calls when the container is mislabelled, before any sub-script runs" || test_fail "dx-factory-reset (docker-ssh): refuses the WHOLE reset with zero delete calls when the container is mislabelled, before any sub-script runs"
 
 # dx-destroy-image: images are never labelled (docker tag cannot attach a
 # label), so this is a plain passthrough once the image is confirmed to

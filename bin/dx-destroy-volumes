@@ -17,6 +17,7 @@ for arg in "$@"; do
 done
 
 VOLUMES=("$DX_NIX_VOLUME" "$DX_PERSIST_VOLUME" "$DX_BOOTSTRAP_VOLUME")
+VOLUME_ROLES=(nix persist bootstrap)
 
 # Filter to volumes that actually exist so we don't prompt about nothing.
 existing=()
@@ -30,6 +31,23 @@ if [ "${#existing[@]}" -eq 0 ]; then
     echo "No DX volumes exist; nothing to destroy."
     exit 0
 fi
+
+# Branch 11 / Phase 6 (qnap-dxe-plan.md Phase 6 item 7): the whole-operation
+# ownership proof, printed and verified before any prompt or deletion --
+# refuses the WHOLE destroy (no volume touched) if any one EXISTING volume
+# fails its DQ6 label check, rather than a resource-by-resource partial
+# destroy. A no-op under DX_RUNTIME=apple (Apple has no DQ6 labels at all),
+# so Apple's behaviour below is unaffected, byte for byte.
+plan_specs=()
+plan_index=0
+for vol in "${VOLUMES[@]}"; do
+    plan_specs+=("volume:$vol:${VOLUME_ROLES[$plan_index]}")
+    plan_index=$((plan_index + 1))
+done
+dx_destructive_plan_and_verify "${plan_specs[@]}" || {
+    echo "Error: refusing to destroy any volume: the plan above found a resource that does not belong to this profile (qnap-dxe-plan.md DQ6)." >&2
+    exit 1
+}
 
 if [ "$force" -ne 1 ]; then
     if [ ! -t 0 ]; then

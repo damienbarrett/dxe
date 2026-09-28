@@ -64,6 +64,29 @@ container_is_running() { dx_runtime_container_running "$1"; }
 container_image_exists() { dx_runtime_image_exists "$1"; }
 container_ensure_volume() { dx_runtime_volume_exists "$1" || dx_runtime_volume_create "$1"; }
 
+# Branch 11 / Phase 6 (qnap-dxe-plan.md Phase 6 item 7): the whole-operation
+# ownership proof bin/dx-factory-reset and bin/dx-destroy-volumes both need
+# before EITHER issues a single delete call -- an immutable plan printed
+# for every targeted resource, and the WHOLE operation refused (zero
+# delete calls reached) if any one EXISTING resource fails its DQ6 label
+# check. docker-ssh only: Apple has no DQ6 labels at all, so this is
+# unconditionally a no-op under DX_RUNTIME=apple (skipped entirely, not
+# merely printing the same thing) -- Apple's own typed-confirmation
+# behaviour in each caller is therefore untouched, byte for byte.
+#
+# Args: one "kind:name:role" triple per target resource, e.g.
+# "volume:dx-qnap-nix:nix". Delegates to the Docker adapter's own
+# dx_runtime_docker_destructive_plan_and_verify -- a narrow, reasoned
+# exception in tests/test_runtime_boundary_audit.sh (the same shape
+# already granted to bin/dx-lock/bin/dx-status's read-only lock view):
+# there is no dx_runtime_<op> contract equivalent to route through without
+# inventing a new contract operation, which only one (unrelated)
+# create-time health flag was pre-authorised for this phase.
+dx_destructive_plan_and_verify() {
+    [ "${DX_RUNTIME:-apple}" = docker-ssh ] || return 0
+    dx_runtime_docker_destructive_plan_and_verify "$@"
+}
+
 container_wait_stopped() {
     local name="$1" timeout="$2" elapsed=0
     while container_is_running "$name"; do
