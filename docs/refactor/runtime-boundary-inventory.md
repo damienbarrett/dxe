@@ -114,6 +114,20 @@ confirm before extraction:
   (Added since, Branch 11 / Phase 5: a fifth capability, `raw_nix_disk`
   (Apple yes, docker-ssh no), for `bin/dx-nix-disk`'s DQ8 disposition
   — "Apple-only; fail immediately with a clear capability message".)
+  (Added since, Branch 11 / Phase 6: a sixth capability,
+  `container_healthcheck` (Apple no, docker-ssh yes) — the one neutral
+  create-time health flag `qnap-dxe-plan.md` Phase 6 item 4 pre-authorised.
+  `bin/dx-create-container` always passes `--health-cmd`/`--health-interval`/
+  `--health-retries`; Apple discards them exactly like `--restart-policy`,
+  docker-ssh renders `docker create --health-cmd ... --health-interval ...
+  --health-retries ...`. The probe command itself is SSH-independent (a
+  marker-file check reachable through the same `docker exec` plane Container
+  Station's own health display already uses, never the guest's network
+  stack), reusing the existing execution-lease/`current`-symlink state
+  `dx-status`'s Bootstrap Generation section already reads rather than
+  inventing a new guest-side marker. See
+  `docs/refactor/docker-adapter-mapping.md` section 4 for the answer table
+  and `bin/dx-create-container`'s own comment for the exact probe command.)
 
 Not migrated, by design, per DQ8 (Apple-only, no runtime abstraction
 applies): `bin/dx-reclaim`'s host-side sparse-image size measurement

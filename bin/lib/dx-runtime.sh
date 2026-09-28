@@ -144,6 +144,28 @@ dx_runtime_container_list() { dx_runtime_dispatch container_list "$@"; }
 #                               POLICY (Docker accepts "no"/"unless-stopped"
 #                               verbatim, no translation needed) plus the
 #                               DQ6 labels it computes itself
+#   --health-cmd CMD           Branch 11 / Phase 6 (qnap-dxe-plan.md Phase 6
+#                               item 4; the one neutral create-time health
+#                               flag pre-authorised for this phase), always
+#                               passed together with --health-interval and
+#                               --health-retries below, never alone. Apple
+#                               ignores all three completely (no HEALTHCHECK
+#                               concept in `container create`, matching
+#                               dx_runtime_capability container_healthcheck
+#                               =false for apple); docker-ssh renders
+#                               --health-cmd CMD --health-interval DURATION
+#                               --health-retries N verbatim (Docker's own
+#                               flag names, no translation needed). CMD must
+#                               be SSH-independent -- reachable through
+#                               `docker exec`/`container exec`'s own plane,
+#                               never the guest's network stack -- so a
+#                               transient tailnet issue never reports the
+#                               guest unhealthy.
+#   --health-interval DURATION Docker duration syntax (e.g. "10s"); ignored
+#                               by Apple like --health-cmd above.
+#   --health-retries N         Consecutive failures before Docker reports
+#                               "unhealthy"; ignored by Apple like
+#                               --health-cmd above.
 #   --entrypoint-cmd CMD
 #   --entrypoint-arg ARG        repeatable, rendered in order -- the
 #                               trailing "-- ARGS" both CLIs agree is the

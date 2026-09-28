@@ -141,6 +141,14 @@ dx_runtime_apple_container_create() {
             # (-p 127.0.0.1:PORT:2222) is unaffected byte for byte.
             --publish) flags+=(-p "127.0.0.1:$2"); shift 2 ;;
             --restart-policy) shift 2 ;;
+            # Branch 11 / Phase 6 (qnap-dxe-plan.md Phase 6 item 4): no
+            # HEALTHCHECK concept in `container create` at all -- read and
+            # discarded, same as --restart-policy above
+            # (dx_runtime_apple_capability container_healthcheck below
+            # returns false for exactly this reason).
+            --health-cmd) shift 2 ;;
+            --health-interval) shift 2 ;;
+            --health-retries) shift 2 ;;
             --entrypoint-cmd) entrypoint_cmd="$2"; shift 2 ;;
             --entrypoint-arg) entrypoint_args+=("$2"); shift 2 ;;
             *) echo "Error: dx_runtime_apple_container_create: unknown parameter '$1'." >&2; return 1 ;;
@@ -250,10 +258,14 @@ dx_runtime_apple_guest_ssh_address() { printf '%s\n' 127.0.0.1; }
 #     from host_filesystem_reclamation (which also covers dx-reclaim's
 #     trim/sizing) because a future runtime could plausibly reclaim host
 #     space without ever supporting this specific raw-disk-image mechanism.
+#   container_healthcheck -- no (Branch 11 / Phase 6, qnap-dxe-plan.md
+#     Phase 6 item 4): `container create` has no HEALTHCHECK concept;
+#     --health-cmd/--health-interval/--health-retries are read and
+#     discarded by dx_runtime_apple_container_create above, unconditionally.
 dx_runtime_apple_capability() {
     case "$1" in
         direct_named_volume_mounts|bind_mounts|host_filesystem_reclamation|raw_nix_disk) return 0 ;;
-        restart_policy) return 1 ;;
+        restart_policy|container_healthcheck) return 1 ;;
         *) echo "Error: unknown runtime capability '$1'." >&2; return 2 ;;
     esac
 }

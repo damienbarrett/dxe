@@ -700,6 +700,22 @@ fi
     dx_runtime_capability host_filesystem_reclamation
 )
 [ "$?" -ne 0 ] && test_pass "capability: host_filesystem_reclamation is no for docker-ssh (DQ8: Apple-only)" || test_fail "capability: host_filesystem_reclamation is no for docker-ssh (DQ8: Apple-only)"
+# Branch 11 / Phase 6 (qnap-dxe-plan.md Phase 6 item 4): the one neutral
+# create-time health flag pre-authorised for this phase.
+(
+    DX_RUNTIME=docker-ssh
+    dx_runtime_capability container_healthcheck
+)
+[ "$?" -eq 0 ] && test_pass "capability: container_healthcheck is yes for docker-ssh (unlike apple)" || test_fail "capability: container_healthcheck is yes for docker-ssh (unlike apple)"
+(
+    DX_RUNTIME=apple
+    dx_runtime_capability container_healthcheck
+)
+# Exactly 1 ("recognized, answer is no"), not merely non-zero -- 2 means
+# "unknown capability name" (dx_runtime_apple_capability's own error path),
+# which would wrongly satisfy a looser "-ne 0" check even if this
+# capability were never taught to the Apple adapter at all.
+[ "$?" -eq 1 ] && test_pass "capability: container_healthcheck is no for apple (no HEALTHCHECK concept in container create)" || test_fail "capability: container_healthcheck is no for apple (no HEALTHCHECK concept in container create)"
 (
     DX_RUNTIME=docker-ssh
     dx_runtime_capability bogus
@@ -914,6 +930,7 @@ printf '%s\n' \"\$@\" > '$cc_argv_log'
         --volume bootstrap:dx-qnap-bootstrap:/guest-bootstrap:rw \
         --env HOST_TZ=UTC --memory 12G --cpus 4 --publish 2222:2222 \
         --restart-policy unless-stopped \
+        --health-cmd 'ls /guest-bootstrap/.locks/leases/*' --health-interval 10s --health-retries 3 \
         --entrypoint-cmd 'echo hi' --entrypoint-arg /guest-bootstrap
 )
 got="$(cat "$cc_argv_log" 2>/dev/null)"
@@ -935,6 +952,12 @@ printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-nix:/nix:rw" && test_pass "c
 printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-persist:/persist:rw" && test_pass "container_create mounts the persist volume at /persist" || test_fail "container_create mounts the persist volume at /persist"
 printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-bootstrap:/guest-bootstrap:rw" && test_pass "container_create mounts the bootstrap volume at its configured path" || test_fail "container_create mounts the bootstrap volume at its configured path"
 printf '%s\n' "$got" | stdin_matches -F -- "--restart" && printf '%s\n' "$got" | stdin_matches -F -- "unless-stopped" && test_pass "container_create renders --restart from DX_CONTAINER_RESTART_POLICY" || test_fail "container_create renders --restart from DX_CONTAINER_RESTART_POLICY"
+# Branch 11 / Phase 6 (qnap-dxe-plan.md Phase 6 item 4): Docker's own flag
+# names verbatim, no translation -- see bin/lib/dx-runtime.sh's vocabulary
+# comment.
+printf '%s\n' "$got" | stdin_matches -F -- "--health-cmd" && printf '%s\n' "$got" | stdin_matches -F -- "ls /guest-bootstrap/.locks/leases/*" && test_pass "container_create renders --health-cmd verbatim" || test_fail "container_create renders --health-cmd verbatim (got: $got)"
+printf '%s\n' "$got" | stdin_matches -F -- "--health-interval" && printf '%s\n' "$got" | stdin_matches -F -- "10s" && test_pass "container_create renders --health-interval verbatim" || test_fail "container_create renders --health-interval verbatim (got: $got)"
+printf '%s\n' "$got" | stdin_matches -F -- "--health-retries" && printf '%s\n' "$got" | stdin_matches -F -- "3" && test_pass "container_create renders --health-retries verbatim" || test_fail "container_create renders --health-retries verbatim (got: $got)"
 printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.managed=true" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.role=container" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.profile=qnap-dxe__dx-qnap" && test_pass "container_create carries the DQ6 labels" || test_fail "container_create carries the DQ6 labels"
 printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.system=x86_64-linux" && test_pass "container_create carries the io.dxe.system label (Branch 11 / Phase 4)" || test_fail "container_create carries the io.dxe.system label (Branch 11 / Phase 4)"
 printf '%s\n' "$got" | stdin_matches -F -- "--name" && test_pass "container_create keeps --name" || test_fail "container_create keeps --name"

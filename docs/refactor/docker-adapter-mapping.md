@@ -217,6 +217,7 @@ number(s) satisfied.
 | `restart_policy` | yes | DQ3: `DX_CONTAINER_RESTART_POLICY` is a real docker-ssh field (`no`\|`unless-stopped`), unlike Apple's fixed "no" |
 | `host_filesystem_reclamation` | no | DQ8: Apple's sparse-image/`fstrim` host-side reclamation has no Docker equivalent; guest-side `nix-collect-garbage` still works via `dx_runtime_exec`, unaffected |
 | `raw_nix_disk` (Branch 11 / Phase 5) | no | DQ8: `bin/dx-nix-disk`'s sparse Apple raw-disk-image mechanism has no Docker equivalent at all; `bin/dx-nix-disk` refuses immediately, before any mutation |
+| `container_healthcheck` (Branch 11 / Phase 6) | yes | `qnap-dxe-plan.md` Phase 6 item 4, the one neutral create-time health flag pre-authorised for the phase: `bin/dx-create-container` always passes `--health-cmd`/`--health-interval`/`--health-retries`; Apple discards them exactly like `--restart-policy` (no HEALTHCHECK concept in `container create`), docker-ssh renders `docker create --health-cmd ... --health-interval ... --health-retries ...` verbatim (Docker's own flag names, no translation). The probe command is SSH-independent — reachable through the same `docker exec` plane Container Station's own health display already uses, never the guest's tailnet path — and reuses the existing execution-lease/`current`-symlink state `dx-status`'s Bootstrap Generation section already reads, rather than a new guest-side marker |
 
 ## 5. Ephemeral-run retry (Apple's race vs. Docker)
 

@@ -579,6 +579,13 @@ dx_runtime_docker_container_create() {
                 shift 2
                 ;;
             --restart-policy) flags+=(--restart "$2"); shift 2 ;;
+            # Branch 11 / Phase 6 (qnap-dxe-plan.md Phase 6 item 4): Docker's
+            # own flag names, no translation needed -- see
+            # bin/lib/dx-runtime.sh's vocabulary comment and
+            # docs/refactor/docker-adapter-mapping.md section 4 for why.
+            --health-cmd) flags+=(--health-cmd "$2"); shift 2 ;;
+            --health-interval) flags+=(--health-interval "$2"); shift 2 ;;
+            --health-retries) flags+=(--health-retries "$2"); shift 2 ;;
             --entrypoint-cmd) entrypoint_cmd="$2"; shift 2 ;;
             --entrypoint-arg) entrypoint_args+=("$2"); shift 2 ;;
             *) echo "Error: dx_runtime_docker_container_create: unknown parameter '$1'." >&2; return 1 ;;
@@ -1019,7 +1026,10 @@ dx_runtime_docker_lock_release() {
 # each answer is what it is. raw_nix_disk (Branch 11 / Phase 5): no --
 # bin/dx-nix-disk's sparse Apple raw-disk-image mechanism has no Docker
 # equivalent at all (DQ8: "Apple-only; fail immediately with a clear
-# capability message").
+# capability message"). container_healthcheck (Branch 11 / Phase 6,
+# qnap-dxe-plan.md Phase 6 item 4): yes -- the one neutral create-time
+# health flag pre-authorised for this phase; --health-cmd/--health-interval/
+# --health-retries render as Docker's own real create flags (above).
 dx_runtime_docker_capability() {
     case "$1" in
         direct_named_volume_mounts) return 0 ;;
@@ -1027,6 +1037,7 @@ dx_runtime_docker_capability() {
         restart_policy) return 0 ;;
         host_filesystem_reclamation) return 1 ;;
         raw_nix_disk) return 1 ;;
+        container_healthcheck) return 0 ;;
         *) echo "Error: unknown runtime capability '$1'." >&2; return 2 ;;
     esac
 }

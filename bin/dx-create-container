@@ -66,6 +66,23 @@ DX_IMAGE_IDENTITY="$(dx_runtime_image_identity "$DX_IMAGE")" || {
 # mount target: Apple stages it for the guest to reformat at boot; the
 # Docker adapter mounts it directly at /nix, per qnap-dxe-plan.md DQ4).
 # persist -> the fixed guest path /persist. bootstrap -> DX_BOOTSTRAP_PATH.
+
+# Branch 11 / Phase 6 (qnap-dxe-plan.md Phase 6 item 4; the one neutral
+# create-time health flag pre-authorised for this phase): SSH-independent
+# by construction -- reachable through the same docker exec/container exec
+# plane Container Station's own health display already uses, never the
+# guest's tailnet path, so a transient network issue never reports the
+# guest unhealthy. Reuses the existing execution-lease/current-symlink
+# state dx-status's Bootstrap Generation section already reads (no new
+# guest-side marker): healthy once the guest has leased the SAME generation
+# bootstrap's own launcher published as current (bin/lib/dx-ssh-common.sh's
+# dx_bootstrap_launch_command) -- exactly the "no drift" case
+# dx_bootstrap_report_drift already names. $DX_BOOTSTRAP_PATH is
+# interpolated here (a host-known, fixed guest path, never user data);
+# every other variable in the command is guest-side and must stay literal,
+# hence the backslash-escaped $.
+DX_HEALTHCHECK_CMD="cur=\$(readlink \"$DX_BOOTSTRAP_PATH/current\" 2>/dev/null) || exit 1; gen=\${cur#generations/}; [ -n \"\$gen\" ] || exit 1; ls \"$DX_BOOTSTRAP_PATH\"/.locks/leases/\"\$gen\".* >/dev/null 2>&1"
+
 CREATE_ARGS=(
     --name "$DX_CONTAINER_NAME"
     --image "$DX_IMAGE"
@@ -89,6 +106,9 @@ CREATE_ARGS=(
     # Tailscale address, never the LAN or 0.0.0.0.
     --publish "$DX_SSH_PORT:2222"
     --restart-policy "$DX_CONTAINER_RESTART_POLICY"
+    --health-cmd "$DX_HEALTHCHECK_CMD"
+    --health-interval 10s
+    --health-retries 3
 )
 
 if [ -n "$DX_GIT_MOUNT_SOURCE" ]; then
