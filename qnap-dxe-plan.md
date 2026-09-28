@@ -966,6 +966,41 @@ fallback, and a full backup and restore demonstrated on a QNAP guest
 
 Promote a non-default canary profile before creating the production QNAP DXE.
 
+**Status (2026-09-28, `feat/qnap-promotion`):** design note
+`docs/refactor/qnap-promotion.md` reviewed and accepted. **Designed and
+code-proven on the branch:** item 3's restore isolation
+(`dx-restore --source-container=NAME`, `bin/lib/dx-backup.sh`/
+`bin/dx-restore`, proven against fakes only, red before green); the
+canary acceptance checklist and evidence shape
+(`docs/qnap-runbook.md` section "9. Promotion (canary acceptance)");
+the canary's own checked-in example profile
+(`tests/profiles/qnap-canary-example.env`). **Still ahead: every live
+step against the real NAS**, each after the user's own explicit go, in
+this pre-approved order (2026-09-28):
+
+1. Create the canary (item 1) as soon as this code lands on `main`; its
+   one-week acceptance period starts that same day.
+2. The restore drill (item 3): create, then later destroy, the
+   disposable `dx-qnap-drill` profile — the operator warned before each
+   of those two steps, not either one done silently.
+3. A fresh disposable `dx-qnap-spike2` for the destructive-lifecycle
+   reaffirmation (item 4), proving isolation now with the canary
+   concurrently live rather than in Phase 6's spike-only environment.
+4. The canary's own image rebuild + `dx-recreate` (item 2), run at an
+   idle moment during the week rather than disrupting real use.
+
+Item 5 (target versions and final validation evidence) is recorded
+throughout, in the shape `docs/qnap-runbook.md` section 9 already
+defines. Item 6's production profile is **no longer an open question on
+the port**: `DX_SSH_PORT=2223` is DECIDED (2026-09-28), not merely
+proposed — the port for the cutover period, explicitly temporary, may
+move back to 2222 once the canary is retired
+(`tests/profiles/qnap-example.env`, already updated to match). The
+production profile itself is still created only after item 1's week
+passes with no unresolved failure and the restore drill (item 3) counts
+as the verified backup. Item 7 (`dx-host` stays intact) is an
+unconditional constraint throughout, not a step to complete.
+
 1. Run the canary for normal development work long enough to exercise Git,
    Nix, tmux, editors, AI tools, tunnels, suspend/reconnect, and controller
    network changes.
@@ -984,6 +1019,24 @@ Promote a non-default canary profile before creating the production QNAP DXE.
 
 All definition-of-done items below are satisfied and no temporary compatibility
 exception lacks an owner and removal condition.
+
+**Compatibility-exception inventory** (full detail:
+`docs/refactor/qnap-promotion.md` section D). Three genuine temporary
+exceptions, each with an owner and a removal condition:
+
+| Exception | Owner | Removal condition |
+| --- | --- | --- |
+| Runtime-boundary audit exception: `bin/dx-lock`, `bin/dx-status`'s read-only lock helpers, and `bin/lib/dx-container.sh`'s `dx_destructive_plan_and_verify` call into `dx_runtime_docker_*` directly. | A future branch extending DQ2's adapter contract — none scheduled. | Locking and the multi-resource ownership plan become real `dx_runtime_<op>` operations with an Apple-side equivalent (Apple has neither today). |
+| Deferred Tailscale-in-guest spike (`## Non-goals`). | A future spike branch, if ever prioritised. | The spike runs and reaches an explicit go/no-go. |
+| Pending context-tree rename (DQ7). | A future standalone mechanical-rename commit. | That commit lands, updates every path consumer and test, and settles any bounded compatibility reader's own removal condition. |
+
+Three candidates considered and found **not** to be exceptions (named
+here so the inventory is complete, not silently short): item 9's
+restart-ordering fallback design (alternative (b)) — decided, kept only
+as a documented fallback, not an open gap; `DX_CONTAINER_RESTART_POLICY`
+defaulting to `no` — permanent per-NAS calibrated guidance, not debt;
+`dx-mount`/`dx-nix-disk` unsupported under `docker-ssh` (DQ8) — a
+permanent, documented capability boundary, not a temporary one.
 
 ## Test strategy
 

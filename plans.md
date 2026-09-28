@@ -38,9 +38,11 @@ Every plan document below is listed under exactly one of these.
   resolved; only the rest of Q7 (the two large refactor proposals) remains
   open and is not urgent. Trimmed to remaining work only on 2026-09-27, per
   the plan's own retirement step (history: `git log` and `docs/evidence/`).
-  Remaining: Branch 11 Phase 7 (promotion to a real QNAP profile) and
-  Branch 13 (the two large proposals, Q7). Branch 12 (`fix/store-trust`)
-  and the four small follow-ups (`fix/test-hardening`) landed 2026-09-28.
+  Remaining: land Branch 11 Phase 7 (promotion to a real QNAP profile --
+  designed and code-proven on `feat/qnap-promotion`, live steps ahead
+  after landing) and Branch 13 (the two large proposals, Q7). Branch 12
+  (`fix/store-trust`) and the four small follow-ups (`fix/test-hardening`)
+  landed 2026-09-28.
 - [`store-trust-plan.md`](store-trust-plan.md) — **Resolved on
   `fix/store-trust` (Branch 12), landed on `main` 2026-09-28.** Both problems
   it tracked (a same-store-path/different-content collision at an image-pin
@@ -63,11 +65,15 @@ Every plan document below is listed under exactly one of these.
   Phases 0-6 have landed on `main` (Phase 6 on 2026-09-28: its own
   maintenance window proved the reboot/restart behaviour and settled the
   restart-ordering decision against the real NAS); Phase 7 (promotion) is
-  not started.
+  designed and code-proven on `feat/qnap-promotion` (not yet landed),
+  with every live step against the real NAS still ahead.
   Accepted for implementation on
   2026-09-26 (see `checkout-consolidation-plan.md`, Branch 11), and sequenced
   after the start-generation fix and the `/persist` backup land. Revisit
-  trigger: when Phase 6 lands, or when Phase 7 (promotion) is scheduled.
+  trigger: when Phase 7 lands and its live steps (canary creation, the
+  restore drill, the disposable-spike destructive-lifecycle
+  reaffirmation, the canary's own rebuild + recreate, and the production
+  profile) complete.
 - [`declarative-nix-plan-a.md`](declarative-nix-plan-a.md) — Audit proposing
   incremental Bash-to-Nix/Home Manager conversions. It puts Nix evaluation and
   coverage gates first, followed by smaller configuration conversions and the

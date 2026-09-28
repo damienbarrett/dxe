@@ -337,28 +337,30 @@ NAS-tested shape), `DX_SSH_PORT=2222`, distinct volumes
 is Increment 2 work (docs only); Increment 0 only decides that it exists
 and its shape.
 
-### C2. Production profile proposal (the user decides)
+### C2. Production profile (the port is now decided; the rest was already settled)
 
-Propose, do not decide:
+**Update (2026-09-28, after this note's own Increment 0):** the port
+below was an open question when this section was first written; the
+user has since decided it. It is recorded here as DECIDED, not
+proposed, matching `docs/qnap-runbook.md` section 9.5 and the checked-in
+`tests/profiles/qnap-example.env`, both already updated to match
+(Increment 2's own follow-up amendment). This table's other fields were
+never open questions — they already matched the checked-in example and
+needed no decision.
 
-| Field | Proposed value | Reasoning |
+| Field | Value | Reasoning |
 | --- | --- | --- |
 | `DX_CONTAINER_NAME` | `dx-qnap` | Already the checked-in `qnap-example.env`'s own value — no change needed there. |
-| `DX_SSH_PORT` | **2223** (open question — see below) | Distinct from the canary's 2222 so both *could* run concurrently during the cutover window, rather than requiring the canary torn down first purely to free the port. |
+| `DX_SSH_PORT` | **2223 — DECIDED, explicitly temporary** | Distinct from the canary's 2222 so both run concurrently during the cutover window. Temporary: it is the port for the cutover period only, and the production profile may move back to 2222 once the canary is retired and the port is free again — a later, separate, explicit decision, not automatic. |
 | `DX_CONTAINER_MEMORY`/`DX_CONTAINER_CPUS` | `8G`/`4` | The existing checked-in example's own documented default — unchanged; the canary's 2-CPU choice was explicitly recorded as a per-profile, canary-only choice (user decision 2), not a new default. |
 | `DX_CONTAINER_RESTART_POLICY` | `unless-stopped`, from creation | Carries over the now-doubly-proven (Phase 6 + the canary's own week) evidence for this specific NAS. |
 | Key pair, volumes | `dx-qnap_key`, `dx-qnap-nix`/`-persist`/`-bootstrap` | Already the checked-in example's own values — no change needed. |
 
-**Open question left to the user, named explicitly (not decided here):**
-the port. 2223 lets the canary and production coexist during promotion;
-reusing 2222 is equally valid if the canary is retired first — either
-way, `DX_SSH_PORT` in a real local profile is git-ignored and costs
-nothing to change later, so this is a low-stakes but still user-owned
-choice per the brief's "which port to use" rule. No code or example
-change is needed either way: `tests/profiles/qnap-example.env` already
-documents `DX_CONTAINER_NAME=dx-qnap`/port 2222 and needs no edit unless
-the user picks a different port for production, in which case Increment 2
-or a later change updates that one line and its header comment.
+`tests/profiles/qnap-example.env`'s `DX_SSH_PORT` line and header
+comment were updated from `2222` to `2223` to match (Increment 2's
+follow-up amendment) — the file documents the production shape
+(`DX_CONTAINER_NAME=dx-qnap`), so it carries the decided value, not a
+placeholder pending the user's word.
 
 ### C3. Item 7 — `dx-host` stays intact
 
