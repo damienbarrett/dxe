@@ -89,6 +89,8 @@ print_env() {
     done
 }
 release_lock() { [ -z "${mount_lock:-}" ] || dx_lock_release "$mount_lock" || true; mount_lock=""; }
+
+mount_main() {
 trap release_lock EXIT HUP INT TERM
 
 dir=""; container_override=""; print_environment=false; destroy=false
@@ -243,3 +245,5 @@ echo "Bringing up mount side container $container_name..."
 echo "Mounting $DX_GIT_MOUNT_SOURCE at $DX_GIT_MOUNT_TARGET"
 release_lock
 exec "$SCRIPT_DIR/dx"
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then mount_main "$@"; fi
