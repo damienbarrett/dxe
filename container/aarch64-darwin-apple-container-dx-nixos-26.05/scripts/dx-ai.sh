@@ -80,6 +80,15 @@ dx_ai_published_root() {
     if [ -L "$root/current" ] && [ -f "$root/current/flake.nix" ]; then readlink -f "$root/current"; else printf '%s\n' "$root"; fi
 }
 
+# Fable B4: a uniform "Error: <msg>" stderr line for the staging/publish
+# paths that used to fail with a bare `return 1` and nothing printed. A
+# plain function call cannot exit its caller, so every call site still
+# writes its own `return 1` right alongside this.
+dx_ai_fail() {
+    printf 'Error: %s\n' "$1" >&2
+    return 1
+}
+
 # Same three-candidate shape as dx_ai_load_opencode_persistence/
 # dx_ai_load_keyring, for the same reason: scripts/lib/dx-ai-lock.sh is
 # packaged both as a Home Manager `home.file` and loadable straight off the
@@ -203,27 +212,37 @@ dx_ai_refresh_pin() {
 
 dx_ai_stage_generation() {
     local published="$1" state="$2" id="$3" stage predecessor=""
-    case "$id" in ''|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
-    [ -d "$published" ] && [ ! -L "$published" ] || return 1
-    [ ! -L "$state" ] && [ ! -L "$state/generations" ] || return 1
+    case "$id" in ''|[.-]*|*[!A-Za-z0-9_.-]*) dx_ai_fail "invalid AI generation id: $id"; return 1 ;; esac
+    [ -d "$published" ] && [ ! -L "$published" ] || { dx_ai_fail "published bootstrap is missing or is a symlink: $published"; return 1; }
+    [ ! -L "$state" ] && [ ! -L "$state/generations" ] || { dx_ai_fail "AI state root or its generations directory is a symlink: $state"; return 1; }
     stage="$state/generations/.staging-$id"
-    mkdir -p "$state/generations" || return 1
-    [ -d "$state/generations" ] && [ ! -L "$state/generations" ] || return 1
-    [ ! -e "$stage" ] && [ ! -L "$stage" ] || return 1
-    mkdir "$stage" || return 1
+    mkdir -p "$state/generations" || { dx_ai_fail "could not create $state/generations"; return 1; }
+    [ -d "$state/generations" ] && [ ! -L "$state/generations" ] || { dx_ai_fail "$state/generations is not a plain directory"; return 1; }
+    [ ! -e "$stage" ] && [ ! -L "$stage" ] || { dx_ai_fail "AI generation stage already exists: $stage"; return 1; }
+    mkdir "$stage" || { dx_ai_fail "could not create AI generation stage: $stage"; return 1; }
     if ! cp -a "$published/." "$stage/" || ! chmod -R u+w "$stage"; then
         chmod -R u+w "$stage" 2>/dev/null || true
         rm -rf "$stage"
+        dx_ai_fail "could not copy the published bootstrap into $stage"
         return 1
     fi
     if [ -L "$state/current" ]; then predecessor="$(readlink "$state/current")"; predecessor=${predecessor##*/}; fi
-    case "$predecessor" in '' ) ;; [.-]*|*[!A-Za-z0-9_.-]*) chmod -R u+w "$stage"; rm -rf "$stage"; return 1 ;; esac
-    printf '%s\n' "$predecessor" > "$stage/.predecessor" || { chmod -R u+w "$stage"; rm -rf "$stage"; return 1; }
+    case "$predecessor" in
+        '') ;;
+        [.-]*|*[!A-Za-z0-9_.-]*)
+            chmod -R u+w "$stage"; rm -rf "$stage"
+            dx_ai_fail "invalid AI predecessor generation name: $predecessor"
+            return 1
+            ;;
+    esac
+    printf '%s\n' "$predecessor" > "$stage/.predecessor" \
+        || { chmod -R u+w "$stage"; rm -rf "$stage"; dx_ai_fail "could not record predecessor in $stage/.predecessor"; return 1; }
     # Record this generation's own tool inventory. A generation published
     # before OpenCode existed has no manifest at all (dx_ai_generation_tools
     # falls back to DX_AI_LEGACY_TOOLS for those); every generation staged
     # from here on declares the complete current bundle.
-    printf '%s\n' $DX_AI_TOOLS > "$stage/.tools-manifest" || { chmod -R u+w "$stage"; rm -rf "$stage"; return 1; }
+    printf '%s\n' $DX_AI_TOOLS > "$stage/.tools-manifest" \
+        || { chmod -R u+w "$stage"; rm -rf "$stage"; dx_ai_fail "could not record tool manifest in $stage/.tools-manifest"; return 1; }
     printf '%s\n' "$stage"
 }
 
@@ -406,11 +425,14 @@ dx_ai_generation_tools() {
 
 dx_ai_validate_generation() {
     local generation="$1" required tool tools
-    [ -d "$generation" ] && [ ! -L "$generation" ] || return 1
-    for required in flake.nix flake.lock pins/agy.json .predecessor; do [ -f "$generation/$required" ] && [ ! -L "$generation/$required" ] || return 1; done
-    tools="$(dx_ai_generation_tools "$generation")" || return 1
+    [ -d "$generation" ] && [ ! -L "$generation" ] || { dx_ai_fail "AI generation is missing or not a directory: $generation"; return 1; }
+    for required in flake.nix flake.lock pins/agy.json .predecessor; do
+        [ -f "$generation/$required" ] && [ ! -L "$generation/$required" ] || { dx_ai_fail "AI generation is missing $generation/$required"; return 1; }
+    done
+    tools="$(dx_ai_generation_tools "$generation")" || { dx_ai_fail "AI generation has an invalid tool manifest: $generation/.tools-manifest"; return 1; }
     while IFS= read -r tool; do
-        [ -f "$generation/profile/bin/$tool" ] && [ -x "$generation/profile/bin/$tool" ] || return 1
+        [ -f "$generation/profile/bin/$tool" ] && [ -x "$generation/profile/bin/$tool" ] \
+            || { dx_ai_fail "AI generation is missing the $tool executable: $generation/profile/bin/$tool"; return 1; }
     done <<EOF
 $tools
 EOF
@@ -424,28 +446,44 @@ EOF
 dx_ai_validate_publish_generation() {
     local generation="$1" expected actual
     dx_ai_validate_generation "$generation" || return 1
-    [ -f "$generation/.tools-manifest" ] && [ ! -L "$generation/.tools-manifest" ] || return 1
+    [ -f "$generation/.tools-manifest" ] && [ ! -L "$generation/.tools-manifest" ] \
+        || { dx_ai_fail "AI generation about to publish has no tool manifest of its own: $generation/.tools-manifest"; return 1; }
     expected="$(printf '%s\n' $DX_AI_TOOLS)"
-    actual="$(dx_ai_generation_tools "$generation")" || return 1
-    [ "$actual" = "$expected" ] || return 1
+    actual="$(dx_ai_generation_tools "$generation")" || { dx_ai_fail "could not read tool manifest: $generation/.tools-manifest"; return 1; }
+    [ "$actual" = "$expected" ] \
+        || { dx_ai_fail "AI generation's tool manifest does not declare the complete current bundle: $generation/.tools-manifest"; return 1; }
 }
 
 dx_ai_publish_pointer() {
     local state="$1" id="$2" tmp
-    case "$id" in ''|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
+    case "$id" in ''|[.-]*|*[!A-Za-z0-9_.-]*) dx_ai_fail "invalid AI generation id: $id"; return 1 ;; esac
     tmp="$state/.current.$$"
-    [ ! -e "$tmp" ] && [ ! -L "$tmp" ] || return 1
-    if ! ln -s "generations/$id" "$tmp"; then return 1; fi
-    if ! mv -Tf "$tmp" "$state/current"; then rm -f "$tmp"; return 1; fi
+    [ ! -e "$tmp" ] && [ ! -L "$tmp" ] || { dx_ai_fail "AI publish temp pointer already exists: $tmp"; return 1; }
+    if ! ln -s "generations/$id" "$tmp"; then dx_ai_fail "could not create AI publish temp pointer: $tmp"; return 1; fi
+    if ! mv -Tf "$tmp" "$state/current"; then rm -f "$tmp"; dx_ai_fail "could not publish AI current pointer: $state/current"; return 1; fi
 }
 
+# Also collects orphaned `.staging-<id>` generation stages: a run killed
+# between dx_ai_stage_generation and dx_ai_publish_generation leaves one
+# behind, and bash's bare `*` glob never matches a dot-name, so before this
+# it accumulated forever, each one pinning a full closure under
+# /nix/var/nix/gcroots/auto. Safe to remove unconditionally: staging only
+# ever happens under dx_ai_run_locked's lock, and this function only ever
+# runs from dx_ai_publish_generation, itself under that same lock, so any
+# `.staging-*` still present here belongs to some earlier, non-current run.
 dx_ai_collect_generations() {
     local state="$1" current="$2" predecessor="$3" candidate candidate_id
-    for candidate in "$state/generations"/*; do
-        [ -d "$candidate" ] || continue; candidate_id=${candidate##*/}
+    for candidate in "$state/generations"/* "$state/generations"/.staging-*; do
+        [ -d "$candidate" ] || continue
+        candidate_id=${candidate##*/}
         if [ -L "$candidate" ]; then rm -f "$candidate"; continue; fi
-        [ "$candidate_id" = "$current" ] && continue
-        [ -n "$predecessor" ] && [ "$candidate_id" = "$predecessor" ] && continue
+        case "$candidate_id" in
+            .staging-*) ;;
+            *)
+                [ "$candidate_id" = "$current" ] && continue
+                [ -n "$predecessor" ] && [ "$candidate_id" = "$predecessor" ] && continue
+                ;;
+        esac
         chmod -R u+w "$candidate" 2>/dev/null || true
         rm -rf "$candidate" || echo "Warning: could not collect obsolete AI generation $candidate_id." >&2
     done
@@ -454,15 +492,22 @@ dx_ai_collect_generations() {
 dx_ai_publish_generation() {
     local state="$1" id="$2" stage="$3" generation predecessor=""
     generation="$state/generations/$id"
-    case "$id" in ''|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
-    [ ! -e "$generation" ] && [ ! -L "$generation" ] || return 1
-    dx_ai_validate_publish_generation "$stage" || return 1
-    mv "$stage" "$generation" || return 1
-    if ! chmod -R a-w "$generation"; then chmod -R u+w "$generation" 2>/dev/null || true; rm -rf "$generation"; return 1; fi
-    if ! dx_ai_publish_pointer "$state" "$id"; then
-        chmod -R u+w "$generation"; rm -rf "$generation"; return 1
+    case "$id" in ''|[.-]*|*[!A-Za-z0-9_.-]*) dx_ai_fail "invalid AI generation id: $id"; return 1 ;; esac
+    [ ! -e "$generation" ] && [ ! -L "$generation" ] || { dx_ai_fail "AI generation already exists: $generation"; return 1; }
+    dx_ai_validate_publish_generation "$stage" || { dx_ai_fail "staged AI generation is not ready to publish: $stage"; return 1; }
+    mv "$stage" "$generation" || { dx_ai_fail "could not move staged AI generation into place: $stage -> $generation"; return 1; }
+    if ! chmod -R a-w "$generation"; then
+        chmod -R u+w "$generation" 2>/dev/null || true
+        rm -rf "$generation"
+        dx_ai_fail "could not make published AI generation read-only: $generation"
+        return 1
     fi
-    predecessor="$(cat "$generation/.predecessor")" || return 1
+    if ! dx_ai_publish_pointer "$state" "$id"; then
+        chmod -R u+w "$generation"; rm -rf "$generation"
+        dx_ai_fail "could not publish AI current pointer for $id"
+        return 1
+    fi
+    predecessor="$(cat "$generation/.predecessor")" || { dx_ai_fail "could not read predecessor from $generation/.predecessor"; return 1; }
     dx_ai_collect_generations "$state" "$id" "$predecessor"
 }
 
@@ -473,7 +518,7 @@ dx_ai_recover_generation() {
     case "$current_target" in generations/*) current=${current_target#generations/} ;; *) echo "Error: invalid AI current pointer." >&2; return 1 ;; esac
     case "$current" in ''|*/*|[.-]*|*[!A-Za-z0-9_.-]*) echo "Error: invalid AI current generation." >&2; return 1 ;; esac
     dx_ai_validate_generation "$state/generations/$current" || { echo "Error: current AI generation is incomplete." >&2; return 1; }
-    predecessor="$(cat "$state/generations/$current/.predecessor")" || return 1
+    predecessor="$(cat "$state/generations/$current/.predecessor")" || { dx_ai_fail "could not read predecessor from $state/generations/$current/.predecessor"; return 1; }
     case "$predecessor" in ''|[.-]*|*[!A-Za-z0-9_.-]*) echo "Error: no valid retained AI predecessor is available." >&2; return 1 ;; esac
     dx_ai_validate_generation "$state/generations/$predecessor" || { echo "Error: retained AI predecessor is incomplete." >&2; return 1; }
     dx_ai_publish_pointer "$state" "$predecessor" || return 1
@@ -598,8 +643,52 @@ EOF
     fi
 }
 
+# Fable B4/B7: acquire $1's lock, run $2 (with any further args) under it,
+# and release it exactly once -- on a normal return AND on HUP/INT/TERM/exit
+# -- replacing what used to be a release-and-clear-trap epilogue copied at
+# every early-return site in dx_ai_main. $stage is script-global (not local
+# to any one function): whichever function is running when a signal fires
+# still has it in scope, so an in-flight AI generation stage is always
+# discarded on the same trap that releases the lock, and a killed run never
+# leaves an orphan pinned under /nix/var/nix/gcroots/auto.
+dx_ai_run_locked() {
+    local lock="$1" result
+    shift
+    dx_ai_load_lock || return 1
+    dx_ai_lock_acquire "$lock" || return 1
+    trap 'rm -rf "${stage:-}"; dx_ai_lock_release "${lock:-}" 2>/dev/null || true' EXIT HUP INT TERM
+    "$@"
+    result=$?
+    dx_ai_lock_release "$lock"
+    trap - EXIT HUP INT TERM
+    return "$result"
+}
+
+# The critical section of a normal (non-recover) dx-ai run, run under
+# dx_ai_run_locked's lock: stage a fresh generation from the published
+# bootstrap, refresh its lock file, refuse a binary-cache miss, build the AI
+# tools profile, and publish it. $stage is intentionally not `local` here --
+# see dx_ai_run_locked above -- and is always cleared before returning,
+# whether this succeeds or fails.
+dx_ai_main_update() {
+    local published="$1" state="$2" id="$3" system="$4" result=0
+    stage="$(dx_ai_stage_generation "$published" "$state" "$id")" || return 1
+    dx_ai_update_flake "$stage" "$system" || result=$?
+    [ "$result" -ne 0 ] || dx_ai_ensure_cached "$stage" "$state" "$system" || result=$?
+    [ "$result" -ne 0 ] || dx_ai_install_profile "$stage" || result=$?
+    [ "$result" -ne 0 ] || dx_ai_publish_generation "$state" "$id" "$stage" || result=$?
+    if [ "$result" -ne 0 ]; then
+        rm -rf "$stage"
+        stage=""
+        return "$result"
+    fi
+    stage=""
+    return 0
+}
+
 dx_ai_main() {
-    local action=update published state id stage="" lock result=0 system
+    local action=update published state id lock system result
+    stage=""
     case "${1:-}" in
         -h|--help) dx_ai_usage; return ;;
         --recover) action=recover; shift ;;
@@ -611,40 +700,38 @@ dx_ai_main() {
             ;;
     esac
     [ "$#" -eq 0 ] || { dx_ai_usage >&2; return 64; }
-    [ "$(id -u)" -ne 0 ] || { echo "Error: run dx-ai as the dx user, not root." >&2; return 1; }
+    [ "$(id -u)" -ne 0 ] || { dx_ai_fail "run dx-ai as the dx user, not root."; return 1; }
     state="${DX_AI_STATE_ROOT:-/persist/home/dx/.local/state/dx-ai}"; lock="$state/.lock"; id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
     export SSL_CERT_FILE="${SSL_CERT_FILE:-$HOME/.nix-profile/etc/ssl/certs/ca-bundle.crt}"
     export NIX_SSL_CERT_FILE="${NIX_SSL_CERT_FILE:-$SSL_CERT_FILE}"
-    dx_ai_load_lock || return 1
-    dx_ai_lock_acquire "$lock" || return
-    trap 'rm -rf "${stage:-}"; dx_ai_lock_release "${lock:-}" 2>/dev/null || true' EXIT HUP INT TERM
+
     if [ "$action" = recover ]; then
-        dx_ai_recover_generation "$state" || result=$?
-        dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM
+        dx_ai_run_locked "$lock" dx_ai_recover_generation "$state"
+        result=$?
         [ "$result" -eq 0 ] || return "$result"
         export PATH="$state/current/profile/bin:$PATH"
         dx_ai_verify "$state/current"
         return
     fi
-    published="$(dx_ai_published_root)"; [ -f "$published/flake.nix" ] || { echo "Error: published bootstrap flake is missing." >&2; dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return 1; }
+
+    published="$(dx_ai_published_root)"
+    [ -f "$published/flake.nix" ] || { dx_ai_fail "published bootstrap flake is missing: $published/flake.nix"; return 1; }
     # Branch 11 / Phase 4 (docs/refactor/arch-neutral-guest.md section 4):
     # resolve this guest's own system once, via the shared helper (also used
     # by bootstrap.sh), and adjust DX_AI_TOOLS (a global the staging/
     # validation/verify functions below already read) BEFORE staging, so a
     # system with no native agy artifact stages, publishes, and verifies a
-    # generation that never claims agy.
-    dx_ai_load_guest_system || { dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return 1; }
-    system="$(dx_guest_resolve_system)" || { dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return 1; }
+    # generation that never claims agy. Neither of these touches $state, so
+    # they run before the lock is even acquired.
+    dx_ai_load_guest_system || return 1
+    system="$(dx_guest_resolve_system)" || return 1
     DX_AI_TOOLS="$(dx_ai_tools_for_system "$published" "$system" | tr '\n' ' ')"; DX_AI_TOOLS="${DX_AI_TOOLS% }"
-    if ! stage="$(dx_ai_stage_generation "$published" "$state" "$id")"; then dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return 1; fi
-    dx_ai_update_flake "$stage" "$system" || result=$?
-    [ "$result" -ne 0 ] || dx_ai_ensure_cached "$stage" "$state" "$system" || result=$?
-    [ "$result" -ne 0 ] || dx_ai_install_profile "$stage" || result=$?
-    [ "$result" -ne 0 ] || dx_ai_publish_generation "$state" "$id" "$stage" || result=$?
-    if [ "$result" -ne 0 ]; then rm -rf "$stage"; dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM; return "$result"; fi
-    stage=""
+
+    dx_ai_run_locked "$lock" dx_ai_main_update "$published" "$state" "$id" "$system"
+    result=$?
+    [ "$result" -eq 0 ] || return "$result"
+
     export PATH="$state/current/profile/bin:$PATH"
-    dx_ai_lock_release "$lock"; lock=""; trap - EXIT HUP INT TERM
     dx_ai_setup_credentials /persist/home/dx "$HOME" || return
     dx_ai_ensure_keyring || return
     # Herdr is optional, so a missing or unhappy integration is reported but

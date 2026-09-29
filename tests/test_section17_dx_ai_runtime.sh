@@ -1074,6 +1074,121 @@ else
     test_fail "a real cache-miss refusal publishes no AI generation and releases its lock"
 fi
 
+# --- Fable B4/WP3.6: dx-ai must not fail silently, and must reclaim orphaned
+# generation stages. Reuses the dx_ai_boot_id/dx_ai_process_start/
+# dx_guest_resolve_system stubs still active from F16 above. ---
+id() { printf '%s\n' 1000; }
+
+# RED (1): a staged generation missing one of its own declared tools'
+# executables (dx_ai_stage_generation always records the complete current
+# DX_AI_TOOLS in .tools-manifest) must fail loudly, naming the missing
+# path -- not just exit 1 with nothing on stderr, which is what
+# dx_ai_validate_publish_generation's silent `return 1` used to do after a
+# successful, possibly multi-minute `nix profile add`.
+missingtool_published="$ai_fixture/missingtool-published"; missingtool_state="$ai_fixture/missingtool-state"
+mkdir -p "$missingtool_published/pins"
+printf '%s\n' '{"aarch64-linux":{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"},"x86_64-linux":{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"}}' > "$missingtool_published/pins/agy.json"
+printf '%s\n' fixture > "$missingtool_published/flake.nix"
+printf '%s\n' fixture > "$missingtool_published/flake.lock"
+dx_ai_update_flake() { :; }
+dx_ai_ensure_cached() { :; }
+dx_ai_install_profile() {
+    local stage="$1" tool
+    mkdir -p "$stage/profile/bin"
+    # Deliberately omits opencode, one of DX_AI_TOOLS.
+    for tool in codex gemini claude agy herdr; do
+        printf '#!/bin/sh\n' > "$stage/profile/bin/$tool"; chmod 0755 "$stage/profile/bin/$tool"
+    done
+}
+dx_ai_setup_credentials() { :; }
+dx_ai_ensure_keyring() { :; }
+dx_ai_verify() { :; }
+missingtool_err="$(DX_AI_BOOTSTRAP_ROOT="$missingtool_published" DX_AI_STATE_ROOT="$missingtool_state" dx_ai_main 2>&1 1>/dev/null)"
+missingtool_rc=$?
+if [ "$missingtool_rc" -ne 0 ] \
+    && printf '%s\n' "$missingtool_err" | stdin_matches '^Error:' \
+    && printf '%s\n' "$missingtool_err" | stdin_matches 'profile/bin/opencode'; then
+    test_pass "a staged generation missing a declared tool's executable fails loudly with its path (WP3.6 RED 1)"
+else
+    test_fail "a staged generation missing a declared tool's executable fails loudly with its path (WP3.6 RED 1)"
+fi
+
+# RED (2): dx_ai_collect_generations must also remove orphaned .staging-*
+# stages -- bash's bare `*` glob never matches a dot-name, so before this
+# fix a killed run's stage was never collected, and its profile/-*-link
+# pinned a full closure under /nix/var/nix/gcroots/auto forever.
+gc_state="$ai_fixture/gc-state"
+mkdir -p "$gc_state/generations/current-gen" "$gc_state/generations/predecessor-gen" "$gc_state/generations/.staging-old"
+ln -s /nix/store/x "$gc_state/generations/.staging-old/profile"
+dx_ai_collect_generations "$gc_state" current-gen predecessor-gen
+if [ ! -e "$gc_state/generations/.staging-old" ] \
+    && [ -d "$gc_state/generations/current-gen" ] \
+    && [ -d "$gc_state/generations/predecessor-gen" ]; then
+    test_pass "dx_ai_collect_generations removes an orphaned .staging-* stage (WP3.6 RED 2)"
+else
+    test_fail "dx_ai_collect_generations removes an orphaned .staging-* stage (WP3.6 RED 2)"
+fi
+
+# RED (3): whichever step fails -- staging itself, the flake update, or the
+# profile install -- dx_ai_main must still release the lock and discard any
+# in-flight stage. Before dx_ai_run_locked existed this was never asserted;
+# only a successful run's release was.
+wp36_seed_published() {
+    local root="$1"
+    mkdir -p "$root/pins"
+    printf '%s\n' '{"aarch64-linux":{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"},"x86_64-linux":{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"}}' > "$root/pins/agy.json"
+    printf '%s\n' fixture > "$root/flake.nix"
+    printf '%s\n' fixture > "$root/flake.lock"
+}
+
+stagefail_published="$ai_fixture/stagefail-published"; stagefail_state="$ai_fixture/stagefail-state"
+wp36_seed_published "$stagefail_published"
+mkdir -p "$stagefail_state"
+ln -s /nonexistent "$stagefail_state/generations"
+DX_AI_BOOTSTRAP_ROOT="$stagefail_published" DX_AI_STATE_ROOT="$stagefail_state" dx_ai_main >/dev/null 2>&1
+stagefail_rc=$?
+if [ "$stagefail_rc" -ne 0 ] && [ ! -d "$stagefail_state/.lock" ]; then
+    test_pass "a staging failure still releases dx-ai's lock (WP3.6 RED 3)"
+else
+    test_fail "a staging failure still releases dx-ai's lock (WP3.6 RED 3)"
+fi
+
+updatefail_published="$ai_fixture/updatefail-published"; updatefail_state="$ai_fixture/updatefail-state"
+wp36_seed_published "$updatefail_published"
+dx_ai_update_flake() { return 1; }
+DX_AI_BOOTSTRAP_ROOT="$updatefail_published" DX_AI_STATE_ROOT="$updatefail_state" dx_ai_main >/dev/null 2>&1
+updatefail_rc=$?
+if [ "$updatefail_rc" -ne 0 ] \
+    && [ ! -d "$updatefail_state/.lock" ] \
+    && [ -z "$(find "$updatefail_state/generations" -maxdepth 1 -name '.staging-*' 2>/dev/null)" ]; then
+    test_pass "a flake-update failure still releases the lock and discards the stage (WP3.6 RED 3)"
+else
+    test_fail "a flake-update failure still releases the lock and discards the stage (WP3.6 RED 3)"
+fi
+
+installfail_published="$ai_fixture/installfail-published"; installfail_state="$ai_fixture/installfail-state"
+wp36_seed_published "$installfail_published"
+dx_ai_update_flake() { :; }
+dx_ai_ensure_cached() { :; }
+dx_ai_install_profile() { return 1; }
+DX_AI_BOOTSTRAP_ROOT="$installfail_published" DX_AI_STATE_ROOT="$installfail_state" dx_ai_main >/dev/null 2>&1
+installfail_rc=$?
+if [ "$installfail_rc" -ne 0 ] \
+    && [ ! -d "$installfail_state/.lock" ] \
+    && [ -z "$(find "$installfail_state/generations" -maxdepth 1 -name '.staging-*' 2>/dev/null)" ]; then
+    test_pass "a profile-install failure still releases the lock and discards the stage (WP3.6 RED 3)"
+else
+    test_fail "a profile-install failure still releases the lock and discards the stage (WP3.6 RED 3)"
+fi
+
+unset -f id dx_ai_update_flake dx_ai_ensure_cached dx_ai_install_profile dx_ai_setup_credentials dx_ai_ensure_keyring dx_ai_verify
+# shellcheck source=/dev/null
+source "$AI_SCRIPT"
+dx_ai_load_lock
+dx_ai_boot_id() { printf '%s\n' test-boot-id; }
+dx_ai_process_start() { printf '%s\n' 123; }
+dx_guest_resolve_system() { printf '%s\n' aarch64-linux; }
+
 # --- F15: --supports is a silent, exact-arity capability probe ---
 if out="$(dx_ai_main --supports herdr)" && [ -z "$out" ]; then
     test_pass "--supports <tool> for a known tool exits 0 with no stdout"
