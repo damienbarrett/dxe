@@ -43,7 +43,16 @@
 # Built-in rebuildable-cache directory names, matched as a path COMPONENT at
 # any depth (so "node_modules" also denies "a/b/node_modules/c"). Glob
 # patterns (result-*) are supported.
-DX_PBS_BUILTIN_COMPONENT_DENY="node_modules target .direnv result result-* __pycache__ .cache dist build .venv .tox .pytest_cache .mypy_cache .pnpm-store .Trash-* .tmp"
+#
+# An indexed array, not a space-separated string: a `for pattern in $VAR`
+# word list undergoes BOTH word-splitting AND pathname (glob) expansion
+# against the current directory, so an unquoted string here would silently
+# let a CWD entry that happens to match one of these globs (e.g. a file
+# actually named "result-bin") replace the pattern word itself before it is
+# ever compared -- breaking the deny check for every OTHER path that pattern
+# was meant to match. Iterated with "${arr[@]}" (quoted), which performs
+# neither. See dx_pbs_path_denied.
+DX_PBS_BUILTIN_COMPONENT_DENY=(node_modules target .direnv result 'result-*' __pycache__ .cache dist build .venv .tox .pytest_cache .mypy_cache .pnpm-store '.Trash-*' .tmp)
 
 # Built-in path-shaped deny patterns, matched as an ANCHORED glob against the
 # full path relative to the backup root (e.g. /persist). Unlike the component
@@ -51,23 +60,41 @@ DX_PBS_BUILTIN_COMPONENT_DENY="node_modules target .direnv result result-* __pyc
 # home/dx/.gemini/antigravity-cli is the `agy` binary/state bundle `dx-ai`
 # reinstalls (see scripts/dx-ai.sh and bootstrap/activation.sh); its sibling
 # config/credentials elsewhere under .gemini stay in.
-DX_PBS_BUILTIN_PATH_DENY="home/dx/.local/state/dx-ai/generations/*/profile home/dx/.gemini/antigravity-cli"
+#
+# An indexed array for the same CWD-glob-expansion reason as
+# DX_PBS_BUILTIN_COMPONENT_DENY above.
+DX_PBS_BUILTIN_PATH_DENY=('home/dx/.local/state/dx-ai/generations/*/profile' home/dx/.gemini/antigravity-cli)
 
-# Extra deny patterns from DX_BACKUP_EXCLUDE_FILE (one per line), passed in by
-# the caller (bin/dx-backup) as extra positional arguments after the root.
-# Matched the same way as DX_PBS_BUILTIN_PATH_DENY: an anchored glob against
-# the full relative path. Stored in a global rather than threaded through
-# every recursive call for the same reason DX_PBS_BUILTIN_* are globals.
-DX_PBS_EXTRA_DENY=""
+# Extra deny patterns from DX_BACKUP_EXCLUDE_FILE (one per line) or extra
+# positional arguments, passed in by the caller (bin/dx-backup) after the
+# root. Matched the same way as DX_PBS_BUILTIN_PATH_DENY: an anchored glob
+# against the full relative path. Stored in a global rather than threaded
+# through every recursive call for the same reason DX_PBS_BUILTIN_* are
+# globals.
+#
+# An indexed array, one element per pattern, for the same CWD-glob-expansion
+# reason as DX_PBS_BUILTIN_COMPONENT_DENY above.
+DX_PBS_EXTRA_DENY=()
 
 # True (0) if $1, a path relative to the backup root (no leading slash), is
 # denied by the built-in deny-list or DX_PBS_EXTRA_DENY.
 dx_pbs_path_denied() {
     local relpath="$1" pattern remainder component
-    for pattern in $DX_PBS_BUILTIN_PATH_DENY $DX_PBS_EXTRA_DENY; do
-        # $pattern is deliberately unquoted: it is a glob pattern (may
-        # contain `*`), not a literal, and the deny-list's whole point is
-        # glob matching (result-*, generations/*/profile, user patterns).
+    # "${DX_PBS_EXTRA_DENY[@]+"${DX_PBS_EXTRA_DENY[@]}"}", not a bare
+    # "${DX_PBS_EXTRA_DENY[@]}": Bash 3.2 (this file's own floor -- see the
+    # module header) treats a zero-element array as unset when expanded
+    # under `set -u`, so a bare expansion would abort every caller with no
+    # extra deny patterns (the common case) with "unbound variable". Same
+    # idiom this file already uses at dx_pbs_walk_repo_files's nested_prune.
+    # DX_PBS_BUILTIN_PATH_DENY is never empty (a fixed built-in list), so it
+    # needs no such guard.
+    for pattern in "${DX_PBS_BUILTIN_PATH_DENY[@]}" "${DX_PBS_EXTRA_DENY[@]+"${DX_PBS_EXTRA_DENY[@]}"}"; do
+        # $pattern is deliberately unquoted HERE (inside the case pattern):
+        # it is a glob pattern (may contain `*`), not a literal, and the
+        # deny-list's whole point is glob matching (result-*,
+        # generations/*/profile, user patterns). A case pattern position
+        # does not undergo word-splitting or pathname expansion, only the
+        # `for` loop above did (fixed by quoting the array expansion there).
         # shellcheck disable=SC2254
         case "$relpath" in
             $pattern | $pattern/*) return 0 ;;
@@ -79,7 +106,7 @@ dx_pbs_path_denied() {
             */*) component="${remainder%%/*}"; remainder="${remainder#*/}" ;;
             *) component="$remainder"; remainder="" ;;
         esac
-        for pattern in $DX_PBS_BUILTIN_COMPONENT_DENY; do
+        for pattern in "${DX_PBS_BUILTIN_COMPONENT_DENY[@]}"; do
             # See the disable above: $pattern is an intentional glob (result-*).
             # shellcheck disable=SC2254
             case "$component" in
