@@ -849,6 +849,33 @@ else
     test_fail "dx-ai acquires a lock with the btime fallback identity (R5)"
 fi
 
+# Coverage: a $proc_root/stat that EXISTS and is readable, but never
+# contains a well-formed, matching `btime` line, exhausts dx_ai_boot_id's
+# fallback loop entirely and falls through to its own `return 1` AFTER the
+# loop (dx-ai-lock.sh:43) -- distinct from $proc_root/stat being missing or
+# unreadable altogether (dx-ai-lock.sh:37/18, the "all process identities are
+# unavailable" R5 case above, which never even enters this loop). No
+# sys/kernel/random/boot_id file is present either, so the earlier UUID
+# short-circuit (line 34-36) is also not what is under test here.
+no_btime_proc="$ai_fixture/no-btime-proc"
+no_btime_lock="$ai_fixture/no-btime.lock"
+mkdir -p "$no_btime_proc/$$"
+printf '%s\n' 'cpu  100 200 300 400' > "$no_btime_proc/stat"
+printf '%s\n' "$$ (dx-ai) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 888" > "$no_btime_proc/$$/stat"
+no_btime_out="$(dx_ai_boot_id "$no_btime_proc")"; no_btime_rc=$?
+if [ "$no_btime_rc" -eq 1 ] && [ -z "$no_btime_out" ]; then
+    test_pass "dx_ai_boot_id falls through its stat-scan loop with no output when no line matches btime (dx-ai-lock.sh:43)"
+else
+    test_fail "dx_ai_boot_id falls through its stat-scan loop with no output when no line matches btime (dx-ai-lock.sh:43) (rc=$no_btime_rc out='$no_btime_out')"
+fi
+no_btime_lock_out="$(dx_ai_lock_acquire "$no_btime_lock" "$no_btime_proc" 2>&1)"; no_btime_lock_rc=$?
+if [ "$no_btime_lock_rc" -eq 1 ] && [ ! -e "$no_btime_lock" ] \
+    && printf '%s\n' "$no_btime_lock_out" | stdin_matches "cannot identify lock owner process"; then
+    test_pass "dx-ai refuses lock acquisition when the boot-id stat fallback finds no btime line (dx-ai-lock.sh:43)"
+else
+    test_fail "dx-ai refuses lock acquisition when the boot-id stat fallback finds no btime line (dx-ai-lock.sh:43) (rc=$no_btime_lock_rc out='$no_btime_lock_out')"
+fi
+
 # --- Fable B3/WP3.5: dx-ai's publication lock reclaims an ownerless
 # directory instead of waiting out the full timeout for an owner that will
 # never appear, writes its owner record via tmp+mv (never a partially
