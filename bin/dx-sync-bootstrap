@@ -7,209 +7,29 @@ source "$SCRIPT_DIR/dx-lib.sh"
 sync_bootstrap_main() {
 dx_require_container_cli
 
-container_exists "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME does not exist. Run ./bin/dx-create-container first." >&2; exit 1; }
-# WP4.2 / Fable A6: honours DX_BOOTSTRAP_WAIT_TIMEOUT (default 30, matching
-# the magic 30 this used to hard-code) with an injectable clock instead of a
-# bare `sleep 1`, so a test can drive this bound without a real 30s wait.
-dx_wait_until "$DX_BOOTSTRAP_WAIT_TIMEOUT" 1 container_is_running "$DX_CONTAINER_NAME" || true
-container_is_running "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start-container first." >&2; exit 1; }
-case "$DX_BOOTSTRAP_PATH" in ''|/) echo "Error: Unsafe DX_BOOTSTRAP_PATH: $DX_BOOTSTRAP_PATH" >&2; exit 1 ;; esac
-
-# WP4.2 / Fable A6: same injectable-clock migration as the container-running
-# wait above; DX_BOOTSTRAP_WAIT_TIMEOUT's bound is unchanged, only the
-# hand-rolled `for`/`sleep 1` counting is replaced.
-dx_wait_until "$DX_BOOTSTRAP_WAIT_TIMEOUT" 1 dx_runtime_exec "$DX_CONTAINER_NAME" sh -c 'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready" || test -L "$1/current"' -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1 || true
-dx_runtime_exec "$DX_CONTAINER_NAME" sh -c 'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready" || test -L "$1/current"' -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1 || {
-    echo "Error: Container $DX_CONTAINER_NAME entrypoint never became ready after ${DX_BOOTSTRAP_WAIT_TIMEOUT}s." >&2; exit 1;
-}
-[ -f "$DX_BOOTSTRAP_SOURCE/bootstrap.sh" ] || { echo "Error: Bootstrap source $DX_BOOTSTRAP_SOURCE/bootstrap.sh does not exist." >&2; exit 1; }
-
-tar_create_args=()
-tar --no-xattrs -C "$DX_BOOTSTRAP_SOURCE" -cf /dev/null . >/dev/null 2>&1 && tar_create_args+=(--no-xattrs)
-tar --no-mac-metadata -C "$DX_BOOTSTRAP_SOURCE" -cf /dev/null . >/dev/null 2>&1 && tar_create_args+=(--no-mac-metadata)
-# Publish only when the payload actually differs from what is already current.
-# A generation id is minted from the clock, so republishing identical content
-# moves `current` for no reason and leaves the running guest looking stale
-# forever -- see dx_bootstrap_content_digest.
-#
-# A guest published before this existed has no digest to compare, so it reports
-# nothing and we publish, which re-establishes the digest for next time.
-#
-# The completeness test is `current/bootstrap.sh`, deliberately not
-# `.dx-bootstrap-ready`: the guest launcher clears that marker on every boot, so
-# on a restart it is always absent at the moment this runs. Gating the skip on
-# it would mean never skipping on the one path that matters.
-#
-# The marker is the launcher's go-ahead, not a completeness record: the launcher
-# waits for it before resolving `current`, so both outcomes here must set it --
-# the publication below, and the skip above. The flat compatibility symlinks
-# point at `current/...` rather than a generation, so they need no republication
-# either.
-content_digest="$(dx_bootstrap_content_digest "$DX_BOOTSTRAP_SOURCE" || true)"
-if [ -n "$content_digest" ]; then
-    published="$(dx_runtime_exec "$DX_CONTAINER_NAME" sh -c '
-        root=$1
-        [ -L "$root/current" ] || exit 0
-        [ -f "$root/current/bootstrap.sh" ] || exit 0
-        readlink "$root/current"
-        cat "$root/current/.dx-content-digest" 2>/dev/null || true
-    ' -- "$DX_BOOTSTRAP_PATH" 2>/dev/null || true)"
-    published_generation="$(printf '%s\n' "$published" | sed -n '1s#^generations/##p')"
-    published_digest="$(printf '%s\n' "$published" | sed -n '2p')"
-    if [ -n "$published_digest" ] && [ "$published_digest" = "$content_digest" ]; then
-        # Publishing is also what prunes execution leases from earlier boots.
-        # Skipping it leaves the previous boot's PID 1 lease beside the live
-        # one, and dx_bootstrap_lease_generation returns whichever it sees
-        # first -- so the drift check would report the guest as running a
-        # generation it booted two restarts ago. Prune by boot id, which is the
-        # part that makes a lease stale across a restart; publication still owns
-        # the fuller process-identity retention pass.
-        dx_runtime_exec "$DX_CONTAINER_NAME" sh -c '
-            root=$1
-            boot=$(cat /proc/sys/kernel/random/boot_id) || exit 0
-            for lease in "$root/.locks/leases"/*; do
-                [ -f "$lease" ] || continue
-                tab=$(printf "\t")
-                IFS="$tab" read -r lease_generation lease_boot lease_rest < "$lease" || continue
-                [ "$lease_boot" = "$boot" ] || rm -f "$lease"
-            done
-        ' -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1 || true
-        # Signal boot readiness here too. The guest launcher waits for this
-        # marker before resolving `current`, so a skip that stayed silent would
-        # stall every restart with unchanged content for the launcher's full
-        # grace period.
-        dx_runtime_exec "$DX_CONTAINER_NAME" sh -c '
-            root=$1
-            touch "$root/.dx-bootstrap-ready"
-            rm -f "$root/.dx-bootstrap-waiting"
-        ' -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1 || true
-        echo "Bootstrap content is unchanged; generation $published_generation stays current."
-        exit 0
-    fi
-fi
-
-generation_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-echo "Syncing bootstrap generation $generation_id from $DX_BOOTSTRAP_SOURCE to $DX_CONTAINER_NAME:$DX_BOOTSTRAP_PATH..."
-
-COPYFILE_DISABLE=1 tar "${tar_create_args[@]}" -C "$DX_BOOTSTRAP_SOURCE" -cf - . | dx_runtime_exec -i "$DX_CONTAINER_NAME" sh -c '
-set -eu
-root=$1
-generation=$2
-content_digest=${3:-}
-generations=$root/generations
-locks=$root/.locks
-lock=$locks/publication
-stage=$generations/.staging-$generation
-process_start() {
-    stat_line=$(cat "/proc/${1:-0}/stat" 2>/dev/null) || return 1
-    stat_fields=${stat_line##*) }
-    set -- $stat_fields
-    [ "$#" -ge 20 ] || return 1
-    shift 19
-    printf "%s\n" "$1"
-}
-[ -d "$root" ] && [ ! -L "$root" ] || { echo "Error: unsafe bootstrap root $root." >&2; exit 1; }
-for path in "$generations" "$locks" "$locks/leases"; do [ ! -L "$path" ] || { echo "Error: refusing symlinked bootstrap state path $path." >&2; exit 1; }; done
-mkdir -p "$generations" "$locks/leases"
-chown root:root "$root" "$generations" "$locks" "$locks/leases"
-chmod 0755 "$root" "$generations"
-chmod 0700 "$locks" "$locks/leases"
-elapsed=0
-while ! mkdir "$lock" 2>/dev/null; do
-    if [ -f "$lock/owner" ]; then
-        tab=$(printf "\t")
-        IFS="$tab" read -r owner_boot owner_pid owner_start < "$lock/owner" || true
-        boot=$(cat /proc/sys/kernel/random/boot_id)
-        live_start=$(process_start "${owner_pid:-0}" || true)
-        if [ -z "${owner_boot:-}" ] || [ -z "${owner_pid:-}" ] || [ -z "${owner_start:-}" ] \
-            || [ "$owner_boot" != "$boot" ] || [ "$owner_start" != "$live_start" ]; then
-            rm -f "$lock/owner"; rmdir "$lock" 2>/dev/null || true; continue
-        fi
-    elif [ "$elapsed" -ge 2 ] && rmdir "$lock" 2>/dev/null; then
-        elapsed=0
-        continue
-    fi
-    [ "$elapsed" -lt 30 ] || { echo "Error: timed out waiting for bootstrap publication lock." >&2; exit 1; }
-    sleep 1; elapsed=$((elapsed + 1))
+local result_file="" status=0 generation=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --result-file) result_file="$2"; shift 2 ;;
+        *) shift ;;
+    esac
 done
-boot=$(cat /proc/sys/kernel/random/boot_id)
-start=$(process_start $$) || { rmdir "$lock" 2>/dev/null || true; exit 1; }
-owner_tmp="$locks/.owner.$$.tmp"
-if ! printf "%s\t%s\t%s\n" "$boot" "$$" "$start" > "$owner_tmp" || ! mv "$owner_tmp" "$lock/owner"; then
-    rm -f "$owner_tmp"; rmdir "$lock" 2>/dev/null || true; exit 1
-fi
-cleanup() { rm -rf "$stage"; rm -f "$lock/owner"; rmdir "$lock" 2>/dev/null || true; }
-trap cleanup EXIT
-trap "exit 129" HUP
-trap "exit 130" INT
-trap "exit 143" TERM
-mkdir "$stage"
-tar -xf - -C "$stage"
-# Consume anything the extractor left unread. tar stops at the end-of-archive
-# marker and does not necessarily drain the trailing padding the creator writes
-# to fill its final block, so the host-side `tar -cf -` can take EPIPE on that
-# last write. The host runs the pipeline under `set -o pipefail`, which would
-# then report a complete, correct publication as a failed sync. Whether it
-# fires depends on the tar implementations at both ends, so it presents as an
-# intermittent sync failure rather than a reproducible one.
-cat >/dev/null
-for required in bootstrap.sh flake.nix flake.lock; do [ -f "$stage/$required" ] && [ ! -L "$stage/$required" ] || { echo "Error: staged bootstrap is missing a regular $required." >&2; exit 1; }; done
-predecessor=""
-if [ -L "$root/current" ]; then
-    predecessor=$(readlink "$root/current")
-    case "$predecessor" in generations/*) predecessor=${predecessor#generations/} ;; *) echo "Error: invalid bootstrap current pointer." >&2; exit 1 ;; esac
-    case "$predecessor" in ""|*/*|[.-]*|*[!A-Za-z0-9_.-]*) echo "Error: invalid bootstrap predecessor generation." >&2; exit 1 ;; esac
-fi
-printf "%s\n" "$predecessor" > "$stage/.predecessor"
-printf "%s\n" "$content_digest" > "$stage/.dx-content-digest"
-chown -R root:root "$stage"
-find "$stage" -type d -exec chmod 0555 {} +
-find "$stage" -type f -exec chmod 0444 {} +
-find "$stage" -type f \( -name "*.sh" -o -name bootstrap.sh \) -exec chmod 0555 {} +
-[ ! -e "$generations/$generation" ] && [ ! -L "$generations/$generation" ] || { echo "Error: bootstrap generation already exists: $generation." >&2; exit 1; }
-mv "$stage" "$generations/$generation"
-current_tmp="$root/.current.$$.tmp"
-[ ! -e "$current_tmp" ] && [ ! -L "$current_tmp" ] || { echo "Error: bootstrap pointer staging path already exists." >&2; exit 1; }
-ln -s "generations/$generation" "$current_tmp"
-mv -Tf "$current_tmp" "$root/current"
-for item in bootstrap.sh flake.nix flake.lock home.nix nixvim.nix home nvim scripts pins bootstrap; do
-    [ -e "$root/current/$item" ] || continue
-    rm -rf "$root/$item"
-    ln -s "current/$item" "$root/$item"
-done
-touch "$root/.dx-bootstrap-ready"
-rm -f "$root/.dx-bootstrap-waiting"
 
-# Retain current, its immutable predecessor, and generations with a fully
-# matching boot/PID/start-time lease. Stale leases are removed.
-current=$generation
-for lease in "$locks/leases"/*; do
-    [ -f "$lease" ] || continue
-    tab=$(printf "\t"); IFS="$tab" read -r lease_gen lease_boot lease_pid lease_start < "$lease" || true
-    lease_name=${lease##*/}
-    case "$lease_gen" in ""|[.-]*|*[!A-Za-z0-9_.-]*) rm -f "$lease"; continue ;; esac
-    case "$lease_boot" in ""|*[!A-Za-z0-9-]*) rm -f "$lease"; continue ;; esac
-    case "$lease_pid" in ""|*[!0-9]*) rm -f "$lease"; continue ;; esac
-    case "$lease_start" in ""|*[!0-9]*) rm -f "$lease"; continue ;; esac
-    [ "$lease_name" = "$lease_gen.$lease_pid" ] || { rm -f "$lease"; continue; }
-    live_start=$(process_start "${lease_pid:-0}" || true)
-    if [ "$lease_boot" != "$boot" ] || [ -z "$live_start" ] || [ "$lease_start" != "$live_start" ]; then rm -f "$lease"; fi
-done
-for candidate in "$generations"/*; do
-    [ -d "$candidate" ] || continue; id=${candidate##*/}
-    [ "$id" = "$current" ] && continue
-    [ -n "$predecessor" ] && [ "$id" = "$predecessor" ] && continue
-    leased=false
-    for lease in "$locks/leases/$id".*; do [ -f "$lease" ] && leased=true; done
-    if [ "$leased" = false ]; then
-        chmod -R u+w "$candidate"
-        rm -rf "$candidate"
-    fi
-done
-trap - EXIT HUP INT TERM
-rm -f "$lock/owner"; rmdir "$lock"
-' -- "$DX_BOOTSTRAP_PATH" "$generation_id" "$content_digest"
-
-echo "Bootstrap generation $generation_id is ready."
+# WP5.1 (Fable A2): the whole publish-or-skip body now lives in
+# bin/lib/dx-bootstrap-sync.sh's dx_bootstrap_sync, which puts every one of
+# its branches inside the kcov 100% gate (bin/dx* entrypoints are exempt --
+# tests/coverage/exclusions.txt). It sets `generation` here via Bash dynamic
+# scoping rather than printing it, so its own progress/result prose prints in
+# real time as it runs, exactly as before this split. Its guest heredoc still
+# ends with a trailing `cat >/dev/null` after extracting: tar stops at the
+# end-of-archive marker without necessarily draining the creator's trailing
+# padding, so without that drain the creator can take EPIPE and pipefail
+# would fail a complete, correct publication.
+dx_bootstrap_sync "$DX_CONTAINER_NAME" "$DX_BOOTSTRAP_SOURCE" "$DX_BOOTSTRAP_PATH" || status=$?
+case "$status" in
+    0) [ -z "$result_file" ] || dx_bootstrap_sync_result_write "$result_file" published "$generation" || exit 1 ;;
+    3) [ -z "$result_file" ] || dx_bootstrap_sync_result_write "$result_file" unchanged "$generation" || exit 1 ;;
+    *) exit 1 ;;
+esac
 }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then sync_bootstrap_main "$@"; fi

@@ -21,8 +21,20 @@ else
     dx_runtime_container_start "$DX_CONTAINER_NAME"
 fi
 
-dx_sync_output="$("$SCRIPT_DIR/dx-sync-bootstrap")"
-printf '%s\n' "$dx_sync_output"
+# WP5.1 (Fable A2): whether the sync actually published, or skipped because
+# the payload was unchanged, used to be decided by pattern-matching
+# dx-sync-bootstrap's own prose on captured stdout -- a coupling that broke
+# the moment that prose was reworded, independent of what actually happened.
+# dx-sync-bootstrap now writes that decision to a structured result file
+# instead; its own stdout is left to print directly (real time, exactly as
+# before), and is no longer the signal anything downstream depends on.
+dx_sync_result_file="$(mktemp "${TMPDIR:-/tmp}/dxe-bootstrap-sync-result.XXXXXX")" || {
+    echo "Error: could not create a temporary file for the bootstrap sync result." >&2
+    exit 1
+}
+trap 'rm -f "$dx_sync_result_file"' EXIT
+
+"$SCRIPT_DIR/dx-sync-bootstrap" --result-file "$dx_sync_result_file"
 
 # Diagnostic reads about the state the sync just left the guest in. Failures
 # here are swallowed on purpose: they feed either a diagnostic (never the
@@ -35,15 +47,21 @@ dx_published_generation="${dx_published_generation#generations/}"
 dx_lease_listing="$(dx_runtime_exec "$DX_CONTAINER_NAME" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$DX_BOOTSTRAP_PATH" 2>/dev/null || true)"
 [ -z "$dx_lease_listing" ] || dx_running_generation="$(dx_bootstrap_lease_generation "$dx_lease_listing" || true)"
 
-if dx_sync_published_generation="$(dx_bootstrap_sync_published_generation "$dx_sync_output")"; then
+outcome="" generation=""
+if ! dx_bootstrap_sync_result_read "$dx_sync_result_file"; then
+    echo "Error: bootstrap sync result file $dx_sync_result_file is missing or malformed." >&2
+    exit 1
+fi
+
+if [ "$outcome" = published ]; then
     # A real publish just happened for this start, not the unchanged-content
     # skip. Confirm, bounded, that the guest has actually picked it up before
     # declaring the start a success (Q4, D7 option 3): a swallowed warning is
     # no longer good enough for a publish the guest hasn't run yet. Skip the
     # round trip entirely when the pre-existing read above already shows a
     # match -- no added delay on the common path.
-    if [ "$dx_running_generation" != "$dx_sync_published_generation" ]; then
-        dx_bootstrap_confirm_publication "$DX_CONTAINER_NAME" "$DX_BOOTSTRAP_PATH" "$dx_sync_published_generation" "$DX_BOOTSTRAP_CONFIRM_TIMEOUT" || exit 1
+    if [ "$dx_running_generation" != "$generation" ]; then
+        dx_bootstrap_confirm_publication "$DX_CONTAINER_NAME" "$DX_BOOTSTRAP_PATH" "$generation" "$DX_BOOTSTRAP_CONFIRM_TIMEOUT" || exit 1
     fi
 else
     # Unchanged-content skip: no fresh publish to confirm. Report, as before,

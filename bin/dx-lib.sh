@@ -15,6 +15,8 @@ source "$DX_LIB_DIR/lib/dx-host-util.sh"
 source "$DX_LIB_DIR/lib/dx-runtime.sh"
 # shellcheck source=lib/dx-container.sh
 source "$DX_LIB_DIR/lib/dx-container.sh"
+# shellcheck source=lib/dx-bootstrap-sync.sh
+source "$DX_LIB_DIR/lib/dx-bootstrap-sync.sh"
 # shellcheck source=lib/dx-ssh-common.sh
 source "$DX_LIB_DIR/lib/dx-ssh-common.sh"
 # shellcheck source=lib/dx-mount-plan.sh

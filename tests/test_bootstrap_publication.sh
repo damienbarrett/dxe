@@ -498,6 +498,306 @@ fi
 
 assert_file_not_contains "$BASE_DIR/bin/dx-start-container" 'OLD_BASE' "dx-start-container no longer probes the guest for the old-base signature (docs/refactor/migration-gates.md#old-base-guards)"
 
+# --- WP5.1 (Fable A2): dx_bootstrap_sync branch coverage --------------------
+#
+# The whole publish-or-skip body moved from bin/dx-sync-bootstrap (a bin/dx*
+# entrypoint, exempt from the kcov 100% gate -- tests/coverage/exclusions.txt)
+# into bin/lib/dx-bootstrap-sync.sh, which is inside that gate. These cases
+# cover the branches that used to ride along on the entrypoint exemption.
+
+# Container absent.
+absent_root="$fixture/absent-root"; mkdir -p "$absent_root"
+mkdir -p "$fixture/absent-fake"
+fake_dir_absent="$(fake_tool_dir_create "$fixture/absent-fake")"
+fake_tool_write "$fake_dir_absent" container '
+case "${1:-}" in
+  system) exit 0 ;;
+  list) exit 0 ;;
+esac
+exit 1
+'
+absent_status=0
+absent_out="$(env PATH="$fake_dir_absent:$PATH" \
+    DX_CONTAINER_NAME=dx-bootstrap-absent \
+    DX_BOOTSTRAP_SOURCE="$good" \
+    DX_BOOTSTRAP_PATH="$absent_root" \
+    DX_BOOTSTRAP_WAIT_TIMEOUT=1 \
+    "$BASE_DIR/bin/dx-sync-bootstrap" 2>&1)" || absent_status=$?
+if [ "$absent_status" -ne 0 ] && printf '%s\n' "$absent_out" | stdin_matches -F 'Error: Container dx-bootstrap-absent does not exist. Run ./bin/dx-create-container first.'; then
+    test_pass "a nonexistent container fails the sync with the existing message"
+else
+    test_fail "a nonexistent container fails the sync with the existing message (status $absent_status, out '$absent_out')"
+fi
+
+# Unsafe DX_BOOTSTRAP_PATH: "/" reaches dx_bootstrap_sync's own guard through
+# the real entrypoint. (An empty DX_BOOTSTRAP_PATH is already rejected one
+# layer up, by config resolution itself -- dx_init_config's "invalid resolved
+# value" -- before dx-sync-bootstrap ever runs; that half of the case pattern
+# is exercised directly against dx_bootstrap_sync in section 9 instead.)
+unsafe_status=0
+unsafe_out="$(env PATH="$fake_dir:$PATH" \
+    DX_CONTAINER_NAME=dx-bootstrap-contract \
+    DX_BOOTSTRAP_SOURCE="$good" \
+    DX_BOOTSTRAP_PATH=/ \
+    DX_BOOTSTRAP_WAIT_TIMEOUT=1 \
+    "$BASE_DIR/bin/dx-sync-bootstrap" 2>&1)" || unsafe_status=$?
+if [ "$unsafe_status" -ne 0 ] && printf '%s\n' "$unsafe_out" | stdin_matches -F 'Error: Unsafe DX_BOOTSTRAP_PATH: /'; then
+    test_pass "an unsafe DX_BOOTSTRAP_PATH of '/' is refused"
+else
+    test_fail "an unsafe DX_BOOTSTRAP_PATH of '/' is refused (status $unsafe_status, out '$unsafe_out')"
+fi
+
+# Entrypoint never ready: the container exists and is running, but the guest
+# never signals readiness. Bounded by DX_BOOTSTRAP_WAIT_TIMEOUT via the same
+# injectable DX_SLEEP seam as the container-running preflight above.
+never_ready_root="$fixture/never-ready-root"; mkdir -p "$never_ready_root"
+mkdir -p "$fixture/never-ready-fake"
+fake_dir_never_ready="$(fake_tool_dir_create "$fixture/never-ready-fake")"
+fake_tool_write "$fake_dir_never_ready" container '
+case "${1:-}" in
+  system) exit 0 ;;
+  list) printf "%s\n" "$DX_CONTAINER_NAME"; exit 0 ;;
+  exec) exit 1 ;;
+esac
+exit 1
+'
+fake_tool_write "$fake_dir_never_ready" fake-sleep 'exit 0'
+never_ready_status=0
+never_ready_out="$(env PATH="$fake_dir_never_ready:$PATH" \
+    DX_CONTAINER_NAME=dx-bootstrap-never-ready \
+    DX_BOOTSTRAP_SOURCE="$good" \
+    DX_BOOTSTRAP_PATH="$never_ready_root" \
+    DX_BOOTSTRAP_WAIT_TIMEOUT=2 \
+    DX_SLEEP=fake-sleep \
+    "$BASE_DIR/bin/dx-sync-bootstrap" 2>&1)" || never_ready_status=$?
+if [ "$never_ready_status" -ne 0 ] && printf '%s\n' "$never_ready_out" | stdin_matches -F 'Error: Container dx-bootstrap-never-ready entrypoint never became ready after 2s.'; then
+    test_pass "a guest that never signals readiness fails the sync with the existing message"
+else
+    test_fail "a guest that never signals readiness fails the sync with the existing message (status $never_ready_status, out '$never_ready_out')"
+fi
+
+# Missing source.
+missing_source_root="$fixture/missing-source-root"; mkdir -p "$missing_source_root"
+: > "$missing_source_root/.dx-bootstrap-waiting"
+no_source_dir="$fixture/no-source"; mkdir -p "$no_source_dir"
+no_source_status=0
+no_source_out="$(env PATH="$fake_dir:$PATH" \
+    DX_CONTAINER_NAME=dx-bootstrap-contract \
+    DX_BOOTSTRAP_SOURCE="$no_source_dir" \
+    DX_BOOTSTRAP_PATH="$missing_source_root" \
+    DX_BOOTSTRAP_WAIT_TIMEOUT=1 \
+    "$BASE_DIR/bin/dx-sync-bootstrap" 2>&1)" || no_source_status=$?
+if [ "$no_source_status" -ne 0 ] && printf '%s\n' "$no_source_out" | stdin_matches -F "Error: Bootstrap source $no_source_dir/bootstrap.sh does not exist."; then
+    test_pass "a bootstrap source missing bootstrap.sh fails the sync with the existing message"
+else
+    test_fail "a bootstrap source missing bootstrap.sh fails the sync with the existing message (status $no_source_status, out '$no_source_out')"
+fi
+
+# Publication lock held forever (a permanently "alive"-looking owner, per the
+# shared boot-id/stat fakes below) times out rather than waiting for real --
+# faking `sleep` itself keeps the guest's own hard-coded 30-iteration loop
+# fast and deterministic, since that loop calls `sleep` directly rather than
+# through the host's DX_SLEEP seam.
+lock_timeout_fixture="$fixture/lock-timeout"; mkdir -p "$lock_timeout_fixture"
+lock_timeout_fake="$(fake_tool_dir_create "$lock_timeout_fixture")"
+fake_tool_write "$lock_timeout_fake" container '
+case "${1:-}" in
+  system) exit 0 ;;
+  list) printf "%s\n" "$DX_CONTAINER_NAME"; exit 0 ;;
+  exec)
+    shift
+    [ "${1:-}" != -i ] || shift
+    shift
+    exec "$@"
+    ;;
+esac
+exit 1
+'
+fake_tool_write "$lock_timeout_fake" chown 'exit 0'
+fake_tool_write "$lock_timeout_fake" cat '
+if [ "${1:-}" = /proc/sys/kernel/random/boot_id ]; then
+  printf "%s\n" test-boot-id
+elif [ "${1:-}" != "${1#/proc/}" ] && [ "${1##*/}" = stat ]; then
+  printf "1 (sh) S"; field=4; while [ "$field" -le 21 ]; do printf " 0"; field=$((field + 1)); done; printf " 99\n"
+else
+  exec /bin/cat "$@"
+fi
+'
+fake_tool_write "$lock_timeout_fake" awk '
+case "$*" in */proc/*/stat*) printf "%s\n" 99 ;; *) exec /usr/bin/awk "$@" ;; esac
+'
+fake_tool_write "$lock_timeout_fake" mv '
+if [ "${1:-}" = -Tf ]; then rm -f "$3"; exec /bin/mv -f "$2" "$3"; else exec /bin/mv "$@"; fi
+'
+fake_tool_write "$lock_timeout_fake" sleep 'exit 0'
+lock_timeout_root="$fixture/lock-timeout-root"
+mkdir -p "$lock_timeout_root/.locks/publication"
+: > "$lock_timeout_root/.dx-bootstrap-waiting"
+printf 'test-boot-id\t424242\t99\n' > "$lock_timeout_root/.locks/publication/owner"
+lock_timeout_status=0
+lock_timeout_out="$(env PATH="$lock_timeout_fake:$PATH" \
+    DX_CONTAINER_NAME=dx-bootstrap-lock-timeout \
+    DX_BOOTSTRAP_SOURCE="$good" \
+    DX_BOOTSTRAP_PATH="$lock_timeout_root" \
+    DX_BOOTSTRAP_WAIT_TIMEOUT=1 \
+    "$BASE_DIR/bin/dx-sync-bootstrap" 2>&1)" || lock_timeout_status=$?
+if [ "$lock_timeout_status" -ne 0 ] && printf '%s\n' "$lock_timeout_out" | stdin_matches -F 'timed out waiting for bootstrap publication lock'; then
+    test_pass "a permanently held publication lock times out rather than waiting forever"
+else
+    test_fail "a permanently held publication lock times out rather than waiting forever (status $lock_timeout_status, out '$lock_timeout_out')"
+fi
+
+# --- WP5.1 Red/Green: dx-start-container must decide "did a real publish
+# happen" from dx-sync-bootstrap's structured result file, never from its
+# prose ------------------------------------------------------------------
+#
+# Before this refactor, dx-start-container's only signal was
+# dx_bootstrap_sync_published_generation pattern-matching the exact literal
+# "Bootstrap generation <id> is ready." on dx-sync-bootstrap's captured
+# stdout. Reworded prose went unrecognised, fell through to the never-fails
+# unchanged-content diagnostic (dx_bootstrap_report_drift), and the start
+# exited 0 with at most a warning -- even though a real publish had just
+# happened and the guest's lease would never match it. Confirmed by hand
+# against the pre-WP5.1 tree (bin/dx-start-container, bin/lib/dx-container.sh
+# at commit b6ff834): this exact fixture exits 0 with
+# "Warning: dx-reword-contract is running bootstrap generation gen-old, but
+# gen-published-old is now published." Driving the REAL dx-start-container
+# (from a fixture copy of bin/, so its "$SCRIPT_DIR/dx-sync-bootstrap" sibling
+# reference resolves inside the fixture) against a fake sync that reports
+# success with entirely reworded prose while a lease for the published
+# generation never appears proves the decoupling: the result file's outcome
+# is what dx-start-container now acts on, so it fails instead (D7 option 3).
+reword_home="$fixture/reword-home"; mkdir -p "$reword_home"
+reword_bin="$fixture/reword-bin"
+cp -R "$BASE_DIR/bin" "$reword_bin"
+cat > "$reword_bin/dx-sync-bootstrap" <<'FAKESYNC'
+#!/bin/bash
+set -euo pipefail
+result_file=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --result-file) result_file="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+echo "Published bootstrap generation reworded-gen-x."
+[ -z "$result_file" ] || printf 'outcome=published\ngeneration=reworded-gen-x\n' > "$result_file"
+FAKESYNC
+chmod 0755 "$reword_bin/dx-sync-bootstrap"
+
+mkdir -p "$fixture/reword-fake"
+reword_fake="$(fake_tool_dir_create "$fixture/reword-fake")"
+fake_tool_write "$reword_fake" container '
+case "${1:-}" in
+  system) exit 0 ;;
+  list) printf "%s\n" "$DX_CONTAINER_NAME"; exit 0 ;;
+  exec)
+    shift
+    [ "${1:-}" != -i ] || shift
+    shift
+    exec "$@"
+    ;;
+esac
+exit 1
+'
+fake_tool_write "$reword_fake" fake-sleep 'exit 0'
+
+reword_root="$fixture/reword-root"
+mkdir -p "$reword_root/.locks/leases"
+: > "$reword_root/.locks/leases/gen-old.1"
+ln -sfn generations/gen-published-old "$reword_root/current"
+
+reword_status=0
+reword_out="$(env PATH="$reword_fake:$PATH" \
+    HOME="$reword_home" \
+    DX_CONTAINER_NAME=dx-reword-contract \
+    DX_NIX_VOLUME=dx-reword-contract-nix \
+    DX_BOOTSTRAP_SOURCE="$good" \
+    DX_BOOTSTRAP_PATH="$reword_root" \
+    DX_BOOTSTRAP_WAIT_TIMEOUT=1 \
+    DX_BOOTSTRAP_CONFIRM_TIMEOUT=2 \
+    DX_SLEEP=fake-sleep \
+    "$reword_bin/dx-start-container" 2>&1)" || reword_status=$?
+if [ "$reword_status" -ne 0 ] \
+    && printf '%s\n' "$reword_out" | stdin_matches -F 'Published bootstrap generation reworded-gen-x.' \
+    && printf '%s\n' "$reword_out" | stdin_matches -F 'Error: dx-reword-contract published bootstrap generation reworded-gen-x'; then
+    test_pass "WP5.1: a real publish is recognised from the structured result file even when dx-sync-bootstrap's own prose is reworded, and the start fails when the lease never matches (D7 option 3)"
+else
+    test_fail "WP5.1: a real publish is recognised from the structured result file even when dx-sync-bootstrap's own prose is reworded, and the start fails when the lease never matches (D7 option 3) (status $reword_status, out '$reword_out')"
+fi
+
+# --- WP5.1: dx-start-container fails loudly on a missing or malformed result
+# file, rather than silently treating it as either outcome. Same fixture-copy
+# technique, a fresh fake sync per case.
+result_file_home="$fixture/result-file-home"; mkdir -p "$result_file_home"
+mkdir -p "$fixture/result-file-fake"
+result_file_fake="$(fake_tool_dir_create "$fixture/result-file-fake")"
+fake_tool_write "$result_file_fake" container '
+case "${1:-}" in
+  system) exit 0 ;;
+  list) printf "%s\n" "$DX_CONTAINER_NAME"; exit 0 ;;
+  exec)
+    shift
+    [ "${1:-}" != -i ] || shift
+    shift
+    exec "$@"
+    ;;
+esac
+exit 1
+'
+
+cat > "$reword_bin/dx-sync-bootstrap" <<'FAKESYNC'
+#!/bin/bash
+set -euo pipefail
+echo "Bootstrap generation missing-result-gen is ready."
+FAKESYNC
+chmod 0755 "$reword_bin/dx-sync-bootstrap"
+missing_result_root="$fixture/missing-result-root"; mkdir -p "$missing_result_root"
+missing_result_status=0
+missing_result_out="$(env PATH="$result_file_fake:$PATH" \
+    HOME="$result_file_home" \
+    DX_CONTAINER_NAME=dx-missing-result-contract \
+    DX_NIX_VOLUME=dx-missing-result-contract-nix \
+    DX_BOOTSTRAP_SOURCE="$good" \
+    DX_BOOTSTRAP_PATH="$missing_result_root" \
+    DX_BOOTSTRAP_WAIT_TIMEOUT=1 \
+    "$reword_bin/dx-start-container" 2>&1)" || missing_result_status=$?
+if [ "$missing_result_status" -ne 0 ] && printf '%s\n' "$missing_result_out" | stdin_matches -F 'is missing or malformed'; then
+    test_pass "dx-start-container fails loudly when the sync never populates the result file"
+else
+    test_fail "dx-start-container fails loudly when the sync never populates the result file (status $missing_result_status, out '$missing_result_out')"
+fi
+
+cat > "$reword_bin/dx-sync-bootstrap" <<'FAKESYNC'
+#!/bin/bash
+set -euo pipefail
+result_file=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --result-file) result_file="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+echo "Bootstrap generation malformed-result-gen is ready."
+[ -z "$result_file" ] || printf 'this is not the right shape\n' > "$result_file"
+FAKESYNC
+chmod 0755 "$reword_bin/dx-sync-bootstrap"
+malformed_result_root="$fixture/malformed-result-root"; mkdir -p "$malformed_result_root"
+malformed_result_status=0
+malformed_result_out="$(env PATH="$result_file_fake:$PATH" \
+    HOME="$result_file_home" \
+    DX_CONTAINER_NAME=dx-malformed-result-contract \
+    DX_NIX_VOLUME=dx-malformed-result-contract-nix \
+    DX_BOOTSTRAP_SOURCE="$good" \
+    DX_BOOTSTRAP_PATH="$malformed_result_root" \
+    DX_BOOTSTRAP_WAIT_TIMEOUT=1 \
+    "$reword_bin/dx-start-container" 2>&1)" || malformed_result_status=$?
+if [ "$malformed_result_status" -ne 0 ] && printf '%s\n' "$malformed_result_out" | stdin_matches -F 'is missing or malformed'; then
+    test_pass "dx-start-container fails loudly when the sync writes a malformed result file"
+else
+    test_fail "dx-start-container fails loudly when the sync writes a malformed result file (status $malformed_result_status, out '$malformed_result_out')"
+fi
+
 # --- WP6.7/WP6.8 (Astra F7/F8): the healthcheck probe -----------------------
 #
 # dx_bootstrap_health_command renders ONE fixed program (no configuration

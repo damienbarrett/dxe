@@ -47,6 +47,8 @@ done
 ) >/dev/null 2>&1 && test_fail "partial snapshot fails closed" || test_pass "partial snapshot fails closed"
 
 source "$BASE_DIR/bin/lib/dx-container.sh"
+# shellcheck source=/dev/null
+source "$BASE_DIR/bin/lib/dx-bootstrap-sync.sh"
 ps() { printf '%s\n' '101 container-runtime-linux start --uuid dx-host-other' '102 container-runtime-linux start --uuid dx-host' 'bad malformed'; }
 if [ "$(container_runtime_pids dx-host)" = 102 ]; then test_pass "runtime discovery matches exact --uuid argument/value pairs"; else test_fail "runtime discovery matches exact --uuid argument/value pairs"; fi
 unset -f ps
@@ -661,31 +663,106 @@ for pair in 'same-gen same-gen' ' new-gen' 'old-gen '; do
     fi
 done
 
-# --- D7 option 3: dx-start-container must tell a real publish from the
-# unchanged-content skip using only dx-sync-bootstrap's own captured stdout,
-# since that is the only distinction available without re-deriving the
-# content digest itself (docs/refactor/decisions/D7-start-generation.md).
-if published="$(dx_bootstrap_sync_published_generation 'Syncing bootstrap generation 20260926T045923Z-7438 from /src to dx-test:/guest-bootstrap...
-Bootstrap generation 20260926T045923Z-7438 is ready.')" && [ "$published" = 20260926T045923Z-7438 ]; then
-    test_pass "a real publish's generation id is parsed from dx-sync-bootstrap's own terminal message"
+# --- D7 option 3 successor (WP5.1 / Fable A2): dx-start-container must tell a
+# real publish from the unchanged-content skip from a structured result file
+# dx-sync-bootstrap writes for it, not by pattern-matching its own prose on
+# captured stdout -- that coupling broke the instant the prose was reworded,
+# independent of what the sync actually did (docs/refactor/decisions/
+# D7-start-generation.md; the fixture-driven Red case lives in section 22).
+bootstrap_result_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bootstrap-result.XXXXXX")"
+
+result_roundtrip_file="$bootstrap_result_fixture/published"
+outcome="" generation=""
+if dx_bootstrap_sync_result_write "$result_roundtrip_file" published 20260926T045923Z-7438 \
+    && dx_bootstrap_sync_result_read "$result_roundtrip_file" \
+    && [ "$outcome" = published ] && [ "$generation" = 20260926T045923Z-7438 ]; then
+    test_pass "a published outcome round-trips through write and read"
 else
-    test_fail "a real publish's generation id is parsed from dx-sync-bootstrap's own terminal message (got '${published:-}')"
+    test_fail "a published outcome round-trips through write and read (outcome='${outcome:-}', generation='${generation:-}')"
 fi
-if dx_bootstrap_sync_published_generation 'Bootstrap content is unchanged; generation 20260926T045923Z-7438 stays current.' >/dev/null 2>&1; then
-    test_fail "the unchanged-content skip message is never mistaken for a publish"
+
+result_roundtrip_file2="$bootstrap_result_fixture/unchanged"
+outcome="" generation=""
+if dx_bootstrap_sync_result_write "$result_roundtrip_file2" unchanged 20260815T044707Z-70118 \
+    && dx_bootstrap_sync_result_read "$result_roundtrip_file2" \
+    && [ "$outcome" = unchanged ] && [ "$generation" = 20260815T044707Z-70118 ]; then
+    test_pass "an unchanged outcome round-trips through write and read"
 else
-    test_pass "the unchanged-content skip message is never mistaken for a publish"
+    test_fail "an unchanged outcome round-trips through write and read (outcome='${outcome:-}', generation='${generation:-}')"
 fi
-if dx_bootstrap_sync_published_generation 'something unexpected happened' >/dev/null 2>&1; then
-    test_fail "unrecognised sync output is never mistaken for a publish"
+
+# A second write to the same path replaces its content rather than appending
+# to it (tmp + mv -f), which is the whole point of writing through a temp file.
+outcome="" generation=""
+if dx_bootstrap_sync_result_write "$result_roundtrip_file" unchanged replacement-generation \
+    && dx_bootstrap_sync_result_read "$result_roundtrip_file" \
+    && [ "$outcome" = unchanged ] && [ "$generation" = replacement-generation ] \
+    && [ "$(wc -l < "$result_roundtrip_file" | tr -d ' ')" = 2 ]; then
+    test_pass "a second write replaces the result file's content rather than appending to it"
 else
-    test_pass "unrecognised sync output is never mistaken for a publish"
+    test_fail "a second write replaces the result file's content rather than appending to it"
 fi
-if dx_bootstrap_sync_published_generation '' >/dev/null 2>&1; then
-    test_fail "empty sync output is never mistaken for a publish"
+
+if dx_bootstrap_sync_result_write "$bootstrap_result_fixture/rejected" bogus-outcome some-gen; then
+    test_fail "the writer refuses an outcome that is neither published nor unchanged"
 else
-    test_pass "empty sync output is never mistaken for a publish"
+    test_pass "the writer refuses an outcome that is neither published nor unchanged"
 fi
+if dx_bootstrap_sync_result_write "$bootstrap_result_fixture/rejected" published '../escape'; then
+    test_fail "the writer refuses an unsafe generation id"
+else
+    test_pass "the writer refuses an unsafe generation id"
+fi
+
+if dx_bootstrap_sync_result_read "$bootstrap_result_fixture/does-not-exist" >/dev/null 2>&1; then
+    test_fail "the reader refuses a missing result file"
+else
+    test_pass "the reader refuses a missing result file"
+fi
+
+ln -s published "$bootstrap_result_fixture/symlink"
+if dx_bootstrap_sync_result_read "$bootstrap_result_fixture/symlink" >/dev/null 2>&1; then
+    test_fail "the reader refuses a symlinked result file"
+else
+    test_pass "the reader refuses a symlinked result file"
+fi
+
+printf 'outcome=published\n' > "$bootstrap_result_fixture/truncated"
+if dx_bootstrap_sync_result_read "$bootstrap_result_fixture/truncated" >/dev/null 2>&1; then
+    test_fail "the reader refuses a result file truncated to one line"
+else
+    test_pass "the reader refuses a result file truncated to one line"
+fi
+
+printf 'outcome=published\ngeneration=gen-a\nextra-trailing-line\n' > "$bootstrap_result_fixture/toolong"
+if dx_bootstrap_sync_result_read "$bootstrap_result_fixture/toolong" >/dev/null 2>&1; then
+    test_fail "the reader refuses a result file with a trailing third line"
+else
+    test_pass "the reader refuses a result file with a trailing third line"
+fi
+
+printf 'outcome=bogus\ngeneration=gen-a\n' > "$bootstrap_result_fixture/badoutcome"
+if dx_bootstrap_sync_result_read "$bootstrap_result_fixture/badoutcome" >/dev/null 2>&1; then
+    test_fail "the reader refuses an outcome that is neither published nor unchanged"
+else
+    test_pass "the reader refuses an outcome that is neither published nor unchanged"
+fi
+
+printf 'outcome=published\nnot-a-generation-line\n' > "$bootstrap_result_fixture/badgenline"
+if dx_bootstrap_sync_result_read "$bootstrap_result_fixture/badgenline" >/dev/null 2>&1; then
+    test_fail "the reader refuses a second line without a generation= prefix"
+else
+    test_pass "the reader refuses a second line without a generation= prefix"
+fi
+
+printf 'outcome=published\ngeneration=../escape\n' > "$bootstrap_result_fixture/badgen"
+if dx_bootstrap_sync_result_read "$bootstrap_result_fixture/badgen" >/dev/null 2>&1; then
+    test_fail "the reader refuses an unsafe generation id"
+else
+    test_pass "the reader refuses an unsafe generation id"
+fi
+
+rm -rf "$bootstrap_result_fixture"
 
 # F12: cleanup_osc used to be defined without a dx_ namespace, leaking into
 # the caller's global namespace; and export TERM had no effect since the
