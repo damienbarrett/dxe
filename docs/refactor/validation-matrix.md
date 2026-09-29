@@ -17,11 +17,15 @@ tiers before completion.
 | Destructive isolated | mac only | Factory reset and cleanup | Explicit opt-in; assert resource names are not any default before execution |
 | Runtime compatibility | mac only | Supported Apple Container surface | Documented Apple Container versions; legacy manifest/tunnel/bootstrap state; restart-safe leases and migration audits |
 
-The `Runs on` column is the operative part of [D3](decisions/D3-ci.md). The first
-three tiers plus Bash 3.2 compatibility and coverage are the contract CI enforces.
-Nix builds and the live/destructive/runtime-compatibility tiers are the
-developer's pre-promotion responsibility on a real macOS host, because Apple
-Container requires virtualization a hosted runner does not have.
+**The hermetic-vs-live split, stated once (Muse E4):** the `Runs on` column
+above is the sole statement of it; nothing else in this document restates
+which tiers are which, only points back here. It is also the operative part
+of [D3](decisions/D3-ci.md). Syntax/lint, Unit/static, Host contract, Bash
+3.2 compatibility and Shell coverage are the contract CI enforces on every
+push -- hermetic, no real guest or Apple Container involved. Nix build, Live
+isolated, Destructive isolated and Runtime compatibility are `mac only`: each
+is the developer's pre-promotion responsibility on a real macOS host,
+because Apple Container needs virtualization a hosted runner does not have.
 
 Nix *evaluation* is not similarly constrained to one architecture: `flake.nix`
 evaluates both `aarch64-linux` (Apple's guest) and `x86_64-linux` (the QNAP's)
@@ -42,7 +46,8 @@ exercised on the Live isolated tier, via an actual guest boot.
 ## Useful final commands
 
 ```sh
-# CI-equivalent tiers, runnable anywhere including a container-free machine
+# CI-equivalent tiers (hermetic; see the table above), runnable anywhere
+# including a container-free machine
 tests/run_all_tests.sh --skip-integration
 tests/run-bash32-tests.sh
 tests/run-coverage-linux.sh
@@ -57,7 +62,7 @@ nix flake check --no-build --no-write-lock-file --all-systems \
 # After committing a release candidate, before promotion
 tests/release-check.sh
 
-# mac-only tiers, before promotion
+# mac-only tiers (see the table above), before promotion
 nix build --no-write-lock-file \
   ./container/aarch64-darwin-apple-container-dx-nixos-26.05#<output>
 ./bin/dx-profile dx-test tests/run_all_tests.sh
@@ -89,7 +94,11 @@ Stage the source rather than copying the working tree: the repository root holds
 SSH private keys that have no reason to enter a guest.
 
 **Pin ShellCheck.** Version 0.11.0 aborts with `Non-exhaustive patterns in
-checkCmd` on `x="$(source f)"` — the construct the import-purity contract in
+checkCmd` on `x="$(source f)"` — the construct the import-purity contract
+depends on in both
 [`tests/test_refactor_contracts.sh`](../../tests/test_refactor_contracts.sh)
-depends on. 0.10.0 is clean across the whole repository. CI pins the version for
-that reason; re-test the pin before bumping it.
+and
+[`tests/test_section9_host_scripts.sh`](../../tests/test_section9_host_scripts.sh).
+0.10.0 is clean across the whole repository. CI pins the version for that
+reason; re-test the pin before bumping it, and again when nixos-26.05 (the
+guest's own pin) becomes the CI pin.
