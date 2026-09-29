@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+
+destroy_container_main() {
 dx_require_container_cli
 
 if ! container_exists "$DX_CONTAINER_NAME"; then
@@ -22,3 +24,5 @@ fi
 echo "Removing container $DX_CONTAINER_NAME..."
 run_with_timeout "$DX_DELETE_COMMAND_TIMEOUT" dx_runtime_container_delete "$DX_CONTAINER_NAME"
 dx_nix_volume_claim_release "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME"
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then destroy_container_main "$@"; fi
