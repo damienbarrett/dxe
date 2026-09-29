@@ -35,13 +35,33 @@ else
     test_pass "undotree not configured both as NixVim module and manually"
 fi
 
-# Test: Comment.nvim not configured both as NixVim module and in extraConfigLua
-COMMENT_MODULE=$(echo "$COMBINED_NIX" | grep "comment.enable = true" | wc -l | xargs)
-COMMENT_EXTRA=$(echo "$COMBINED_NIX" | grep -E "require.*Comment.*setup|require.*ts_context_commentstring" | wc -l | xargs)
-if [ "$COMMENT_MODULE" -gt 0 ] && [ "$COMMENT_EXTRA" -gt 1 ]; then
-    test_fail "Comment.nvim not configured both as NixVim module and in extraConfigLua (Module: $COMMENT_MODULE, Extra: $COMMENT_EXTRA)"
+# Test: Comment.nvim's pre_hook survives NixVim's module system (WP7.7,
+# docs/reviews/2026-09-29-fable.md finding C7). Behavioural, not source
+# text: checks.<system>.nvim launches the real, headless Neovim built from
+# nixvim.nix with an extra `assert(require('Comment.config'):get().pre_hook,
+# ...)`, and NixVim's own test harness fails the build if Neovim prints
+# anything to stderr -- so this catches "pre_hook was set, then silently
+# overridden" the way the old two-`require('Comment').setup(...)` calls
+# could, which a grep counting call sites cannot.
+if command -v nix >/dev/null 2>&1; then
+    # The flake's checks only exist for the two Linux guest systems
+    # (flake.nix's supportedSystems), never for the host's own OS, so this
+    # maps the host CPU architecture straight to "<arch>-linux" -- the same
+    # `uname -m` idiom scripts/lib/dx-guest-system.sh uses guest-side.
+    case "$(uname -m)" in
+        aarch64|arm64) NVIM_CHECK_SYSTEM=aarch64-linux ;;
+        x86_64|amd64)  NVIM_CHECK_SYSTEM=x86_64-linux ;;
+        *)             NVIM_CHECK_SYSTEM="" ;;
+    esac
+    if [ -z "$NVIM_CHECK_SYSTEM" ]; then
+        test_skip "unsupported host architecture ($(uname -m)), skipping checks.<system>.nvim"
+    elif nix build --no-write-lock-file --no-link "$CONTAINER_DIR#checks.$NVIM_CHECK_SYSTEM.nvim" 2>/dev/null; then
+        test_pass "checks.$NVIM_CHECK_SYSTEM.nvim: Comment's pre_hook survives NixVim's module system"
+    else
+        test_fail "checks.$NVIM_CHECK_SYSTEM.nvim: Comment's pre_hook survives NixVim's module system"
+    fi
 else
-    test_pass "Comment.nvim not configured both as NixVim module and in extraConfigLua"
+    test_skip "nix not available, skipping checks.<system>.nvim"
 fi
 
 # Test: prefer NixVim modules over extraPlugins

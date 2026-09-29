@@ -30,11 +30,11 @@
     ./nvim/plugins/todo-comments.nix
     ./nvim/plugins/treesitter.nix
     ./nvim/plugins/trouble.nix
+    ./nvim/plugins/ts-context-commentstring.nix
     ./nvim/plugins/web-devicons.nix
     ./nvim/plugins/which-key.nix
     ./nvim/plugins/yazi.nix
     ./nvim/extra_plugins/outline.nix
-    ./nvim/extra_plugins/ts-context-commentstring.nix
     ./nvim/extra_plugins/undotree.nix
     # Seamless tmux/vim Ctrl-h/j/k/l navigation. Remove this line and
     # nvim/plugins/vim-tmux-navigator.nix (and restore the Ctrl-J/Ctrl-K maps in

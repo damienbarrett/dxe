@@ -413,6 +413,36 @@
 
               touch $out
             '';
+
+            # WP7.7 (docs/reviews/2026-09-29-fable.md finding C7): NixVim's
+            # own test harness launches a real, headless Neovim and fails
+            # the build if it prints anything to stderr (nixvim's
+            # modules/top-level/test.nix). `pre_hook` used to be set by a
+            # raw second `require('Comment').setup(...)` call in the
+            # now-deleted nvim/extra_plugins/ts-context-commentstring.nix,
+            # which silently won over whatever `plugins.comment.enable`
+            # alone produced; this proves the typed
+            # `plugins.comment.settings.pre_hook` (nvim/plugins/comment.nix)
+            # actually reaches the running config instead of a source-text
+            # assertion that can't tell "set" from "set and then lost".
+            # Only the two plugins under test are imported (not the whole
+            # of nixvim.nix): several of the other plugins (project-nvim,
+            # for one -- see its own comment) print unrelated startup
+            # chatter to stderr under a from-scratch $HOME, which this
+            # harness would otherwise misreport as a pre_hook regression.
+            nvim = nixvim.lib.${system}.check.mkTestDerivationFromNixvimModule {
+              inherit pkgs;
+              module = {
+                imports = [
+                  ./nvim/plugins/comment.nix
+                  ./nvim/plugins/ts-context-commentstring.nix
+                  ./nvim/plugins/treesitter.nix # ts-context-commentstring needs it to function
+                ];
+                extraConfigLua = ''
+                  assert(require('Comment.config'):get().pre_hook, 'pre_hook lost')
+                '';
+              };
+            };
           };
         };
 

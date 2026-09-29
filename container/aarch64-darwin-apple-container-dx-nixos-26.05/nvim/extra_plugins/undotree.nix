@@ -1,6 +1,11 @@
 { pkgs, ... }:
 {
-  plugins.undotree.enable = false;
+  # extra_plugins/'s admission rule (Fable C7): a plugin lives here only when
+  # no upstream NixVim module exists for it. NixVim's own `plugins.undotree`
+  # module targets a *different* undotree plugin than the one below
+  # (jiaoshijie/undotree, the Lua rewrite) -- `enable = false` here used to
+  # be a no-op reminder of that, not a real toggle; it is gone now that this
+  # comment says the same thing.
 
   extraPlugins = [
     (pkgs.vimUtils.buildVimPlugin {

@@ -62,11 +62,12 @@ if command -v nix >/dev/null 2>&1; then
         # each shell (home/shell.nix) -- the same eval-only, zero-warnings
         # proof the three checks above already get. WP7.5 (Fable C5):
         # scripts-hermetic proves the installed dx-theme-restore/copy-hook
-        # commands no longer depend on an ambient PATH.
+        # commands no longer depend on an ambient PATH. WP7.7 (Fable C7):
+        # nvim proves Comment's pre_hook survives NixVim's module system.
         for check_name in home-activation ai-tools bootstrap-essentials \
             inventory inventory-list \
             bash-integration fish-integration nushell-integration \
-            scripts-hermetic; do
+            scripts-hermetic nvim; do
             if check_output="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#checks.$system.$check_name.drvPath" 2>&1)"; then
                 test_pass "checks.$system.$check_name evaluates"
             else
@@ -121,6 +122,8 @@ else
         test_skip "nix not available, skipping checks.$system.nushell-integration warnings check"
         test_skip "nix not available, skipping checks.$system.scripts-hermetic evaluation"
         test_skip "nix not available, skipping checks.$system.scripts-hermetic warnings check"
+        test_skip "nix not available, skipping checks.$system.nvim evaluation"
+        test_skip "nix not available, skipping checks.$system.nvim warnings check"
         test_skip "nix not available, skipping checks.$system.alias-is-identity evaluation"
     done
 fi
