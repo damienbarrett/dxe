@@ -496,12 +496,100 @@ assert_file_not_contains "$BOOTSTRAP_DIR/system.sh" 'chown -R dx:dx /home/dx/.ss
 assert_file_not_contains "$BOOTSTRAP_DIR/persistence.sh" 'chown -R dx:dx /persist/home/dx' "persistence setup does not recursively re-own persisted home on every boot"
 assert_file_contains_literal "$BOOTSTRAP_DIR/persistence.sh" 'dx_ensure_tree_owner' "persisted-tree ownership uses a marker-guarded migration helper"
 assert_file_contains_literal "$BOOTSTRAP_DIR/activation.sh" 'dx_ensure_tree_owner' "activation uses bounded ownership checks for mutable roots"
-assert_file_contains_literal "$BOOTSTRAP_DIR/base-and-storage.sh" 'Bootstrap phase: essentials installation completed in' "essentials installation reports elapsed time"
-assert_file_contains_literal "$BOOTSTRAP_DIR/base-and-storage.sh" 'Bootstrap phase: Nix volume prepare/mount completed in' "Nix volume prepare/mount reports elapsed time"
-assert_file_contains_literal "$BOOTSTRAP_DIR/common.sh" 'Bootstrap phase: essentials verification/repair completed in' "essentials verification/repair reports elapsed time"
-assert_file_contains_literal "$BOOTSTRAP_DIR/activation.sh" 'Bootstrap phase: Nix ownership check/migration completed in' "Nix ownership check/migration reports elapsed time"
-assert_file_contains_literal "$BOOTSTRAP_DIR/activation.sh" 'Bootstrap phase: Home Manager activation completed in' "Home Manager activation reports elapsed time"
-assert_file_contains_literal "$BOOTSTRAP_DIR/activation.sh" 'Bootstrap phase: final guest tool verification completed in' "final guest tool verification reports elapsed time"
+# Fable review B8/D7: the six "Bootstrap phase: ... completed in Ns" lines
+# below used to be asserted by grepping the literal text out of the phase
+# functions' own source. Each is now driven through the real function with
+# only its own immediate dependencies stubbed, so the assertion exercises
+# the actual timing/echo logic instead of parsing source text.
+p_ie_output="$({
+    useradd() { :; }
+    install_essentials
+} 2>&1)" || true
+if printf '%s\n' "$p_ie_output" | stdin_matches -F 'Bootstrap phase: essentials installation completed in'; then
+    test_pass "install_essentials reports elapsed time on completion"
+else
+    test_fail "install_essentials reports elapsed time on completion (output: $p_ie_output)"
+fi
+
+p_pnv_output="$({
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
+    findmnt() { [ "$*" = '-n -o TARGET,FSTYPE /nix' ] && printf '%s\n' '/nix btrfs' || return 1; }
+    prepare_nix_volume
+} 2>&1)" || true
+if printf '%s\n' "$p_pnv_output" | stdin_matches -F 'Bootstrap phase: Nix volume prepare/mount completed in'; then
+    test_pass "prepare_nix_volume reports elapsed time on completion"
+else
+    test_fail "prepare_nix_volume reports elapsed time on completion (output: $p_pnv_output)"
+fi
+
+p_eev_output="$({
+    essentials_profile_store_path() { printf '%s\n' /fake/essentials-profile; }
+    essentials_store_valid() { return 0; }
+    ensure_essentials_valid
+} 2>&1)" || true
+if printf '%s\n' "$p_eev_output" | stdin_matches -F 'Bootstrap phase: essentials verification/repair completed in'; then
+    test_pass "ensure_essentials_valid reports elapsed time on completion"
+else
+    test_fail "ensure_essentials_valid reports elapsed time on completion (output: $p_eev_output)"
+fi
+
+p_eno_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-phase-ownership.XXXXXX")"
+p_eno_output="$({
+    owner_uid="$(command id -u)"
+    owner_gid="$(command id -g)"
+    id() { [ "${1:-}" = -u ] && printf '%s\n' "$owner_uid" || printf '%s\n' "$owner_gid"; }
+    if [ "$(command uname -s)" = Darwin ]; then
+        stat() {
+            if [ "${1:-}" = -c ]; then
+                shift 2
+                command stat -f '%u:%g' "$1"
+            else
+                command stat "$@"
+            fi
+        }
+    fi
+    chown() {
+        local args=() arg
+        for arg in "$@"; do
+            if [ "$arg" = dx:dx ]; then args+=("$owner_uid:$owner_gid"); else args+=("$arg"); fi
+        done
+        command chown "${args[@]}"
+    }
+    run_as_dx() { return 0; }
+    essentials_store_valid() { return 0; }
+    mkdir -p "$p_eno_root/store" "$p_eno_root/var/nix"
+    DX_NIX_OWNERSHIP_ROOT="$p_eno_root" publish_nix_ownership_marker >/dev/null
+    DX_NIX_OWNERSHIP_ROOT="$p_eno_root" ensure_nix_ownership
+} 2>&1)" || true
+rm -rf "$p_eno_root"
+if printf '%s\n' "$p_eno_output" | stdin_matches -F 'Bootstrap phase: Nix ownership check/migration completed in'; then
+    test_pass "ensure_nix_ownership reports elapsed time on completion"
+else
+    test_fail "ensure_nix_ownership reports elapsed time on completion (output: $p_eno_output)"
+fi
+
+p_hma_output="$({
+    validate_positive_integer() { return 0; }
+    run_as_dx_with_timeout() { return 0; }
+    dx_guest_resolve_system() { printf '%s\n' aarch64-linux; }
+    export DX_BOOTSTRAP_ROOT="$fixture" DX_GUEST_ACTIVATION_TIMEOUT=1 DX_GUEST_ACTIVATION_ATTEMPTS=1 DX_GUEST_ACTIVATION_RETRY_DELAY=1
+    run_home_manager_activation
+} 2>&1)" || true
+if printf '%s\n' "$p_hma_output" | stdin_matches -F 'Bootstrap phase: Home Manager activation completed in'; then
+    test_pass "run_home_manager_activation reports elapsed time on completion"
+else
+    test_fail "run_home_manager_activation reports elapsed time on completion (output: $p_hma_output)"
+fi
+
+p_vgt_output="$({
+    run_as_dx() { return 0; }
+    verify_guest_tools
+} 2>&1)" || true
+if printf '%s\n' "$p_vgt_output" | stdin_matches -F 'Bootstrap phase: final guest tool verification completed in'; then
+    test_pass "verify_guest_tools reports elapsed time on completion"
+else
+    test_fail "verify_guest_tools reports elapsed time on completion (output: $p_vgt_output)"
+fi
 assert_file_contains_literal "$BOOTSTRAP_DIR/activation.sh" 'dx_activate_herdr || echo "Warning: Herdr activation failed; continuing bootstrap without it." >&2' "Herdr persistence and config seeding are non-fatal bootstrap activation steps"
 assert_file_contains_literal "$BOOTSTRAP" 'configure_guest true' "validated Nix imports pass content validation only from bootstrap into guest setup"
 assert_file_not_contains "$BOOTSTRAP" 'DX_NIX_VOLUME_PHASE' "bootstrap uses explicit Nix volume lifecycle seams"
@@ -1428,31 +1516,16 @@ rm -rf "$p9_fixture"
 # hosts -- macOS bash 3.2 and Linux), so the check's own decision logic is
 # what these fixtures exercise, not any one host's real toolchain.
 
-# Ordering: verify_remount_prerequisites must run strictly after
-# populate_prepared_nix_volume (the remount in apple-image mode; container
-# start in direct-volume mode -- bootstrap_main's own shared call site
-# either way) and strictly before nix_restore_image_default_profile, whose
-# own named tools it exists to check ahead of.
-bootstrap_sh="$CONTAINER_DIR/bootstrap.sh"
-p10_populate_line="$(grep -n '^\s*populate_prepared_nix_volume$' "$bootstrap_sh" | cut -d: -f1)"
-p10_verify_line="$(grep -n '^\s*verify_remount_prerequisites$' "$bootstrap_sh" | cut -d: -f1)"
-p10_restore_line="$(grep -n '^\s*nix_restore_image_default_profile$' "$bootstrap_sh" | cut -d: -f1)"
-if [ -n "$p10_populate_line" ] && [ -n "$p10_verify_line" ] && [ -n "$p10_restore_line" ] \
-    && [ "$p10_populate_line" -lt "$p10_verify_line" ] && [ "$p10_verify_line" -lt "$p10_restore_line" ]; then
-    test_pass "bootstrap_main calls verify_remount_prerequisites between populate_prepared_nix_volume and nix_restore_image_default_profile"
-else
-    test_fail "bootstrap_main calls verify_remount_prerequisites between populate_prepared_nix_volume and nix_restore_image_default_profile (populate=$p10_populate_line verify=$p10_verify_line restore=$p10_restore_line)"
-fi
-
-# P10b (Fable review B8): the phase order the P10 test above pins by
-# comparing grep line numbers in bootstrap.sh's source text is proven here
-# behaviourally instead -- source the orchestrator (its own
-# `[ "${BASH_SOURCE[0]}" = "$0" ]` guard, asserted above, keeps sourcing
-# from running bootstrap_main or execing sshd), shadow every documented
-# phase function with a stub that logs its own $FUNCNAME, and call
-# bootstrap_phases(). Today bootstrap_phases does not exist (the phases are
-# still inline inside bootstrap_main, which also owns env setup and the
-# final `exec sshd`), so this fails cleanly rather than booting sshd.
+# Ordering (Fable review B8): verify_remount_prerequisites must run strictly
+# after populate_prepared_nix_volume (the remount in apple-image mode;
+# container start in direct-volume mode -- bootstrap_phases' own shared call
+# site either way) and strictly before nix_restore_image_default_profile,
+# whose own named tools it exists to check ahead of. Proven behaviourally:
+# source the orchestrator (its own `[ "${BASH_SOURCE[0]}" = "$0" ]` guard,
+# asserted above, keeps sourcing from running bootstrap_main or execing
+# sshd), shadow every documented phase function with a stub that logs its
+# own $FUNCNAME, and call bootstrap_phases() -- not by comparing grep line
+# numbers in bootstrap.sh's source text.
 p10b_output="$({
     source "$BOOTSTRAP"
     configure_single_user_nix() { printf '%s\n' "$FUNCNAME"; }
