@@ -3,7 +3,106 @@
 # This file intentionally does not set shell options or initialize configuration.
 
 DXE_CONFIG_SNAPSHOT_VERSION_CURRENT=1
-DXE_CONFIG_FIELDS="DX_RUNTIME DX_REMOTE_HOST DX_GUEST_SYSTEM DX_NIX_STORAGE_MODE DX_CONTAINER_RESTART_POLICY DX_CONTAINER_NAME DX_IMAGE DX_SSH_PORT DX_SSH_KEY DX_SSH_KEY_PUB DX_SSH_CONNECT_TIMEOUT DX_CONTEXT_DIR DX_BOOTSTRAP_SOURCE DX_BOOTSTRAP_VOLUME DX_BOOTSTRAP_PATH DX_BOOTSTRAP_WAIT_TIMEOUT DX_BOOTSTRAP_CONFIRM_TIMEOUT DX_GUEST_ACTIVATION_TIMEOUT DX_GUEST_ACTIVATION_ATTEMPTS DX_GUEST_ACTIVATION_RETRY_DELAY DX_NIX_VOLUME DX_NIX_MOUNT DX_NIX_DISK DX_NIX_DISK_SIZE DX_PERSIST_VOLUME DX_GIT_MOUNT_SOURCE DX_GIT_MOUNT_TARGET DX_GUEST_WORKDIR DX_CONTAINER_MEMORY DX_CONTAINER_CPUS DX_CONTAINER_VOLUME_DIR DX_STOP_GRACE_SECONDS DX_STOP_COMMAND_TIMEOUT DX_STOP_WAIT_TIMEOUT DX_DELETE_COMMAND_TIMEOUT DX_MOUNT_IDENTITY_DIR DX_TUNNEL_LOCK_TIMEOUT DX_BACKUP_DIR"
+
+# Fable A5's refactor: one table, one line per field, `NAME<TAB>kind<TAB>
+# default`. DXE_CONFIG_FIELDS, dx_config_path_field, dx_config_default and
+# dx_config_validate_value are all lookups over this table (plus one
+# validator per kind) instead of four hand-synced per-field lists that had
+# to agree by construction (and didn't: dx_config_validate_value had no
+# default arm, and DX_BOOTSTRAP_SOURCE's default depended on field order --
+# see the two commits before this one). Bash 3.2-clean: a multi-line
+# string and `case`, no associative arrays (no `declare -A`/namerefs/
+# `mapfile`/`local x=$(...)` in this file, matching every other bin/
+# library).
+#
+# kind is one of, chosen to reproduce dx_config_validate_value's original
+# per-field arms exactly (see the WP4.3 refactor commit message for the
+# full NAME -> kind mapping):
+#   enum:a,b   -- exact match against one comma-joined literal list
+#   name       -- DX_CONTAINER_NAME's non-empty identifier class
+#   optname    -- the same class, but empty is also accepted (DX_REMOTE_HOST)
+#   image      -- DX_IMAGE's class (adds `.`/`/`/`:` for image refs)
+#   port       -- 1-65535
+#   posint     -- a positive (non-zero) integer
+#   size       -- a positive integer with an optional K/M/G/T/P(k/m/g/p/t) suffix
+#   abspath    -- a non-empty value starting with `/`
+#   optpath    -- the same, but empty is also accepted
+#
+# default is one of:
+#   =literal    -- the literal value verbatim (`=` alone means empty)
+#   @root:suffix -- "$DX_PROJECT_ROOT/suffix"
+#   @home:suffix -- "$HOME/suffix" (HOME must be set, as today)
+#   @field:NAME  -- NAME's own default (DX_BOOTSTRAP_SOURCE's default is
+#                   exactly DX_CONTEXT_DIR's, independent of field order --
+#                   see dx_config_default)
+DXE_CONFIG_REGISTRY=$'DX_RUNTIME\tenum:apple,docker-ssh\t=apple
+DX_REMOTE_HOST\toptname\t=
+DX_GUEST_SYSTEM\tenum:aarch64-linux,x86_64-linux\t=aarch64-linux
+DX_NIX_STORAGE_MODE\tenum:apple-image,direct-volume\t=apple-image
+DX_CONTAINER_RESTART_POLICY\tenum:no,unless-stopped\t=no
+DX_CONTAINER_NAME\tname\t=dx-host
+DX_IMAGE\timage\t=dx-nixos-26.05
+DX_SSH_PORT\tport\t=2222
+DX_SSH_KEY\tabspath\t@root:dx_key
+DX_SSH_KEY_PUB\tabspath\t@root:dx_key.pub
+DX_SSH_CONNECT_TIMEOUT\tposint\t=15
+DX_CONTEXT_DIR\tabspath\t@root:container/aarch64-darwin-apple-container-dx-nixos-26.05
+DX_BOOTSTRAP_SOURCE\tabspath\t@field:DX_CONTEXT_DIR
+DX_BOOTSTRAP_VOLUME\tname\t=dx-bootstrap
+DX_BOOTSTRAP_PATH\tabspath\t=/guest-bootstrap
+DX_BOOTSTRAP_WAIT_TIMEOUT\tposint\t=30
+DX_BOOTSTRAP_CONFIRM_TIMEOUT\tposint\t=5
+DX_GUEST_ACTIVATION_TIMEOUT\tposint\t=1800
+DX_GUEST_ACTIVATION_ATTEMPTS\tposint\t=2
+DX_GUEST_ACTIVATION_RETRY_DELAY\tposint\t=5
+DX_NIX_VOLUME\tname\t=dx-nix
+DX_NIX_MOUNT\tabspath\t=/nix
+DX_NIX_DISK\tabspath\t@home:.dx-cache/nix-store.img
+DX_NIX_DISK_SIZE\tsize\t=64G
+DX_PERSIST_VOLUME\tname\t=dx-persist
+DX_GIT_MOUNT_SOURCE\toptpath\t=
+DX_GIT_MOUNT_TARGET\tabspath\t=/workspace
+DX_GUEST_WORKDIR\toptpath\t=
+DX_CONTAINER_MEMORY\tsize\t=12G
+DX_CONTAINER_CPUS\tposint\t=4
+DX_CONTAINER_VOLUME_DIR\tabspath\t@home:Library/Application Support/com.apple.container/volumes
+DX_STOP_GRACE_SECONDS\tposint\t=5
+DX_STOP_COMMAND_TIMEOUT\tposint\t=15
+DX_STOP_WAIT_TIMEOUT\tposint\t=5
+DX_DELETE_COMMAND_TIMEOUT\tposint\t=15
+DX_MOUNT_IDENTITY_DIR\tabspath\t@home:.dx-cache/mount-identities
+DX_TUNNEL_LOCK_TIMEOUT\tposint\t=5
+DX_BACKUP_DIR\tabspath\t@home:Backups/dxe-persist'
+
+# Looks up NAME's registry row and prints "kind<TAB>default" (everything
+# after the first tab); returns 1 with no output for an unregistered name.
+# Every other lookup below is built on this one scan.
+dx_config_registry_row() {
+    local line name
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        name=${line%%$'\t'*}
+        if [ "$name" = "$1" ]; then
+            printf '%s' "${line#*$'\t'}"
+            return 0
+        fi
+    done <<<"$DXE_CONFIG_REGISTRY"
+    return 1
+}
+
+dx_config_kind() {
+    local row
+    row="$(dx_config_registry_row "$1")" || return 1
+    printf '%s' "${row%%$'\t'*}"
+}
+
+DXE_CONFIG_FIELDS=""
+while IFS= read -r dxe_config_registry_line; do
+    [ -n "$dxe_config_registry_line" ] || continue
+    DXE_CONFIG_FIELDS="$DXE_CONFIG_FIELDS ${dxe_config_registry_line%%$'\t'*}"
+done <<<"$DXE_CONFIG_REGISTRY"
+DXE_CONFIG_FIELDS=${DXE_CONFIG_FIELDS# }
+unset dxe_config_registry_line
 
 dx_config_is_field() {
     case " $DXE_CONFIG_FIELDS " in
@@ -12,143 +111,93 @@ dx_config_is_field() {
     esac
 }
 
+# A path field is exactly one whose kind accepts a filesystem path (the
+# only two kinds that ever do): eligible for the ${DX_PROJECT_ROOT}
+# placeholder in dx_parse_config_file. This set is identical to the
+# original hand-written list -- every abspath/optpath field and no other.
 dx_config_path_field() {
-    case "$1" in
-        DX_SSH_KEY|DX_SSH_KEY_PUB|DX_CONTEXT_DIR|DX_BOOTSTRAP_SOURCE|DX_BOOTSTRAP_PATH|DX_NIX_MOUNT|DX_NIX_DISK|DX_GIT_MOUNT_SOURCE|DX_GIT_MOUNT_TARGET|DX_GUEST_WORKDIR|DX_CONTAINER_VOLUME_DIR|DX_MOUNT_IDENTITY_DIR|DX_BACKUP_DIR) return 0 ;;
+    case "$(dx_config_kind "$1")" in
+        abspath|optpath) return 0 ;;
         *) return 1 ;;
     esac
 }
 
 dx_config_default() {
-    case "$1" in
-        DX_RUNTIME) printf '%s' apple ;;
-        DX_REMOTE_HOST) printf '%s' '' ;;
-        DX_GUEST_SYSTEM) printf '%s' aarch64-linux ;;
-        DX_NIX_STORAGE_MODE) printf '%s' apple-image ;;
-        DX_CONTAINER_RESTART_POLICY) printf '%s' no ;;
-        DX_CONTAINER_NAME) printf '%s' dx-host ;;
-        DX_IMAGE) printf '%s' dx-nixos-26.05 ;;
-        DX_SSH_PORT) printf '%s' 2222 ;;
-        DX_SSH_KEY) printf '%s/dx_key' "$DX_PROJECT_ROOT" ;;
-        DX_SSH_KEY_PUB) printf '%s/dx_key.pub' "$DX_PROJECT_ROOT" ;;
-        DX_SSH_CONNECT_TIMEOUT) printf '%s' 15 ;;
-        DX_CONTEXT_DIR) printf '%s/container/aarch64-darwin-apple-container-dx-nixos-26.05' "$DX_PROJECT_ROOT" ;;
-        # Fable A5: derived from DX_CONTEXT_DIR's own default (a direct
-        # call, not "${DX_CONTEXT_DIR:-...}" read from the environment) so
-        # this is correct regardless of where DX_BOOTSTRAP_SOURCE falls in
-        # DXE_CONFIG_FIELDS -- the previous form only produced the right
-        # value because DX_CONTEXT_DIR happened to precede it there.
-        DX_BOOTSTRAP_SOURCE) dx_config_default DX_CONTEXT_DIR ;;
-        DX_BOOTSTRAP_VOLUME) printf '%s' dx-bootstrap ;;
-        DX_BOOTSTRAP_PATH) printf '%s' /guest-bootstrap ;;
-        DX_BOOTSTRAP_WAIT_TIMEOUT) printf '%s' 30 ;;
-        DX_BOOTSTRAP_CONFIRM_TIMEOUT) printf '%s' 5 ;;
-        DX_GUEST_ACTIVATION_TIMEOUT) printf '%s' 1800 ;;
-        DX_GUEST_ACTIVATION_ATTEMPTS) printf '%s' 2 ;;
-        DX_GUEST_ACTIVATION_RETRY_DELAY) printf '%s' 5 ;;
-        DX_NIX_VOLUME) printf '%s' dx-nix ;;
-        DX_NIX_MOUNT) printf '%s' /nix ;;
-        DX_NIX_DISK) printf '%s/.dx-cache/nix-store.img' "${HOME:?}" ;;
-        DX_NIX_DISK_SIZE) printf '%s' 64G ;;
-        DX_PERSIST_VOLUME) printf '%s' dx-persist ;;
-        DX_GIT_MOUNT_SOURCE) printf '%s' '' ;;
-        DX_GIT_MOUNT_TARGET) printf '%s' /workspace ;;
-        DX_GUEST_WORKDIR) printf '%s' '' ;;
-        DX_CONTAINER_MEMORY) printf '%s' 12G ;;
-        DX_CONTAINER_CPUS) printf '%s' 4 ;;
-        DX_CONTAINER_VOLUME_DIR) printf '%s/Library/Application Support/com.apple.container/volumes' "${HOME:?}" ;;
-        DX_STOP_GRACE_SECONDS) printf '%s' 5 ;;
-        DX_STOP_COMMAND_TIMEOUT) printf '%s' 15 ;;
-        DX_STOP_WAIT_TIMEOUT) printf '%s' 5 ;;
-        DX_DELETE_COMMAND_TIMEOUT) printf '%s' 15 ;;
-        DX_MOUNT_IDENTITY_DIR) printf '%s/.dx-cache/mount-identities' "${HOME:?}" ;;
-        DX_TUNNEL_LOCK_TIMEOUT) printf '%s' 5 ;;
-        DX_BACKUP_DIR) printf '%s/Backups/dxe-persist' "${HOME:?}" ;;
-        *) return 1 ;;
+    local row default_expr
+    row="$(dx_config_registry_row "$1")" || return 1
+    default_expr=${row#*$'\t'}
+    case "$default_expr" in
+        '='*) printf '%s' "${default_expr#=}" ;;
+        '@field:'*) dx_config_default "${default_expr#@field:}" ;;
+        '@root:'*) printf '%s/%s' "$DX_PROJECT_ROOT" "${default_expr#@root:}" ;;
+        '@home:'*) printf '%s/%s' "${HOME:?}" "${default_expr#@home:}" ;;
     esac
 }
 
 dx_config_validate_value() {
-    local name="$1" value="$2" number
-    case "$name" in
-        DX_RUNTIME)
-            # Phase 2 (qnap-dxe-plan.md DQ2/DQ3) ships the docker-ssh
-            # adapter alongside Apple's. Phase 1 used the placeholder name
-            # `docker`; that bare name is never valid (the implemented value
-            # is `docker-ssh`, DQ1's Docker-over-SSH control plane), and it
-            # earns its own clear rejection message pointing at the real
-            # name, distinct from the generic "invalid value" reported by
-            # every caller of this predicate for any other bogus value.
-            case "$value" in
-                # `:` (not a bare `;;`) so this no-op branch is itself a
-                # traceable command -- an empty case arm registers no
-                # coverage hit even when selected (see bin/lib/dx-backup.sh's
-                # dx_backup_restore_push for the same fix, and run-coverage-
-                # linux.sh's KCOV_SUBSHELL_TERMINATOR for the same class of
-                # kcov limitation).
-                apple) : ;;
-                docker-ssh) : ;;
-                docker) echo "Error: DX_RUNTIME=docker was Phase 1's placeholder name; the implemented value is 'docker-ssh'." >&2; return 1 ;;
+    local name="$1" value="$2" kind number
+    # Phase 2 (qnap-dxe-plan.md DQ2/DQ3) ships the docker-ssh adapter
+    # alongside Apple's. Phase 1 used the placeholder name `docker`; that
+    # bare name is never valid (the implemented value is `docker-ssh`,
+    # DQ1's Docker-over-SSH control plane), and it earns its own clear
+    # rejection message pointing at the real name, distinct from the
+    # generic "invalid value" every other bogus value gets from the kind
+    # lookup below -- checked first since it is a value-specific exception
+    # to DX_RUNTIME's own enum, not a kind of its own.
+    if [ "$name" = DX_RUNTIME ] && [ "$value" = docker ]; then
+        echo "Error: DX_RUNTIME=docker was Phase 1's placeholder name; the implemented value is 'docker-ssh'." >&2
+        return 1
+    fi
+    kind="$(dx_config_kind "$name")" || { echo "Error: unknown configuration field '$name'." >&2; return 1; }
+    case "$kind" in
+        enum:*)
+            # Reject an embedded comma before the substring match below,
+            # so a value cannot smuggle the whole enum list (or another
+            # member plus a trailing comma) past a single-token check.
+            case "$value" in *,*) return 1 ;; esac
+            case ",${kind#enum:}," in
+                *",$value,"*) : ;;
                 *) return 1 ;;
             esac
             ;;
-        DX_REMOTE_HOST)
-            # A validated OpenSSH config alias (qnap-dxe-plan.md DQ1: "The
-            # OpenSSH alias owns the username, management identity file,
-            # MagicDNS name, host-key policy... DXE configuration stores the
-            # alias, not arbitrary SSH option text"). Empty is allowed at
-            # this per-field level -- it is the correct value for
-            # DX_RUNTIME=apple -- and is required (or forbidden) only in
-            # combination with DX_RUNTIME, which dx_config_validate_cross_fields
-            # checks once every field is resolved. Same character class as
-            # the other short-identifier fields (DX_CONTAINER_NAME etc.):
-            # no leading dot/hyphen, no shell metacharacters, so it can only
-            # ever cross an ssh command line as a single, unambiguous token.
+        name)
+            case "$value" in ''|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
+            ;;
+        optname)
+            # Same character class as `name`, but empty is also accepted --
+            # DX_REMOTE_HOST is empty for DX_RUNTIME=apple
+            # (dx_config_validate_cross_fields enforces which runtimes
+            # require or forbid it; this per-field check only shapes the
+            # value when one is given).
             case "$value" in
                 '') : ;;
                 [.-]*|*[!A-Za-z0-9_.-]*) return 1 ;;
                 *) : ;;
             esac
             ;;
-        DX_GUEST_SYSTEM)
-            case "$value" in aarch64-linux|x86_64-linux) : ;; *) return 1 ;; esac
-            ;;
-        DX_NIX_STORAGE_MODE)
-            case "$value" in apple-image|direct-volume) : ;; *) return 1 ;; esac
-            ;;
-        DX_CONTAINER_RESTART_POLICY)
-            case "$value" in no|unless-stopped) : ;; *) return 1 ;; esac
-            ;;
-        DX_CONTAINER_NAME|DX_NIX_VOLUME|DX_PERSIST_VOLUME|DX_BOOTSTRAP_VOLUME)
-            case "$value" in ''|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
-            ;;
-        DX_IMAGE)
+        image)
             case "$value" in ''|[.-]*|*[!A-Za-z0-9_./:-]*) return 1 ;; esac
             ;;
-        DX_SSH_PORT)
+        port)
             case "$value" in ''|*[!0-9]*) return 1 ;; esac
             [ "$value" -ge 1 ] 2>/dev/null && [ "$value" -le 65535 ] 2>/dev/null || return 1
             ;;
-        DX_SSH_CONNECT_TIMEOUT|DX_BOOTSTRAP_WAIT_TIMEOUT|DX_BOOTSTRAP_CONFIRM_TIMEOUT|DX_GUEST_ACTIVATION_TIMEOUT|DX_GUEST_ACTIVATION_ATTEMPTS|DX_GUEST_ACTIVATION_RETRY_DELAY|DX_CONTAINER_CPUS|DX_STOP_GRACE_SECONDS|DX_STOP_COMMAND_TIMEOUT|DX_STOP_WAIT_TIMEOUT|DX_DELETE_COMMAND_TIMEOUT|DX_TUNNEL_LOCK_TIMEOUT)
+        posint)
             case "$value" in ''|*[!0-9]*|0) return 1 ;; esac
             ;;
-        DX_NIX_DISK_SIZE|DX_CONTAINER_MEMORY)
+        size)
             case "$value" in
                 *[KMGTPkmgpt]) number=${value%?} ;;
                 *) number=$value ;;
             esac
             case "$number" in ''|*[!0-9]*|0) return 1 ;; esac
             ;;
-        DX_BOOTSTRAP_PATH|DX_NIX_MOUNT|DX_GIT_MOUNT_TARGET)
+        abspath)
             case "$value" in /*) ;; *) return 1 ;; esac
             ;;
-        DX_SSH_KEY|DX_SSH_KEY_PUB|DX_CONTEXT_DIR|DX_BOOTSTRAP_SOURCE|DX_NIX_DISK|DX_CONTAINER_VOLUME_DIR|DX_MOUNT_IDENTITY_DIR|DX_BACKUP_DIR)
-            case "$value" in /*) ;; *) return 1 ;; esac
-            ;;
-        DX_GIT_MOUNT_SOURCE|DX_GUEST_WORKDIR)
+        optpath)
             case "$value" in ''|/*) ;; *) return 1 ;; esac
             ;;
-        *) echo "Error: unknown configuration field '$name'." >&2; return 1 ;;
     esac
 }
 
