@@ -26,7 +26,7 @@ wrapper so a macOS contributor can reproduce the report without a native `kcov`
 package. Declarative Nix and live Apple Container paths remain outside line
 coverage and inside their explicit evaluation/build/behavior tiers.
 
-## Two numbers, not one
+## More than one number
 
 A single "100%" over a declared scope is a vanity metric on its own. After Phase
 1b the ~20 executables in `bin/` — where the user-facing behavior lives — are
@@ -34,14 +34,25 @@ outside the measured scope. The exclusion-file test catches new *entries*; it do
 not catch logic being left in, or pushed back into, entrypoints to stay under the
 bar. The excluded share can grow while the headline number stays at 100%.
 
-The coverage job therefore reports **two** numbers:
+The coverage job therefore reports more than the headline percentage:
 
 1. **Gated** — 100% line coverage over the declared sourceable scope. A regression
    fails CI.
-2. **Ratcheted** — the share of total repository shell lines that falls *inside*
-   the covered scope. Baselined at the Phase 1b exit gate, published alongside the
-   report, and forbidden to regress. This is not gated at a fixed value; it is
-   gated against its own previous value.
+2. **Ratcheted** — two further numbers, both against their own previous value
+   rather than a fixed target. Until 2026-09-30 this was a single share ratio
+   (scope text lines over all shell text lines, including tests), which fell
+   when tests were added and rose when comments were added inside a covered
+   library — the metric rewarded and punished changes that never touched
+   executable behavior. `tests/lib/coverage-metric.sh` (WP1.5 / decision D-1;
+   old ratio history at
+   [../../evidence/20260930/coverage-ratchet-history.md](../../evidence/20260930/coverage-ratchet-history.md))
+   replaced it with `scope_exec_lines` (a **floor**: kcov's own executable
+   line count summed over the scope, immune to comments and to tests, which
+   are outside the scope) and `unscoped_prod_exec_lines` (a **ceiling**:
+   non-comment source lines over the exempt production set in
+   `tests/coverage/exclusions.txt`, so logic pushed out of the covered scope
+   into an exempt entrypoint to dodge the 100% gate shows up as a
+   regression).
 
-The second number is what makes the first one meaningful. It is tracked in
-[baselines.md's measurable targets](../baselines.md#measurable-targets).
+These further numbers are what make the headline percentage meaningful. They
+are tracked in [baselines.md's measurable targets](../baselines.md#measurable-targets).
