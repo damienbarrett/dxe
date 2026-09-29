@@ -251,7 +251,7 @@ Every review ID and where it lands.
 
 ### WP5 — Protocol pins
 
-- [ ] **WP5.1** `dx-sync-bootstrap --result-file` (`outcome=`, `generation=`
+- [x] 53c4716+8315ff8 **WP5.1** `dx-sync-bootstrap --result-file` (`outcome=`, `generation=`
   in the config grammar); `dx-start-container` reads it; string parser
   deleted; sync body moves to `bin/lib/dx-bootstrap-sync.sh`. *Red:* reworded
   success line must still make start fail when the lease never matches.
@@ -307,7 +307,7 @@ Every review ID and where it lands.
 - [x] **WP6.8** Healthcheck program fixed; `DX_BOOTSTRAP_PATH` transported as
   data. *Red:* path containing `$(printf injected >&2)` produces no side
   effect. (Astra F8)
-- [ ] **WP6.9** Restore: one-pass parent-dir dedupe, bounded transport,
+- [x] ce63dc7..324fbaf **WP6.9** Restore: one-pass parent-dir dedupe, bounded transport,
   single guest `chown`. *Red:* large-tree recording test asserting bounded
   runtime-call count; the baseline timing failures re-examined. (Astra R4,
   Muse D5)
@@ -413,3 +413,5 @@ Every review ID and where it lands.
 - **2026-09-30** ShellCheck fixes (3526aa1) and the six P13 bootstrap coverage cases (8fbf24f, section 3: 205 → 219) landed; CI's ShellCheck is clean over the whole branch locally. Case (e) still touches the real `/etc/fstab` path (permission-denied here, real append as root in the image, restored from a snapshot); the seam is a follow-up.
 - **2026-09-30** Sixth local kcov run on 8fbf24f: **100% line coverage of the scope**, every suite green in the image; the metric fired on the ceiling (exempt executable lines 3028 → 3173) because WP4.1's guards and WP6.7's marker lines are exempt-file code. Ceiling re-based to 3173 with the reason in `ratchet.env`; floor set to 3306. WP1.5 complete.
 - **2026-09-30** CI run 36640705743 (18f5cdd): ShellCheck green on CI; the container-free step fails in five suites that pass on the Mac: section 16 (registry text assertion broken by the heredoc table), 31 (create argv golden lacks WP6.7's `--env DX_BOOTSTRAP_PATH`), 14 (stale `0-27` help literal), 33 (WP1.2 appended bash's real bin dir to the restricted fake remote PATH; on GitHub runners that is /usr/bin, which has docker), 20 (consequences of 16 and an unexplained section 17 exit 1 on Linux). Fixes in flight; Linux reproduction available via the kcov image.
+- **2026-09-30** WP6.9 landed (ce63dc7, 0053d94, 324fbaf): restore push is bounded (2,000-file fixture: 2,005 → 8 runtime calls; ≤10 asserted), one awk ancestor pass, shipped lists over the existing threshold, one `chown -h` batch, `identical` targets no longer pushed, `dx_backup_ship_list` shared with the status pass. Restore suite 48 → 59.
+- **2026-09-30** WP5.1 landed (53c4716, 8315ff8): `bin/lib/dx-bootstrap-sync.sh` (`dx_bootstrap_sync` 0/3/1, result file `outcome=`/`generation=` written tmp+mv and read by a bounded reader), `dx-sync-bootstrap --result-file`, `dx-start-container` fails loudly on a missing/malformed result; the prose parser is deleted. Section 22: 43 → 51, section 9: 138 → 148. Follow-up: `test_refactor_contracts.sh` still asserts the literal `cat >/dev/null` in `bin/dx-sync-bootstrap` (now satisfied by a comment); point it at the library when that file is next touched (WP1.6).
