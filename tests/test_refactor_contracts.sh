@@ -127,18 +127,32 @@ done
 # inside the subshell, branch on its exit status, call test_pass/test_fail in
 # the parent — correctly fails the run when the subshell's condition is false,
 # so this regression cannot return silently.
-if ROOT="$ROOT" bash -c '
-    set -euo pipefail
-    source "$ROOT/tests/test_helpers.sh"
-    if ( set -e; false ); then test_pass "probe"; else test_fail "probe"; fi
-    print_summary >/dev/null
-    exit_with_code
-' >/dev/null 2>&1; then
-    probe_status=0
-else
-    probe_status=$?
-fi
-check test "$probe_status" -ne 0
+#
+# The probe runs as a real file for the same reason entrypoint_conforms's
+# probe does below: this file runs under kcov in CI, and kcov's bash
+# instrumentation sets PS4 to a trace string that expands `${BASH_SOURCE}`,
+# which is unset inside an inline `bash -c '...'` program, so under `set -u`
+# the probe used to die on `BASH_SOURCE: unbound variable` before ever
+# sourcing test_helpers.sh -- and a probe that crashes for the wrong reason
+# still exits non-zero, so the plain exit-status check below used to pass
+# vacuously under kcov. Asserting the stripped summary line names exactly
+# "1 failed" closes that gap: only a real, single test_fail can produce it.
+f6_probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-f6-probe.XXXXXX")"
+f6_probe_script="$f6_probe_dir/probe.sh"
+cat > "$f6_probe_script" <<'PROBE'
+#!/bin/bash
+set -euo pipefail
+source "$ROOT/tests/test_helpers.sh"
+if ( set -e; false ); then test_pass "probe"; else test_fail "probe"; fi
+print_summary
+exit_with_code
+PROBE
+f6_probe_output="$(ROOT="$ROOT" bash "$f6_probe_script" 2>&1)" && f6_probe_status=0 || f6_probe_status=$?
+rm -rf "$f6_probe_dir"
+check test "$f6_probe_status" -ne 0
+f6_probe_summary="$(sed 's/\x1b\[[0-9;]*m//g' <<<"$f6_probe_output")"
+f6_summary_reports_one_failed() { grep -q '1 failed' <<<"$f6_probe_summary"; }
+check f6_summary_reports_one_failed
 
 # --- F13 contract: DX_AI_TOOLS is no longer just an inventory to keep tidy,
 # it is load-bearing. dx_ai_validate_generation requires an executable of that
@@ -253,8 +267,8 @@ check test -z "$(grep -i 'keyring\|dbus' <<<"$bootstrap_source_text")"
 # private "project root" (DX_SSH_KEY and friends resolve from
 # DX_PROJECT_ROOT, which bin/dx-lib.sh always recomputes from the sourced
 # file's own location -- a fake HOME alone would not stop dx-create-keys
-# from writing a real keypair into this checkout), sourced inside a nested
-# `bash -c` with HOME and XDG_STATE_HOME redirected into that same private
+# from writing a real keypair into this checkout), sourced by a nested probe
+# script with HOME and XDG_STATE_HOME redirected into that same private
 # root, PATH restricted to a directory holding only fake
 # `container`/`docker`/`ssh` (each `exit 1`) plus /usr/bin:/bin, and stdin
 # from /dev/null so a script that reaches an interactive `read` fails closed
@@ -262,6 +276,14 @@ check test -z "$(grep -i 'keyring\|dbus' <<<"$bootstrap_source_text")"
 # plus a 20s watchdog `kill -9` stands in for it: a mis-guarded script can
 # hang or fail, but it cannot hang this suite or mutate anything outside its
 # own scratch directory.
+#
+# The nested probe is a real file (`$probe_root/probe.sh`, run as `bash
+# "$probe_root/probe.sh" ...`), not an inline `bash -c '...'` program:
+# kcov's bash instrumentation (this file runs under kcov in CI) sets PS4 to
+# a trace string that expands `${BASH_SOURCE}`, which is an empty array
+# inside a `bash -c` program, so under `set -u` the nested shell dies on
+# `BASH_SOURCE: unbound variable` before it ever reaches `source`. A real
+# file gives bash a real BASH_SOURCE and sidesteps that entirely.
 entrypoint_main_name() {
     local base="$1" name
     name=${base#dx}
@@ -272,7 +294,7 @@ entrypoint_main_name() {
 }
 
 entrypoint_conforms() {
-    local entry_name="$1" func probe_root out err funcfile fake_tool status ok probe_pid watchdog_pid
+    local entry_name="$1" func probe_root out err funcfile probe_script fake_tool status ok probe_pid watchdog_pid
     func="$(entrypoint_main_name "$entry_name")"
     probe_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-wp41-probe.XXXXXX")"
     cp -R "$ROOT/bin" "$probe_root/bin"
@@ -283,22 +305,25 @@ entrypoint_conforms() {
     done
     out="$probe_root/stdout"; err="$probe_root/stderr"; funcfile="$probe_root/func"
     : > "$out"; : > "$err"
+    probe_script="$probe_root/probe.sh"
+    cat > "$probe_script" <<'PROBE'
+#!/bin/bash
+set -euo pipefail
+entry="$1"; func="$2"; funcfile="$3"
+# shellcheck disable=SC1090
+source "$entry"
+if declare -F "$func" >/dev/null 2>&1; then
+    printf defined > "$funcfile"
+else
+    printf missing > "$funcfile"
+fi
+PROBE
     (
         cd "$probe_root" || exit 90
         HOME="$probe_root/home" \
         XDG_STATE_HOME="$probe_root/state" \
         PATH="$probe_root/fake-path:/usr/bin:/bin" \
-        bash -c '
-            set -euo pipefail
-            entry="$1"; func="$2"; funcfile="$3"
-            # shellcheck disable=SC1090
-            source "$entry"
-            if declare -F "$func" >/dev/null 2>&1; then
-                printf defined > "$funcfile"
-            else
-                printf missing > "$funcfile"
-            fi
-        ' _ "$probe_root/bin/$entry_name" "$func" "$funcfile"
+        bash "$probe_script" "$probe_root/bin/$entry_name" "$func" "$funcfile"
     ) </dev/null >"$out" 2>"$err" &
     probe_pid=$!
     ( sleep 20; kill -9 "$probe_pid" 2>/dev/null ) &
