@@ -35,6 +35,20 @@
 #     safe default: it is never silently dropped), and a warning is printed
 #     to stderr so a live run surfaces it for a decision rather than quietly
 #     picking one.
+#
+# Scan completeness is a CONTRACT (WP6.1, Astra F1): every traversal
+# (`find`), Git-inspection (`git`), and stat/hash subprocess this file runs
+# is checked explicitly, never left to `2>/dev/null` or an unchecked `||
+# continue`. A failure at ANY of those points aborts the whole listing
+# (non-zero exit) and names the affected path in an "Error: ..." line on
+# stderr, rather than silently producing a SHORTER-than-true listing. This
+# matters because the host (bin/dx-backup) diffs each fresh listing against
+# the previous one and removes from the mirror anything the new listing does
+# not mention -- a listing that silently omitted a path because a subtree
+# briefly became unreadable, or a file vanished between being listed and
+# being hashed, would otherwise be indistinguishable from "that path is no
+# longer at risk", and the host would delete the last backed-up copy of
+# still-at-risk content. Never trust a partial scan as if it were complete.
 
 # ---------------------------------------------------------------------------
 # Deny-list
@@ -151,25 +165,89 @@ dx_pbs_path_denied() {
 # module comment). Prunes descent into deny-listed directory names and does
 # not descend past a discovered repo root's `.git` itself. `.git` FILES are
 # reported to stderr as a warning and otherwise ignored (see module comment).
+#
+# WP6.1 (Astra F1): `find`'s own output and exit status are captured into a
+# temp file FIRST, and the exit status is checked BEFORE any of it is acted
+# on, rather than piping directly into the consuming `while` loop with
+# stderr discarded (the old shape hid a traversal error -- e.g. a subtree
+# that became unreadable mid-walk -- behind what looked like an ordinary,
+# merely-shorter listing). A nonzero `find` aborts this function entirely:
+# no partial repo list is treated as if it were complete.
 dx_pbs_find_repos() {
-    local root="$1" entry
-    find "$root" -name .git -print0 2>/dev/null | while IFS= read -r -d '' entry; do
+    local root="$1" entry out err rc
+    out="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-findrepos-out.XXXXXX")" || return 1
+    err="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-findrepos-err.XXXXXX")" || { rm -f "$out"; return 1; }
+    find "$root" -name .git -print0 > "$out" 2> "$err"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "Error: repository discovery failed under $root: $(cat "$err")" >&2
+        rm -f "$out" "$err"
+        return 1
+    fi
+    rm -f "$err"
+    while IFS= read -r -d '' entry; do
         if [ -f "$entry" ]; then
             echo "Warning: $entry is a file, not a directory (a linked worktree or submodule); it is not treated as a repository boundary. See docs/lifecycle.md." >&2
             continue
         fi
         [ -d "$entry" ] || continue
         dirname "$entry"
-    done
+    done < "$out"
+    rm -f "$out"
 }
 
-# True (0) if the repository at $1 is at-risk as a whole: it has commits on a
-# local branch not reachable from any remote, or it has no remote at all.
+# Whether the repository at $1 is at-risk as a whole. Return codes (WP6.2,
+# Astra F2 -- three-way, not a plain boolean, because "the query itself
+# failed" must be distinguishable from a confirmed answer):
+#   0  at risk: there is at least one commit reachable from HEAD, a branch,
+#      a tag, or refs/stash that is NOT reachable from any remote-tracking
+#      ref (or there is no remote at all, which trivially makes everything
+#      "not reachable from a remote").
+#   1  safe: every commit reachable from HEAD/branches/tags/stash is also
+#      reachable from a remote-tracking ref.
+#   2  unknown: the git query itself failed. The caller (dx_pbs_emit_repo)
+#      must treat this the SAME as 0 (retain the whole repository
+#      conservatively -- never narrow the selection on an unproven "safe")
+#      AND propagate it as a reported failure (WP6.1's completeness
+#      contract): an unknown repository is never silently "safe".
+#
+# Retention policy this encodes (WP6.2, Astra F2's "define the retention
+# policy for stash and local tag refs"):
+#   - `--all` (every ref under refs/, PLUS HEAD explicitly, per git's own
+#     documentation of the flag) is the set of "local" commit tips checked,
+#     not `--branches` alone: `--branches` never included HEAD when HEAD is
+#     DETACHED (Astra's own reproduction -- a local-only commit on a
+#     detached HEAD, with the branch it started from already fully pushed,
+#     was classified "safe"), and never included refs/stash at all (a
+#     stash's own commit is reachable ONLY from refs/stash, never from any
+#     branch or tag -- "stash-only work" must count as at-risk, same as any
+#     other local-only commit, because dropping it loses real, otherwise
+#     unrecoverable content).
+#   - A local TAG is therefore also covered by `--all`, and this is
+#     deliberate, with two different outcomes depending on what it points
+#     at: a tag on a commit ALREADY reachable from a remote-tracking ref
+#     contributes nothing extra to `--not --remotes`'s output (the content
+#     is already safe on the remote; only the tag pointer itself is local,
+#     which this selector -- scoped to protecting CONTENT, not every local
+#     ref's bookkeeping -- does not treat as at-risk). A tag on a commit
+#     that is NOT reachable from any remote DOES surface that commit (same
+#     as a branch would), so the tag alone is enough to keep the repository
+#     at-risk even after nothing else (no branch) points there any more.
+#   - Remote-tracking refs (`--not --remotes`) are the LOCAL EVIDENCE this
+#     check uses for "already pushed"; they record what this clone last
+#     fetched/pushed, not a live guarantee that the remote still retains
+#     those objects today.
 dx_pbs_repo_at_risk_whole() {
-    local repo="$1" remote_count unpushed
-    remote_count="$(git -C "$repo" remote 2>/dev/null | wc -l | tr -d '[:space:]')"
-    [ "${remote_count:-0}" -gt 0 ] || return 0
-    unpushed="$(git -C "$repo" log --branches --not --remotes --oneline 2>/dev/null)"
+    local repo="$1" unpushed err rc
+    err="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-riskerr.XXXXXX")" || return 2
+    unpushed="$(git -C "$repo" rev-list --all --not --remotes 2>"$err")"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "Error: git reachability query failed for $repo: $(cat "$err")" >&2
+        rm -f "$err"
+        return 2
+    fi
+    rm -f "$err"
     [ -n "$unpushed" ]
 }
 
@@ -180,11 +258,25 @@ dx_pbs_repo_at_risk_whole() {
 # finds (modified, staged, untracked, ignored) is included by construction:
 # it is simply not in this set.
 dx_pbs_repo_clean_set() {
-    local repo="$1" outfile="$2" all_file diff_file
+    local repo="$1" outfile="$2" all_file diff_file err rc
     all_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-all.XXXXXX")" || return 1
     diff_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-diff.XXXXXX")" || { rm -f "$all_file"; return 1; }
-    git -C "$repo" ls-tree -r --name-only HEAD 2>/dev/null | LC_ALL=C sort > "$all_file"
-    git -C "$repo" diff --name-only HEAD 2>/dev/null | LC_ALL=C sort > "$diff_file"
+    err="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-cleanerr.XXXXXX")" || { rm -f "$all_file" "$diff_file"; return 1; }
+    git -C "$repo" ls-tree -r --name-only HEAD 2>"$err" | LC_ALL=C sort > "$all_file"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "Error: git ls-tree failed for $repo: $(cat "$err")" >&2
+        rm -f "$all_file" "$diff_file" "$err"
+        return 1
+    fi
+    git -C "$repo" diff --name-only HEAD 2>"$err" | LC_ALL=C sort > "$diff_file"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "Error: git diff failed for $repo: $(cat "$err")" >&2
+        rm -f "$all_file" "$diff_file" "$err"
+        return 1
+    fi
+    rm -f "$err"
     comm -23 "$all_file" "$diff_file" > "$outfile"
     rm -f "$all_file" "$diff_file"
 }
@@ -263,6 +355,18 @@ dx_pbs_stat_mtime() {
 # indistinguishable from a hardlink to itself). The nested repo's own pass
 # is the sole, correct source for its content either way (its own
 # safe/whole-repo status, evaluated independently).
+#
+# WP6.1 (Astra F1): `cd`ing into a repository that has since become
+# unreadable or vanished used to `exit 0` -- an empty, successful-looking
+# walk, indistinguishable from "this repo genuinely has no files". It now
+# reports the failure and exits 1. `find`'s own output and exit status are
+# likewise captured into a temp file first and checked explicitly (stderr
+# is no longer discarded), same reasoning as dx_pbs_find_repos above: a
+# nonzero `find` aborts the walk instead of silently yielding a shorter
+# list. All of this runs inside the existing subshell (needed for `cd`), so
+# its own exit status -- which the pipe at every call site already checks --
+# is how the failure reaches the caller; nothing here can set a variable
+# the parent shell would see.
 dx_pbs_walk_repo_files() {
     local dir="$1" keep_git="${2:-}" nested_file="${3:-}"
     local -a nested_prune=()
@@ -274,18 +378,31 @@ dx_pbs_walk_repo_files() {
                 "$dir"/*) nested_prune+=(-o -path "./${nrepo#"$dir"/}") ;;
             esac; :; done < "$nested_file"
     fi
-    ( cd "$dir" 2>/dev/null || exit 0
+    ( cd "$dir" 2>/dev/null || { echo "Error: could not access repository directory: $dir" >&2; exit 1; }
+      dxpbswalkout="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-walkout.XXXXXX")" || exit 1
+      dxpbswalkerr="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-walkerr.XXXXXX")" || { rm -f "$dxpbswalkout"; exit 1; }
       if [ "$keep_git" = keep-git ]; then
           find . \( \
                 "${DX_PBS_COMPONENT_PRUNE[@]}" \
                 "${nested_prune[@]+"${nested_prune[@]}"}" \
-            \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
+            \) -prune -o \( -type f -o -type l \) -print0 > "$dxpbswalkout" 2> "$dxpbswalkerr"
       else
           find . \( -name .git -o \( \
                 "${DX_PBS_COMPONENT_PRUNE[@]}" \
                 "${nested_prune[@]+"${nested_prune[@]}"}" \
-            \) \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
-      fi | while IFS= read -r -d '' entry; do printf '%s\0' "${entry#./}"; done
+            \) \) -prune -o \( -type f -o -type l \) -print0 > "$dxpbswalkout" 2> "$dxpbswalkerr"
+      fi
+      dxpbswalkrc=$?
+      if [ "$dxpbswalkrc" -ne 0 ]; then
+          echo "Error: directory traversal failed under $dir: $(cat "$dxpbswalkerr")" >&2
+          rm -f "$dxpbswalkout" "$dxpbswalkerr"
+          exit 1
+      fi
+      rm -f "$dxpbswalkerr"
+      while IFS= read -r -d '' entry; do printf '%s\0' "${entry#./}"; done < "$dxpbswalkout"
+      dxpbswalkrc=$?
+      rm -f "$dxpbswalkout"
+      exit "$dxpbswalkrc"
     ) # KCOV_SUBSHELL_TERMINATOR
 }
 
@@ -315,7 +432,13 @@ dx_pbs_emit_found_list() {
         [ -n "$found" ] || continue
         relpath="$relroot/$found"
         dx_pbs_path_denied "$relpath" && continue
-        hashed="$(dx_pbs_hash_entry "$repo/$found")" || continue
+        # WP6.1 (Astra F1): a hash/stat failure here (the file vanished
+        # between being listed and being hashed, or is otherwise unreadable)
+        # used to `continue`, silently omitting the entry from the listing
+        # as if it were simply no longer at risk. It now aborts: an entry
+        # whose metadata could not be obtained is a reported failure, never
+        # a silent skip.
+        hashed="$(dx_pbs_hash_entry "$repo/$found")" || { echo "Error: could not read/hash: $relpath" >&2; return 1; }
         # Single line (this file's own convention, see
         # dx_pbs_walk_repo_files's comment): a bare `fi`/`done` keyword
         # starts no traceable command of its own, so kcov never registers a
@@ -332,13 +455,19 @@ dx_pbs_emit_found_list() {
 # is always "whole-repo" here: the entire repo is at risk, not just a subset
 # of its files).
 dx_pbs_emit_repo_whole() {
-    local repo="$1" relroot="$2" reason_mode="${3:-}" nested_file="${4:-}" list_file
+    local repo="$1" relroot="$2" reason_mode="${3:-}" nested_file="${4:-}" list_file rc
     list_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-whole.XXXXXX")" || return 1
+    # WP6.1: pipefail (set by every context that sources this file -- see
+    # the module header) makes $? below reflect dx_pbs_walk_repo_files's own
+    # exit status, not just the trailing `while`'s -- checked explicitly
+    # rather than trusted to an ambient `set -e` alone.
     dx_pbs_walk_repo_files "$repo" keep-git "$nested_file" | while IFS= read -r -d '' entry; do printf '%s\n' "$entry"; done > "$list_file"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then rm -f "$list_file"; return 1; fi
     if [ -n "$reason_mode" ]; then
-        dx_pbs_emit_found_list "$repo" "$relroot" "$list_file" whole-repo
+        dx_pbs_emit_found_list "$repo" "$relroot" "$list_file" whole-repo || { rm -f "$list_file"; return 1; }
     else
-        dx_pbs_emit_found_list "$repo" "$relroot" "$list_file"
+        dx_pbs_emit_found_list "$repo" "$relroot" "$list_file" || { rm -f "$list_file"; return 1; }
     fi
     rm -f "$list_file"
 }
@@ -360,26 +489,37 @@ dx_pbs_emit_repo_whole() {
 # classification would double this function's already-per-file hashing cost.
 dx_pbs_emit_repo_safe() {
     local repo="$1" relroot="$2" reason_mode="${3:-}" nested_file="${4:-}"
-    local clean_set found_file delta_set ignored_set ik_set mu_set
+    local clean_set found_file delta_set ignored_set ik_set mu_set rc err
     clean_set="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-clean.XXXXXX")" || return 1
-    dx_pbs_repo_clean_set "$repo" "$clean_set"
+    dx_pbs_repo_clean_set "$repo" "$clean_set" || { rm -f "$clean_set"; return 1; }
     found_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-found.XXXXXX")" || { rm -f "$clean_set"; return 1; }
+    # WP6.1: see dx_pbs_emit_repo_whole's comment -- same explicit rc check.
     dx_pbs_walk_repo_files "$repo" "" "$nested_file" | while IFS= read -r -d '' entry; do printf '%s\n' "$entry"; done | LC_ALL=C sort > "$found_file"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then rm -f "$clean_set" "$found_file"; return 1; fi
     delta_set="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-delta.XXXXXX")" || { rm -f "$clean_set" "$found_file"; return 1; }
     comm -23 "$found_file" "$clean_set" > "$delta_set"
 
     if [ -n "$reason_mode" ]; then
         ignored_set="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-ignored.XXXXXX")" || { rm -f "$clean_set" "$found_file" "$delta_set"; return 1; }
-        git -C "$repo" ls-files --others --ignored --exclude-standard 2>/dev/null | LC_ALL=C sort > "$ignored_set"
+        err="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-ignoredrr.XXXXXX")" || { rm -f "$clean_set" "$found_file" "$delta_set" "$ignored_set"; return 1; }
+        git -C "$repo" ls-files --others --ignored --exclude-standard 2>"$err" | LC_ALL=C sort > "$ignored_set"
+        rc=$?
+        if [ "$rc" -ne 0 ]; then
+            echo "Error: git ls-files failed for $repo: $(cat "$err")" >&2
+            rm -f "$clean_set" "$found_file" "$delta_set" "$ignored_set" "$err"
+            return 1
+        fi
+        rm -f "$err"
         ik_set="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-ik.XXXXXX")" || { rm -f "$clean_set" "$found_file" "$delta_set" "$ignored_set"; return 1; }
         mu_set="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-mu.XXXXXX")" || { rm -f "$clean_set" "$found_file" "$delta_set" "$ignored_set" "$ik_set"; return 1; }
         comm -12 "$delta_set" "$ignored_set" > "$ik_set"
         comm -23 "$delta_set" "$ignored_set" > "$mu_set"
-        dx_pbs_emit_found_list "$repo" "$relroot" "$ik_set" ignored-kept
-        dx_pbs_emit_found_list "$repo" "$relroot" "$mu_set" modified-untracked
+        dx_pbs_emit_found_list "$repo" "$relroot" "$ik_set" ignored-kept || { rm -f "$clean_set" "$found_file" "$delta_set" "$ignored_set" "$ik_set" "$mu_set"; return 1; }
+        dx_pbs_emit_found_list "$repo" "$relroot" "$mu_set" modified-untracked || { rm -f "$clean_set" "$found_file" "$delta_set" "$ignored_set" "$ik_set" "$mu_set"; return 1; }
         rm -f "$ignored_set" "$ik_set" "$mu_set"
     else
-        dx_pbs_emit_found_list "$repo" "$relroot" "$delta_set"
+        dx_pbs_emit_found_list "$repo" "$relroot" "$delta_set" || { rm -f "$clean_set" "$found_file" "$delta_set"; return 1; }
     fi
 
     rm -f "$clean_set" "$found_file" "$delta_set"
@@ -391,18 +531,30 @@ dx_pbs_emit_repo_safe() {
 # body -- an if/else block ending in only its own `fi` keyword (no real
 # command) does not give kcov anything to register a hit against on the
 # line shared with `done`, the same class of issue as an empty case arm.
+# WP6.2: dx_pbs_repo_at_risk_whole is now three-way (0 at risk, 1 safe, 2
+# unknown/query failed -- see its own comment for the full policy). Risk
+# code 2 dispatches to the SAME whole-repo emitter as code 0 (retain
+# conservatively: never narrow the selection on an unproven "safe"), but
+# still makes this function report failure (WP6.1's completeness contract):
+# an unknown repository's run is never treated as a clean success.
 dx_pbs_emit_repo() {
-    local repo="$1" relroot="$2" reason_mode="${3:-}" repos_file="${4:-}" nested_file=""
+    local repo="$1" relroot="$2" reason_mode="${3:-}" repos_file="${4:-}" nested_file="" risk_rc overall_rc=0
     if [ -n "$repos_file" ]; then
         nested_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-nested.XXXXXX")" || return 1
         dx_pbs_nested_repos_for "$repo" "$repos_file" "$nested_file"
     fi
-    if dx_pbs_repo_at_risk_whole "$repo"; then
-        dx_pbs_emit_repo_whole "$repo" "$relroot" "$reason_mode" "$nested_file"
+    dx_pbs_repo_at_risk_whole "$repo"
+    risk_rc=$?
+    if [ "$risk_rc" -eq 2 ]; then
+        dx_pbs_emit_repo_whole "$repo" "$relroot" "$reason_mode" "$nested_file" || :
+        overall_rc=1
+    elif [ "$risk_rc" -eq 0 ]; then
+        dx_pbs_emit_repo_whole "$repo" "$relroot" "$reason_mode" "$nested_file" || overall_rc=1
     else
-        dx_pbs_emit_repo_safe "$repo" "$relroot" "$reason_mode" "$nested_file"
+        dx_pbs_emit_repo_safe "$repo" "$relroot" "$reason_mode" "$nested_file" || overall_rc=1
     fi
     [ -z "$nested_file" ] || rm -f "$nested_file"
+    return "$overall_rc"
 }
 
 # ---------------------------------------------------------------------------
@@ -415,8 +567,16 @@ dx_pbs_emit_repo() {
 # the full at-risk TSV listing on stdout -- path<TAB>size<TAB>mtime<TAB>sha256,
 # plus a 5th <TAB>reason column in --with-reason mode -- and a one-line
 # summary of skipped special files (sockets/fifos/devices) to stderr.
+#
+# WP6.1 (Astra F1): scan completeness is a contract -- see the module
+# header. Every sub-scan below (repository discovery, the outside-repos
+# walk, each repository's own emission) is checked explicitly; any failure
+# sets had_error and the driver still runs every remaining sub-scan (so a
+# single run reports every Error it hits, not just the first), but returns
+# non-zero at the end. The caller (bin/dx-backup, via dx_backup_diff and
+# friends) must never treat a non-zero exit's stdout as a complete listing.
 dx_pbs_list_driver() {
-    local reason_mode="$1" root="$2" repos_file repo relroot special_count
+    local reason_mode="$1" root="$2" repos_file repo relroot special_count had_error=0
     shift 2
     # DX_PBS_EXTRA_DENY=("$@"), not DX_PBS_EXTRA_DENY="$*": "$*" joins every
     # remaining positional argument into ONE space-separated string,
@@ -434,23 +594,33 @@ dx_pbs_list_driver() {
     [ -d "$root" ] || { echo "Error: backup root $root does not exist or is not a directory." >&2; return 1; }
 
     repos_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-repos.XXXXXX")" || return 1
-    dx_pbs_find_repos "$root" > "$repos_file"
+    dx_pbs_find_repos "$root" > "$repos_file" || had_error=1
 
+    # The special-file (socket/fifo/device) count is informational only --
+    # never part of the at-risk selection itself -- so it stays permissive
+    # (2>/dev/null, no exit-status check) rather than folding into the
+    # completeness contract above.
     special_count="$(find "$root" \( -type s -o -type p -o -type b -o -type c \) 2>/dev/null | wc -l | tr -d '[:space:]')"
 
     # Outside-any-repository files: walk the whole tree, pruning at every
     # discovered repository root (each is handled by its own pass below) and
     # every deny-listed directory name.
-    dx_pbs_list_outside_repos "$root" "$repos_file" "$reason_mode"
+    dx_pbs_list_outside_repos "$root" "$repos_file" "$reason_mode" || had_error=1
 
     while IFS= read -r repo; do
         [ -n "$repo" ] || continue
         relroot="${repo#"$root"/}"
         [ "$relroot" != "$repo" ] || relroot="."
-        dx_pbs_emit_repo "$repo" "$relroot" "$reason_mode" "$repos_file"; done < "$repos_file"
+        dx_pbs_emit_repo "$repo" "$relroot" "$reason_mode" "$repos_file" || had_error=1
+    done < "$repos_file"
 
     rm -f "$repos_file"
     echo "Selector summary: ${special_count:-0} special file(s) (socket/fifo/device) skipped." >&2
+    if [ "$had_error" -ne 0 ]; then
+        echo "Error: the /persist selection did not complete successfully; see the Error line(s) above. This listing must not be treated as complete." >&2
+        return 1
+    fi
+    return 0
 }
 
 # dx_pbs_list ROOT [EXTRA_DENY_PATTERN...]
@@ -473,8 +643,15 @@ dx_pbs_list_with_reason() {
     dx_pbs_list_driver reason "$@"
 }
 
+# WP6.1 (Astra F1): `find`'s own output and exit status are captured into a
+# temp file first and the exit status is checked BEFORE any of it is acted
+# on (stderr is no longer discarded either) -- same reasoning as
+# dx_pbs_find_repos and dx_pbs_walk_repo_files above. A hash/stat failure
+# for one already-listed entry also aborts the whole walk, rather than
+# `continue`-ing past it as if the entry had simply stopped being at risk.
 dx_pbs_list_outside_repos() {
     local root="$1" repos_file="$2" reason_mode="${3:-}" prune_expr=() repo found relpath hashed
+    local out err rc
     # find's -path must match the exact string find itself will produce for
     # that entry, so this walk operates on absolute paths throughout (no
     # `cd`+relative form, unlike the per-repo walks below, which have no repo
@@ -484,24 +661,38 @@ dx_pbs_list_outside_repos() {
         if [ "${#prune_expr[@]}" -gt 0 ]; then prune_expr+=(-o); fi
         prune_expr+=(-path "$repo"); done < "$repos_file"
 
+    out="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-outside-out.XXXXXX")" || return 1
+    err="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-outside-err.XXXXXX")" || { rm -f "$out"; return 1; }
     if [ "${#prune_expr[@]}" -gt 0 ]; then
         find "$root" \( \( "${prune_expr[@]}" \) -o \
                 "${DX_PBS_COMPONENT_PRUNE[@]}" \
-            \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
+            \) -prune -o \( -type f -o -type l \) -print0 > "$out" 2> "$err"
     else
         find "$root" \( \
                 "${DX_PBS_COMPONENT_PRUNE[@]}" \
-            \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
-    fi | while IFS= read -r -d '' found; do
+            \) -prune -o \( -type f -o -type l \) -print0 > "$out" 2> "$err"
+    fi
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "Error: directory traversal failed under $root: $(cat "$err")" >&2
+        rm -f "$out" "$err"
+        return 1
+    fi
+    rm -f "$err"
+
+    while IFS= read -r -d '' found; do
         relpath="${found#"$root"/}"
         dx_pbs_path_denied "$relpath" && continue
-        hashed="$(dx_pbs_hash_entry "$found")" || continue
+        hashed="$(dx_pbs_hash_entry "$found")" || { echo "Error: could not read/hash: $relpath" >&2; rm -f "$out"; return 1; }
         if [ -n "$reason_mode" ]; then
             printf '%s\t%s\toutside-repo\n' "$relpath" "$hashed"
         else
             printf '%s\t%s\n' "$relpath" "$hashed"
         fi
-    done
+    done < "$out"
+    rc=$?
+    rm -f "$out"
+    return "$rc"
 }
 
 # ---------------------------------------------------------------------------
@@ -579,4 +770,8 @@ dx_pbs_main() {
     esac
 }
 
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then set -uo pipefail; dx_pbs_main "$@"; fi
+# WP6.1 (Astra F1): -e too, not just -u/pipefail -- the standalone
+# entrypoint (this is how the guest actually runs it, over `container
+# exec`) must itself fail closed on any unchecked error, on top of the
+# explicit checks threaded through every function above.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then set -euo pipefail; dx_pbs_main "$@"; fi
