@@ -717,15 +717,25 @@ populate_prepared_nix_volume() {
     # set -u); they are not a production fallback.
     local owner_uid="${1:-0}"
     local owner_gid="${2:-0}"
-    local import_started identity
-    local volume_root="${DX_NIX_VOLUME_ROOT:?Nix volume was not prepared}"
+    local import_started identity record
+    # Contract 3 (refactor-v2-final.md, Fable B6 item 3): prepare_nix_volume's
+    # mode-tagged record, read through the bounded parser, never the exported
+    # DX_NIX_VOLUME_ALREADY_MOUNTED/ROOT/DEVICE/FS_TYPE/MOUNT_OPTS/IN_PLACE
+    # globals.
+    local nix_volume_mode nix_volume_root nix_volume_device nix_volume_fs nix_volume_opts
+    record="$(dx_read_nix_volume_record)" || {
+        echo "Error: Nix volume was not prepared." >&2
+        return 1
+    }
+    dx_parse_nix_volume_record "$record" || return 1
+    local volume_root="$nix_volume_root"
 
-    if [ "${DX_NIX_VOLUME_IN_PLACE:-false}" = true ]; then
+    if [ "$nix_volume_mode" = in-place ]; then
         populate_prepared_nix_volume_in_place "$volume_root" "$owner_uid" "$owner_gid"
         return
     fi
 
-    if [ "${DX_NIX_VOLUME_ALREADY_MOUNTED:-false}" = true ]; then
+    if [ "$nix_volume_mode" = already-mounted ]; then
         return 0
     fi
     migrate_durable_nix_identity_if_needed "$volume_root"
@@ -747,14 +757,14 @@ populate_prepared_nix_volume() {
     echo "Nix volume image import completed in $((SECONDS - import_started))s."
 
     umount "$volume_root"
-    mount -t "$DX_NIX_VOLUME_FS_TYPE" -o "$DX_NIX_VOLUME_MOUNT_OPTS" "$DX_NIX_VOLUME_DEVICE" /nix
+    mount -t "$nix_volume_fs" -o "$nix_volume_opts" "$nix_volume_device" /nix
 
-    if ! grep -q "/nix $DX_NIX_VOLUME_FS_TYPE" /etc/fstab 2>/dev/null; then
+    if ! grep -q "/nix $nix_volume_fs" /etc/fstab 2>/dev/null; then
         echo "Adding /nix to /etc/fstab..."
         if blkid -L dx-nix >/dev/null 2>&1; then
-            echo "LABEL=dx-nix /nix $DX_NIX_VOLUME_FS_TYPE $DX_NIX_VOLUME_MOUNT_OPTS 0 0" >> /etc/fstab
+            echo "LABEL=dx-nix /nix $nix_volume_fs $nix_volume_opts 0 0" >> /etc/fstab
         else
-            echo "$DX_NIX_VOLUME_DEVICE /nix $DX_NIX_VOLUME_FS_TYPE $DX_NIX_VOLUME_MOUNT_OPTS 0 0" >> /etc/fstab
+            echo "$nix_volume_device /nix $nix_volume_fs $nix_volume_opts 0 0" >> /etc/fstab
         fi
     fi
 }
@@ -924,9 +934,10 @@ prepare_nix_volume_direct_impl() {
         echo "Error: direct-volume mode requires the Nix volume mounted at /nix" >&2
         return 1
     fi
-    DX_NIX_VOLUME_ROOT=/nix
-    DX_NIX_VOLUME_IN_PLACE=true
-    export DX_NIX_VOLUME_ROOT DX_NIX_VOLUME_IN_PLACE
+    # Contract 3 (refactor-v2-final.md, Fable B6 item 3): mode=in-place is
+    # the record's third mode -- root=/nix, no device/fs/opts -- never the
+    # exported DX_NIX_VOLUME_ROOT/DX_NIX_VOLUME_IN_PLACE globals.
+    dx_write_nix_volume_record in-place /nix || return 1
     record_durable_nix_identity /nix
 }
 
@@ -1009,16 +1020,14 @@ prepare_nix_volume_impl() {
     current_fstype="${current_fstype##* }"
     if [ -n "$current_fstype" ] && [ "$current_fstype" = "$fs_type" ]; then
         echo "/nix is already a $fs_type mount. Skipping setup."
-        DX_NIX_VOLUME_ALREADY_MOUNTED=true
-        DX_NIX_VOLUME_ROOT=/nix
+        dx_write_nix_volume_record already-mounted /nix || return 1
         record_durable_nix_identity /nix
         return 0
     fi
 
     if [ ! -d "$raw_path" ]; then
         echo "Warning: $raw_path not found. Skipping dedicated volume setup."
-        DX_NIX_VOLUME_ALREADY_MOUNTED=true
-        DX_NIX_VOLUME_ROOT=/nix
+        dx_write_nix_volume_record already-mounted /nix || return 1
         return 0
     fi
 
@@ -1053,12 +1062,7 @@ prepare_nix_volume_impl() {
     echo "Mounting $dev to /nix..."
     mkdir -p /mnt/tmp-nix
     dx_nix_mount "$dev" "$fs_type" "$mount_opts" /mnt/tmp-nix || return 1
-    DX_NIX_VOLUME_ALREADY_MOUNTED=false
-    DX_NIX_VOLUME_ROOT=/mnt/tmp-nix
-    DX_NIX_VOLUME_DEVICE="$dev"
-    DX_NIX_VOLUME_FS_TYPE="$fs_type"
-    DX_NIX_VOLUME_MOUNT_OPTS="$mount_opts"
-    export DX_NIX_VOLUME_ALREADY_MOUNTED DX_NIX_VOLUME_ROOT DX_NIX_VOLUME_DEVICE DX_NIX_VOLUME_FS_TYPE DX_NIX_VOLUME_MOUNT_OPTS
+    dx_write_nix_volume_record prepared /mnt/tmp-nix "$dev" "$fs_type" "$mount_opts" || return 1
     record_durable_nix_identity /mnt/tmp-nix
 }
 
