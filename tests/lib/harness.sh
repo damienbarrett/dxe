@@ -77,16 +77,41 @@ it() {
     DXE_HARNESS_LABEL="$1"
 }
 
-# Ensure $DXE_TEST_RESULTS names a real, writable, append-only file,
-# creating one with mktemp under ${TMPDIR:-/tmp} the first time it is
-# needed, if the caller has not already set one. See the file header for
-# why this must stay lazy rather than running at source time.
+# Ensure $DXE_TEST_RESULTS names a real, writable, append-only file OWNED BY
+# THIS PROCESS, creating one with mktemp under ${TMPDIR:-/tmp} the first
+# time it is needed, if the caller has not already set one -- or if
+# whatever is already set belongs to a DIFFERENT process. See the file
+# header for why this must stay lazy rather than running at source time.
+#
+# Root cause this owner check closes (found in CI, e.g.
+# test_section20_skip_integration.sh spawning test_section15/16/17 as
+# complete nested `bash <file>` processes): DXE_TEST_RESULTS is exported,
+# so a suite that runs ANOTHER suite as a plain child process hands it down
+# by ordinary environment inheritance. Before this check, the child's own
+# first test_pass/test_fail/skip saw DXE_TEST_RESULTS already non-empty and
+# happily appended its cases onto the PARENT's file -- and the child's own
+# finish/exit_with_code then deleted that shared file as its last step, so
+# an earlier real failure (or even the parent's own prior pass lines)
+# leaked into an unrelated later suite's tally, and whichever suite ran
+# after the child inherited a `finish` deleted out from under it.
+#
+# DXE_TEST_RESULTS_OWNER=$$ is exported alongside the path every time this
+# function mints one, so it always names the PID of whichever process is
+# actually recording into it. A subshell (`( … )`) or background job forked
+# from a script shares that SAME script's $$ (Bash does not fork a new pid
+# for those), so it still passes this check and keeps appending to the
+# same file -- exactly Fable D1's original fix, undisturbed. Only a
+# genuinely new interpreter (`bash file`, `bash -c '...'`) gets its own
+# $$, so an inherited DXE_TEST_RESULTS whose recorded owner is not THIS
+# $$ is treated as if it were never set at all, and a fresh, private file
+# is minted (and its ownership claimed) instead of adopting the parent's.
 _dxe_harness_results_file() {
-    if [ -z "${DXE_TEST_RESULTS:-}" ]; then
+    if [ -z "${DXE_TEST_RESULTS:-}" ] || [ "${DXE_TEST_RESULTS_OWNER:-}" != "$$" ]; then
         local file
         file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-results.XXXXXX")"
         DXE_TEST_RESULTS="$file"
-        export DXE_TEST_RESULTS
+        DXE_TEST_RESULTS_OWNER="$$"
+        export DXE_TEST_RESULTS DXE_TEST_RESULTS_OWNER
     fi
 }
 
