@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+
+restore_main() {
 dx_require_container_cli
 # shellcheck source=lib/dx-backup.sh
 source "$SCRIPT_DIR/lib/dx-backup.sh"
@@ -88,3 +90,5 @@ fi
 dx_backup_restore_push "$DX_CONTAINER_NAME" "$BACKUP_DIR" "$TARGETS"
 count="$(wc -l < "$TARGETS" | tr -d '[:space:]')"
 echo "Restored ${count} file(s) into $DX_CONTAINER_NAME:$DX_BACKUP_GUEST_ROOT."
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then restore_main "$@"; fi
