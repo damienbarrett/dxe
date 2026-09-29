@@ -15,10 +15,10 @@ dx_wait_until "$DX_BOOTSTRAP_WAIT_TIMEOUT" 1 container_is_running "$DX_CONTAINER
 container_is_running "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start-container first." >&2; exit 1; }
 case "$DX_BOOTSTRAP_PATH" in ''|/) echo "Error: Unsafe DX_BOOTSTRAP_PATH: $DX_BOOTSTRAP_PATH" >&2; exit 1 ;; esac
 
-for _ in $(seq 1 "$DX_BOOTSTRAP_WAIT_TIMEOUT"); do
-    dx_runtime_exec "$DX_CONTAINER_NAME" sh -c 'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready" || test -L "$1/current"' -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1 && break
-    sleep 1
-done
+# WP4.2 / Fable A6: same injectable-clock migration as the container-running
+# wait above; DX_BOOTSTRAP_WAIT_TIMEOUT's bound is unchanged, only the
+# hand-rolled `for`/`sleep 1` counting is replaced.
+dx_wait_until "$DX_BOOTSTRAP_WAIT_TIMEOUT" 1 dx_runtime_exec "$DX_CONTAINER_NAME" sh -c 'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready" || test -L "$1/current"' -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1 || true
 dx_runtime_exec "$DX_CONTAINER_NAME" sh -c 'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready" || test -L "$1/current"' -- "$DX_BOOTSTRAP_PATH" >/dev/null 2>&1 || {
     echo "Error: Container $DX_CONTAINER_NAME entrypoint never became ready after ${DX_BOOTSTRAP_WAIT_TIMEOUT}s." >&2; exit 1;
 }
