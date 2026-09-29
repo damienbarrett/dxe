@@ -787,10 +787,14 @@ env PATH="$cc_fixture/bin:/usr/bin:/bin" \
 
 # Independently reconstructed (not copy-pasted from the adapter): the exact
 # argv bin/dx-create-container builds now -- name, entrypoint, cap-add, the
-# three volumes, eight env vars (five unchanged since before Branch 11 /
+# three volumes, nine env vars (five unchanged since before Branch 11 /
 # Phase 2, plus DX_NIX_STORAGE_MODE and DX_IMAGE_IDENTITY from Phase 3 and
-# DX_GUEST_SYSTEM from Phase 4, three deliberate additions), memory, cpus,
-# publish, [no git volume, no pub-key env: neither was configured above].
+# DX_GUEST_SYSTEM from Phase 4, plus DX_BOOTSTRAP_PATH from WP6.7/6.8 (Astra
+# F8, commit eff33a0): the healthcheck probe now reads it from the
+# container's own environment instead of having it interpolated into the
+# generated health program text, so it crosses as one more --env token
+# alongside the four other deliberate additions), memory, cpus, publish,
+# [no git volume, no pub-key env: neither was configured above].
 (
     source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
     entrypoint_cmd="$(dx_bootstrap_launch_command)"
@@ -810,6 +814,7 @@ env PATH="$cc_fixture/bin:/usr/bin:/bin" \
         -e DX_NIX_STORAGE_MODE=apple-image \
         -e DX_IMAGE_IDENTITY=sha256:cafef00dcafef00dcafef00dcafef00dcafef00dcafef00dcafef00dcafef00 \
         -e DX_GUEST_SYSTEM=aarch64-linux \
+        -e DX_BOOTSTRAP_PATH=/guest-bootstrap \
         -m 12G -c 4 \
         -p 127.0.0.1:2222:2222 \
         dxe-rtb-image -c "$entrypoint_cmd" -- /guest-bootstrap \
