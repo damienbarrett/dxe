@@ -1,6 +1,8 @@
 { config, lib, pkgs, ... }:
 
 let
+  dxThemeScript = import ./dx-scripts.nix { inherit pkgs; };
+
   # Single source of truth for dx-theme aliases. Each key is the alias the
   # user types (e.g. `dx-theme catppuccin-mocha`); each value is the base16
   # scheme name tinty applies. dx-theme.sh reads this via jq from
@@ -87,30 +89,63 @@ in
   # Plain-text default alias — read by the activation hook below.
   xdg.configFile."dx/themes-default".text = dxDefault;
 
-  home.file.".local/bin/dx-theme-copy-hook" = {
-    executable = true;
-    source = ../scripts/dx-theme-copy-hook.sh;
-  };
-
-  home.file.".local/bin/dx-theme-write-tool-themes" = {
-    executable = true;
-    source = ../scripts/dx-theme-write-tool-themes.sh;
-  };
-
-  home.file.".local/bin/dx-theme-osc-hook" = {
-    executable = true;
-    source = ../scripts/dx-theme-osc-hook.sh;
-  };
-
-  home.file.".local/bin/dx-theme-restore" = {
-    executable = true;
-    source = ../scripts/dx-theme-restore.sh;
-  };
-
-  home.file.".local/bin/dx-theme" = {
-    executable = true;
-    source = ../scripts/dx-theme.sh;
-  };
+  # WP7.5 (docs/reviews/2026-09-29-fable.md finding C5): each installed
+  # theme command is a `pkgs.writeShellApplication` wrapper over the raw
+  # script (still the source of truth, still loadable directly for tests),
+  # with exactly the runtime dependencies that script actually calls listed
+  # as `deps` -- see dx-scripts.nix. `checks.<system>.scripts-hermetic`
+  # (flake.nix) proves the restore/copy-hook pair no longer depends on an
+  # ambient PATH.
+  home.file = lib.mapAttrs'
+    (name: spec: lib.nameValuePair ".local/bin/${name}" {
+      source = "${dxThemeScript name spec.file spec.deps (spec.extra or { })}/bin/${name}";
+    })
+    {
+      dx-theme-copy-hook = {
+        file = ../scripts/dx-theme-copy-hook.sh;
+        deps = [ pkgs.coreutils ]; # mkdir/cp; tmux stays ambient (optional, guarded)
+      };
+      dx-theme-write-tool-themes = {
+        file = ../scripts/dx-theme-write-tool-themes.sh;
+        deps = [ pkgs.tinty pkgs.coreutils ]; # tinty info; mkdir/cat/mktemp/chmod/mv/dirname/stat
+        extra.excludeShellChecks = [
+          # The `\033\\` pairs in the OSC/DCS escape sequences this writes
+          # (write_herdr_host_terminals) are literal backslash-backslash
+          # bytes ending a single-quoted string, not an attempt to escape
+          # the closing quote -- SC1003 is an info-level false positive on
+          # this pattern (also excluded below for dx-theme-restore and
+          # dx-theme-osc-hook, which build the same sequences).
+          "SC1003"
+          # `[ -r "$proc/comm" ] && read ... || continue`
+          # (write_herdr_host_terminals): both the `[ -r ]` failure and the
+          # `read` failure are meant to `continue`, so the A&&B||C ambiguity
+          # SC2015 warns about does not apply -- there is no distinct
+          # else-only-for-B branch here.
+          "SC2015"
+        ];
+      };
+      dx-theme-osc-hook = {
+        file = ../scripts/dx-theme-osc-hook.sh;
+        deps = [ ]; # printf only; delegates to dx-theme-write-tool-themes for everything else
+        extra.excludeShellChecks = [ "SC1003" ]; # see dx-theme-write-tool-themes above
+      };
+      dx-theme-restore = {
+        file = ../scripts/dx-theme-restore.sh;
+        deps = [ pkgs.tinty pkgs.gnused pkgs.coreutils ]; # tinty current/info; sed; cat
+        extra.excludeShellChecks = [ "SC1003" ]; # see dx-theme-write-tool-themes above
+      };
+      dx-theme = {
+        file = ../scripts/dx-theme.sh;
+        deps = [ pkgs.tinty pkgs.jq pkgs.gnused pkgs.util-linux pkgs.coreutils ]; # tinty; themes.json; sed; column; cat/mkdir
+        extra.excludeShellChecks = [
+          # `$k` inside the single-quoted jq filters (resolve_scheme,
+          # is_alias) is a jq variable bound by `--arg k`, not a shell
+          # variable -- SC2016 is an info-level false positive for jq/awk
+          # filter strings written this way.
+          "SC2016"
+        ];
+      };
+    };
 
   home.activation.tintyDefaultTheme = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
     if [ ! -s "$HOME/.config/dx/theme-current" ] \

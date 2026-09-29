@@ -365,6 +365,54 @@
               '
               touch $out
             '';
+
+            # WP7.5 (docs/reviews/2026-09-29-fable.md finding C5): every
+            # installed guest command used to be a plain `home.file` copy of
+            # a script whose PATH resolution depended on whatever happened
+            # to be ambient at invocation time -- fragile exactly when a
+            # caller supplies a minimal PATH (tmux's `run-shell -b`, a Tinty
+            # hook). `pkgs.writeShellApplication`'s `runtimeInputs` bakes an
+            # absolute PATH prefix into the script itself, so its real
+            # dependencies resolve no matter what the caller's PATH is. This
+            # check proves that for the two entry points whose PATH-fragility
+            # was the concrete, previously-worked-around symptom
+            # (dx-theme-write-tool-themes.sh's now-deleted `ensure_tinty_on_path`
+            # hand rolled probe): running them with PATH=/var/empty must
+            # neither fail nor print a "command not found" diagnostic.
+            scripts-hermetic = pkgs.runCommand "scripts-hermetic"
+              { homeFiles = homeConfiguration.config.home-files; } ''
+              set -euo pipefail
+              export HOME=$(mktemp -d)
+              mkdir -p "$HOME/.config/dx"
+              printf '%s\n' base16-mocha > "$HOME/.config/dx/theme-current"
+
+              assert_clean() {
+                local label="$1"; shift
+                local result rc=0
+                result="$(HOME="$HOME" PATH=/var/empty "$@" 2>&1)" || rc=$?
+                if [ "$rc" -ne 0 ]; then
+                  echo "$label exited $rc under an isolated PATH:" >&2
+                  printf '%s\n' "$result" >&2
+                  exit 1
+                fi
+                case "$result" in
+                  *"not found"*)
+                    echo "$label leaked an ambient-PATH dependency:" >&2
+                    printf '%s\n' "$result" >&2
+                    exit 1
+                    ;;
+                esac
+              }
+
+              assert_clean dx-theme-restore "$homeFiles/.local/bin/dx-theme-restore"
+
+              theme_file="$HOME/incoming-theme.sh"
+              printf '# theme\n' > "$theme_file"
+              export TINTY_THEME_FILE_PATH="$theme_file"
+              assert_clean dx-theme-copy-hook "$homeFiles/.local/bin/dx-theme-copy-hook" shell
+
+              touch $out
+            '';
           };
         };
 

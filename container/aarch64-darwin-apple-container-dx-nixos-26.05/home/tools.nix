@@ -1,5 +1,8 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
+let
+  dxScript = import ./dx-scripts.nix { inherit pkgs; };
+in
 {
   # WP2.2 (docs/reviews/2026-09-29-fable.md finding C2): userName, userEmail
   # and extraConfig are renamed options as of this Home Manager release --
@@ -142,56 +145,67 @@
     '';
   };
 
-  home.file.".local/bin/dx-ai" = {
-    executable = true;
-    source = ../scripts/dx-ai.sh;
+  # WP7.5 (docs/reviews/2026-09-29-fable.md finding C5): the installed
+  # commands below (everything except dx-ai) are `pkgs.writeShellApplication`
+  # wrappers over the raw scripts (still the source of truth), each `deps`
+  # list being exactly what that script calls -- see dx-scripts.nix. dx-ai
+  # stays a plain `home.file` copy: it must keep working loaded straight off
+  # the bootstrap volume before any generation (hence any wrapped profile)
+  # exists. The three `.local/lib/dx/*.sh` entries are source-only libraries
+  # (sourced, never executed directly), so they stay plain `home.file`
+  # copies too.
+  home.file = lib.mapAttrs'
+    (name: spec: lib.nameValuePair ".local/bin/${name}" {
+      source = "${dxScript name spec.file spec.deps { }}/bin/${name}";
+    })
+    {
+      dx-keyring = {
+        file = ../scripts/dx-keyring.sh;
+        deps = [ pkgs.coreutils ]; # dirname, in the bootstrap-volume/HOME library-candidate search
+      };
+      dx-verify-inventory = {
+        file = ../scripts/dx-verify-inventory.sh;
+        deps = [ ]; # command -v/printf only
+      };
+      dx-claude-statusline = {
+        file = ../scripts/dx-claude-statusline.sh;
+        deps = [ pkgs.coreutils pkgs.jq ]; # cat/mkdir/mv/cut; jq
+      };
+      dx-herdr-navigate = {
+        file = ../scripts/dx-herdr-navigate.sh;
+        deps = [ pkgs.jq ]; # herdr itself stays ambient (optional, via HERDR_BIN_PATH/command -v)
+      };
+    }
+  // {
+    ".local/bin/dx-ai" = {
+      executable = true;
+      source = ../scripts/dx-ai.sh;
+    };
+
+    # dx-ai loads this at runtime (it is a source-only library, not a
+    # command); see scripts/dx-ai.sh's dx_ai_load_opencode_persistence for
+    # why it also looks for a copy on the bootstrap volume.
+    ".local/lib/dx/dx-opencode-persistence.sh".source =
+      ../scripts/lib/dx-opencode-persistence.sh;
+
+    # Shared guest-system detection (Branch 11 / Phase 4, DQ7), used by both
+    # dx-ai (dx_ai_load_guest_system, same three-candidate shape as
+    # dx-opencode-persistence.sh above) and bootstrap.sh (which sources it
+    # directly from the bootstrap volume, since it never runs
+    # post-activation).
+    ".local/lib/dx/dx-guest-system.sh".source =
+      ../scripts/lib/dx-guest-system.sh;
+
+    # Guest keyring ownership lives entirely in the AI-tools layer
+    # (Branch 16): dx-ai's dx_ai_ensure_keyring and the dx-keyring command
+    # above are both thin wrappers over this shared library (source-only,
+    # like dx-opencode-persistence.sh above), and home/shell.nix's
+    # profileExtra reads the recorded bus address through it too. Bootstrap
+    # keeps none of this.
+    ".local/lib/dx/dx-keyring.sh".source =
+      ../scripts/lib/dx-keyring.sh;
+
+    ".local/share/nvim/site/after/plugin/dx-herdr-navigator.lua".source =
+      ../nvim/extra_plugins/herdr-navigator.lua;
   };
-
-  # dx-ai loads this at runtime (it is a source-only library, not a command);
-  # see scripts/dx-ai.sh's dx_ai_load_opencode_persistence for why it also
-  # looks for a copy on the bootstrap volume.
-  home.file.".local/lib/dx/dx-opencode-persistence.sh".source =
-    ../scripts/lib/dx-opencode-persistence.sh;
-
-  # Shared guest-system detection (Branch 11 / Phase 4, DQ7), used by both
-  # dx-ai (dx_ai_load_guest_system, same three-candidate shape as
-  # dx-opencode-persistence.sh above) and bootstrap.sh (which sources it
-  # directly from the bootstrap volume, since it never runs post-activation).
-  home.file.".local/lib/dx/dx-guest-system.sh".source =
-    ../scripts/lib/dx-guest-system.sh;
-
-  # Guest keyring ownership lives entirely in the AI-tools layer (Branch 16):
-  # dx-ai's dx_ai_ensure_keyring and the dx-keyring command below are both
-  # thin wrappers over this shared library (source-only, like
-  # dx-opencode-persistence.sh above), and home/shell.nix's profileExtra
-  # reads the recorded bus address through it too. Bootstrap keeps none of
-  # this.
-  home.file.".local/lib/dx/dx-keyring.sh".source =
-    ../scripts/lib/dx-keyring.sh;
-
-  home.file.".local/bin/dx-keyring" = {
-    executable = true;
-    source = ../scripts/dx-keyring.sh;
-  };
-
-  # Branch 11 / Phase 4 (qnap-dxe-plan.md Phase 4 item 4): the guest CLI
-  # inventory verifier the coordinating session runs via dx_runtime_exec at
-  # the QNAP exit gate.
-  home.file.".local/bin/dx-verify-inventory" = {
-    executable = true;
-    source = ../scripts/dx-verify-inventory.sh;
-  };
-
-  home.file.".local/bin/dx-claude-statusline" = {
-    executable = true;
-    source = ../scripts/dx-claude-statusline.sh;
-  };
-
-  home.file.".local/bin/dx-herdr-navigate" = {
-    executable = true;
-    source = ../scripts/dx-herdr-navigate.sh;
-  };
-
-  home.file.".local/share/nvim/site/after/plugin/dx-herdr-navigator.lua".source =
-    ../nvim/extra_plugins/herdr-navigator.lua;
 }

@@ -265,12 +265,16 @@ assert_file_contains "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" "accent_primary" \
 assert_file_contains "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" "starship_accent_primary" \
     "writer uses starship_accent_primary as the base0E palette-ref alias"
 
-# PATH fallback so the writer can find tinty when invoked from tmux's
-# run-shell -b (which may inherit a minimal PATH that excludes
-# ~/.nix-profile/bin).
-assert_file_contains_literal "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" \
-    'PATH="$HOME/.nix-profile/bin:$PATH"' \
-    "writer prepends ~/.nix-profile/bin to PATH when tinty is not found"
+# WP7.5 (docs/reviews/2026-09-29-fable.md finding C5): the writer used to
+# hand-roll a PATH probe (`ensure_tinty_on_path`) for tmux's run-shell -b,
+# which may inherit a minimal PATH that excludes ~/.nix-profile/bin. The
+# installed copy is now a `pkgs.writeShellApplication` wrapper
+# (home/theme.nix) whose `runtimeInputs` (tinty among them) bake an
+# absolute PATH prefix into the script itself, so the hand-rolled probe is
+# gone from the source of truth too, not just superseded at install time.
+# checks.<system>.scripts-hermetic (flake.nix) is the behavioural proof.
+assert_file_not_contains "$SCRIPT_DX_THEME_WRITE_TOOL_THEMES" "ensure_tinty_on_path" \
+    "writer no longer hand-rolls its own tinty PATH probe"
 
 # Zero-arg mode prefers Tinty's hook env vars over `tinty current` so the
 # copy-hook applies the *incoming* palette without racing tinty's state

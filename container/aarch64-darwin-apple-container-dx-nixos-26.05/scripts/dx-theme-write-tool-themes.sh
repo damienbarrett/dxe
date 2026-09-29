@@ -3,13 +3,11 @@ set -eo pipefail
 
 base16_slots=(00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F)
 
-ensure_tinty_on_path() {
-  # tmux `run-shell -b` may spawn us with a minimal PATH that excludes
-  # ~/.nix-profile/bin.
-  if ! command -v tinty >/dev/null 2>&1 && [ -x "$HOME/.nix-profile/bin/tinty" ]; then
-    PATH="$HOME/.nix-profile/bin:$PATH"
-  fi
-}
+# tmux `run-shell -b` may spawn this with a minimal PATH; the installed copy
+# of this script is a `pkgs.writeShellApplication` wrapper (home/theme.nix)
+# whose `runtimeInputs` (tinty among them) are baked into an absolute PATH
+# prefix at build time, so tinty resolves no matter what PATH the caller
+# supplies. See docs/reviews/2026-09-29-fable.md finding C5.
 
 load_palette_from_tinty_info() {
   local scheme="$1"
@@ -68,7 +66,6 @@ validate_palette() {
   done
 }
 
-ensure_tinty_on_path
 palette=()
 load_palette "$@"
 
