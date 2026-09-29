@@ -26,21 +26,52 @@ dx_tunnel_state_dir() { printf '%s\n' "${DX_TUNNEL_STATE_DIR:-${XDG_STATE_HOME:-
 # runtime, so it never needed disambiguating, and no existing socket/
 # metadata/lock path may shift for it. docker-ssh gains a fourth segment,
 # dx_runtime_host_identity's own "docker-ssh:<alias>:<daemon-id>" (cached
-# after the first call in a process, so this costs no repeated round
-# trip); dx_runtime_host_identity is available here the same way
-# dx_short_hash (bin/lib/dx-host-util.sh) already is -- assumed sourced
-# by the caller first (bin/dx-lib.sh's own order), not re-sourced here.
+# in-process after the first call, and -- WP3.4 / Fable A1 -- cached on
+# disk across processes too, so this costs no repeated round trip);
+# dx_runtime_host_identity is available here the same way dx_short_hash
+# (bin/lib/dx-host-util.sh) already is -- assumed sourced by the caller
+# first (bin/dx-lib.sh's own order), not re-sourced here.
+#
+# WP3.4 / Fable A1: a FAILING identity resolution used to be silently
+# swallowed here -- "$(dx_runtime_host_identity)" as a bare printf argument
+# does not abort under errexit even though the command substitution itself
+# failed, so an unreachable host used to make the identity segment empty
+# and every socket/metadata/lock path shift under it. Resolved into a
+# local, checked explicitly, before ever building the key string, matching
+# every other dial-then-use call in this codebase (dx_ssh_endpoint,
+# dx_ssh_common_options's own callers, ...); every caller of the four
+# functions below now runs under a `set -e` entrypoint (bin/dx-forward,
+# bin/dx-reverse) and so already propagates this failure correctly once it
+# is no longer masked here.
 dx_tunnel_key() {
     if [ "${DX_RUNTIME:-apple}" = docker-ssh ]; then
-        printf '%s:%s:%s:%s' "$1" "$DX_CONTAINER_NAME" "$2" "$(dx_runtime_host_identity)"
+        local identity
+        identity="$(dx_runtime_host_identity)" || return 1
+        printf '%s:%s:%s:%s' "$1" "$DX_CONTAINER_NAME" "$2" "$identity"
     else
         printf '%s:%s:%s' "$1" "$DX_CONTAINER_NAME" "$2"
     fi
 }
-dx_tunnel_hash() { dx_short_hash "$(dx_tunnel_key "$1" "$2")"; }
-dx_tunnel_socket_path() { printf '%s/s-%s.sock\n' "$(dx_tunnel_state_dir)" "$(dx_tunnel_hash "$1" "$2")"; }
-dx_tunnel_metadata_path() { printf '%s/m-%s.meta\n' "$(dx_tunnel_state_dir)" "$(dx_tunnel_hash "$1" "$2")"; }
-dx_tunnel_lock_path() { printf '%s/locks/%s.lock\n' "$(dx_tunnel_state_dir)" "$(dx_tunnel_hash "$1" "$2")"; }
+dx_tunnel_hash() {
+    local key
+    key="$(dx_tunnel_key "$1" "$2")" || return 1
+    dx_short_hash "$key"
+}
+dx_tunnel_socket_path() {
+    local hash
+    hash="$(dx_tunnel_hash "$1" "$2")" || return 1
+    printf '%s/s-%s.sock\n' "$(dx_tunnel_state_dir)" "$hash"
+}
+dx_tunnel_metadata_path() {
+    local hash
+    hash="$(dx_tunnel_hash "$1" "$2")" || return 1
+    printf '%s/m-%s.meta\n' "$(dx_tunnel_state_dir)" "$hash"
+}
+dx_tunnel_lock_path() {
+    local hash
+    hash="$(dx_tunnel_hash "$1" "$2")" || return 1
+    printf '%s/locks/%s.lock\n' "$(dx_tunnel_state_dir)" "$hash"
+}
 dx_tunnel_legacy_socket_path() { printf '%s/dx-%s-%s-%s.sock\n' "${TMPDIR:-/tmp}" "$1" "$DX_CONTAINER_NAME" "$2"; }
 
 dx_tunnel_prepare_state() {
