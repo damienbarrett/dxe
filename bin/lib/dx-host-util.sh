@@ -121,6 +121,36 @@ dx_process_identity_matches() {
     [ -n "$current" ] && [ "$current" = "$2" ]
 }
 
+# dx_wait_until <timeout-seconds> <interval-seconds> <cmd...> -- WP4.2 /
+# Fable A6: the one bounded-wait primitive every hand-written polling loop
+# in this codebase (bin/lib/dx-container.sh, bin/dx-sync-bootstrap,
+# bin/dx-wait-ssh, dx_lock_acquire below) now shares, so they share one
+# injectable clock instead of each hardcoding its own `sleep 1`.
+#
+# Checks the predicate BEFORE ever sleeping, so an already-true condition
+# (or a zero timeout) never sleeps at all. Elapsed time is the plain sum of
+# the intervals already slept -- never a wall-clock read (SECONDS, date,
+# etc.) -- so a test can advance it deterministically by overriding
+# ${DX_SLEEP:-sleep} with a fake that records its call instead of actually
+# waiting, with no dependence on this host's real clock or load. Production
+# callers never set DX_SLEEP, so they keep calling the real `sleep`.
+#
+# "$@" is invoked directly, in this shell, never in a subshell or command
+# substitution, so a predicate that sets an outer local (as
+# dx_lock_acquire's own reclaim logic and dx_bootstrap_confirm_publication
+# in dx-container.sh both do, via Bash's dynamic scoping) is still visible
+# to the caller once dx_wait_until returns.
+dx_wait_until() {
+    local timeout="$1" interval="$2" elapsed=0
+    shift 2
+    while :; do
+        "$@" && return 0
+        [ "$elapsed" -lt "$timeout" ] || return 1
+        "${DX_SLEEP:-sleep}" "$interval"
+        elapsed=$((elapsed + interval))
+    done
+}
+
 dx_lock_acquire() {
     local lock_dir="$1" timeout="${2:-5}" elapsed=0 owner pid start current
     owner="$lock_dir/owner"
