@@ -356,36 +356,12 @@ as a whole phase stack.
 
 ## Open follow-ups (not yet branches)
 
-- **A live tmux-resurrect restore probe in Section 6 is timing-flaky** (seen
-  on Branch 16's live tier, 2026-09-27; the file was untouched by that
-  branch). `test_section6_tools.sh`'s restore check probes tmux server
-  start-up timing rather than a settled state. Backlog: make the probe wait
-  for the observable condition (bounded poll) instead of a fixed delay, the
-  way the Herdr acceptance tests do, and prove it stable across three
-  consecutive live runs.
-- **`dx-status` has no "keyring: not running" line** for Branch 15's failure
-  policy B warning path (guest reachable, keyring not started). Not
-  blocking; `bin/dx-status`'s existing host-script test fixture (a fake
-  `container exec ... bash` responder) answers every exec identically
-  regardless of command, so adding a distinguishable keyring probe there
-  needs that fixture extended first.
-- **`dx-restore --dry-run` over a very large target set is slow** (found on
-  Branch 17's live gate, 2026-09-27). `dx_backup_restore_status` resolves
-  each target's guest hash by scanning the batch result per target, so a
-  full-mirror dry-run over 60,000 targets is effectively O(n^2) and had not
-  finished after 13 minutes (correctness was proven on 1,000- and 167-file
-  subsets, including a deliberate conflict). Backlog: join the local and
-  guest hash lists in one pass (sort + join, or a single awk over both
-  files) and prove the full 60k dry-run completes in well under a minute.
-- **Section 27's fake `ssh` blocks forever when its stdin is an open
-  pipe or socket** (found 2026-09-27 when a live-gate script ran
-  `tests/run-tier.sh live` without `</dev/null`: the tier sat 22 minutes
-  inside `test_section27_qnap_scripts.sh`, and two stale copies of the same
-  test from an earlier run were found hung the same way). The standing
-  rule "stdin from /dev/null" masks it. Backlog: make the Phase 0 scripts'
-  fake `ssh` (and any other recording fake that may be reached with an
-  inherited stdin) redirect its own stdin from /dev/null, and add a
-  bounded-time test that runs Section 27 with stdin held open.
+- **Backlog probes.** The four small, specified probes formerly detailed
+  here (tmux-resurrect restore timing, the missing `dx-status` keyring
+  line, `dx-restore --dry-run`'s O(n^2) behavior, Section 27's fake-`ssh`
+  open-stdin hang) are now tracked in `plans.md`'s Open section, entry
+  "Backlog probes from the consolidation plan" (Muse D5, WP9.6) — see
+  there for detail, owner, status and revisit trigger.
 - **`--dry-run --summary` shows no "denied by the deny-list" total — decided
   2026-09-27 (coordinating session, option c): the walk prunes component-
   denied directories before the selector sees them, so any cheap counter
