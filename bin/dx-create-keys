@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
+create_keys_main() {
 if [ -f "$DX_SSH_KEY" ]; then
     echo "SSH key $DX_SSH_KEY already exists; skipping generation."
     exit 0
@@ -11,3 +12,5 @@ fi
 
 echo "Generating SSH keypair at $DX_SSH_KEY..."
 ssh-keygen -t ed25519 -f "$DX_SSH_KEY" -N ""
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then create_keys_main "$@"; fi
