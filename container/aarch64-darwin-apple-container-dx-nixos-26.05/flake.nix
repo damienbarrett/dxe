@@ -46,16 +46,29 @@
       # parameter instead of closing over one fixed value.
       perSystem = system:
         let
-          pkgs = import nixpkgs {
-            inherit system;
-            config.allowUnfree = true;
-          };
+          # WP7.8 (docs/reviews/2026-09-29-fable.md finding C8): the stable
+          # instance needs no unfree allowance at all -- dxPackages,
+          # bootstrapEssentials and every NixVim plugin (nvim below is
+          # built with this same `pkgs`) are free, verified by evaluating
+          # packages.<system>.default with no override present. Plain
+          # `nixpkgs.legacyPackages.${system}` (no `import nixpkgs { ... }`
+          # call of our own) also means one fewer nixpkgs instantiation.
+          pkgs = nixpkgs.legacyPackages.${system};
 
           unstable = import nixpkgs-unstable {
             inherit system;
-            config = {
-              allowUnfree = true;
-            };
+            # An explicit, closed list rather than a blanket `allowUnfree`:
+            # this documents which packages in aiPackages are unfree
+            # (verified against this exact pin -- claude-code is Anthropic's
+            # own unfree license; codex, herdr and opencode are all free
+            # (Apache-2.0/Apache-2.0/MIT) and need no entry here) instead of
+            # silently permitting whatever the next `nix flake update
+            # nixpkgs-unstable` on the guest (dx-ai.sh:270) happens to pull
+            # in.
+            config.allowUnfreePredicate = p: builtins.elem (nixpkgs.lib.getName p) [
+              "claude-code"
+              "antigravity-cli" # agy -- pins/agy.json, flake.nix's agy derivation
+            ];
           };
 
           # WP7.3 (docs/reviews/2026-09-29-fable.md finding C3, Muse B4):
