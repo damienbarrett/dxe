@@ -1627,5 +1627,139 @@ else
     test_fail "nix_verify_no_bootstrap_path_collision: the volume has never registered this root at all -> nothing to compare, no diagnostic (output: $p11_absent_output)"
 fi
 
+# P12 (docs/reviews/2026-09-29-fable.md finding B2, WP3.2): the wrapper
+# `if prepare_nix_volume_impl "$@"; then` (below prepare_nix_volume_impl)
+# invokes it as an `if` condition, so Bash suspends errexit for the whole
+# function body -- a failing mkfs/truncate/mount was silently ignored,
+# DX_NIX_VOLUME_ROOT was still set to /mnt/tmp-nix, and the phase printed
+# "... completed". The next phase (populate_prepared_nix_volume) then finds
+# no store at that path and tars the image store into the ephemeral rootfs
+# before failing -- bricking the guest until recreate.
+#
+# DX_NIX_RAW_PATH is a test-only override, added alongside these cases,
+# mirroring DX_NIX_DISK_SIZE two lines below it in the source: production
+# never sets it, so the hardcoded /var/lib/dx-nix-raw default is unchanged,
+# but it lets these fixtures point the directory-style branch at a plain
+# writable temp directory. /var/lib itself is root-owned on every host this
+# suite runs on unprivileged, so without this seam the mkfs/truncate/mount
+# lines below are simply unreachable outside a real guest boot. mkfs/
+# truncate/mount themselves stay stubbed either way -- they need
+# CAP_SYS_ADMIN this runner does not have -- and are validated on the live
+# tier only (docs/refactor/validation-matrix.md).
+#
+# Each case below runs the whole fixture as the left side of `(...) || true`
+# rather than a bare statement: prepare_nix_volume_impl's own bug (errexit
+# suspended inside an `if` condition) means a failing stub never aborts the
+# subshell early either way, but populate_prepared_nix_volume's
+# `${DX_NIX_VOLUME_ROOT:?...}` guard performs an unconditional shell exit
+# when unset (not an ordinary non-zero return), which -- unlike a normal
+# command failure -- is not suppressed by an `if`/`&&`/`||` context around
+# the call itself. Only nesting the whole capture in its own subshell
+# contains that abrupt exit to the subshell instead of this test file.
+p12_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p12-unchecked-privileged.XXXXXX")"
+
+# (a) A failing mount (the task's own reproduction): an older kernel
+# rejecting a mount option, or any other mount(8) failure. Every other stub
+# is a "happy path" no-op (truncate creates the sparse image file, mkfs
+# succeeds); only mount fails. tar is a MUST-NOT sentinel: if
+# prepare_nix_volume still reported success, a following
+# populate_prepared_nix_volume call would try to seed the image store with
+# tar -- proving the brick, not just the exit code.
+p12_raw_mount="$p12_fixture/dx-nix-raw-mount"
+mkdir -p "$p12_raw_mount"
+p12_mount_out="$p12_fixture/mount-fail.out"
+(
+    export DX_NIX_RAW_PATH="$p12_raw_mount"
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
+    findmnt() { return 1; }
+    blkid() { return 1; }
+    umount() { :; }
+    tar() { echo MUST-NOT-TAR; return 1; }
+    truncate() { : > "${3:?}"; }
+    mkfs.btrfs() { :; }
+    mkfs.ext4() { :; }
+    mount() { echo 'mount: wrong fs type' >&2; return 32; }
+    prepare_nix_volume
+    echo "prepare_exit=$?"
+    echo "root=${DX_NIX_VOLUME_ROOT:-unset}"
+    populate_prepared_nix_volume
+) >"$p12_mount_out" 2>&1 || true
+if ! grep -qxF 'prepare_exit=0' "$p12_mount_out" \
+    && grep -qxF 'root=unset' "$p12_mount_out" \
+    && grep -qF 'Error: mount failed for' "$p12_mount_out" \
+    && ! grep -qF completed "$p12_mount_out" \
+    && ! grep -qF MUST-NOT-TAR "$p12_mount_out"; then
+    test_pass "prepare_nix_volume: a failing mount is checked -- fails closed, leaves DX_NIX_VOLUME_ROOT unset, never reports completed, and a following populate never seeds the store"
+else
+    test_fail "prepare_nix_volume: a failing mount is checked -- fails closed, leaves DX_NIX_VOLUME_ROOT unset, never reports completed, and a following populate never seeds the store (output: $(cat "$p12_mount_out"))"
+fi
+
+# (b) A failing mkfs.btrfs (the fs_type the grep stub above selects). mount
+# and truncate stay happy-path no-ops so only the mkfs failure is under
+# test.
+p12_raw_mkfs="$p12_fixture/dx-nix-raw-mkfs"
+mkdir -p "$p12_raw_mkfs"
+p12_mkfs_out="$p12_fixture/mkfs-fail.out"
+(
+    export DX_NIX_RAW_PATH="$p12_raw_mkfs"
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
+    findmnt() { return 1; }
+    blkid() { return 1; }
+    umount() { :; }
+    tar() { echo MUST-NOT-TAR; return 1; }
+    truncate() { : > "${3:?}"; }
+    mkfs.btrfs() { echo 'mkfs.btrfs: failed' >&2; return 1; }
+    mkfs.ext4() { echo 'mkfs.ext4: failed' >&2; return 1; }
+    mount() { :; }
+    prepare_nix_volume
+    echo "prepare_exit=$?"
+    echo "root=${DX_NIX_VOLUME_ROOT:-unset}"
+    populate_prepared_nix_volume
+) >"$p12_mkfs_out" 2>&1 || true
+if ! grep -qxF 'prepare_exit=0' "$p12_mkfs_out" \
+    && grep -qxF 'root=unset' "$p12_mkfs_out" \
+    && grep -qF 'Error: mkfs.btrfs failed for' "$p12_mkfs_out" \
+    && ! grep -qF completed "$p12_mkfs_out" \
+    && ! grep -qF MUST-NOT-TAR "$p12_mkfs_out"; then
+    test_pass "prepare_nix_volume: a failing mkfs.btrfs is checked -- fails closed, leaves DX_NIX_VOLUME_ROOT unset, never reports completed, and a following populate never seeds the store"
+else
+    test_fail "prepare_nix_volume: a failing mkfs.btrfs is checked -- fails closed, leaves DX_NIX_VOLUME_ROOT unset, never reports completed, and a following populate never seeds the store (output: $(cat "$p12_mkfs_out"))"
+fi
+
+# (c) A failing truncate: the sparse image file is never created, but
+# nothing downstream noticed before this fix -- mkfs ran against a
+# non-existent device path and "succeeded" (stubbed), then mount
+# "succeeded" (stubbed) too.
+p12_raw_truncate="$p12_fixture/dx-nix-raw-truncate"
+mkdir -p "$p12_raw_truncate"
+p12_truncate_out="$p12_fixture/truncate-fail.out"
+(
+    export DX_NIX_RAW_PATH="$p12_raw_truncate"
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
+    findmnt() { return 1; }
+    blkid() { return 1; }
+    umount() { :; }
+    tar() { echo MUST-NOT-TAR; return 1; }
+    truncate() { echo 'truncate: failed' >&2; return 1; }
+    mkfs.btrfs() { :; }
+    mkfs.ext4() { :; }
+    mount() { :; }
+    prepare_nix_volume
+    echo "prepare_exit=$?"
+    echo "root=${DX_NIX_VOLUME_ROOT:-unset}"
+    populate_prepared_nix_volume
+) >"$p12_truncate_out" 2>&1 || true
+if ! grep -qxF 'prepare_exit=0' "$p12_truncate_out" \
+    && grep -qxF 'root=unset' "$p12_truncate_out" \
+    && grep -qF 'Error: truncate failed for' "$p12_truncate_out" \
+    && ! grep -qF completed "$p12_truncate_out" \
+    && ! grep -qF MUST-NOT-TAR "$p12_truncate_out"; then
+    test_pass "prepare_nix_volume: a failing truncate is checked -- fails closed, leaves DX_NIX_VOLUME_ROOT unset, never reports completed, and a following populate never seeds the store"
+else
+    test_fail "prepare_nix_volume: a failing truncate is checked -- fails closed, leaves DX_NIX_VOLUME_ROOT unset, never reports completed, and a following populate never seeds the store (output: $(cat "$p12_truncate_out"))"
+fi
+
+rm -rf "$p12_fixture"
+
 print_summary
 exit_with_code
