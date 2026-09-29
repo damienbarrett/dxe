@@ -60,13 +60,15 @@ dx_real_ssh_known_hosts_snapshot() {
     find "$dir" -mindepth 1 2>/dev/null | sort
 }
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-# Test counters
+# Test counters. Kept and updated for backward compatibility (some suites
+# or ad-hoc debugging may read them directly), but they are no longer the
+# source of truth for print_summary/exit_with_code below: a test_pass/
+# test_fail/test_skip call made inside a `( ... )` subshell or a background
+# job still increments these in whatever shell made the call, and that
+# increment dies with the subshell exactly as it always has. The results
+# file tests/lib/harness.sh records to (WP1.1, Fable D1) does not have that
+# problem -- an append survives the subshell -- which is why the actual
+# pass/fail decision below is read from it instead.
 TESTS_PASSED=0
 TESTS_FAILED=0
 TESTS_SKIPPED=0
@@ -74,6 +76,7 @@ TESTS_SKIPPED=0
 # Base directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 CONTAINER_DIR="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
 FLAKE_NIX="$CONTAINER_DIR/flake.nix"
 FLAKE_LOCK="$CONTAINER_DIR/flake.lock"
@@ -88,6 +91,13 @@ DX_CONTAINER_NAME="${DX_CONTAINER_NAME:-dx-host}"
 DX_SSH_PORT="${DX_SSH_PORT:-2222}"
 # Pure host helpers are safe on machines without Apple Container.
 source "$BASE_DIR/bin/lib/dx-host-util.sh"
+
+# tests/lib/harness.sh (WP1.1, Fable D1): the results-file recorder
+# test_pass/test_fail/test_skip/print_summary/exit_with_code below are now
+# shims over. Also supplies RED/GREEN/YELLOW/NC, so this file no longer
+# defines its own copies.
+# shellcheck source=lib/harness.sh
+source "$SCRIPT_DIR/lib/harness.sh"
 
 # Test assertion functions
 assert_file_exists() {
@@ -171,22 +181,32 @@ assert_git_not_tracked() {
     return 0
 }
 
-# Test result functions
+# Test result functions -- shims over tests/lib/harness.sh (WP1.1, Fable
+# D1). Each one still prints the exact colored line it always has (other
+# tooling and humans read these) and still updates the TESTS_PASSED/
+# TESTS_FAILED/TESTS_SKIPPED counters in the calling shell for backward
+# compatibility, but the call this file's own print_summary/exit_with_code
+# actually trust is _dxe_harness_record/skip's append to $DXE_TEST_RESULTS,
+# which -- unlike these counters -- is still there to read even when the
+# call was made inside a `( ... )` subshell or a background job.
 test_pass() {
     local message="$1"
     echo -e "  ${GREEN}✓ PASS${NC}: $message"
+    _dxe_harness_record pass "$message"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 }
 
 test_fail() {
     local message="$1"
     echo -e "  ${RED}✗ FAIL${NC}: $message"
+    _dxe_harness_record fail "$message"
     TESTS_FAILED=$((TESTS_FAILED + 1))
 }
 
 test_skip() {
     local message="$1"
     echo -e "  ${YELLOW}○ SKIP${NC}: $message"
+    skip "$message"
     TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
 }
 
@@ -290,19 +310,49 @@ assert_tmux_runtime_not_contains() {
     return 0
 }
 
-# Summary
+# Summary. Prints the byte-identical line print_summary always has, but the
+# counts come from $DXE_TEST_RESULTS (tests/lib/harness.sh), not from
+# $TESTS_PASSED/$TESTS_FAILED/$TESTS_SKIPPED -- see the comment above
+# test_pass for why.
 print_summary() {
+    _dxe_harness_results_file
+    local passed failed skipped
+    passed="$(_dxe_harness_count pass)"
+    failed="$(_dxe_harness_count fail)"
+    skipped="$(_dxe_harness_count skip)"
     echo ""
     echo "=============================="
-    echo -e "Results: ${GREEN}$TESTS_PASSED passed${NC}, ${RED}$TESTS_FAILED failed${NC}, ${YELLOW}$TESTS_SKIPPED skipped${NC}"
+    echo -e "Results: ${GREEN}$passed passed${NC}, ${RED}$failed failed${NC}, ${YELLOW}$skipped skipped${NC}"
     echo "=============================="
-    
-    if [ $TESTS_FAILED -gt 0 ]; then
+
+    if [ "$failed" -gt 0 ]; then
         GLOBAL_FAILED=1
     fi
 }
 
-# Exit with proper code after all tests
+# Exit with proper code after all tests. Non-zero if $DXE_TEST_RESULTS has
+# any fail line (not just if GLOBAL_FAILED was already set by a preceding
+# print_summary call, so a suite that calls exit_with_code without ever
+# calling print_summary still exits correctly). Deliberately does NOT apply
+# tests/lib/harness.sh finish's "zero recorded cases is itself a failure"
+# rule: several existing suites legitimately record only skips when no
+# container is present (e.g. test_section19_reverse_forward.sh: 0 passed,
+# 1 skipped) and must keep exiting 0. Removes the results file as its own
+# last step, explicitly, rather than via a trap: many suites install their
+# own `trap ... EXIT` for fixture cleanup (test_dx_backup.sh,
+# test_docker_runtime_adapter.sh, ...), and a trap installed here would
+# either clobber theirs or be clobbered by them depending on source order.
+# Since every call site in this suite immediately exits afterward (grep
+# confirms print_summary is always followed by exit_with_code, and
+# exit_with_code always calls `exit`), there is no later reader of the file
+# left to break by removing it here.
 exit_with_code() {
+    _dxe_harness_results_file
+    local failed
+    failed="$(_dxe_harness_count fail)"
+    if [ "$failed" -gt 0 ]; then
+        GLOBAL_FAILED=1
+    fi
+    rm -f "${DXE_TEST_RESULTS:-}"
     exit $GLOBAL_FAILED
 }

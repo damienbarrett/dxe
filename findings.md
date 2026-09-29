@@ -40,8 +40,8 @@ Branch: `refactor/findings-2026-09-29` (from `docs/model-reviews-20260929`).
 | Container-free suite (`tests/run_all_tests.sh --skip-integration`) | yes | yes |
 | Bash 3.2 host contracts | yes (the host shell *is* 3.2) | macos-15 |
 | ShellCheck | no binary locally | pinned 0.10.0 |
-| kcov coverage + ratchet | no kcov, Docker Desktop not running | ubuntu-24.04 |
-| Nix evaluation / `checks` | no `nix` locally | ubuntu-24.04 |
+| kcov coverage + ratchet | probably, via the Apple runtime (`run-coverage-linux.sh` accepts it as provider); unverified until WP1.1 lands | ubuntu-24.04 |
+| Nix evaluation / `checks` | yes, via the Apple runtime: `container run --rm --memory 8g -v <guest>:/src:ro nixos/nix:2.34.8 sh -c 'nix --extra-experimental-features "nix-command flakes" flake check --no-build --no-write-lock-file --all-systems /src'` (1 GB default memory gets OOM-killed at NixVim) | ubuntu-24.04 |
 | Live guest (`dx-test`) | Apple runtime available | manual only |
 
 Items whose Red can only fail on CI (kcov, Nix) are marked **CI-verified**:
@@ -142,7 +142,7 @@ Every review ID and where it lands.
 
 ### WP1 — Test foundations (no production change)
 
-- [ ] **WP1.1** `tests/lib/harness.sh`: import-pure, Bash 3.2-clean;
+- [x] (this commit) **WP1.1** `tests/lib/harness.sh`: import-pure, Bash 3.2-clean;
   `it`, `expect_exit`, `expect_stdout`, `expect_stderr`, `expect_file_eq`,
   `skip --class`, `finish`; results recorded one line per case to an
   append-only file (`$DXE_TEST_RESULTS`) so subshell assertions survive;
@@ -165,7 +165,7 @@ Every review ID and where it lands.
   runners become wrappers; `--help` fixed; contract test fails on a file with
   zero or two tiers. *Red:* header contract fails today. (Fable D2, Muse D1,
   Astra R2)
-- [ ] **WP1.5** Coverage metric: `tests/lib/coverage-metric.sh` computing
+- [x] bf866c8 **WP1.5** Coverage metric: `tests/lib/coverage-metric.sh` computing
   `scope_exec_lines` (Σ kcov `total_lines` over scope, floor) and
   `unscoped_prod_exec_lines` (non-comment lines in the exempt production set,
   ceiling); `ratchet.env` shrinks to two lines, history to
@@ -182,31 +182,31 @@ Every review ID and where it lands.
   `wait_until`; contract forbids bare `sleep N` in unit-tier files. (Fable D10)
 - [ ] **WP1.8** Contract: no column-0 coreutil override outside a subshell in
   `tests/test_*.sh`; fix `test_section17:50`. (Fable D6)
-- [ ] **WP1.9** `test_runtime_boundary_audit.sh` scans git-tracked shell only
+- [x] 862ede8 **WP1.9** `test_runtime_boundary_audit.sh` scans git-tracked shell only
   (baseline failure on an ignored `.claude/settings.local.json`).
 
 ### WP2 — Nix checks in CI (no guest behaviour change)
 
-- [ ] **WP2.1** Flake `checks` per system: `home-activation`, `ai-tools`,
+- [x] fb705a9+cabac33 **WP2.1** Flake `checks` per system: `home-activation`, `ai-tools`,
   `alias-is-identity`; CI runs `nix flake check --no-build --all-systems`;
   section 5 requires `checks.<system>.home-activation.drvPath` without
   `|| true`; section 0's literal updated; `validation-matrix.md` corrected.
   **CI-verified.** (Fable C1, Astra F11, Muse E1)
-- [ ] **WP2.2** Warnings contract: evaluating the checks prints zero
+- [x] 3b7cac8 **WP2.2** Warnings contract: evaluating the checks prints zero
   `trace: warning|evaluation warning` lines. Green: `programs.git.settings`,
   `makeNixvimWithModule { inherit pkgs; }`, decide gemini (pin out or hard
   error). **CI-verified.** (Fable C2)
 
 ### WP3 — Correctness with reproductions (guest and host)
 
-- [ ] **WP3.1** `dx_ai_setup_credentials` must not clobber a non-JSON
+- [x] 0416271+758caf9 **WP3.1** `dx_ai_setup_credentials` must not clobber a non-JSON
   `settings.json`. *Red:* fixture `{not json`; exit ≠ 0, `Error:` names the
   file, bytes unchanged. Refactor: `dx_ai_merge_json_setting`. (Fable B1)
-- [ ] **WP3.2** `prepare_nix_volume_impl` checks `mkfs`, `truncate`, `mount`.
+- [x] e2a2b8b+18b506e **WP3.2** `prepare_nix_volume_impl` checks `mkfs`, `truncate`, `mount`.
   *Red:* failing `mount` stub + `tar` sentinel; exit ≠ 0, `DX_NIX_VOLUME_ROOT`
   unset, sentinel never fires. Record mount/mkfs stubs as live-only in
   `validation-matrix.md`. (Fable B2)
-- [ ] **WP3.3** Deny-list as arrays, `find` predicates generated from them,
+- [x] ce1b719+e7944e0+ba21e14 **WP3.3** Deny-list as arrays, `find` predicates generated from them,
   extra patterns passed as records not `$*`; explicit missing exclude file
   aborts before guest access. *Red:* (a) CWD containing `result-bin` still
   denies `p/result-abc`; (b) walk/list equivalence with `dx_pbs_path_denied`;
@@ -217,10 +217,10 @@ Every review ID and where it lands.
   section 19 with fake `ssh` flipped to 255: list names the same socket, stop
   removes it, zero `ssh` calls. Green: daemon-id state file + `|| return 1`.
   (Fable A1)
-- [ ] **WP3.5** `dx-ai` lock: ownerless directory reclaimed; owner written
+- [x] 2295206+5326b9e **WP3.5** `dx-ai` lock: ownerless directory reclaimed; owner written
   via tmp+mv; stale takeover by rename-then-remove. *Red:* ownerless lock
   acquired; reclaim loses when target exists. (Fable B3)
-- [ ] **WP3.6** `dx-ai` failure messages and orphan-stage GC. *Red:* missing
+- [x] 168d3e8 **WP3.6** `dx-ai` failure messages and orphan-stage GC. *Red:* missing
   staged tool → stderr `Error:` with path; `.staging-old` removed under the
   lock. (Fable B4)
 
@@ -242,7 +242,7 @@ Every review ID and where it lands.
   table for `docs/configuration.md`. *Red:* `DX_RUNTIME=docker-ssh` +
   `apple-image` rejected; `DX_NOT_A_FIELD` rejected. (Fable A5, Astra F10,
   Muse C1, C2)
-- [ ] **WP4.4** `bootstrap_phases()` split from `bootstrap_main()`; the
+- [x] b752e39+cdf4166 **WP4.4** `bootstrap_phases()` split from `bootstrap_main()`; the
   grep-line-number order test replaced by a shadowed-function log. (Fable B8)
 - [ ] **WP4.5** Host duplication helpers: `dx_require_running_container`,
   `dx_prepare_state_dir`, `dx_tar_create`, `dx_die`/`dx_warn`, the SSH-opts
@@ -354,3 +354,13 @@ Every review ID and where it lands.
 
 - **2026-09-29** Plan written; baseline recorded; branch created.
 - **2026-09-29** WP0 landed: reviews moved to `docs/reviews/`, indexed; `findings.md` indexed in `plans.md`; section 10 green (158 cases). WP1.1 next.
+- **2026-09-30** WP1.9 landed (862ede8): boundary audit scans git-tracked files only; baseline failure closed.
+- **2026-09-30** WP1.5 landed (bf866c8): two-number metric, `ratchet.env` is 4 lines, history in `docs/evidence/20260930/`. Open: `scope_exec_lines_floor=0` until the first kcov run sets it (local run via the Apple runtime planned after WP1.1).
+- **2026-09-30** WP2.1/WP2.2 landed (fb705a9, 3b7cac8, cabac33): flake `checks` for both systems (home-activation, ai-tools, bootstrap-essentials, alias-is-identity), CI `--all-systems`, zero evaluation warnings. Verified locally via the container runtime. Open decision for the user: keep gemini-cli (acknowledged removal notice) or drop it from `DX_AI_TOOLS` + `aiPackages`.
+- **2026-09-30** WP3.1 landed (0416271, 758caf9): a non-JSON `settings.json` is refused, never clobbered; `dx_ai_merge_json_setting` extracted.
+- **2026-09-30** WP3.2 landed (e2a2b8b, 18b506e): mkfs/truncate/mount failures abort `prepare_nix_volume` with `DX_NIX_VOLUME_ROOT` unset; `dx_nix_format_device`/`dx_nix_mount` extracted with pinned argv; `DX_NIX_RAW_PATH` override added for unprivileged fixtures (mirrors `DX_NIX_DISK_SIZE`); live-only validation of these stubs recorded in `validation-matrix.md`.
+- **2026-09-30** WP4.4 landed (b752e39, cdf4166): `bootstrap_phases()` split from `bootstrap_main()`; phase order asserted by running it with shadowed phases; grep-line-number test deleted; six literal `Bootstrap phase:` assertions converted to behavioural cases (Fable D7 item 1). Correction to Fable B8: `bootstrap.sh` already carried the `BASH_SOURCE` guard (since 59c7b7b); only the phases/main split was missing.
+- **2026-09-30** WP3.5/WP3.6 landed (2295206, 5326b9e, 168d3e8): ownerless lock reclaimed, owner written tmp+mv, stale takeover by rename-then-remove; lock moved to `scripts/lib/dx-ai-lock.sh` (kcov scope); `dx_ai_fail` at ~20 sites; `.staging-*` orphans collected; `dx_ai_run_locked` replaces the release epilogue. Section 17: 95 → 115. Caveat from the agent: the three lock-release-on-failure cases are regression tests, not reproductions (the old epilogues already released). Note for WP5.2: the reclaim uses GNU `mv -T`; macOS tests cover it only through a shim, so unify on a portable `[ ! -e "$reclaim" ] && mv` form when the three lock copies merge.
+- **2026-09-30** WP3.3 landed (ce1b719, e7944e0, ba21e14): deny lists are arrays (no CWD glob expansion), extra patterns are records, `find` prune predicate generated once, a bad explicit exclude file aborts `dx-backup` before any guest call. Selector 70 → 77 cases, backup 47 → 50. Correction to Fable B5/Astra F6: both runtime adapters already carried patterns as separate argv; the join was inside `dx_pbs_list_driver` only.
+- **2026-09-30** WP3.4 landed (addcb12, de9fefe): tunnel identity read from `~/.local/state/dxe/<container>/host-identity`, fails closed, zero dials on the tunnel path; `dx_profile_state_segment` shared by tunnels, backups and known-hosts; the adapter suite now isolates HOME (it had started writing real state). Accepted limitation to record: the daemon-id cache is scoped by container name only; every lifecycle preflight (`dx_runtime_docker_available`) still dials live and rewrites it, so only the tunnel path reads it without dialling, which is the intended fail-closed behaviour.
+- **2026-09-30** WP1.1 landed: `tests/lib/harness.sh` (results file, `expect_*`, `skip --class`, `finish`), `test_helpers.sh` shims, suites 34 (harness) and 35 (coverage metric) registered in all runners. Verified serially: sections 34, 35, 9, 21, 3, 17, 10, 20, 19, 0, 13, 22, 33, 28, 29 + contracts + Bash 3.2. Two section 22 and one section 21 wall-clock cases fail on this host with and without the change (A/B tested): the host carries a load average near 370 from 59 long-running `agy` processes outside this work, so timing assertions here are not trustworthy (Fable D10); CI is the arbiter for them. `scope_exec_lines_floor` still 0: local kcov run next.
