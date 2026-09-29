@@ -187,7 +187,10 @@ if (
     groupadd() { printf '%s\n' "$*" > "$fixture/groupadd"; }
     useradd() { printf '%s\n' "$*" > "$fixture/useradd"; }
     usermod() { :; }
-    PATH="$no_getent_bin" DX_AUTH_ROOT="$auth_root" DX_NIX_DURABLE_UID=42420 DX_NIX_DURABLE_GID=42420 create_user
+    # Contract 5 (refactor-v2-final.md, Fable B6 item 5): the durable
+    # identity candidate is now a positional record, never
+    # DX_NIX_DURABLE_UID/DX_NIX_DURABLE_GID.
+    PATH="$no_getent_bin" DX_AUTH_ROOT="$auth_root" create_user "$(printf 'identity=42420:42420\nmigrate=false')" >/dev/null
     [ "${DX_NIX_IDENTITY_MIGRATION_REQUIRED:-false}" = true ]
     grep -q -- '-f dx' "$fixture/groupadd"
     grep -q -- '-g dx' "$fixture/useradd"
@@ -206,7 +209,7 @@ if (
     groupadd() { printf '%s\n' "$*" > "$fixture/gid-groupadd"; }
     useradd() { printf '%s\n' "$*" > "$fixture/gid-useradd"; }
     usermod() { :; }
-    DX_AUTH_ROOT="$auth_root" DX_NIX_DURABLE_UID=42420 DX_NIX_DURABLE_GID=42420 create_user
+    DX_AUTH_ROOT="$auth_root" create_user "$(printf 'identity=42420:42420\nmigrate=false')" >/dev/null
     [ "${DX_NIX_IDENTITY_MIGRATION_REQUIRED:-false}" = true ]
     grep -q -- '-f dx' "$fixture/gid-groupadd"
     grep -q -- '-g dx' "$fixture/gid-useradd"
@@ -228,7 +231,7 @@ if (
     groupadd() { printf '%s\n' "$*" > "$fixture/existing-dx-groupadd"; return 97; }
     useradd() { printf '%s\n' "$*" > "$fixture/existing-dx-useradd"; }
     usermod() { :; }
-    DX_AUTH_ROOT="$auth_root" DX_NIX_DURABLE_UID=42420 DX_NIX_DURABLE_GID=42420 create_user
+    DX_AUTH_ROOT="$auth_root" create_user "$(printf 'identity=42420:42420\nmigrate=false')" >/dev/null
     [ ! -e "$fixture/existing-dx-groupadd" ]
     grep -q -- '-u 42420 -g dx' "$fixture/existing-dx-useradd"
 ); then
@@ -372,14 +375,20 @@ mkdir -p "$durable_nix/store" "$durable_persist"
 chown "$test_uid:$test_gid" "$durable_nix/store"
 # shellcheck disable=SC2218
 chown 1:1 "$durable_persist"
-if DX_PERSIST_HOME="$durable_persist" record_durable_nix_identity "$durable_nix" \
-    && [ "${DX_NIX_DURABLE_UID:-}" = "$test_uid" ] \
-    && [ "${DX_PERSIST_IDENTITY_MIGRATION_REQUIRED:-false}" = true ]; then
+# Contract 5 (refactor-v2-final.md, Fable B6 item 5): record_durable_nix_
+# identity now returns a bounded `identity=`/`migrate=` record on stdout
+# instead of exporting DX_NIX_DURABLE_UID/DX_NIX_DURABLE_GID.
+# DX_PERSIST_IDENTITY_MIGRATION_REQUIRED is removed outright (it was
+# write-only in production); the mismatch is still observable via the
+# unchanged warning text on stderr.
+mismatch_err="$fixture/durable-nix-persist-mismatch.err"
+mismatch_identity="$(DX_PERSIST_HOME="$durable_persist" record_durable_nix_identity "$durable_nix" 2>"$mismatch_err")"
+if printf '%s\n' "$mismatch_identity" | grep -qx "identity=$test_uid:$test_gid" \
+    && grep -qF 'scheduling persisted-home migration' "$mismatch_err"; then
     test_pass "Nix identity wins a durable Nix/persist mismatch and schedules migration"
 else
-    test_fail "Nix identity wins a durable Nix/persist mismatch and schedules migration"
+    test_fail "Nix identity wins a durable Nix/persist mismatch and schedules migration (identity: $mismatch_identity; stderr: $(cat "$mismatch_err" 2>/dev/null))"
 fi
-unset DX_PERSIST_IDENTITY_MIGRATION_REQUIRED
 unsafe_nix="$fixture/unsafe-nix"
 unsafe_persist="$fixture/unsafe-persist"
 mkdir -p "$unsafe_nix/store" "$unsafe_nix/var/nix/db" "$unsafe_nix/var/nix" "$unsafe_persist"
@@ -388,13 +397,17 @@ touch "$unsafe_nix/var/nix/db/big-lock"
 chown -R 0:0 "$unsafe_nix"
 # shellcheck disable=SC2218
 chown "$test_uid:$test_gid" "$unsafe_persist"
-if DX_PERSIST_HOME="$unsafe_persist" record_durable_nix_identity "$unsafe_nix" \
-    && [ "${DX_NIX_DURABLE_UID:-}" = "$test_uid" ] \
-    && [ "${DX_NIX_DURABLE_GID:-}" = "$test_gid" ] \
+# A plain `>` redirect (not `$(...)`) keeps this call in the current shell,
+# so DX_NIX_IDENTITY_MIGRATION_REQUIRED's export -- which
+# record_durable_nix_identity still sets, unchanged -- is observable below;
+# a command-substitution capture would fork a subshell and lose it.
+unsafe_identity_out="$fixture/unsafe-identity.out"
+DX_PERSIST_HOME="$unsafe_persist" record_durable_nix_identity "$unsafe_nix" > "$unsafe_identity_out"
+if grep -qx "identity=$test_uid:$test_gid" "$unsafe_identity_out" \
     && [ "${DX_NIX_IDENTITY_MIGRATION_REQUIRED:-false}" = true ]; then
     test_pass "root-owned Nix store DB and big-lock defer to safe persist identity and schedule migration"
 else
-    test_fail "root-owned Nix store DB and big-lock defer to safe persist identity and schedule migration"
+    test_fail "root-owned Nix store DB and big-lock defer to safe persist identity and schedule migration (identity: $(cat "$unsafe_identity_out" 2>/dev/null))"
 fi
 unset DX_NIX_IDENTITY_MIGRATION_REQUIRED
 if (
@@ -731,11 +744,12 @@ mkdir -p "$persist_only"
 # the durable_nix/durable_persist fixture.
 # shellcheck disable=SC2218
 chown "$test_uid:$test_gid" "$persist_only"
-DX_PERSIST_HOME="$persist_only" record_durable_nix_identity "$fixture/no-nix" || true
-if [ "${DX_NIX_DURABLE_UID:-}" = "$test_uid" ] && [ "${DX_NIX_DURABLE_GID:-}" = "$test_gid" ]; then
+# Contract 5: identity=<uid:gid> is now this function's own stdout record.
+persist_only_identity="$(DX_PERSIST_HOME="$persist_only" record_durable_nix_identity "$fixture/no-nix" || true)"
+if printf '%s\n' "$persist_only_identity" | grep -qx "identity=$test_uid:$test_gid"; then
     test_pass "persist-only durable identity is reused"
 else
-    test_fail "persist-only durable identity is reused"
+    test_fail "persist-only durable identity is reused (identity: $persist_only_identity)"
 fi
 
 # A failed marker publication must not strand a temp file that could be read as
@@ -862,16 +876,17 @@ id() {
         *) command id "$@" ;;
     esac
 }
-DX_NIX_DURABLE_UID="$test_uid"
-DX_NIX_DURABLE_GID="$test_gid"
+# Contract 5: the durable-identity candidate is now the positional record,
+# never DX_NIX_DURABLE_UID/DX_NIX_DURABLE_GID.
 unset DX_NIX_IDENTITY_MIGRATION_REQUIRED
-if create_user && [ "${DX_NIX_IDENTITY_MIGRATION_REQUIRED:-false}" = true ]; then
+if create_user "$(printf 'identity=%s:%s\nmigrate=false' "$test_uid" "$test_gid")" >/dev/null \
+    && [ "${DX_NIX_IDENTITY_MIGRATION_REQUIRED:-false}" = true ]; then
     test_pass "existing dx identity conflict keeps the safe account and schedules migration"
 else
     test_fail "existing dx identity conflict keeps the safe account and schedules migration"
 fi
 unset -f id
-unset DX_NIX_DURABLE_UID DX_NIX_DURABLE_GID DX_NIX_IDENTITY_MIGRATION_REQUIRED
+unset DX_NIX_IDENTITY_MIGRATION_REQUIRED
 
 print_summary
 exit_with_code

@@ -24,7 +24,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded dx_bootstrap_scratch_dir dx_persist_durable_identity_record dx_read_durable_identity_record essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id dx_parse_durable_identity_record create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -2409,6 +2409,105 @@ else
 fi
 
 rm -rf "$p14_fixture"
+
+# P15 (refactor-v2-final.md Contract 5, Fable B6 item 5): record_durable_
+# nix_identity returns a bounded `identity=`/`migrate=` record on stdout
+# instead of exporting DX_NIX_DURABLE_UID/DX_NIX_DURABLE_GID/
+# DX_PERSIST_IDENTITY_MIGRATION_REQUIRED, create_user takes that record
+# positionally and returns its own final identity in the same shape, and
+# the two are bridged across the prepare/create_user phase boundary via
+# dx_persist_durable_identity_record/dx_read_durable_identity_record rather
+# than the removed environment variables.
+p15_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p15-durable-identity.XXXXXX")"
+export DX_BOOTSTRAP_SCRATCH_DIR="$p15_fixture/scratch"
+
+# (a) A safe, already-owned Nix store: record_durable_nix_identity returns
+# that uid:gid and migrate=false, and persists the same record for later
+# reads -- never exporting DX_NIX_DURABLE_UID/DX_NIX_DURABLE_GID.
+p15_safe_root="$p15_fixture/safe-volume"
+mkdir -p "$p15_safe_root/store"
+p15_safe_output="$({
+    stat() { printf '4242:4242\n'; }
+    DX_PERSIST_HOME="$p15_fixture/no-such-persist-home" record_durable_nix_identity "$p15_safe_root"
+    echo "durable-uid-after=${DX_NIX_DURABLE_UID:-<unset>}"
+} 2>/dev/null)"
+p15_safe_expected="identity=4242:4242
+migrate=false
+durable-uid-after=<unset>"
+if [ "$p15_safe_output" = "$p15_safe_expected" ] \
+    && [ "$(cat "$DX_BOOTSTRAP_SCRATCH_DIR/durable-identity-record" 2>/dev/null)" = "$(printf 'identity=4242:4242\nmigrate=false')" ]; then
+    test_pass "P15: record_durable_nix_identity returns identity=/migrate= on stdout, persists it for create_user, and never exports DX_NIX_DURABLE_UID"
+else
+    test_fail "P15: record_durable_nix_identity returns identity=/migrate= on stdout, persists it for create_user, and never exports DX_NIX_DURABLE_UID (output: $p15_safe_output; persisted: $(cat "$DX_BOOTSTRAP_SCRATCH_DIR/durable-identity-record" 2>/dev/null))"
+fi
+rm -rf "$DX_BOOTSTRAP_SCRATCH_DIR"
+
+# (b) No safe identity anywhere: identity= is empty, migrate=false, and the
+# persisted record faithfully carries that same empty-identity record (not
+# stale state from an earlier call, and not silently skipped).
+p15_none_root="$p15_fixture/none-volume"
+mkdir -p "$p15_none_root"
+p15_none_output="$({
+    DX_PERSIST_HOME="$p15_fixture/no-such-persist-home" record_durable_nix_identity "$p15_none_root"
+} 2>/dev/null)"
+p15_none_expected="$(printf 'identity=\nmigrate=false')"
+if [ "$p15_none_output" = "$p15_none_expected" ] \
+    && [ "$(dx_read_durable_identity_record)" = "$p15_none_expected" ]; then
+    test_pass "P15: record_durable_nix_identity with no safe identity returns an empty identity= and persists that same empty record"
+else
+    test_fail "P15: record_durable_nix_identity with no safe identity returns an empty identity= and persists that same empty record (output: $p15_none_output; read-back: $(dx_read_durable_identity_record))"
+fi
+
+# (c) The persist/read bridge round-trips exactly the record written,
+# independent of record_durable_nix_identity itself (the mechanism
+# bootstrap_phases relies on to carry the value from prepare_nix_volume's
+# own branches to the later, separate create_user phase).
+dx_persist_durable_identity_record "$(printf 'identity=777:888\nmigrate=true')"
+if [ "$(dx_read_durable_identity_record)" = "$(printf 'identity=777:888\nmigrate=true')" ]; then
+    test_pass "P15: dx_persist_durable_identity_record/dx_read_durable_identity_record round-trip the record across the phase boundary"
+else
+    test_fail "P15: dx_persist_durable_identity_record/dx_read_durable_identity_record round-trip the record across the phase boundary (read-back: $(dx_read_durable_identity_record))"
+fi
+rm -rf "$DX_BOOTSTRAP_SCRATCH_DIR"
+
+# (d) create_user takes the record positionally (never DX_NIX_DURABLE_UID/
+# DX_NIX_DURABLE_GID) and returns its own final identity in the same shape.
+# No "dx" user exists yet, and the durable uid/gid are free, so it creates
+# dx with exactly that identity.
+p15_auth_root="$p15_fixture/auth"
+mkdir -p "$p15_auth_root/etc"
+printf '%s\n' 'root:x:0:0:root:/root:/bin/sh' > "$p15_auth_root/etc/passwd"
+printf '%s\n' 'root:x:0:' > "$p15_auth_root/etc/group"
+p15_useradd_log="$p15_fixture/useradd.log"
+# A `case` statement defined inline inside this `$(...)` command
+# substitution's own captured text breaks this host's bash 3.2 parser (see
+# the longer comment on the same pattern in the P9/P11 blocks above);
+# if/[[ ]] avoids it.
+p15_create_user_output="$({
+    id() {
+        if [ "${1:-}" = -u ] && [ "${2:-}" = dx ]; then
+            [ -f "$p15_fixture/dx-created" ] && printf '5151\n' || return 1
+        elif [ "${1:-}" = -g ] && [ "${2:-}" = dx ]; then
+            [ -f "$p15_fixture/dx-created" ] && printf '5151\n' || return 1
+        else
+            command id "$@"
+        fi
+    }
+    groupadd() { :; }
+    useradd() { printf '%s\n' "$*" >> "$p15_useradd_log"; : > "$p15_fixture/dx-created"; }
+    usermod() { :; }
+    DX_AUTH_ROOT="$p15_auth_root" create_user "$(printf 'identity=5151:5151\nmigrate=false')"
+} 2>&1)"
+if grep -qF -- '-u 5151 -g dx' "$p15_useradd_log" \
+    && printf '%s\n' "$p15_create_user_output" | stdin_matches -F 'identity=5151:5151' \
+    && printf '%s\n' "$p15_create_user_output" | stdin_matches -F 'migrate=false'; then
+    test_pass "P15: create_user takes the durable-identity record positionally and returns its own final identity in the same shape"
+else
+    test_fail "P15: create_user takes the durable-identity record positionally and returns its own final identity in the same shape (useradd: $(cat "$p15_useradd_log" 2>/dev/null); output: $p15_create_user_output)"
+fi
+
+unset DX_BOOTSTRAP_SCRATCH_DIR
+rm -rf "$p15_fixture"
 
 print_summary
 exit_with_code

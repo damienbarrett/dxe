@@ -1783,7 +1783,7 @@ source "$GUEST/bootstrap/base-and-storage.sh"
 
     mkdir -p "$root/unsafe-persist"
     chown 0:0 "$root/unsafe-persist"
-    DX_PERSIST_HOME="$root/unsafe-persist" record_durable_nix_identity "$root"
+    DX_PERSIST_HOME="$root/unsafe-persist" record_durable_nix_identity "$root" >/dev/null
 
     id() { case "$1:$2" in -u:dx|-g:dx) printf '%s\n' 1000;; *) builtin id "$@";; esac; }
     chown() { :; }
@@ -1908,7 +1908,10 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     printf '%s\n' 'root:x:0:' > "$auth_root/etc/group"
     id() { [ "$1" = -u ] && [ "$2" = dx ] && return 1; builtin id "$@"; }
     groupadd() { :; }; useradd() { :; }; usermod() { :; }
-    DX_AUTH_ROOT="$auth_root" DX_NIX_DURABLE_UID=42420 DX_NIX_DURABLE_GID=42420 create_user
+    # Contract 5 (refactor-v2-final.md, Fable B6 item 5): the durable
+    # identity candidate is now a positional record, never
+    # DX_NIX_DURABLE_UID/DX_NIX_DURABLE_GID.
+    DX_AUTH_ROOT="$auth_root" create_user "$(printf 'identity=42420:42420\nmigrate=false')" >/dev/null
     ! DX_AUTH_ROOT="$fixture/core-auth-missing" auth_entries_with_numeric_id passwd 42420 >/dev/null 2>&1 || exit 1
 )
 (

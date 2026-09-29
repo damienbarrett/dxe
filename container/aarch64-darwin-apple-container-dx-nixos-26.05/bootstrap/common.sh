@@ -7,6 +7,45 @@
 DX_NIX_FEAT_OPTS=(--extra-experimental-features "nix-command flakes")
 DX_NIX_NET_OPTS=(--option connect-timeout 15 --option stalled-download-timeout 60 --option download-attempts 2)
 
+# A small scratch directory for values that must cross a bootstrap phase
+# boundary without an exported environment variable (refactor-v2-final.md
+# Contract 5, Fable B6 item 5). It lives outside /nix on purpose: apple-image
+# mode replaces /nix wholesale mid-boot (populate_prepared_nix_volume's own
+# umount/mount), so anything written under the pre-remount volume root would
+# vanish for a reader that runs after the remount, exactly the failure mode
+# the removed exported globals never had (process environment survives a
+# filesystem remount). DX_BOOTSTRAP_SCRATCH_DIR is a test-only override,
+# mirroring DX_NIX_RAW_PATH's own pattern: production never sets it, so the
+# /run default is unchanged, but a sourceable fixture can point it at a
+# disposable temp directory instead of requiring root to write /run.
+dx_bootstrap_scratch_dir() {
+    printf '%s\n' "${DX_BOOTSTRAP_SCRATCH_DIR:-/run/dx-bootstrap}"
+}
+
+# Contract 5: record_durable_nix_identity's own record, bridged from wherever
+# it runs (inside prepare_nix_volume's branches) to create_user, a separate
+# later phase. Best-effort: a write failure here must never fail the boot
+# over a scratch-directory hiccup -- it only means create_user falls back to
+# allocating a fresh identity, the same outcome as today's "no durable
+# identity available" path.
+dx_persist_durable_identity_record() {
+    local record="$1"
+    local dir
+    dir="$(dx_bootstrap_scratch_dir)"
+    mkdir -p "$dir" 2>/dev/null || return 0
+    printf '%s\n' "$record" > "$dir/durable-identity-record" 2>/dev/null || true
+}
+
+# Bounded reader: an absent or symlinked record file is treated the same as
+# no durable identity at all, never sourced or trusted as anything but plain
+# text.
+dx_read_durable_identity_record() {
+    local file
+    file="$(dx_bootstrap_scratch_dir)/durable-identity-record"
+    [ -f "$file" ] && [ ! -L "$file" ] || return 0
+    cat "$file" 2>/dev/null || true
+}
+
 # Marker paths are durable state and must be either absent or a regular file.
 # In particular, GNU mv treats a directory destination as a request to move
 # the temporary file inside it, which can make a publication appear to

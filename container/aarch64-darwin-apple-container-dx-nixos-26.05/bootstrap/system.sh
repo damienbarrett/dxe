@@ -149,31 +149,70 @@ auth_entries_with_numeric_id() {
     return 0
 }
 
+# Contract 5 (refactor-v2-final.md, Fable B6 item 5): parses the bounded,
+# non-sourced two-line record record_durable_nix_identity returns
+# (`identity=<uid:gid-or-empty>`, `migrate=<true|false>`) into the two
+# durable_* globals below, replacing the DX_NIX_DURABLE_UID/DX_NIX_DURABLE_GID
+# environment reads. Unknown lines are ignored; a malformed identity= value
+# is treated the same as absent (no durable identity to reuse). Deliberately
+# assigns durable_uid/durable_gid WITHOUT `local` -- the sole caller,
+# create_user, declares those two names `local` in its own frame, and bash's
+# dynamic scoping means this helper's assignment lands there.
+dx_parse_durable_identity_record() {
+    local record="$1"
+    local line value
+    durable_uid=""
+    durable_gid=""
+    while IFS= read -r line; do
+        case "$line" in
+            identity=*)
+                value="${line#identity=}"
+                case "$value" in
+                    [0-9]*:[0-9]*)
+                        durable_uid="${value%%:*}"
+                        durable_gid="${value##*:}"
+                        ;;
+                esac
+                ;;
+        esac
+    done <<<"$record"
+}
+
 # 2. Create non-root guest user (Section 3)
 create_user() {
+    # Contract 5: the durable-identity candidate arrives as an explicit
+    # positional record (bootstrap_phases reads it from
+    # dx_read_durable_identity_record, itself fed by record_durable_
+    # nix_identity's own persisted record) instead of DX_NIX_DURABLE_UID/
+    # DX_NIX_DURABLE_GID. DX_NIX_IDENTITY_MIGRATION_REQUIRED is unchanged --
+    # migrate_durable_nix_identity_if_needed still reads it, in a later
+    # phase, and this function both consumes and can independently set it.
+    local durable_uid durable_gid
+    dx_parse_durable_identity_record "${1:-}"
+
     if id -u dx >/dev/null 2>&1; then
-        if [ -n "${DX_NIX_DURABLE_UID:-}" ] && [ -n "${DX_NIX_DURABLE_GID:-}" ] \
-            && { [ "$(id -u dx)" != "$DX_NIX_DURABLE_UID" ] || [ "$(id -g dx)" != "$DX_NIX_DURABLE_GID" ]; }; then
-            echo "Warning: existing dx identity $(id -u dx):$(id -g dx) conflicts with durable identity $DX_NIX_DURABLE_UID:$DX_NIX_DURABLE_GID; keeping the safe existing identity and scheduling one migration." >&2
+        if [ -n "$durable_uid" ] && [ -n "$durable_gid" ] \
+            && { [ "$(id -u dx)" != "$durable_uid" ] || [ "$(id -g dx)" != "$durable_gid" ]; }; then
+            echo "Warning: existing dx identity $(id -u dx):$(id -g dx) conflicts with durable identity $durable_uid:$durable_gid; keeping the safe existing identity and scheduling one migration." >&2
             DX_NIX_IDENTITY_MIGRATION_REQUIRED=true
             export DX_NIX_IDENTITY_MIGRATION_REQUIRED
         fi
     else
         echo "Creating user dx..."
-        if [ -n "${DX_NIX_DURABLE_UID:-}" ] && [ -n "${DX_NIX_DURABLE_GID:-}" ]; then
-            echo "Creating dx with durable Nix UID:GID $DX_NIX_DURABLE_UID:$DX_NIX_DURABLE_GID..."
+        if [ -n "$durable_uid" ] && [ -n "$durable_gid" ]; then
+            echo "Creating dx with durable Nix UID:GID $durable_uid:$durable_gid..."
             local existing_user existing_group
-            if existing_user="$(auth_entries_with_numeric_id passwd "$DX_NIX_DURABLE_UID")" \
-                && existing_group="$(auth_entries_with_numeric_id group "$DX_NIX_DURABLE_GID")" \
+            if existing_user="$(auth_entries_with_numeric_id passwd "$durable_uid")" \
+                && existing_group="$(auth_entries_with_numeric_id group "$durable_gid")" \
                 && { [ -z "$existing_user" ] || [ "$existing_user" = dx ]; } \
                 && { [ -z "$existing_group" ] || [ "$existing_group" = dx ]; }; then
                 # The durable group may have survived without its user (for
                 # example after an interrupted auth-file restore).  Reuse it
                 # instead of asking groupadd to recreate an existing GID.
                 if [ -z "$existing_group" ]; then
-                    groupadd -g "$DX_NIX_DURABLE_GID" dx
+                    groupadd -g "$durable_gid" dx
                 fi
-                useradd -m -u "$DX_NIX_DURABLE_UID" -g dx -s /bin/sh dx
+                useradd -m -u "$durable_uid" -g dx -s /bin/sh dx
             else
                 echo "Warning: durable Nix UID/GID is unavailable or occupied; allocating a safe dx identity and scheduling one migration." >&2
                 DX_NIX_IDENTITY_MIGRATION_REQUIRED=true
@@ -201,6 +240,12 @@ create_user() {
         echo "@includedir /etc/sudoers.d" >> /etc/sudoers
         chmod 440 /etc/sudoers
     fi
+
+    # Contract 5: returns the final identity -- the same two-line shape
+    # record_durable_nix_identity produces -- so a caller that wants it
+    # never has to re-derive it via a second id -u/-g dx round trip.
+    printf 'identity=%s:%s\n' "$(id -u dx)" "$(id -g dx)"
+    printf 'migrate=%s\n' "${DX_NIX_IDENTITY_MIGRATION_REQUIRED:-false}"
 }
 
 # SSH host identity must outlive the ephemeral rootfs.  /etc/ssh is rebuilt with
