@@ -146,7 +146,11 @@ assert_file_exists "$DX_HERDR_NAV_SCRIPT" "Herdr pane navigator helper exists"
 assert_file_contains "$DX_HERDR_NAV_SCRIPT" "pane process-info" "Herdr navigator inspects the foreground pane process"
 assert_file_contains "$DX_HERDR_NAV_SCRIPT" "pane send-keys" "Herdr navigator forwards Ctrl navigation into Neovim"
 assert_file_contains "$DX_HERDR_NAV_SCRIPT" "pane focus" "Herdr navigator focuses adjacent Herdr panes"
-assert_file_contains "$TOOLS_NIX" ".local/bin/dx-herdr-navigate" "Herdr navigator helper is installed by Home Manager"
+# WP7.5 (docs/reviews/2026-09-29-fable.md finding C5): dx-herdr-navigate is
+# now installed via the dxScript/mapAttrs' table (home/tools.nix), so its
+# destination path ".local/bin/dx-herdr-navigate" is generated from the
+# attribute name below rather than appearing as that literal string.
+assert_file_contains "$TOOLS_NIX" "dx-herdr-navigate = {" "Herdr navigator helper is installed by Home Manager"
 assert_file_contains "$TOOLS_NIX" "dx-herdr-navigator.lua" "Herdr-aware Neovim edge navigation is installed by Home Manager"
 if bash -n "$DX_HERDR_NAV_SCRIPT" 2>/dev/null; then
     test_pass "Herdr navigator helper passes bash syntax check"
@@ -320,7 +324,9 @@ if git -C "$BASE_DIR" ls-files --error-unmatch "${DX_VERIFY_INVENTORY_SCRIPT#$BA
 else
     test_fail "guest inventory verifier script is tracked for flake source inclusion"
 fi
-assert_file_contains "$TOOLS_NIX" ".local/bin/dx-verify-inventory" "guest inventory verifier command is installed by Home Manager"
+# WP7.5 (docs/reviews/2026-09-29-fable.md finding C5): see the
+# dx-herdr-navigate comment above -- same dxScript/mapAttrs' table.
+assert_file_contains "$TOOLS_NIX" "dx-verify-inventory = {" "guest inventory verifier command is installed by Home Manager"
 
 if bash -n "$DX_VERIFY_INVENTORY_SCRIPT" 2>/dev/null; then
     test_pass "guest inventory verifier script passes bash syntax check"
