@@ -109,6 +109,47 @@ done <"$OPEN_PLAN_LINKS"
 
 rm -f "$OPEN_PLAN_LINKS"
 
+# --- reviews live under docs/reviews/, indexed there (findings.md D-2) ---
+#
+# D-2 reserves the repository root for plans that plans.md indexes; reviews
+# are evidence, not plans, and move under docs/reviews/ instead, indexed by
+# docs/reviews/README.md. Assert the move happened and stays complete: no
+# findings-*.md left at the root, and every review file under docs/reviews/
+# (other than its own README) is linked from that README. Same
+# `](target` link-extraction idiom as above, matched on basename since the
+# index links with a relative path.
+findings_at_root="$(find "$BASE_DIR" -maxdepth 1 -type f -name 'findings-*.md')"
+if [ -z "$findings_at_root" ]; then
+    test_pass "no findings-*.md remains at the repository root"
+else
+    test_fail "no findings-*.md remains at the repository root: $findings_at_root"
+fi
+
+REVIEWS_DIR="$BASE_DIR/docs/reviews"
+REVIEWS_README="$REVIEWS_DIR/README.md"
+assert_file_exists "$REVIEWS_README" "docs/reviews/README.md exists"
+
+REVIEWS_README_LINKS="$(mktemp)"
+if [ -f "$REVIEWS_README" ]; then
+    while IFS= read -r reference; do
+        [ -n "$reference" ] || continue
+        target=${reference#']('}; target=${target%%#*}
+        basename "$target" >>"$REVIEWS_README_LINKS"
+    done < <(grep -oE '\]\([^)]+' "$REVIEWS_README" || true)
+fi
+
+while IFS= read -r review_file; do
+    [ -n "$review_file" ] || continue
+    review_name="$(basename "$review_file")"
+    if grep -Fxq -- "$review_name" "$REVIEWS_README_LINKS" 2>/dev/null; then
+        test_pass "docs/reviews/README.md links $review_name"
+    else
+        test_fail "docs/reviews/README.md links $review_name"
+    fi
+done < <(find "$REVIEWS_DIR" -maxdepth 1 -type f -name '*.md' -not -name 'README.md' 2>/dev/null | sort)
+
+rm -f "$REVIEWS_README_LINKS"
+
 all_docs="$README $BASE_DIR/docs/lifecycle.md $CONFIG_DOC $BASE_DIR/docs/guest.md $BASE_DIR/docs/troubleshooting.md $BASE_DIR/docs/release-maintenance.md $BASE_DIR/docs/qnap-runbook.md"
 for command in "$BASE_DIR"/bin/dx*; do
     [ -f "$command" ] || continue
