@@ -1,4 +1,5 @@
 {
+  "note": "aarch64-linux (1.0.5) and x86_64-linux (1.2.12) are intentionally on different upstream releases right now, not undocumented drift (docs/reviews/2026-09-29-fable.md finding C6 corrects Muse B6, which read the skew as a bug). checks.<system>.agy-pin-shape (flake.nix) enforces the SHAPE of each per-system entry and ignores this key; it does not enforce the version numbers matching. Closes automatically the next time `dx-ai update` runs on the Apple guest and the aarch64-linux pin catches up.",
   "aarch64-linux": {
     "version": "1.0.5",
     "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.0.5-5009297080451072/linux-arm/cli_linux_arm64.tar.gz",

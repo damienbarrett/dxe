@@ -64,10 +64,12 @@ if command -v nix >/dev/null 2>&1; then
         # scripts-hermetic proves the installed dx-theme-restore/copy-hook
         # commands no longer depend on an ambient PATH. WP7.7 (Fable C7):
         # nvim proves Comment's pre_hook survives NixVim's module system.
+        # WP7.6 (Fable C6): agy-pin-shape proves every per-system agy pin is
+        # well-formed.
         for check_name in home-activation ai-tools bootstrap-essentials \
             inventory inventory-list \
             bash-integration fish-integration nushell-integration \
-            scripts-hermetic nvim; do
+            scripts-hermetic nvim agy-pin-shape; do
             if check_output="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#checks.$system.$check_name.drvPath" 2>&1)"; then
                 test_pass "checks.$system.$check_name evaluates"
             else
@@ -124,6 +126,8 @@ else
         test_skip "nix not available, skipping checks.$system.scripts-hermetic warnings check"
         test_skip "nix not available, skipping checks.$system.nvim evaluation"
         test_skip "nix not available, skipping checks.$system.nvim warnings check"
+        test_skip "nix not available, skipping checks.$system.agy-pin-shape evaluation"
+        test_skip "nix not available, skipping checks.$system.agy-pin-shape warnings check"
         test_skip "nix not available, skipping checks.$system.alias-is-identity evaluation"
     done
 fi
