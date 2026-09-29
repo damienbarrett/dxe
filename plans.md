@@ -106,3 +106,23 @@ Every plan document below is listed under exactly one of these.
   **Recorded conflict.** Phase 4's coverage-ratchet gate vs.
   `declarative-nix-plan-a.md` #12 remains live — see that entry above. The
   ordering is decided in `findings.md` D-1: the metric lands first.
+- **Backlog probes from the consolidation plan** — Four small, specified
+  probes `checkout-consolidation-plan.md`'s own "Open follow-ups" section
+  tracked without a branch (Muse D5): a live tmux-resurrect restore probe
+  in Section 6 is timing-flaky (make it poll for the observable condition
+  instead of a fixed delay, the way the Herdr acceptance tests do, and
+  prove it stable across three consecutive live runs); `dx-status` has no
+  "keyring: not running" line for the failure-policy B warning path (its
+  host-script test fixture answers every exec identically regardless of
+  command, so extend that fixture first); `dx-restore --dry-run` over a
+  very large target set is O(n^2) and had not finished after 13 minutes
+  over 60,000 targets — **addressed by `findings.md` WP6.9** (one-pass
+  parent-dir dedupe, bounded transport; design landed 2026-09-30,
+  implementation in progress); and Section 27's fake `ssh` blocks forever
+  when its stdin is an open pipe or socket (make its fake redirect its own
+  stdin from `/dev/null`, and add a bounded-time test that runs Section 27
+  with stdin held open). owner: the user. Revisit trigger: when each of
+  the three remaining probes (tmux-resurrect, `dx-status` keyring,
+  Section 27 stdin) is fixed and proven stable across three consecutive
+  live runs, and when `findings.md` WP6.9 lands, closing the restore item
+  here too.
