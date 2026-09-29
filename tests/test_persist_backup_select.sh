@@ -24,46 +24,73 @@ git_repo() {
     git -C "$repo" config user.name "DXE Test"
 }
 
+# ShellCheck's SC2218 ("this function is only defined later") cannot see
+# execution order: this file repeatedly builds a git fixture with the REAL
+# git binary, then locally shadows `git` for one target substring only
+# (falling through to `command git "$@"` for everything else), then
+# `unset -f git` immediately after the assertion that needed it. Every git
+# invocation marked `# shellcheck disable=SC2218` below runs strictly
+# BEFORE its own block's shadow definition is ever executed, so it is
+# always the real git -- moving a shadow definition earlier would make it
+# intercept the very fixture-building calls it needs to run for real first
+# (and, for the single-target shadows, an unset "$..._target" degrades
+# their case pattern to *"$empty"* == **, which matches every invocation).
+
 # --- Fixture: repo-a -- has a remote, HEAD is pushed, then gains local,
 # uncommitted changes of every kind the rules must catch. ---
 mkdir -p "$FIXTURE/remotes"
+# shellcheck disable=SC2218
 git init -q --bare "$FIXTURE/remotes/repo-a.git"
 git_repo "$FIXTURE/persist/git/repo-a"
 printf 'unchanged\n' > "$FIXTURE/persist/git/repo-a/unchanged.txt"
 printf 'original\n' > "$FIXTURE/persist/git/repo-a/modified.txt"
 mkdir -p "$FIXTURE/persist/git/repo-a/node_modules/pkg"
 printf 'dep\n' > "$FIXTURE/persist/git/repo-a/node_modules/pkg/index.js"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-a" add -A
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-a" commit -q -m "initial"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-a" remote add origin "$FIXTURE/remotes/repo-a.git"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-a" push -q origin main
 # Now make it dirty in every way the rules must catch.
 printf 'changed\n' > "$FIXTURE/persist/git/repo-a/modified.txt"
 printf 'brand new\n' > "$FIXTURE/persist/git/repo-a/staged-new.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-a" add staged-new.txt
 printf 'untracked\n' > "$FIXTURE/persist/git/repo-a/untracked.txt"
 printf 'secret.local\n' > "$FIXTURE/persist/git/repo-a/.gitignore"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-a" add .gitignore
 printf 'do-not-lose-me\n' > "$FIXTURE/persist/git/repo-a/secret.local"
 printf 'rebuildable\n' > "$FIXTURE/persist/git/repo-a/node_modules/pkg/new-dep.js"
 
 # --- Fixture: repo-b -- pushed once, then a LOCAL-ONLY commit on top: the
 # whole repository (including .git) must be treated as at-risk. ---
+# shellcheck disable=SC2218
 git init -q --bare "$FIXTURE/remotes/repo-b.git"
 git_repo "$FIXTURE/persist/git/repo-b"
 printf 'one\n' > "$FIXTURE/persist/git/repo-b/file.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-b" add -A
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-b" commit -q -m "initial"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-b" remote add origin "$FIXTURE/remotes/repo-b.git"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-b" push -q origin main
 printf 'two\n' >> "$FIXTURE/persist/git/repo-b/file.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-b" commit -q -am "local-only commit"
 
 # --- Fixture: repo-c -- no remote at all: at-risk as a whole even though
 # everything is committed and the tree is otherwise clean. ---
 git_repo "$FIXTURE/persist/git/repo-c"
 printf 'clean\n' > "$FIXTURE/persist/git/repo-c/clean.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-c" add -A
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-c" commit -q -m "only commit, no remote"
 
 # --- Fixture: repo-detached -- WP6.2 / Astra F2: a commit reachable ONLY
@@ -72,15 +99,22 @@ git -C "$FIXTURE/persist/git/repo-c" commit -q -m "only commit, no remote"
 # --remotes` never looked at HEAD at all when it was detached, so this
 # reproduced live as "safe" -- zero backup entries for a real local-only
 # commit. ---
+# shellcheck disable=SC2218
 git init -q --bare "$FIXTURE/remotes/repo-detached.git"
 git_repo "$FIXTURE/persist/git/repo-detached"
 printf 'pushed\n' > "$FIXTURE/persist/git/repo-detached/pushed.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-detached" add -A
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-detached" commit -q -m "pushed commit"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-detached" remote add origin "$FIXTURE/remotes/repo-detached.git"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-detached" push -q origin main
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-detached" checkout -q --detach main
 printf 'pushed\nlocal-only change\n' > "$FIXTURE/persist/git/repo-detached/pushed.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-detached" commit -q -am "local-only commit on detached HEAD"
 
 # --- Fixture: repo-stash -- WP6.2: stash-only work (everything else
@@ -88,14 +122,20 @@ git -C "$FIXTURE/persist/git/repo-detached" commit -q -am "local-only commit on 
 # from refs/stash, never from a branch or tag, so it needs its own
 # explicit reachability check -- see the retention-policy comment above
 # dx_pbs_repo_at_risk_whole. ---
+# shellcheck disable=SC2218
 git init -q --bare "$FIXTURE/remotes/repo-stash.git"
 git_repo "$FIXTURE/persist/git/repo-stash"
 printf 'pushed\n' > "$FIXTURE/persist/git/repo-stash/pushed.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-stash" add -A
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-stash" commit -q -m "pushed commit"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-stash" remote add origin "$FIXTURE/remotes/repo-stash.git"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-stash" push -q origin main
 printf 'pushed\nstashed change\n' > "$FIXTURE/persist/git/repo-stash/pushed.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-stash" stash push -q -m "wip"
 
 # --- Fixture: repo-tag-local -- WP6.2: a local-only tag pointing at a
@@ -103,29 +143,43 @@ git -C "$FIXTURE/persist/git/repo-stash" stash push -q -m "wip"
 # retention policy documented above dx_pbs_repo_at_risk_whole): the
 # commit's content is already safely on the remote, and only the tag
 # POINTER itself is local. ---
+# shellcheck disable=SC2218
 git init -q --bare "$FIXTURE/remotes/repo-tag-local.git"
 git_repo "$FIXTURE/persist/git/repo-tag-local"
 printf 'pushed\n' > "$FIXTURE/persist/git/repo-tag-local/pushed.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-tag-local" add -A
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-tag-local" commit -q -m "pushed commit"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-tag-local" remote add origin "$FIXTURE/remotes/repo-tag-local.git"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-tag-local" push -q origin main
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-tag-local" tag local-only-tag main
 
 # --- Fixture: repo-tag-unpushed -- WP6.2: a local tag on a commit that is
 # NOT reachable from any remote -- even after no branch points there any
 # more -- still flags the repository at-risk: the tag alone keeps that
 # commit's content the operator's sole responsibility to protect. ---
+# shellcheck disable=SC2218
 git init -q --bare "$FIXTURE/remotes/repo-tag-unpushed.git"
 git_repo "$FIXTURE/persist/git/repo-tag-unpushed"
 printf 'pushed\n' > "$FIXTURE/persist/git/repo-tag-unpushed/pushed.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-tag-unpushed" add -A
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-tag-unpushed" commit -q -m "pushed commit"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-tag-unpushed" remote add origin "$FIXTURE/remotes/repo-tag-unpushed.git"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-tag-unpushed" push -q origin main
 printf 'pushed\nunpushed via tag only\n' > "$FIXTURE/persist/git/repo-tag-unpushed/pushed.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-tag-unpushed" commit -q -am "unpushed, kept alive only by a tag"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-tag-unpushed" tag keep-me-tag
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-tag-unpushed" reset -q --hard origin/main
 
 # --- Mid-task addition: a NESTED git repository (a plain subdirectory
@@ -143,11 +197,15 @@ git -C "$FIXTURE/persist/git/repo-tag-unpushed" reset -q --hard origin/main
 # whichever repo's own pass is responsible for it. ---
 git_repo "$FIXTURE/persist/git/repo-outer"
 printf 'outer file\n' > "$FIXTURE/persist/git/repo-outer/outer.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-outer" add -A
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-outer" commit -q -m "outer, no remote"
 git_repo "$FIXTURE/persist/git/repo-outer/nested"
 printf 'nested file\n' > "$FIXTURE/persist/git/repo-outer/nested/inner.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-outer/nested" add -A
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-outer/nested" commit -q -m "nested, no remote either"
 
 # --- A SECOND nested case: the nested repo is itself SAFE (pushed,
@@ -156,12 +214,17 @@ git -C "$FIXTURE/persist/git/repo-outer/nested" commit -q -m "nested, no remote 
 # repo's clean, already-pushed content (which it previously did, since
 # the outer walk has no way to know the nested repo's OWN git status;
 # only the nested repo's own independent pass does). ---
+# shellcheck disable=SC2218
 git init -q --bare "$FIXTURE/remotes/repo-nested-safe.git"
 git_repo "$FIXTURE/persist/git/repo-outer/nested-safe"
 printf 'nested safe, clean\n' > "$FIXTURE/persist/git/repo-outer/nested-safe/clean.txt"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-outer/nested-safe" add -A
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-outer/nested-safe" commit -q -m "nested, pushed and clean"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-outer/nested-safe" remote add origin "$FIXTURE/remotes/repo-nested-safe.git"
+# shellcheck disable=SC2218
 git -C "$FIXTURE/persist/git/repo-outer/nested-safe" push -q origin main
 
 # --- Loose file outside any repository. ---
@@ -715,11 +778,16 @@ rm -rf "$stat_fail_root"
 # git calls untouched. ---
 git_fail_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-gitfail.XXXXXX")"
 mkdir -p "$git_fail_root/git"
+# shellcheck disable=SC2218
 git init -q -b main "$git_fail_root/git/broken-repo"
+# shellcheck disable=SC2218
 git -C "$git_fail_root/git/broken-repo" config user.email test@example.com
+# shellcheck disable=SC2218
 git -C "$git_fail_root/git/broken-repo" config user.name "DXE Test"
 printf 'content\n' > "$git_fail_root/git/broken-repo/file.txt"
+# shellcheck disable=SC2218
 git -C "$git_fail_root/git/broken-repo" add -A
+# shellcheck disable=SC2218
 git -C "$git_fail_root/git/broken-repo" commit -q -m initial
 git_fail_target="$git_fail_root/git/broken-repo"
 git() {
@@ -755,14 +823,22 @@ rm -rf "$git_fail_root"
 # would have excluded it). ---
 git_unreach_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-gitunreach.XXXXXX")"
 mkdir -p "$git_unreach_root/git"
+# shellcheck disable=SC2218
 git init -q --bare "$git_unreach_root/remote.git"
+# shellcheck disable=SC2218
 git init -q -b main "$git_unreach_root/git/repo"
+# shellcheck disable=SC2218
 git -C "$git_unreach_root/git/repo" config user.email test@example.com
+# shellcheck disable=SC2218
 git -C "$git_unreach_root/git/repo" config user.name "DXE Test"
 printf 'pushed and clean\n' > "$git_unreach_root/git/repo/pushed.txt"
+# shellcheck disable=SC2218
 git -C "$git_unreach_root/git/repo" add -A
+# shellcheck disable=SC2218
 git -C "$git_unreach_root/git/repo" commit -q -m initial
+# shellcheck disable=SC2218
 git -C "$git_unreach_root/git/repo" remote add origin "$git_unreach_root/remote.git"
+# shellcheck disable=SC2218
 git -C "$git_unreach_root/git/repo" push -q origin main
 git_unreach_target="$git_unreach_root/git/repo"
 git() {
@@ -816,11 +892,16 @@ dxe_pbs_clean_tmp_count() {
 
 clean_lstree_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-cleanlstree.XXXXXX")"
 mkdir -p "$clean_lstree_root/git"
+# shellcheck disable=SC2218
 git init -q -b main "$clean_lstree_root/git/repo"
+# shellcheck disable=SC2218
 git -C "$clean_lstree_root/git/repo" config user.email test@example.com
+# shellcheck disable=SC2218
 git -C "$clean_lstree_root/git/repo" config user.name "DXE Test"
 printf 'content\n' > "$clean_lstree_root/git/repo/file.txt"
+# shellcheck disable=SC2218
 git -C "$clean_lstree_root/git/repo" add -A
+# shellcheck disable=SC2218
 git -C "$clean_lstree_root/git/repo" commit -q -m initial
 clean_lstree_target="$clean_lstree_root/git/repo"
 git() {
@@ -857,11 +938,16 @@ rm -rf "$clean_lstree_root"
 
 clean_diff_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-cleandiff.XXXXXX")"
 mkdir -p "$clean_diff_root/git"
+# shellcheck disable=SC2218
 git init -q -b main "$clean_diff_root/git/repo"
+# shellcheck disable=SC2218
 git -C "$clean_diff_root/git/repo" config user.email test@example.com
+# shellcheck disable=SC2218
 git -C "$clean_diff_root/git/repo" config user.name "DXE Test"
 printf 'content\n' > "$clean_diff_root/git/repo/file.txt"
+# shellcheck disable=SC2218
 git -C "$clean_diff_root/git/repo" add -A
+# shellcheck disable=SC2218
 git -C "$clean_diff_root/git/repo" commit -q -m initial
 clean_diff_target="$clean_diff_root/git/repo"
 git() {
@@ -940,11 +1026,16 @@ dxe_pbs_emitsafe_tmp_count() {
 }
 emitsafe_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-emitsafe.XXXXXX")"
 mkdir -p "$emitsafe_root/git"
+# shellcheck disable=SC2218
 git init -q -b main "$emitsafe_root/git/repo"
+# shellcheck disable=SC2218
 git -C "$emitsafe_root/git/repo" config user.email test@example.com
+# shellcheck disable=SC2218
 git -C "$emitsafe_root/git/repo" config user.name "DXE Test"
 printf 'content\n' > "$emitsafe_root/git/repo/file.txt"
+# shellcheck disable=SC2218
 git -C "$emitsafe_root/git/repo" add -A
+# shellcheck disable=SC2218
 git -C "$emitsafe_root/git/repo" commit -q -m initial
 emitsafe_target="$emitsafe_root/git/repo"
 git() {

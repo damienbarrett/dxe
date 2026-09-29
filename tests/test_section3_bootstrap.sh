@@ -1536,25 +1536,26 @@ rm -rf "$p9_fixture"
 # own $FUNCNAME, and call bootstrap_phases() -- not by comparing grep line
 # numbers in bootstrap.sh's source text.
 p10b_output="$({
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh
     source "$BOOTSTRAP"
-    configure_single_user_nix() { printf '%s\n' "$FUNCNAME"; }
-    install_essentials() { printf '%s\n' "$FUNCNAME"; }
-    link_system_bash() { printf '%s\n' "$FUNCNAME"; }
-    capture_nix_image_default_profile() { printf '%s\n' "$FUNCNAME"; }
-    prepare_nix_volume() { printf '%s\n' "$FUNCNAME"; }
-    materialize_auth_files() { printf '%s\n' "$FUNCNAME"; }
-    create_user() { printf '%s\n' "$FUNCNAME"; }
-    populate_prepared_nix_volume() { printf '%s\n' "$FUNCNAME"; }
-    verify_remount_prerequisites() { printf '%s\n' "$FUNCNAME"; }
-    nix_restore_image_default_profile() { printf '%s\n' "$FUNCNAME"; }
-    ensure_essentials_valid() { printf '%s\n' "$FUNCNAME"; }
-    publish_nix_image_store_identity() { printf '%s\n' "$FUNCNAME"; }
-    configure_release_identity() { printf '%s\n' "$FUNCNAME"; }
-    setup_persist() { printf '%s\n' "$FUNCNAME"; }
-    configure_ssh() { printf '%s\n' "$FUNCNAME"; }
-    configure_guest() { printf '%s\n' "$FUNCNAME"; }
-    verify_guest_tools() { printf '%s\n' "$FUNCNAME"; }
-    configure_timezone() { printf '%s\n' "$FUNCNAME"; }
+    configure_single_user_nix() { printf '%s\n' "${FUNCNAME[0]}"; }
+    install_essentials() { printf '%s\n' "${FUNCNAME[0]}"; }
+    link_system_bash() { printf '%s\n' "${FUNCNAME[0]}"; }
+    capture_nix_image_default_profile() { printf '%s\n' "${FUNCNAME[0]}"; }
+    prepare_nix_volume() { printf '%s\n' "${FUNCNAME[0]}"; }
+    materialize_auth_files() { printf '%s\n' "${FUNCNAME[0]}"; }
+    create_user() { printf '%s\n' "${FUNCNAME[0]}"; }
+    populate_prepared_nix_volume() { printf '%s\n' "${FUNCNAME[0]}"; }
+    verify_remount_prerequisites() { printf '%s\n' "${FUNCNAME[0]}"; }
+    nix_restore_image_default_profile() { printf '%s\n' "${FUNCNAME[0]}"; }
+    ensure_essentials_valid() { printf '%s\n' "${FUNCNAME[0]}"; }
+    publish_nix_image_store_identity() { printf '%s\n' "${FUNCNAME[0]}"; }
+    configure_release_identity() { printf '%s\n' "${FUNCNAME[0]}"; }
+    setup_persist() { printf '%s\n' "${FUNCNAME[0]}"; }
+    configure_ssh() { printf '%s\n' "${FUNCNAME[0]}"; }
+    configure_guest() { printf '%s\n' "${FUNCNAME[0]}"; }
+    verify_guest_tools() { printf '%s\n' "${FUNCNAME[0]}"; }
+    configure_timezone() { printf '%s\n' "${FUNCNAME[0]}"; }
     bootstrap_phases
 } 2>&1)" || true
 p10b_expected="configure_single_user_nix
