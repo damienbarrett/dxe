@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+
+gc_main() {
 dx_require_container_cli
 
 if ! container_is_running "$DX_CONTAINER_NAME"; then
@@ -19,3 +21,5 @@ echo "Running Nix store optimization in guest..."
 dx_runtime_exec -u dx "$DX_CONTAINER_NAME" bash -lc 'nix-store --optimise'
 
 echo "Nix maintenance complete."
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then gc_main "$@"; fi
