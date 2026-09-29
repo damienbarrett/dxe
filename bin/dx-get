@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+
+get_main() {
 dx_require_container_cli
 
 SOURCE="${1:-}"
@@ -55,3 +57,5 @@ else
     fi
     dx_runtime_exec "$DX_CONTAINER_NAME" cat "$SOURCE" > "$FINAL_DEST"
 fi
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then get_main "$@"; fi
