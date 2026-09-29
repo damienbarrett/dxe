@@ -60,6 +60,21 @@ if command -v nix >/dev/null 2>&1; then
             else
                 test_fail "checks.$system.$check_name evaluates (${check_output})"
             fi
+
+            # WP2.2 (docs/reviews/2026-09-29-fable.md finding C2): an
+            # evaluation warning here is a guest-boot-time landmine --
+            # bootstrap/activation.sh runs this same Home Manager evaluation
+            # on first boot -- that a CI eval gate checking only the exit
+            # code would never catch. Only the line that actually starts a
+            # warning counts; a wrapped continuation line (e.g. the
+            # `nixpkgs.source`/`follows` message's second/third lines) is
+            # not itself a new, unhandled warning.
+            warning_lines="$(printf '%s\n' "$check_output" | grep -E '^(trace: warning|evaluation warning)' || true)"
+            if [ -z "$warning_lines" ]; then
+                test_pass "checks.$system.$check_name prints zero evaluation warnings"
+            else
+                test_fail "checks.$system.$check_name prints zero evaluation warnings (${warning_lines})"
+            fi
         done
 
         # alias-is-identity's entire body is an `assert`; forcing its
@@ -77,7 +92,9 @@ else
     test_skip "nix not available, skipping flake check"
     for system in aarch64-linux x86_64-linux; do
         test_skip "nix not available, skipping checks.$system.home-activation evaluation"
+        test_skip "nix not available, skipping checks.$system.home-activation warnings check"
         test_skip "nix not available, skipping checks.$system.ai-tools evaluation"
+        test_skip "nix not available, skipping checks.$system.ai-tools warnings check"
         test_skip "nix not available, skipping checks.$system.alias-is-identity evaluation"
     done
 fi
