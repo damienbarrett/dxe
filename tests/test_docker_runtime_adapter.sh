@@ -1460,7 +1460,7 @@ case "$1 $2" in
 esac
 case "$1" in exec) exit 0 ;; *) echo "UNMATCHED: $*" >&2; exit 99 ;; esac'
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     "$BASE_DIR/bin/dx-enter" true </dev/null >/dev/null 2>&1
     grep -qx -- '-tt' "$ssh_argv_log"
@@ -1735,7 +1735,7 @@ case "$1 $2" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" status 2>&1)"; rc=$?
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" status 2>&1)"; rc=$?
     [ "$rc" -eq 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "not held"
 )
 [ "$?" -eq 0 ] && test_pass "bin/dx-lock status reports 'not held' end to end" || test_fail "bin/dx-lock status reports 'not held' end to end"
@@ -1754,7 +1754,7 @@ case "$1 $2" in
     *) echo "docker rm should never run without --force" >&2; exit 99 ;;
 esac'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" unlock 2>&1)"; rc=$?
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" unlock 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "Refusing to unlock without --force" && printf '%s\n' "$out" | stdin_matches -F -- "somehost:1:2:20260927T000000Z"
 )
 [ "$?" -eq 0 ] && test_pass "bin/dx-lock unlock without --force shows owner metadata and refuses" || test_fail "bin/dx-lock unlock without --force shows owner metadata and refuses"
@@ -1779,7 +1779,7 @@ case "$1 $2" in
     *) [ "$1" = rm ] && [ "$2" = dxe-lock-qnap-dxe__dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" unlock --force 2>&1)"; rc=$?
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" unlock --force 2>&1)"; rc=$?
     [ "$rc" -eq 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "Lock released."
 )
 [ "$?" -eq 0 ] && test_pass "bin/dx-lock unlock --force removes the lock end to end" || test_fail "bin/dx-lock unlock --force removes the lock end to end"
@@ -2284,7 +2284,7 @@ case "$1 $2" in
 esac
 echo "UNMATCHED: $*" >&2; exit 99'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
         DX_CONTAINER_NAME=dx-qnap \
         DX_NIX_VOLUME=dxe-p3-nix DX_PERSIST_VOLUME=dxe-p3-persist DX_BOOTSTRAP_VOLUME=dxe-p3-bootstrap \
         PATH="$dir:/usr/bin:/bin" \
@@ -2322,7 +2322,7 @@ case "$1" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
         DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dxe-p3-nix \
         PATH="$dir:/usr/bin:/bin" \
         "$BASE_DIR/bin/dx-destroy-container" 2>&1)"; rc=$?
@@ -2353,7 +2353,7 @@ case "$1" in
 esac
 echo "UNMATCHED: $*" >&2; exit 99'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
         DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dxe-p3-nix \
         DX_PERSIST_VOLUME=dxe-p3-persist DX_BOOTSTRAP_VOLUME=dxe-p3-bootstrap \
         PATH="$dir:/usr/bin:/bin" \
@@ -2383,7 +2383,7 @@ case "$1" in
 esac
 echo "UNMATCHED: $*" >&2; exit 99'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
         DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dxe-p3-nix \
         DX_PERSIST_VOLUME=dxe-p3-persist DX_BOOTSTRAP_VOLUME=dxe-p3-bootstrap \
         PATH="$dir:/usr/bin:/bin" \
@@ -2421,7 +2421,7 @@ case "$1" in
 esac
 echo "UNMATCHED: $*" >&2; exit 99'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
         DX_CONTAINER_NAME=dx-qnap \
         DX_NIX_VOLUME=dxe-p6-nix DX_PERSIST_VOLUME=dxe-p6-persist DX_BOOTSTRAP_VOLUME=dxe-p6-bootstrap \
         PATH="$dir:/usr/bin:/bin" \
@@ -2460,7 +2460,7 @@ case "$1" in
 esac
 echo "UNMATCHED: $*" >&2; exit 99'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
         DX_CONTAINER_NAME=dx-qnap \
         DX_NIX_VOLUME=dxe-p6-nix DX_PERSIST_VOLUME=dxe-p6-persist DX_BOOTSTRAP_VOLUME=dxe-p6-bootstrap \
         PATH="$dir:/usr/bin:/bin" \
@@ -2508,7 +2508,7 @@ case "$1" in
 esac
 echo "UNMATCHED: $*" >&2; exit 99'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
         DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos \
         DX_NIX_VOLUME=dxe-p6-nix DX_PERSIST_VOLUME=dxe-p6-persist DX_BOOTSTRAP_VOLUME=dxe-p6-bootstrap \
         PATH="$dir:/usr/bin:/bin" \
@@ -2550,7 +2550,7 @@ case "$1" in
 esac
 echo "UNMATCHED: $*" >&2; exit 99'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
         DX_IMAGE=dxe-p3-image \
         PATH="$dir:/usr/bin:/bin" \
         "$BASE_DIR/bin/dx-destroy-image" >/dev/null 2>&1
@@ -2599,7 +2599,7 @@ case "$1" in
 esac
 echo "UNMATCHED: $*" >&2; exit 99'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
         DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dxe-p3-image \
         DX_LEGACY_WORKSPACE_VOLUME=dxe-p3-legacy DX_PERSIST_VOLUME=dxe-p3-persist \
         PATH="$dir:/usr/bin:/bin" \
@@ -2702,7 +2702,7 @@ case "$1" in
 esac
 echo "UNMATCHED: $*" >&2; exit 99'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux \
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
         DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dxe-p3-nix DX_PERSIST_VOLUME=dxe-p3-persist \
         DX_NIX_MOUNT=/nix \
         PATH="$dir:/usr/bin:/bin" \
@@ -2757,7 +2757,7 @@ case "$1" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_CONTAINER_NAME=dx-qnap
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID DXE_RUNTIME_GUEST_SSH_ADDRESS
     put_source="$fixture/put-source.txt"
     printf 'fixture contents\n' > "$put_source"
@@ -2799,7 +2799,7 @@ esac'
 (
     nix_disk_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-nix-disk-docker.XXXXXX")"
     nix_disk_path="$nix_disk_home/does-not-exist-yet/nix-store.img"
-    out="$(env HOME="$nix_disk_home" DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_NIX_DISK="$nix_disk_path" DX_NIX_DISK_SIZE=1M \
+    out="$(env HOME="$nix_disk_home" DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_NIX_STORAGE_MODE=direct-volume DX_NIX_DISK="$nix_disk_path" DX_NIX_DISK_SIZE=1M \
         "$BASE_DIR/bin/dx-nix-disk" 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && [ ! -e "$nix_disk_path" ] && [ ! -d "$(dirname "$nix_disk_path")" ] \
         && printf '%s\n' "$out" | stdin_matches -F -- "dx-nix-disk is Apple-only"
@@ -2816,7 +2816,7 @@ esac'
     fake_tool_write "$dir" docker 'echo "docker should never be called" >&2; exit 99'
     mount_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-mount-docker.XXXXXX")"
     PATH="$dir:/usr/bin:/bin"
-    out="$(env HOME="$mount_home" DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap-mount PATH="$PATH" \
+    out="$(env HOME="$mount_home" DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap-mount PATH="$PATH" \
         "$BASE_DIR/bin/dx-mount" "$mount_home" 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] \
         && printf '%s\n' "$out" | stdin_matches -F -- "dx-mount is not supported under DX_RUNTIME=docker-ssh" \
