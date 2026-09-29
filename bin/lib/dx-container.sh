@@ -227,8 +227,8 @@ dx_bootstrap_content_digest() {
 
 # Announce that the guest is running an older generation than the published
 # one. This is the diagnostic for the unchanged-content skip path only (see
-# dx_bootstrap_sync_published_generation below): a start whose sync actually
-# published a new generation is confirmed, bounded, by
+# dx_bootstrap_sync_result_read's outcome in bin/dx-start-container): a start
+# whose sync actually published a new generation is confirmed, bounded, by
 # dx_bootstrap_confirm_publication instead, which can fail the start outright
 # (D7 option 3, docs/refactor/decisions/D7-start-generation.md). This function
 # only makes a real drift visible when there was nothing to confirm -- an
@@ -241,33 +241,6 @@ dx_bootstrap_report_drift() {
     echo "The guest boots whichever generation was current when it started, so a bootstrap change needs one more start to take effect." >&2
     echo "Run dx-start-container again to pick it up." >&2
     return 0
-}
-
-# Whether the sync that just ran (bin/dx-sync-bootstrap, captured stdout)
-# actually published a new generation, or skipped because the payload was
-# unchanged. dx-sync-bootstrap's own two terminal messages are the only
-# distinction available without re-deriving the content digest ourselves:
-# "Bootstrap generation <id> is ready." on a real publish, "... generation
-# <id> stays current." on a skip. Prints the published generation id and
-# returns 0 only for a real publish; a skip, or output matching neither
-# message (defensive -- dx-sync-bootstrap only ever reaches one of the two on
-# a successful exit), returns 1 with no output.
-dx_bootstrap_sync_published_generation() {
-    local output="$1" line generation
-    while IFS= read -r line; do
-        case "$line" in
-            "Bootstrap generation "*" is ready.")
-                generation=${line#Bootstrap generation }
-                generation=${generation% is ready.}
-                case "$generation" in ""|*/*|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
-                printf '%s\n' "$generation"
-                return 0
-                ;;
-        esac
-    done <<EOF
-$output
-EOF
-    return 1
 }
 
 # Bound how long a start waits for the guest's execution lease to confirm a
