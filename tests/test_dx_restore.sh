@@ -8,6 +8,11 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 source "$SCRIPT_DIR/lib/fake-tools.sh"
+# Astra F5 / WP6.6: dx_lock_acquire/dx_lock_release, needed in-process below
+# to simulate a concurrently-held backup lock (RED 5) without spawning a
+# second real process.
+# shellcheck source=../bin/lib/dx-host-util.sh
+source "$BASE_DIR/bin/lib/dx-host-util.sh"
 GUEST="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
 test_section "Persist backup: dx-restore (fake-container boundary)"
 
@@ -1038,6 +1043,39 @@ else
 fi
 
 rm -rf "$DIRPUSH_FIXTURE"
+
+# ---------------------------------------------------------------------------
+# Astra F5 RED 5 (WP6.6, docs/reviews/2026-09-29-astra.md, "F5"): restore
+# takes the SAME lock as backup, over the same mirror directory (bin/dx-restore
+# now acquires it before ever checking for a backup mirror, exactly like
+# bin/dx-backup) -- a restore started while a backup holds it refuses rather
+# than reading ahead of a not-yet-published generation, exactly the
+# interleaving Astra F5 flags. Simulated by holding the lock in THIS test
+# script's own (still-alive) process; DX_SLEEP=fake-sleep keeps
+# dx_lock_acquire's own bounded wait fast and deterministic (this codebase's
+# established seam, see tests/test_bootstrap_publication.sh).
+# ---------------------------------------------------------------------------
+RESTORE_LOCK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-lock-test.XXXXXX")"
+RESTORE_LOCK_BACKUP_DIR="$RESTORE_LOCK_ROOT/backups"
+mkdir -p "$RESTORE_LOCK_BACKUP_DIR/test-container"
+fake_tool_write "$FAKE_DIR" fake-sleep 'exit 0'
+dx_lock_acquire "$RESTORE_LOCK_BACKUP_DIR/test-container/.lock" 1
+set +e
+restore_lock_out="$(DX_BACKUP_DIR="$RESTORE_LOCK_BACKUP_DIR" DX_SLEEP=fake-sleep "$BASE_DIR/bin/dx-restore" --dry-run 2>&1)"
+restore_lock_rc=$?
+set -e
+dx_lock_release "$RESTORE_LOCK_BACKUP_DIR/test-container/.lock"
+if [ "$restore_lock_rc" -ne 0 ]; then
+    test_pass "Astra F5 RED 5: dx-restore started while dx-backup's lock is held refuses rather than reading ahead"
+else
+    test_fail "Astra F5 RED 5: dx-restore started while dx-backup's lock is held refuses rather than reading ahead (got: $restore_lock_out)"
+fi
+if printf '%s\n' "$restore_lock_out" | stdin_matches -F 'lock'; then
+    test_pass "Astra F5 RED 5: the refusal names the lock, a clear message rather than a generic failure"
+else
+    test_fail "Astra F5 RED 5: the refusal names the lock, a clear message rather than a generic failure (got: $restore_lock_out)"
+fi
+rm -rf "$RESTORE_LOCK_ROOT"
 
 print_summary
 exit_with_code
