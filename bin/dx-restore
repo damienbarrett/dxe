@@ -87,8 +87,10 @@ if [ -n "$conflicts" ] && [ "$FORCE" != true ]; then
     exit 1
 fi
 
-dx_backup_restore_push "$DX_CONTAINER_NAME" "$BACKUP_DIR" "$TARGETS"
-count="$(wc -l < "$TARGETS" | tr -d '[:space:]')"
+PUSH_TARGETS="$WORK/push-targets.txt"
+awk -F'\t' '$2 != "identical" { print $1 }' "$STATUS" > "$PUSH_TARGETS"
+dx_backup_restore_push "$DX_CONTAINER_NAME" "$BACKUP_DIR" "$PUSH_TARGETS"
+count="$(wc -l < "$PUSH_TARGETS" | tr -d '[:space:]')"
 echo "Restored ${count} file(s) into $DX_CONTAINER_NAME:$DX_BACKUP_GUEST_ROOT."
 }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then restore_main "$@"; fi
