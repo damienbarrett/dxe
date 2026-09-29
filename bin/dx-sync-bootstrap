@@ -8,7 +8,10 @@ sync_bootstrap_main() {
 dx_require_container_cli
 
 container_exists "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME does not exist. Run ./bin/dx-create-container first." >&2; exit 1; }
-for _ in {1..30}; do container_is_running "$DX_CONTAINER_NAME" && break; sleep 1; done
+# WP4.2 / Fable A6: honours DX_BOOTSTRAP_WAIT_TIMEOUT (default 30, matching
+# the magic 30 this used to hard-code) with an injectable clock instead of a
+# bare `sleep 1`, so a test can drive this bound without a real 30s wait.
+dx_wait_until "$DX_BOOTSTRAP_WAIT_TIMEOUT" 1 container_is_running "$DX_CONTAINER_NAME" || true
 container_is_running "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start-container first." >&2; exit 1; }
 case "$DX_BOOTSTRAP_PATH" in ''|/) echo "Error: Unsafe DX_BOOTSTRAP_PATH: $DX_BOOTSTRAP_PATH" >&2; exit 1 ;; esac
 

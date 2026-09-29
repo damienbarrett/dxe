@@ -130,6 +130,54 @@ else
     test_fail "concurrent syncs retain complete current and predecessor generations"
 fi
 
+# WP4.2 / Fable A6: the "wait for the container to be running" preflight
+# (bin/dx-sync-bootstrap, immediately after the container_exists check) must
+# honour DX_BOOTSTRAP_WAIT_TIMEOUT -- not a hard-coded 30 -- and its sleeps
+# must be injectable, not a bare `sleep 1`, or this case waits out a real 30s
+# against unmigrated code. A runtime whose container exists but never reports
+# running must fail fast, with the preflight's existing message, after at
+# most DX_BOOTSTRAP_WAIT_TIMEOUT sleeps.
+wait_fixture="$fixture/wait-preflight"; mkdir -p "$wait_fixture"
+fake_dir_wait="$(fake_tool_dir_create "$wait_fixture")"
+fake_tool_write "$fake_dir_wait" container '
+case "${1:-}" in
+  list)
+    shift
+    case " $* " in
+      *" -a "*) printf "%s\n" "$DX_CONTAINER_NAME" ;;
+    esac
+    exit 0
+    ;;
+esac
+exit 1
+'
+fake_tool_write "$fake_dir_wait" fake-sleep '
+[ -z "${DXE_FAKE_SLEEP_LOG:-}" ] || printf "%s\n" "$1" >> "$DXE_FAKE_SLEEP_LOG"
+exit 0
+'
+wait_sleep_log="$wait_fixture/sleep.log"
+wait_status=0
+wait_out="$(env PATH="$fake_dir_wait:$PATH" \
+    DX_CONTAINER_NAME=dx-bootstrap-wait-contract \
+    DX_BOOTSTRAP_SOURCE="$good" \
+    DX_BOOTSTRAP_PATH="$wait_fixture/root" \
+    DX_BOOTSTRAP_WAIT_TIMEOUT=2 \
+    DX_SLEEP=fake-sleep \
+    DXE_FAKE_SLEEP_LOG="$wait_sleep_log" \
+    "$BASE_DIR/bin/dx-sync-bootstrap" 2>&1)" || wait_status=$?
+if [ "$wait_status" -ne 0 ] && printf '%s\n' "$wait_out" | stdin_matches -F 'Error: Container dx-bootstrap-wait-contract is not running. Run ./bin/dx-start-container first.'; then
+    test_pass "a container that never starts fails the sync fast with the existing message"
+else
+    test_fail "a container that never starts fails the sync fast with the existing message (status=$wait_status, out: $wait_out)"
+fi
+wait_sleep_count=0
+[ -f "$wait_sleep_log" ] && wait_sleep_count="$(wc -l < "$wait_sleep_log" | tr -d ' ')"
+if [ "$wait_sleep_count" -ge 1 ] && [ "$wait_sleep_count" -le 2 ]; then
+    test_pass "the container-running preflight honours DX_BOOTSTRAP_WAIT_TIMEOUT via the injectable DX_SLEEP seam, not a hard-coded 30 real sleeps"
+else
+    test_fail "the container-running preflight honours DX_BOOTSTRAP_WAIT_TIMEOUT via the injectable DX_SLEEP seam, not a hard-coded 30 real sleeps (fake sleep recorded $wait_sleep_count calls)"
+fi
+
 assert_file_contains_literal "$BASE_DIR/bin/lib/dx-ssh-common.sh" 'acquire_publication_lock' "launcher creates its execution lease under the publication lock"
 assert_file_contains_literal "$BASE_DIR/bin/lib/dx-ssh-common.sh" 'payload="$root/generations/$generation"' "launcher executes the exact leased generation"
 
