@@ -32,6 +32,13 @@ not just the bare "checking flake output" that `nix flake check` does for
 `homeConfigurations` on its own, which walks the attribute without evaluating
 it.
 
+`prepare_nix_volume_impl`'s `mkfs.btrfs`/`mkfs.ext4`, `truncate` and `mount`
+calls (constitution rule 3: a privilege-boundary stub must be validated
+against the real boundary at least once) are function-shadowed in the
+Unit/static tier's `test_section3_bootstrap.sh` fixtures, since they need
+`CAP_SYS_ADMIN` this tier's runner does not have; the real commands are only
+exercised on the Live isolated tier, via an actual guest boot.
+
 ## Useful final commands
 
 ```sh

@@ -24,7 +24,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity setup_nix_volume configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -1757,6 +1757,50 @@ if ! grep -qxF 'prepare_exit=0' "$p12_truncate_out" \
     test_pass "prepare_nix_volume: a failing truncate is checked -- fails closed, leaves DX_NIX_VOLUME_ROOT unset, never reports completed, and a following populate never seeds the store"
 else
     test_fail "prepare_nix_volume: a failing truncate is checked -- fails closed, leaves DX_NIX_VOLUME_ROOT unset, never reports completed, and a following populate never seeds the store (output: $(cat "$p12_truncate_out"))"
+fi
+
+# Refactor pin: dx_nix_mount is now the sole caller of `mount` from
+# prepare_nix_volume_impl. Assert it forwards the exact device, filesystem,
+# options and mountpoint argv mount(8) itself expects -- not just that *a*
+# mount call happened -- in the MUST-NOT sentinel style at test_section3:1416
+# ("$*" recorded to a log, then compared for equality).
+p12_mount_argv_log="$p12_fixture/mount-argv.log"
+(
+    mount() { printf '%s\n' "$*" >> "$p12_mount_argv_log"; }
+    dx_nix_mount /dev/fake-dev btrfs 'compress=zstd:3,noatime' /mnt/tmp-nix
+)
+if [ "$(cat "$p12_mount_argv_log" 2>/dev/null)" = "-t btrfs -o compress=zstd:3,noatime /dev/fake-dev /mnt/tmp-nix" ]; then
+    test_pass "dx_nix_mount forwards the exact mount argv (device, filesystem, options, mountpoint)"
+else
+    test_fail "dx_nix_mount forwards the exact mount argv (device, filesystem, options, mountpoint) (log: $(cat "$p12_mount_argv_log" 2>/dev/null))"
+fi
+
+# Refactor pin: dx_nix_format_device dispatches on its fs_type argument, not
+# on any ambient state, and calls exactly one of mkfs.btrfs/mkfs.ext4 -- the
+# other is a MUST-NOT sentinel. Two cases (btrfs and ext4) pin both the
+# argv of the tool that runs and that the other tool never runs at all.
+p12_format_btrfs_log="$p12_fixture/format-btrfs.log"
+(
+    mkfs.btrfs() { printf '%s\n' "$*" >> "$p12_format_btrfs_log"; }
+    mkfs.ext4() { echo MUST-NOT-MKFS-EXT4 >> "$p12_format_btrfs_log"; }
+    dx_nix_format_device /dev/fake-dev btrfs
+)
+if [ "$(cat "$p12_format_btrfs_log" 2>/dev/null)" = "-f -L dx-nix -m single -d single /dev/fake-dev" ]; then
+    test_pass "dx_nix_format_device btrfs: forwards the exact mkfs.btrfs argv, never calls mkfs.ext4"
+else
+    test_fail "dx_nix_format_device btrfs: forwards the exact mkfs.btrfs argv, never calls mkfs.ext4 (log: $(cat "$p12_format_btrfs_log" 2>/dev/null))"
+fi
+
+p12_format_ext4_log="$p12_fixture/format-ext4.log"
+(
+    mkfs.btrfs() { echo MUST-NOT-MKFS-BTRFS >> "$p12_format_ext4_log"; }
+    mkfs.ext4() { printf '%s\n' "$*" >> "$p12_format_ext4_log"; }
+    dx_nix_format_device /dev/fake-dev ext4
+)
+if [ "$(cat "$p12_format_ext4_log" 2>/dev/null)" = "-F -L dx-nix /dev/fake-dev" ]; then
+    test_pass "dx_nix_format_device ext4: forwards the exact mkfs.ext4 argv, never calls mkfs.btrfs"
+else
+    test_fail "dx_nix_format_device ext4: forwards the exact mkfs.ext4 argv, never calls mkfs.btrfs (log: $(cat "$p12_format_ext4_log" 2>/dev/null))"
 fi
 
 rm -rf "$p12_fixture"

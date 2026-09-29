@@ -856,6 +856,33 @@ prepare_nix_volume_direct_impl() {
 # room to grow and survives container rebuilds. This requires CAP_SYS_ADMIN
 # inside the guest, which dx-create-container grants via --cap-add.
 #
+# dx_nix_format_device / dx_nix_mount (docs/reviews/2026-09-29-fable.md
+# finding B2, WP3.2 refactor): the two privileged calls
+# prepare_nix_volume_impl makes to build the dedicated Nix volume, pulled
+# out of the block-device and sparse-image branches below so the fs_type
+# dispatch and its failure message exist in exactly one place, and so the
+# underlying mkfs.*/mount invocation is a single, argv-pinnable seam. Every
+# caller must check the return value itself -- neither function ever
+# suspends errexit; the wrapper's own `if prepare_nix_volume_impl "$@";
+# then` (below) stays the only place that does.
+dx_nix_format_device() {
+    local dev="$1"
+    local fs_type="$2"
+    if [ "$fs_type" == "btrfs" ]; then
+        mkfs.btrfs -f -L dx-nix -m single -d single "$dev" || { echo "Error: mkfs.btrfs failed for $dev" >&2; return 1; }
+    else
+        mkfs.ext4 -F -L dx-nix "$dev" || { echo "Error: mkfs.ext4 failed for $dev" >&2; return 1; }
+    fi
+}
+
+dx_nix_mount() {
+    local dev="$1"
+    local fs_type="$2"
+    local mount_opts="$3"
+    local mountpoint="$4"
+    mount -t "$fs_type" -o "$mount_opts" "$dev" "$mountpoint" || { echo "Error: mount failed for $dev" >&2; return 1; }
+}
+
 # Explicit dispatch on DX_NIX_STORAGE_MODE (qnap-dxe-plan.md DQ4): an absent
 # variable (every container created before Branch 11 / Phase 3, including
 # the primary guest) falls straight through to the apple-image body below,
@@ -927,11 +954,7 @@ prepare_nix_volume_impl() {
                 echo "Error: failed to umount $raw_path. The container is missing CAP_SYS_ADMIN; re-create it with ./bin/dx-destroy && ./bin/dx (dx-create-container adds the capability)." >&2
                 return 1
             fi
-            if [ "$fs_type" == "btrfs" ]; then
-                mkfs.btrfs -f -L dx-nix -m single -d single "$dev" || { echo "Error: mkfs.btrfs failed for $dev" >&2; return 1; }
-            else
-                mkfs.ext4 -F -L dx-nix "$dev" || { echo "Error: mkfs.ext4 failed for $dev" >&2; return 1; }
-            fi
+            dx_nix_format_device "$dev" "$fs_type" || return 1
         fi
     else
         echo "Detected directory-style mount at $raw_path. Using sparse image file."
@@ -940,18 +963,14 @@ prepare_nix_volume_impl() {
             local disk_size="${DX_NIX_DISK_SIZE:-64G}"
             echo "Creating $disk_size sparse image file at $dev..."
             truncate -s "$disk_size" "$dev" || { echo "Error: truncate failed for $dev" >&2; return 1; }
-            if [ "$fs_type" == "btrfs" ]; then
-                mkfs.btrfs -f -L dx-nix -m single -d single "$dev" || { echo "Error: mkfs.btrfs failed for $dev" >&2; return 1; }
-            else
-                mkfs.ext4 -F -L dx-nix "$dev" || { echo "Error: mkfs.ext4 failed for $dev" >&2; return 1; }
-            fi
+            dx_nix_format_device "$dev" "$fs_type" || return 1
         fi
     fi
 
     # Mount the volume
     echo "Mounting $dev to /nix..."
     mkdir -p /mnt/tmp-nix
-    mount -t "$fs_type" -o "$mount_opts" "$dev" /mnt/tmp-nix || { echo "Error: mount failed for $dev" >&2; return 1; }
+    dx_nix_mount "$dev" "$fs_type" "$mount_opts" /mnt/tmp-nix || return 1
     DX_NIX_VOLUME_ALREADY_MOUNTED=false
     DX_NIX_VOLUME_ROOT=/mnt/tmp-nix
     DX_NIX_VOLUME_DEVICE="$dev"
