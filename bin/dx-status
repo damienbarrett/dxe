@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
+status_main() {
 if [ "${1:-}" = "--tunnel-state" ]; then
     [ "$#" -eq 1 ] || { echo "Usage: $(basename "$0") --tunnel-state" >&2; exit 2; }
     original_container=$DX_CONTAINER_NAME
@@ -174,3 +175,5 @@ if [ "${DX_RUNTIME:-apple}" = docker-ssh ]; then
     echo -e "\n--- Remote Lock ---"
     dx_runtime_docker_lock_audit
 fi
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then status_main "$@"; fi
