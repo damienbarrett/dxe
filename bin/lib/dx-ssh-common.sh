@@ -382,6 +382,63 @@ else
     payload="$root"
 fi
 rm -f "$root/.dx-bootstrap-waiting"
-exec "$payload/bootstrap.sh" serve
+exec "$payload/bootstrap.sh" serve "${generation:-}" "${boot_id:-}" "${start:-}"
+EOF
+}
+
+# The Docker healthcheck probe (Branch 11 / Phase 6, Astra F7/F8). Rendered
+# next to the launcher above because both speak the SAME lease protocol: a
+# `.locks/leases/<generation>.<pid>` file the launcher writes just before it
+# execs the guest bootstrap, holding "<generation>\t<boot id>\t<pid>\t<start
+# time>" (see the launcher's own lease write above -- same field order,
+# reused here). A lease alone only proves generation *ownership*, not
+# readiness, and not even a still-running process: nothing removes a lease
+# when its writer dies (Astra F7). This probe revalidates the full identity
+# against live process state (boot id, pid liveness, and the exec-preserved
+# start time, closing PID reuse) and additionally requires a completion
+# marker that bootstrap_main only publishes after every bootstrap_phases()
+# call succeeds -- this signal means READINESS, not mere ownership (recorded
+# here and in docs/lifecycle.md's healthcheck paragraph).
+#
+# $DX_BOOTSTRAP_PATH is read from the container's own environment (a --env
+# field on `container create`, D6/Astra F8) -- this program text is one fixed
+# literal, byte-identical for every guest, so no configured value can ever
+# change what this probe executes; a hostile path can, at most, fail to match
+# any real directory. Independent of the SSH network path by construction
+# (Astra F7's own recommendation): entirely local `[ ]`/`readlink`/`cat`
+# file-state checks under $DX_BOOTSTRAP_PATH, so a transient tailnet issue
+# never reports the guest unhealthy.
+dx_bootstrap_health_command() {
+    cat <<'EOF'
+root="$DX_BOOTSTRAP_PATH"
+[ -n "$root" ] || exit 1
+process_start() {
+    stat_line=$(cat "/proc/${1:-0}/stat" 2>/dev/null) || return 1
+    stat_fields=${stat_line##*) }
+    set -- $stat_fields
+    [ "$#" -ge 20 ] || return 1
+    shift 19
+    printf "%s\n" "$1"
+}
+cur=$(readlink "$root/current" 2>/dev/null) || exit 1
+case "$cur" in generations/*) generation=${cur#generations/} ;; *) exit 1 ;; esac
+case "$generation" in ""|*/*|[.-]*|*[!A-Za-z0-9_.-]*) exit 1 ;; esac
+boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || exit 1
+tab=$(printf "\t")
+healthy=1
+for lease in "$root/.locks/leases/$generation".*; do
+    [ -f "$lease" ] || continue
+    owner_gen="" owner_boot="" owner_pid="" owner_start=""
+    IFS="$tab" read -r owner_gen owner_boot owner_pid owner_start < "$lease" || continue
+    [ "$owner_gen" = "$generation" ] || continue
+    [ -n "$owner_boot" ] && [ -n "$owner_pid" ] && [ -n "$owner_start" ] || continue
+    [ "$owner_boot" = "$boot" ] || continue
+    live_start=$(process_start "$owner_pid") || continue
+    [ "$owner_start" = "$live_start" ] || continue
+    [ -f "$root/.locks/ready/$owner_pid.$owner_start" ] || continue
+    healthy=0
+    break
+done
+exit "$healthy"
 EOF
 }

@@ -498,5 +498,124 @@ fi
 
 assert_file_not_contains "$BASE_DIR/bin/dx-start-container" 'OLD_BASE' "dx-start-container no longer probes the guest for the old-base signature (docs/refactor/migration-gates.md#old-base-guards)"
 
+# --- WP6.7/WP6.8 (Astra F7/F8): the healthcheck probe -----------------------
+#
+# dx_bootstrap_health_command renders ONE fixed program (no configuration
+# ever interpolated into it, D6) that validates the full lease identity --
+# generation, boot id, pid, live process start time -- plus a completion
+# marker tied to that identity, published only after bootstrap_phases
+# succeeds (readiness, not mere generation ownership).
+health_fixture="$fixture/health"
+mkdir -p "$health_fixture"
+health_fake="$(fake_tool_dir_create "$health_fixture")"
+fake_tool_write "$health_fake" cat '
+case "$1" in
+  /proc/sys/kernel/random/boot_id) printf "%s\n" test-boot-id ;;
+  /proc/1/stat) printf "1 (sh) S"; f=4; while [ "$f" -le 21 ]; do printf " 0"; f=$((f + 1)); done; printf " 99\n" ;;
+  /proc/*/stat) exit 1 ;;
+  *) exec /bin/cat "$@" ;;
+esac
+'
+health_probe="$(dx_bootstrap_health_command)"
+
+health_probe_2="$(DX_BOOTSTRAP_PATH='/some/other/$(printf injected >&2)/path' dx_bootstrap_health_command)"
+if [ "$health_probe" = "$health_probe_2" ]; then
+    test_pass "dx_bootstrap_health_command's program text never changes with DX_BOOTSTRAP_PATH (D6: data, not code)"
+else
+    test_fail "dx_bootstrap_health_command's program text never changes with DX_BOOTSTRAP_PATH (D6: data, not code)"
+fi
+
+health_run() {
+    # $1: bootstrap root. Fresh .locks/leases + .locks/ready + generations/review
+    # laid out by the caller before invoking this.
+    env DX_BOOTSTRAP_PATH="$1" PATH="$health_fake:$PATH" sh -c "$health_probe"
+}
+
+health_fresh() {
+    rm -rf "$health_fixture/root"
+    mkdir -p "$health_fixture/root/.locks/leases" "$health_fixture/root/.locks/ready" "$health_fixture/root/generations/review"
+    ln -sfn generations/review "$health_fixture/root/current"
+}
+
+# F8: a hostile DX_BOOTSTRAP_PATH is transported as data and never executed.
+health_fresh
+hostile_out=""
+for hostile in \
+    '/guest-bootstrap/$(printf injected >&2)' \
+    '/guest-bootstrap/with space' \
+    "/guest-bootstrap/with'quote" \
+    '/guest-bootstrap/with$dollar' \
+    '/guest-bootstrap/with\backslash'; do
+    one_out="$(health_run "$hostile" 2>&1)" || true
+    hostile_out="$hostile_out$one_out"
+done
+if printf '%s' "$hostile_out" | grep -q injected; then
+    test_fail "F8: a path containing \$(printf injected >&2) produces no side effect (got: $hostile_out)"
+else
+    test_pass "F8: a path containing \$(printf injected >&2), spaces, quotes, \$, and backslashes produces no side effect"
+fi
+
+# F7: stale lease (dead pid) -> unhealthy.
+health_fresh
+printf 'review\ttest-boot-id\t999999\t50\n' > "$health_fixture/root/.locks/leases/review.999999"
+if health_run "$health_fixture/root" >/dev/null 2>&1; then
+    test_fail "F7: a lease naming a pid that no longer exists is unhealthy"
+else
+    test_pass "F7: a lease naming a pid that no longer exists is unhealthy"
+fi
+
+# F7: live pid, recorded start does not match live start (PID reuse) -> unhealthy.
+health_fresh
+printf 'review\ttest-boot-id\t1\t50\n' > "$health_fixture/root/.locks/leases/review.1"
+if health_run "$health_fixture/root" >/dev/null 2>&1; then
+    test_fail "F7: a live pid whose recorded start time does not match /proc (pid reuse) is unhealthy"
+else
+    test_pass "F7: a live pid whose recorded start time does not match /proc (pid reuse) is unhealthy"
+fi
+
+# F7: fully live, matching lease but no completion marker -> unhealthy (readiness).
+health_fresh
+printf 'review\ttest-boot-id\t1\t99\n' > "$health_fixture/root/.locks/leases/review.1"
+if health_run "$health_fixture/root" >/dev/null 2>&1; then
+    test_fail "F7: a live matching lease with no completion marker is unhealthy (readiness, not ownership)"
+else
+    test_pass "F7: a live matching lease with no completion marker is unhealthy (readiness, not ownership)"
+fi
+
+# F7: fully live, matching lease plus a completion marker written after
+# activation -> healthy.
+: > "$health_fixture/root/.locks/ready/1.99"
+if health_run "$health_fixture/root" >/dev/null 2>&1; then
+    test_pass "F7: a live matching lease plus its completion marker is healthy"
+else
+    test_fail "F7: a live matching lease plus its completion marker is healthy"
+fi
+
+# The marker itself is published by the guest side, tied to the exact
+# identity the launcher recorded, only after bootstrap_phases succeeds.
+source "$CONTAINER_DIR/bootstrap/common.sh"
+marker_root="$health_fixture/marker-root"; mkdir -p "$marker_root"
+if (
+    DX_BOOTSTRAP_PATH="$marker_root" dx_bootstrap_publish_ready_marker review test-boot-id 99 4242
+    [ -f "$marker_root/.locks/ready/4242.99" ] && [ ! -L "$marker_root/.locks/ready/4242.99" ]
+); then
+    test_pass "dx_bootstrap_publish_ready_marker writes a regular-file marker keyed by pid.start"
+else
+    test_fail "dx_bootstrap_publish_ready_marker writes a regular-file marker keyed by pid.start"
+fi
+marker_root_noop="$health_fixture/marker-root-noop"; mkdir -p "$marker_root_noop"
+if (
+    DX_BOOTSTRAP_PATH="$marker_root_noop" dx_bootstrap_publish_ready_marker "" "" "" ""
+    [ ! -e "$marker_root_noop/.locks/ready" ]
+); then
+    test_pass "dx_bootstrap_publish_ready_marker is a no-op with no lease identity (the unsignalled-fallback boot)"
+else
+    test_fail "dx_bootstrap_publish_ready_marker is a no-op with no lease identity (the unsignalled-fallback boot)"
+fi
+
+assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" 'DX_HEALTHCHECK_CMD="$(dx_bootstrap_health_command)"' "the healthcheck program is rendered by the single shared function, not built inline"
+assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '--env "DX_BOOTSTRAP_PATH=$DX_BOOTSTRAP_PATH"' "DX_BOOTSTRAP_PATH crosses to the probe as container-environment data, not interpolated text"
+assert_file_not_contains "$BASE_DIR/bin/dx-create-container" 'DX_BOOTSTRAP_PATH/current' "no healthcheck program text is built by interpolating the configured path"
+
 print_summary
 exit_with_code

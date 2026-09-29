@@ -36,6 +36,32 @@ dx_publish_atomic_marker() {
     esac
 }
 
+# Publishes the completion marker the host healthcheck probe requires
+# alongside a live, identity-matched lease before it reports the guest
+# healthy (Astra F7; bin/lib/dx-ssh-common.sh's dx_bootstrap_health_command).
+# Keyed by pid.start -- exactly the pair the probe independently revalidates
+# against live /proc state before it will even look for this file -- so a
+# reused pid from an earlier, unrelated boot can never satisfy today's check
+# by coincidence. $1 generation, $2 boot id, $3 start time, $4 pid: the SAME
+# four positional values the launcher passed to bootstrap_main (it computed
+# them once, before exec; this never re-derives them). A no-op, not a
+# failure, when there is no lease identity to publish against (the
+# unsignalled-fallback boot in the launcher's own else branch never writes a
+# lease either, so the probe can never match it regardless). Best-effort on
+# a real failure: losing this marker only keeps the healthcheck unhealthy,
+# never sshd itself, so bootstrap_main does not abort the boot over it.
+dx_bootstrap_publish_ready_marker() {
+    local generation="$1" boot_id="$2" start="$3" pid="$4"
+    local root="${DX_BOOTSTRAP_PATH:-}"
+    [ -n "$root" ] && [ -n "$pid" ] && [ -n "$start" ] || return 0
+    local dir="$root/.locks/ready"
+    mkdir -p "$dir" 2>/dev/null || return 1
+    local marker="$dir/$pid.$start"
+    local tmp="$dir/.ready.$pid.$start.tmp"
+    printf '%s\t%s\t%s\t%s\n' "$generation" "$boot_id" "$pid" "$start" > "$tmp" || { rm -f "$tmp"; return 1; }
+    dx_publish_atomic_marker "$tmp" "$marker" "bootstrap readiness marker"
+}
+
 dx_pipeline_succeeded() {
     local status
     for status in "$@"; do

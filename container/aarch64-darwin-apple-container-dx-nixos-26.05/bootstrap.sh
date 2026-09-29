@@ -32,6 +32,14 @@ bootstrap_phases() {
 }
 
 bootstrap_main() {
+    # $2/$3/$4: the generation/boot-id/start-time triple the launcher (bin/
+    # lib/dx-ssh-common.sh's dx_bootstrap_launch_command) recorded in this
+    # exact process's own lease just before it exec'd here ($1 is the
+    # vestigial "serve" mode token). Empty on the unsignalled-fallback boot,
+    # where no lease was ever written either -- see
+    # dx_bootstrap_publish_ready_marker's own no-op case below.
+    local dx_lease_generation="${2:-}" dx_lease_boot_id="${3:-}" dx_lease_start="${4:-}"
+
     export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}"
     export NIX_SSL_CERT_FILE="${NIX_SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}"
     DX_GUEST_ACTIVATION_TIMEOUT="${DX_GUEST_ACTIVATION_TIMEOUT:-1800}"
@@ -39,6 +47,12 @@ bootstrap_main() {
     DX_GUEST_ACTIVATION_RETRY_DELAY="${DX_GUEST_ACTIVATION_RETRY_DELAY:-5}"
 
     bootstrap_phases
+
+    # Astra F7: the host healthcheck probe treats a lease alone as ownership,
+    # not readiness. Publish the completion marker it also requires only
+    # now, after every phase above has actually succeeded.
+    dx_bootstrap_publish_ready_marker "$dx_lease_generation" "$dx_lease_boot_id" "$dx_lease_start" "$$" \
+        || echo "Warning: could not publish the bootstrap readiness marker; the container healthcheck will report unhealthy despite sshd starting." >&2
 
     echo "Guest bootstrap complete. Starting sshd in foreground..."
     exec "$(command -v sshd)" -D -e -p 2222
