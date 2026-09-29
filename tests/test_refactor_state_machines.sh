@@ -424,7 +424,17 @@ export DXE_FAKE_SSH_START_DELAY=1
 tunnel_race_start='source "$1"; source "$2"; source "$3"; source "$4"; dx_port_in_use() { return 1; }; dx_tunnel_start reverse 18000 8000'
 tunnel_race_stop='source "$1"; source "$2"; source "$3"; source "$4"; dx_tunnel_stop reverse 18000'
 /bin/bash -c "$tunnel_race_start" _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-runtime.sh" "$BASE_DIR/bin/lib/dx-ssh-common.sh" "$BASE_DIR/bin/lib/dx-tunnel.sh" >/dev/null & race_start=$!
-sleep 0.2
+# A blind `sleep 0.2` here used to just hope race_start had won the
+# dx_lock_acquire race (WP4.2 / Fable A6, D10) before race_stop began --
+# fragile on a loaded host. Poll for the readiness marker instead: the
+# per-key tunnel lock's owner file only exists once race_start's
+# dx_lock_acquire has actually succeeded, at which point it is blocked
+# inside the (DXE_FAKE_SSH_START_DELAY=1) dial holding that lock, so
+# race_stop is guaranteed to contend on it rather than finding nothing to
+# stop. 100 x 0.05s is a 5s bound, well inside DX_TUNNEL_LOCK_TIMEOUT=3's
+# own contention window plus slop for this host's load.
+race_lock="$(dx_tunnel_lock_path reverse 18000)"
+for _ in $(seq 1 100); do [ -f "$race_lock/owner" ] && break; sleep 0.05; done
 /bin/bash -c "$tunnel_race_stop" _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-runtime.sh" "$BASE_DIR/bin/lib/dx-ssh-common.sh" "$BASE_DIR/bin/lib/dx-tunnel.sh" >/dev/null & race_stop=$!
 race_start_status=0; race_stop_status=0; wait "$race_start" || race_start_status=$?; wait "$race_stop" || race_stop_status=$?
 race_socket="$(dx_tunnel_socket_path reverse 18000)"; race_metadata="$(dx_tunnel_metadata_path reverse 18000)"
