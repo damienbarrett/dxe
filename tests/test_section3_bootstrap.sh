@@ -1444,6 +1444,71 @@ else
     test_fail "bootstrap_main calls verify_remount_prerequisites between populate_prepared_nix_volume and nix_restore_image_default_profile (populate=$p10_populate_line verify=$p10_verify_line restore=$p10_restore_line)"
 fi
 
+# P10b (Fable review B8): the phase order the P10 test above pins by
+# comparing grep line numbers in bootstrap.sh's source text is proven here
+# behaviourally instead -- source the orchestrator (its own
+# `[ "${BASH_SOURCE[0]}" = "$0" ]` guard, asserted above, keeps sourcing
+# from running bootstrap_main or execing sshd), shadow every documented
+# phase function with a stub that logs its own $FUNCNAME, and call
+# bootstrap_phases(). Today bootstrap_phases does not exist (the phases are
+# still inline inside bootstrap_main, which also owns env setup and the
+# final `exec sshd`), so this fails cleanly rather than booting sshd.
+p10b_output="$({
+    source "$BOOTSTRAP"
+    configure_single_user_nix() { printf '%s\n' "$FUNCNAME"; }
+    install_essentials() { printf '%s\n' "$FUNCNAME"; }
+    link_system_bash() { printf '%s\n' "$FUNCNAME"; }
+    capture_nix_image_default_profile() { printf '%s\n' "$FUNCNAME"; }
+    prepare_nix_volume() { printf '%s\n' "$FUNCNAME"; }
+    materialize_auth_files() { printf '%s\n' "$FUNCNAME"; }
+    create_user() { printf '%s\n' "$FUNCNAME"; }
+    populate_prepared_nix_volume() { printf '%s\n' "$FUNCNAME"; }
+    verify_remount_prerequisites() { printf '%s\n' "$FUNCNAME"; }
+    nix_restore_image_default_profile() { printf '%s\n' "$FUNCNAME"; }
+    ensure_essentials_valid() { printf '%s\n' "$FUNCNAME"; }
+    publish_nix_image_store_identity() { printf '%s\n' "$FUNCNAME"; }
+    configure_release_identity() { printf '%s\n' "$FUNCNAME"; }
+    setup_persist() { printf '%s\n' "$FUNCNAME"; }
+    configure_ssh() { printf '%s\n' "$FUNCNAME"; }
+    configure_guest() { printf '%s\n' "$FUNCNAME"; }
+    verify_guest_tools() { printf '%s\n' "$FUNCNAME"; }
+    configure_timezone() { printf '%s\n' "$FUNCNAME"; }
+    bootstrap_phases
+} 2>&1)" || true
+p10b_expected="configure_single_user_nix
+install_essentials
+link_system_bash
+capture_nix_image_default_profile
+prepare_nix_volume
+materialize_auth_files
+create_user
+populate_prepared_nix_volume
+verify_remount_prerequisites
+nix_restore_image_default_profile
+ensure_essentials_valid
+publish_nix_image_store_identity
+configure_release_identity
+setup_persist
+configure_ssh
+configure_guest
+verify_guest_tools
+configure_timezone"
+if [ "$p10b_output" = "$p10b_expected" ]; then
+    test_pass "bootstrap_phases runs every documented phase in order (shadowed-function log, not a grep-line-number comparison)"
+else
+    test_fail "bootstrap_phases runs every documented phase in order (shadowed-function log, not a grep-line-number comparison) (log: $p10b_output)"
+fi
+
+p10b_populate_idx="$(printf '%s\n' "$p10b_output" | grep -n -x 'populate_prepared_nix_volume' | cut -d: -f1)"
+p10b_verify_idx="$(printf '%s\n' "$p10b_output" | grep -n -x 'verify_remount_prerequisites' | cut -d: -f1)"
+p10b_restore_idx="$(printf '%s\n' "$p10b_output" | grep -n -x 'nix_restore_image_default_profile' | cut -d: -f1)"
+if [ -n "$p10b_populate_idx" ] && [ -n "$p10b_verify_idx" ] && [ -n "$p10b_restore_idx" ] \
+    && [ "$p10b_populate_idx" -lt "$p10b_verify_idx" ] && [ "$p10b_verify_idx" -lt "$p10b_restore_idx" ]; then
+    test_pass "bootstrap_phases (behavioural log) runs verify_remount_prerequisites strictly between populate_prepared_nix_volume and nix_restore_image_default_profile"
+else
+    test_fail "bootstrap_phases (behavioural log) runs verify_remount_prerequisites strictly between populate_prepared_nix_volume and nix_restore_image_default_profile (log: $p10b_output)"
+fi
+
 # All healthy: every named tool resolves and execs cleanly, and run_as_dx
 # succeeds -- the function returns 0 with no diagnostic at all (a healthy
 # reused volume boots without churn -- the outcome table's first row).
