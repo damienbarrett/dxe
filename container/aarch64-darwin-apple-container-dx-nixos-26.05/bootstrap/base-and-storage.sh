@@ -420,13 +420,15 @@ nix_image_default_profile_store_path() {
     printf '%s\n' "$nix_root/store/$relative"
 }
 
+# Contract 2 (refactor-v2-final.md): the resolved value is persisted for
+# its three consumers below via dx_persist_image_default_profile_target
+# instead of being exported as DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET.
 capture_nix_image_default_profile() {
     local source_root="${1:-/nix}"
     local target
 
     target="$(nix_image_default_profile_store_path "$source_root")" || return 1
-    DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET="$target"
-    export DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET
+    dx_persist_image_default_profile_target "$target"
 }
 
 # Recreate /nix/var/nix/profiles/default as a direct link to the retained
@@ -436,7 +438,8 @@ capture_nix_image_default_profile() {
 nix_restore_image_default_profile() {
     local nix_root="${DX_NIX_ROOT:-/nix}"
     local profiles="$nix_root/var/nix/profiles"
-    local target="${DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET:-}"
+    local target
+    target="$(dx_read_image_default_profile_target)"
     local profile="$profiles/default"
     local temporary=""
     local part
@@ -496,7 +499,8 @@ nix_image_bootstrap_store_paths() {
     {
         essentials="$(nix_image_essentials_identity "$source_root" || true)"
         [ -n "$essentials" ] && printf '%s\n' "/nix/store/$essentials"
-        default_profile="${DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET:-$(nix_image_default_profile_store_path "$source_root" || true)}"
+        default_profile="$(dx_read_image_default_profile_target)"
+        [ -n "$default_profile" ] || default_profile="$(nix_image_default_profile_store_path "$source_root" || true)"
         case "$default_profile" in
             "$nix_root"/store/*) printf '%s\n' "/nix/store/${default_profile#"$nix_root"/store/}" ;;
         esac

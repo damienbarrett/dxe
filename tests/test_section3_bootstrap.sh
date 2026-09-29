@@ -24,7 +24,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded dx_bootstrap_scratch_dir dx_persist_durable_identity_record dx_read_durable_identity_record dx_write_nix_volume_record dx_read_nix_volume_record dx_parse_nix_volume_record essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id dx_parse_durable_identity_record create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded dx_bootstrap_scratch_dir dx_persist_durable_identity_record dx_read_durable_identity_record dx_write_nix_volume_record dx_read_nix_volume_record dx_parse_nix_volume_record dx_persist_image_default_profile_target dx_read_image_default_profile_target essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id dx_parse_durable_identity_record create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -2582,6 +2582,68 @@ fi
 
 unset DX_BOOTSTRAP_SCRATCH_DIR
 rm -rf "$p16_fixture"
+
+# P17 (refactor-v2-final.md Contract 2): capture_nix_image_default_profile
+# persists the resolved target for its three consumers via
+# dx_persist_image_default_profile_target/dx_read_image_default_profile_
+# target instead of the exported DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET, and
+# the value survives across separate bootstrap phases (capture ->
+# nix_image_bootstrap_store_paths -> nix_restore_image_default_profile,
+# simulating the /nix remount by capturing against one root and restoring
+# against another that shares only the scratch directory).
+p17_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p17-default-profile.XXXXXX")"
+# nix_image_default_profile_store_path requires the resolved profile link to
+# stay under source_root/store/*; on macOS /tmp is itself a symlink to
+# /private/tmp, so readlink -f's fully-resolved path would otherwise never
+# match this $TMPDIR-rooted fixture path textually. Resolve to the physical
+# path up front, the same way this file's own top-level fixture already
+# does (see fixture_physical near the top of this file).
+p17_fixture="$(cd "$p17_fixture" && pwd -P)"
+export DX_BOOTSTRAP_SCRATCH_DIR="$p17_fixture/scratch"
+p17_image="$p17_fixture/image"
+mkdir -p "$p17_image/store/default-profile/bin" "$p17_image/store/default-profile/etc/ssl/certs" "$p17_image/var/nix/profiles"
+: > "$p17_image/store/default-profile/bin/sh"; : > "$p17_image/store/default-profile/bin/nix"
+: > "$p17_image/store/default-profile/etc/ssl/certs/ca-bundle.crt"
+chmod 0755 "$p17_image/store/default-profile/bin/sh" "$p17_image/store/default-profile/bin/nix"
+ln -s "$p17_image/store/default-profile" "$p17_image/var/nix/profiles/default-1-link"
+ln -s default-1-link "$p17_image/var/nix/profiles/default"
+
+if DX_NIX_ROOT="$p17_image" capture_nix_image_default_profile "$p17_image" \
+    && [ -z "${DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET:-}" ] \
+    && [ "$(dx_read_image_default_profile_target)" = "$p17_image/store/default-profile" ] \
+    && DX_NIX_ROOT="$p17_image" nix_image_bootstrap_store_paths "$p17_image" | stdin_matches -x /nix/store/default-profile; then
+    test_pass "P17 (Contract 2 gate): capture_nix_image_default_profile persists the target for nix_image_bootstrap_store_paths without exporting DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET"
+else
+    test_fail "P17 (Contract 2 gate): capture_nix_image_default_profile persists the target for nix_image_bootstrap_store_paths without exporting DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET"
+fi
+
+# Simulate the /nix remount: a second root standing in for the durable
+# volume once it has replaced /nix, sharing only the scratch directory the
+# capture above wrote to.
+p17_volume="$p17_fixture/volume"
+mkdir -p "$p17_volume/store/default-profile/bin" "$p17_volume/store/default-profile/etc/ssl/certs" "$p17_volume/var/nix/profiles"
+: > "$p17_volume/store/default-profile/bin/sh"; : > "$p17_volume/store/default-profile/bin/nix"
+: > "$p17_volume/store/default-profile/etc/ssl/certs/ca-bundle.crt"
+chmod 0755 "$p17_volume/store/default-profile/bin/sh" "$p17_volume/store/default-profile/bin/nix"
+if (
+    unset DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET
+    dx_persist_image_default_profile_target "$p17_volume/store/default-profile"
+    chown() { :; }
+    # nix_restore_image_default_profile's own `mv -Tf` is GNU-mv-only (the
+    # production guest is always Linux); mv -f alone is atomic-equivalent
+    # for this call's exact two-argument shape, so this stub stays a real
+    # rename rather than a no-op, portable to this host's BSD mv.
+    mv() { if [ "$1" = -Tf ]; then shift; command mv -f "$@"; else command mv "$@"; fi; }
+    DX_NIX_ROOT="$p17_volume" nix_restore_image_default_profile
+) \
+    && [ "$(readlink "$p17_volume/var/nix/profiles/default")" = "$p17_volume/store/default-profile" ]; then
+    test_pass "P17: nix_restore_image_default_profile reads the persisted target back across the simulated remount, never DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET"
+else
+    test_fail "P17: nix_restore_image_default_profile reads the persisted target back across the simulated remount, never DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET"
+fi
+
+unset DX_BOOTSTRAP_SCRATCH_DIR
+rm -rf "$p17_fixture"
 
 print_summary
 exit_with_code

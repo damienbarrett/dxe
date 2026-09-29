@@ -46,6 +46,29 @@ dx_read_durable_identity_record() {
     cat "$file" 2>/dev/null || true
 }
 
+# Contract 2 (refactor-v2-final.md): the image default-profile target
+# bridges capture_nix_image_default_profile (captured before the /nix
+# remount, its own bootstrap phase) to its three consumers --
+# nix_image_bootstrap_store_paths and GC-root publication (both reached
+# from within populate_prepared_nix_volume, a later phase) and
+# nix_restore_image_default_profile (a separate, still later phase) --
+# without the exported DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET global. Living
+# outside /nix, it survives the remount the same way the removed global did.
+dx_persist_image_default_profile_target() {
+    local target="$1"
+    local dir
+    dir="$(dx_bootstrap_scratch_dir)"
+    mkdir -p "$dir" 2>/dev/null || return 0
+    printf '%s\n' "$target" > "$dir/image-default-profile-target" 2>/dev/null || true
+}
+
+dx_read_image_default_profile_target() {
+    local file
+    file="$(dx_bootstrap_scratch_dir)/image-default-profile-target"
+    [ -f "$file" ] && [ ! -L "$file" ] || return 0
+    cat "$file" 2>/dev/null || true
+}
+
 # Contract 3 (refactor-v2-final.md, Fable B6 item 3): a versioned,
 # mode-tagged, non-sourceable record replacing the exported
 # DX_NIX_VOLUME_ALREADY_MOUNTED/ROOT/DEVICE/FS_TYPE/MOUNT_OPTS/IN_PLACE
