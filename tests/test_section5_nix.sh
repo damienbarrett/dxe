@@ -54,7 +54,7 @@ if command -v nix >/dev/null 2>&1; then
     # its own stderr in the message, instead of being swallowed and
     # misreported downstream as "not the same derivation".
     for system in aarch64-linux x86_64-linux; do
-        for check_name in home-activation ai-tools; do
+        for check_name in home-activation ai-tools bootstrap-essentials; do
             if check_output="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#checks.$system.$check_name.drvPath" 2>&1)"; then
                 test_pass "checks.$system.$check_name evaluates"
             else
@@ -95,6 +95,8 @@ else
         test_skip "nix not available, skipping checks.$system.home-activation warnings check"
         test_skip "nix not available, skipping checks.$system.ai-tools evaluation"
         test_skip "nix not available, skipping checks.$system.ai-tools warnings check"
+        test_skip "nix not available, skipping checks.$system.bootstrap-essentials evaluation"
+        test_skip "nix not available, skipping checks.$system.bootstrap-essentials warnings check"
         test_skip "nix not available, skipping checks.$system.alias-is-identity evaluation"
     done
 fi

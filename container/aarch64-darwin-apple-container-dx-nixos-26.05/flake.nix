@@ -267,7 +267,13 @@
             # evaluation this replaced was redundant.
             home-activation = homeConfiguration.activationPackage;
 
-            inherit (packages) ai-tools;
+            # bootstrap-essentials is not a subset of dxPackages (see its
+            # own comment above), so it is not already forced by
+            # home-activation the way packages.<system>.default was --
+            # without its own check, a package present only for
+            # aarch64-linux would go undetected on x86_64-linux until the
+            # QNAP's bootstrap ran it for real.
+            inherit (packages) ai-tools bootstrap-essentials;
 
             # homeConfigurations.dx is meant to be the SAME derivation as
             # homeConfigurations."dx-aarch64-linux" (a real alias, not a
