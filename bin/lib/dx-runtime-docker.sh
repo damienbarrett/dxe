@@ -149,6 +149,26 @@ dx_runtime_docker_require_bin() {
     printf '%s' "$DXE_RUNTIME_DOCKER_BIN"
 }
 
+# The one production entry point for "run the discovered docker CLI, with
+# these verb/args, on DX_REMOTE_HOST" (Fable A7; findings.md WP8.3 step 2).
+# Every dx_runtime_docker_<op> below whose ENTIRE remote call is "resolve
+# the binary, then run one docker verb with it" calls this instead of
+# repeating `local bin; bin="$(dx_runtime_docker_require_bin)" || return 1;
+# dx_runtime_docker_ssh_exec "$bin" ...` at its own top -- a second
+# `dx_runtime_docker_require_bin` call within the same process is a cached,
+# no-op read (dx_runtime_docker_discover_bin's own top guard), never a
+# second ssh round trip, so a caller that already resolved `bin` itself for
+# some OTHER reason (a label lookup, the exec tty branch's own raw ssh
+# call) and also calls this loses nothing by doing so. Exit status and
+# stdin/stdout/stderr pass through unchanged, exactly like
+# dx_runtime_docker_ssh_exec itself (a plain function call, no subshell or
+# pipe of its own).
+dx_runtime_docker_cli() {
+    local bin
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_ssh_exec "$bin" "$@"
+}
+
 # --- Guest SSH address discovery (Branch 11 / Phase 5, DQ5) -----------------
 #
 # The address the guest's own SSH server publishes on AND is reached at:
@@ -374,9 +394,8 @@ dx_runtime_docker_daemon_id_cache_read() {
 # below, reads the cache, and only to avoid dialling at all.
 dx_runtime_docker_discover_daemon_id() {
     [ -z "${DXE_RUNTIME_DOCKER_DAEMON_ID:-}" ] || return 0
-    local bin fields id name arch os
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    fields="$(dx_runtime_docker_ssh_exec "$bin" info --format '{{.ID}}|{{.Name}}|{{.Architecture}}|{{.OperatingSystem}}' 2>/dev/null)" || {
+    local fields id name arch os
+    fields="$(dx_runtime_docker_cli info --format '{{.ID}}|{{.Name}}|{{.Architecture}}|{{.OperatingSystem}}' 2>/dev/null)" || {
         echo "Error: could not query Docker daemon info on $DX_REMOTE_HOST." >&2
         return 1
     }
@@ -423,11 +442,11 @@ dx_runtime_docker_available() {
 # reusing an already-discovered binary path but not re-running the full
 # preflight chain above.
 dx_runtime_docker_system_running() {
-    local bin stderr_file rc
-    bin="$(dx_runtime_docker_require_bin)" || return 1
+    local stderr_file rc
+    dx_runtime_docker_require_bin >/dev/null || return 1
     stderr_file="$(mktemp "${TMPDIR:-/tmp}/dxe-docker-info-stderr.XXXXXX")" || return 1
     rc=0
-    dx_runtime_docker_ssh_exec "$bin" info >/dev/null 2>"$stderr_file" || rc=$?
+    dx_runtime_docker_cli info >/dev/null 2>"$stderr_file" || rc=$?
     DXE_RUNTIME_DOCKER_LAST_FAILURE="$(cat "$stderr_file")"
     rm -f "$stderr_file"
     return "$rc"
@@ -485,9 +504,7 @@ dx_runtime_docker_host_identity() {
 # keep working unmodified for either runtime.
 
 dx_runtime_docker_image_exists() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" image inspect "$1" >/dev/null 2>&1
+    dx_runtime_docker_cli image inspect "$1" >/dev/null 2>&1
 }
 
 # Branch 11 / Phase 3 (docs/refactor/direct-volume-storage.md section 5.1):
@@ -499,45 +516,34 @@ dx_runtime_docker_image_exists() {
 # digest comparison; Docker's template renders "sha256:<hex>" itself, no
 # parsing needed on the controller.
 dx_runtime_docker_image_identity() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" image inspect --format '{{.Id}}' "$1"
+    dx_runtime_docker_cli image inspect --format '{{.Id}}' "$1"
 }
 
 dx_runtime_docker_image_list() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" image ls "$@" --format 'table {{.Repository}}	{{.Tag}}	{{.ID}}	{{.CreatedSince}}	{{.Size}}'
+    dx_runtime_docker_cli image ls "$@" --format 'table {{.Repository}}	{{.Tag}}	{{.ID}}	{{.CreatedSince}}	{{.Size}}'
 }
 
 dx_runtime_docker_volume_exists() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" volume inspect "$1" >/dev/null 2>&1
+    dx_runtime_docker_cli volume inspect "$1" >/dev/null 2>&1
 }
 
 dx_runtime_docker_container_exists() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" container inspect "$1" >/dev/null 2>&1
+    dx_runtime_docker_cli container inspect "$1" >/dev/null 2>&1
 }
 
 dx_runtime_docker_container_running() {
-    local bin state
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    state="$(dx_runtime_docker_ssh_exec "$bin" container inspect --format '{{.State.Running}}' "$1" 2>/dev/null)" || return 1
+    local state
+    state="$(dx_runtime_docker_cli container inspect --format '{{.State.Running}}' "$1" 2>/dev/null)" || return 1
     state="$(printf '%s\n' "$state" | tail -n1 | tr -d '\r')"
     [ "$state" = true ]
 }
 
 dx_runtime_docker_container_list() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
     # io.dxe.system (Branch 11 / Phase 4 design point E) is appended as a
     # fourth column, keeping {{.Names}} first so bin/dx-status's own
     # column-1-anchored `grep "^${DX_CONTAINER_NAME}[[:space:]]"` still works
     # unmodified.
-    dx_runtime_docker_ssh_exec "$bin" ps "$@" --format 'table {{.Names}}	{{.Image}}	{{.Status}}	{{.Label "io.dxe.system"}}'
+    dx_runtime_docker_cli ps "$@" --format 'table {{.Names}}	{{.Image}}	{{.Status}}	{{.Label "io.dxe.system"}}'
 }
 
 # --- Lifecycle (item 4) -----------------------------------------------------
@@ -603,8 +609,7 @@ dx_runtime_docker_label_flags() {
 }
 
 dx_runtime_docker_container_create() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
+    dx_runtime_docker_require_bin >/dev/null || return 1
     local name="" image="" entrypoint_cmd="" flags=() entrypoint_args=() guest_addr=""
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -673,27 +678,21 @@ dx_runtime_docker_container_create() {
     # dx_runtime_docker_exec's own module comment above for the full
     # reasoning and bin/lib/dx-runtime-apple.sh's container_create for the
     # same fix on the Apple side.
-    dx_runtime_docker_ssh_exec "$bin" create --name "$name" --entrypoint sh \
+    dx_runtime_docker_cli create --name "$name" --entrypoint sh \
         "${flags[@]+"${flags[@]}"}" "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}" \
         "$image" -c "$entrypoint_cmd" -- "${entrypoint_args[@]+"${entrypoint_args[@]}"}"
 }
 
 dx_runtime_docker_container_start() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" start "$@"
+    dx_runtime_docker_cli start "$@"
 }
 
 dx_runtime_docker_container_stop() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" stop "$@"
+    dx_runtime_docker_cli stop "$@"
 }
 
 dx_runtime_docker_container_kill() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" kill "$@"
+    dx_runtime_docker_cli kill "$@"
 }
 
 # --- DQ6 label verification before deletion (item 5) -----------------------
@@ -758,7 +757,7 @@ dx_runtime_docker_container_delete() {
     for name in "$@"; do :; done
     fields="$(dx_runtime_docker_container_labels "$bin" "$name")" || true
     dx_runtime_docker_verify_labels container "$name" container "$fields" || return 1
-    dx_runtime_docker_ssh_exec "$bin" rm "$@"
+    dx_runtime_docker_cli rm "$@"
 }
 
 # The Containerfile's pinned base image reference. qnap-dxe-plan.md's
@@ -808,7 +807,7 @@ dx_runtime_docker_base_image_ref() {
 # "$DX_CONTEXT_DIR") -- not a docker-ssh-specific shape, but the one
 # existing caller's shape, which this adapter must accept unchanged.
 dx_runtime_docker_image_build() {
-    local image="" context_dir="" bin ref
+    local image="" context_dir="" ref
     case "$1" in
         -t)
             [ "$#" -ge 3 ] || { echo "Error: dx_runtime_docker_image_build expected '-t IMAGE CONTEXT_DIR'." >&2; return 1; }
@@ -820,9 +819,8 @@ dx_runtime_docker_image_build() {
             ;;
     esac
     ref="$(dx_runtime_docker_base_image_ref "$context_dir")" || return 1
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" pull "$ref" || return 1
-    dx_runtime_docker_ssh_exec "$bin" tag "$ref" "$image"
+    dx_runtime_docker_cli pull "$ref" || return 1
+    dx_runtime_docker_cli tag "$ref" "$image"
 }
 
 # No label check possible (see this section's own module comment): images
@@ -830,9 +828,7 @@ dx_runtime_docker_image_build() {
 # (bin/dx-destroy-image) already addresses by exact configured name; that
 # is the only protection available here.
 dx_runtime_docker_image_delete() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" image rm "$@"
+    dx_runtime_docker_cli image rm "$@"
 }
 
 # Role is derived from which configured volume name was passed -- the one
@@ -850,14 +846,14 @@ dx_runtime_docker_volume_role() {
 }
 
 dx_runtime_docker_volume_create() {
-    local bin role
-    bin="$(dx_runtime_docker_require_bin)" || return 1
+    local role
+    dx_runtime_docker_require_bin >/dev/null || return 1
     role="$(dx_runtime_docker_volume_role "$1")" || {
         echo "Error: dx_runtime_docker_volume_create: '$1' is not one of the configured DXE volumes (DX_NIX_VOLUME/DX_PERSIST_VOLUME/DX_BOOTSTRAP_VOLUME); refusing to create it unlabelled (qnap-dxe-plan.md DQ6)." >&2
         return 1
     }
     dx_runtime_docker_label_flags "$role"
-    dx_runtime_docker_ssh_exec "$bin" volume create "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}" "$@"
+    dx_runtime_docker_cli volume create "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}" "$@"
 }
 
 dx_runtime_docker_volume_delete() {
@@ -870,7 +866,7 @@ dx_runtime_docker_volume_delete() {
     }
     fields="$(dx_runtime_docker_volume_labels "$bin" "$name")" || true
     dx_runtime_docker_verify_labels volume "$name" "$role" "$fields" || return 1
-    dx_runtime_docker_ssh_exec "$bin" volume rm "$@"
+    dx_runtime_docker_cli volume rm "$@"
 }
 
 # --- Whole-operation destructive plan (Branch 11 / Phase 6, item 7) -------
@@ -960,10 +956,9 @@ dx_runtime_docker_destructive_plan_and_verify() {
 # every way Docker cannot say: the query fails outright, the volume is
 # absent from the report, or the size is empty/"N/A".
 dx_runtime_docker_volume_usage() {
-    local bin name output
-    bin="$(dx_runtime_docker_require_bin)" || return 1
+    local name output
     name="$1"
-    output="$(dx_runtime_docker_ssh_exec "$bin" system df -v --format "{{range .Volumes}}{{if eq .Name \"$name\"}}{{.Size}}{{end}}{{end}}" 2>/dev/null)" || {
+    output="$(dx_runtime_docker_cli system df -v --format "{{range .Volumes}}{{if eq .Name \"$name\"}}{{.Size}}{{end}}{{end}}" 2>/dev/null)" || {
         printf 'unknown\n'
         return 0
     }
@@ -1033,20 +1028,16 @@ dx_runtime_docker_exec() {
         ssh_opts+=(-tt)
         ssh "${ssh_opts[@]}" "${DX_REMOTE_HOST:?}" "$(dx_runtime_docker_quote_argv "$bin" exec "${flags[@]+"${flags[@]}"}" "$@")"
     else
-        dx_runtime_docker_ssh_exec "$bin" exec "${flags[@]+"${flags[@]}"}" "$@"
+        dx_runtime_docker_cli exec "${flags[@]+"${flags[@]}"}" "$@"
     fi
 }
 
 dx_runtime_docker_logs() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" logs "$@"
+    dx_runtime_docker_cli logs "$@"
 }
 
 dx_runtime_docker_export() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" export "$@"
+    dx_runtime_docker_cli export "$@"
 }
 
 # Ephemeral, no-persistent-container run. Apple's own retry loop
@@ -1058,9 +1049,7 @@ dx_runtime_docker_export() {
 # that is new evidence for a scoped retry then, not something to guess at
 # now (docs/refactor/docker-adapter-mapping.md section 5).
 dx_runtime_docker_run_ephemeral() {
-    local bin
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    dx_runtime_docker_ssh_exec "$bin" run "$@"
+    dx_runtime_docker_cli run "$@"
 }
 
 # --- Remote per-profile lock (item 6) --------------------------------------
@@ -1096,15 +1085,14 @@ dx_runtime_docker_lock_owner_token() {
 # token it just claimed, so a caller that wants to release only its own
 # acquisition can pass that exact token back to dx_runtime_docker_lock_release.
 dx_runtime_docker_lock_acquire() {
-    local bin lock_name owner
-    bin="$(dx_runtime_docker_require_bin)" || return 1
+    local lock_name owner
     lock_name="$(dx_runtime_docker_lock_name)"
     owner="$(dx_runtime_docker_lock_owner_token)"
     # Branch 11 / Phase 4: reuses the same shared label helper containers
     # and volumes already call, so the lock picks up io.dxe.system (and any
     # future addition) without duplicating the other four labels by hand.
     dx_runtime_docker_label_flags lock
-    dx_runtime_docker_ssh_exec "$bin" create --name "$lock_name" \
+    dx_runtime_docker_cli create --name "$lock_name" \
         "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}" \
         --label "io.dxe.owner=$owner" \
         "$DX_IMAGE" >/dev/null 2>&1 || {
@@ -1118,10 +1106,9 @@ dx_runtime_docker_lock_acquire() {
 # succeeds (a missing lock is a normal, reportable state, not an error).
 # This is the read-only half bin/dx-status exposes.
 dx_runtime_docker_lock_audit() {
-    local bin lock_name fields owner created
-    bin="$(dx_runtime_docker_require_bin)" || return 1
+    local lock_name fields owner created
     lock_name="$(dx_runtime_docker_lock_name)"
-    fields="$(dx_runtime_docker_ssh_exec "$bin" container inspect --format '{{index .Config.Labels "io.dxe.owner"}}|{{.Created}}' "$lock_name" 2>/dev/null)" || {
+    fields="$(dx_runtime_docker_cli container inspect --format '{{index .Config.Labels "io.dxe.owner"}}|{{.Created}}' "$lock_name" 2>/dev/null)" || {
         printf 'not held\n'
         return 0
     }
@@ -1139,10 +1126,9 @@ dx_runtime_docker_lock_audit() {
 # staleness, and that decision is the operator's, made outside this
 # function, before calling it with --force.
 dx_runtime_docker_lock_release() {
-    local expected_owner="$1" bin lock_name fields managed profile role owner
-    bin="$(dx_runtime_docker_require_bin)" || return 1
+    local expected_owner="$1" lock_name fields managed profile role owner
     lock_name="$(dx_runtime_docker_lock_name)"
-    fields="$(dx_runtime_docker_ssh_exec "$bin" container inspect --format '{{index .Config.Labels "io.dxe.managed"}}|{{index .Config.Labels "io.dxe.profile"}}|{{index .Config.Labels "io.dxe.role"}}|{{index .Config.Labels "io.dxe.owner"}}' "$lock_name" 2>/dev/null)" || {
+    fields="$(dx_runtime_docker_cli container inspect --format '{{index .Config.Labels "io.dxe.managed"}}|{{index .Config.Labels "io.dxe.profile"}}|{{index .Config.Labels "io.dxe.role"}}|{{index .Config.Labels "io.dxe.owner"}}' "$lock_name" 2>/dev/null)" || {
         echo "Error: no lock '$lock_name' to release." >&2
         return 1
     }
@@ -1156,7 +1142,7 @@ dx_runtime_docker_lock_release() {
         echo "Error: refusing to release '$lock_name': it is held by a different owner ($owner), not the one requesting release ($expected_owner)." >&2
         return 1
     fi
-    dx_runtime_docker_ssh_exec "$bin" rm "$lock_name" >/dev/null
+    dx_runtime_docker_cli rm "$lock_name" >/dev/null
 }
 
 # --- Runtime capability queries (qnap-dxe-plan.md DQ2/DQ3/DQ4/DQ8) --------
