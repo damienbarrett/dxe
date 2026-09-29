@@ -403,6 +403,23 @@ fi
 # can leak into what these assertions check.
 start_home="$fixture/start-container-home"
 
+# A recording PASSTHROUGH for DX_SLEEP (Fable D10): logs the call, then
+# actually sleeps for real (via the genuine `sleep` binary elsewhere on
+# PATH -- this fixture never names anything else "sleep"), so a fixture that
+# needs a REAL background writer's delay to actually elapse (case (e) below)
+# keeps working exactly as before, but the count of confirm-loop polls is
+# now a transcript on disk instead of an elapsed-seconds guess: zero
+# recorded sleeps proves the skip path never entered the confirm loop at
+# all; one or more proves the confirm loop actually polled rather than
+# checking once. Never a no-op stub (that would only prove the confirm loop
+# stopped calling sleep, not that it kept working) -- see this repo's own
+# "no-op stub hides root-vs-dx bugs" lesson applied to timing instead of
+# privilege.
+fake_tool_write "$fake_dir" fake-sleep '
+[ -z "${DXE_FAKE_SLEEP_LOG:-}" ] || printf "%s\n" "$1" >> "$DXE_FAKE_SLEEP_LOG"
+exec sleep "$@"
+'
+
 run_start_container() {
     env PATH="$fake_dir:$PATH" \
         HOME="$start_home" \
@@ -476,37 +493,49 @@ fi
 
 # (c) Unchanged content (skip path): today's behaviour exactly -- no wait,
 # even with a generously large bound configured, proving the confirm loop
-# never runs on this path.
+# never runs on this path. Proven through the DX_SLEEP transcript (zero
+# recorded calls) rather than an elapsed-seconds bound (Fable D10), which
+# would falsely fail on a host too loaded to finish the skip path in 5s and
+# falsely pass a confirm loop that polled a handful of times very quickly.
 start_root_c="$fixture/start-c"; mkdir -p "$start_root_c"; : > "$start_root_c/.dx-bootstrap-waiting"
 run_start_container "$good" "$start_root_c" 1 >/dev/null 2>&1 || true
-SECONDS=0
+start_c_sleep_log="$fixture/start-c-sleep.log"
 start_c_status=0
-start_c_out="$(run_start_container "$good" "$start_root_c" 30 2>&1)" || start_c_status=$?
-start_c_elapsed=$SECONDS
+start_c_out="$(DX_SLEEP=fake-sleep DXE_FAKE_SLEEP_LOG="$start_c_sleep_log" \
+    run_start_container "$good" "$start_root_c" 30 2>&1)" || start_c_status=$?
+start_c_sleep_count=0
+[ -f "$start_c_sleep_log" ] && start_c_sleep_count="$(wc -l < "$start_c_sleep_log" | tr -d ' ')"
 if [ "$start_c_status" -eq 0 ] && printf '%s\n' "$start_c_out" | stdin_matches -F 'stays current' \
-    && ! printf '%s\n' "$start_c_out" | stdin_matches -F 'Error:' && [ "$start_c_elapsed" -lt 5 ]; then
+    && ! printf '%s\n' "$start_c_out" | stdin_matches -F 'Error:' && [ "$start_c_sleep_count" -eq 0 ]; then
     test_pass "dx-start-container's unchanged-content skip is unaffected: no wait despite a 30s bound"
 else
-    test_fail "dx-start-container's unchanged-content skip is unaffected: no wait despite a 30s bound (status $start_c_status, elapsed ${start_c_elapsed}s, out '$start_c_out')"
+    test_fail "dx-start-container's unchanged-content skip is unaffected: no wait despite a 30s bound (status $start_c_status, sleeps $start_c_sleep_count, out '$start_c_out')"
 fi
 
 # (e) Published, lease appears late but within the bound: still succeeds --
 # guards against the deadline being too tight, and against a poll loop that
 # only checks once instead of actually polling (a 2s writer delay forces at
-# least one full 1s sleep-and-recheck cycle before the match).
+# least one full 1s sleep-and-recheck cycle before the match). The writer's
+# 2s delay is real (a genuine background process, not something DX_SLEEP
+# could stand in for), so DX_SLEEP here is the RECORDING passthrough
+# (actually sleeps, just also logs), and "the poll loop actually polls" is
+# proven by at least one recorded sleep rather than an elapsed-seconds
+# window (Fable D10).
 start_root_e="$fixture/start-e"; mkdir -p "$start_root_e"; : > "$start_root_e/.dx-bootstrap-waiting"
 lease_the_published_generation "$start_root_e" 2 &
 lease_e_pid=$!
-SECONDS=0
+start_e_sleep_log="$fixture/start-e-sleep.log"
 start_e_status=0
-start_e_out="$(run_start_container "$good" "$start_root_e" 5 2>&1)" || start_e_status=$?
-start_e_elapsed=$SECONDS
+start_e_out="$(DX_SLEEP=fake-sleep DXE_FAKE_SLEEP_LOG="$start_e_sleep_log" \
+    run_start_container "$good" "$start_root_e" 5 2>&1)" || start_e_status=$?
 wait "$lease_e_pid" 2>/dev/null || true
-if [ "$start_e_status" -eq 0 ] && [ "$start_e_elapsed" -ge 1 ] && [ "$start_e_elapsed" -lt 5 ] \
+start_e_sleep_count=0
+[ -f "$start_e_sleep_log" ] && start_e_sleep_count="$(wc -l < "$start_e_sleep_log" | tr -d ' ')"
+if [ "$start_e_status" -eq 0 ] && [ "$start_e_sleep_count" -ge 1 ] \
     && ! printf '%s\n' "$start_e_out" | stdin_matches -F 'Error:'; then
     test_pass "dx-start-container succeeds on a lease that appears late but within the bound (the poll loop actually polls)"
 else
-    test_fail "dx-start-container succeeds on a lease that appears late but within the bound (status $start_e_status, elapsed ${start_e_elapsed}s, out '$start_e_out')"
+    test_fail "dx-start-container succeeds on a lease that appears late but within the bound (status $start_e_status, sleeps $start_e_sleep_count, out '$start_e_out')"
 fi
 
 assert_file_not_contains "$BASE_DIR/bin/dx-start-container" 'OLD_BASE' "dx-start-container no longer probes the guest for the old-base signature (docs/refactor/migration-gates.md#old-base-guards)"
