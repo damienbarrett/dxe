@@ -1071,7 +1071,11 @@ run_docker_status() {
         for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
         export PATH="$docker_status_fixture:/usr/bin:/bin"
         export HOME="$docker_status_fixture/home"
-        export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DXE_RUNTIME_DOCKER_BIN=docker
+        # DX_NIX_STORAGE_MODE=direct-volume (WP4.3, Astra F10 / Muse C1):
+        # dx_config_validate_cross_fields now requires it alongside
+        # DX_RUNTIME=docker-ssh; unrelated to this fixture's own
+        # Image/Container column-shape assertions.
+        export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_NIX_STORAGE_MODE=direct-volume DXE_RUNTIME_DOCKER_BIN=docker
         export DX_CONTAINER_NAME=dxe-status-fixture DX_IMAGE=dx-qnap-spike-nixos
         "$BASE_DIR/bin/dx-status"
     )
@@ -1215,7 +1219,11 @@ run_thirdstate_status() {
         for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
         export PATH="$thirdstate_fixture:/usr/bin:/bin"
         export HOME="$thirdstate_fixture/home"
-        export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DXE_RUNTIME_DOCKER_BIN=docker
+        # DX_NIX_STORAGE_MODE=direct-volume (WP4.3, Astra F10 / Muse C1):
+        # dx_config_validate_cross_fields now requires it alongside
+        # DX_RUNTIME=docker-ssh; unrelated to this fixture's own
+        # bootstrap-progress/login-shell assertions.
+        export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_NIX_STORAGE_MODE=direct-volume DXE_RUNTIME_DOCKER_BIN=docker
         export DX_CONTAINER_NAME=dxe-status-fixture DX_IMAGE=dx-qnap-thirdstate
         DXE_RUNTIME_GUEST_SSH_ADDRESS="$(printf '%s.%s.%s.%s' 100 64 1 3)"
         export DXE_RUNTIME_GUEST_SSH_ADDRESS
