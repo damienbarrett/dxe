@@ -9,14 +9,19 @@
 #   4. (optional) drop the note next to the Ctrl-J/Ctrl-K maps in nvim/keymaps.nix.
 # Nothing else depends on it. Once removed, the Ctrl-J/Ctrl-K scroll aliases in
 # keymaps.nix take effect again.
-{ pkgs, ... }:
 {
-  extraPlugins = [ pkgs.vimPlugins.vim-tmux-navigator ];
+  # WP7.7 (docs/reviews/2026-09-29-fable.md finding C7): the pinned NixVim
+  # has a typed module for this plugin (`plugins.tmux-navigator`), replacing
+  # a raw `extraPlugins = [ pkgs.vimPlugins.vim-tmux-navigator ];` plus
+  # `globals.tmux_navigator_no_mappings = 1;`.
+  plugins.tmux-navigator = {
+    enable = true;
+    settings.no_mappings = 1;
+  };
 
   # Map the keys explicitly (rather than the plugin's auto-mappings) so every
   # binding is visible in the Nix config. The Ctrl-J / Ctrl-K scroll aliases
   # were removed from keymaps.nix so these win (Ctrl-D / Ctrl-U still scroll).
-  globals.tmux_navigator_no_mappings = 1;
 
   keymaps = [
     { mode = "n"; key = "<C-h>"; action = "<cmd>TmuxNavigateLeft<CR>";  options = { silent = true; desc = "Navigate Left (tmux/vim)"; }; }

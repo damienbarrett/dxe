@@ -1,8 +1,11 @@
+# extra_plugins/'s admission rule (Fable C7): a plugin lives here only when
+# no upstream NixVim module exists for it -- true for outline.nvim.
 { pkgs, ... }:
 {
   extraPlugins = [
     (pkgs.vimUtils.buildVimPlugin {
-      name = "outline-nvim";
+      pname = "outline.nvim";
+      version = "0-unstable-c293eb5";
       doCheck = false;
       src = pkgs.fetchFromGitHub {
         owner = "hedyhli";
