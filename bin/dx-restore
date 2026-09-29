@@ -51,10 +51,23 @@ if [ -n "$SOURCE_CONTAINER" ]; then
 fi
 
 BACKUP_DIR="$(dx_backup_resolve_dir "$SOURCE_CONTAINER")"
+mkdir -p "$BACKUP_DIR"
+
+# Astra F5 / WP6.6: the SAME lock dx-backup takes over this exact mirror
+# directory (see bin/dx-backup's own comment) -- a restore reading `current`
+# (or a generation being carried into it) while a backup is mid-publish is
+# exactly the interleaving Astra F5 flags, so restore refuses/waits for it
+# too, never just reading ahead. The trap is set immediately (lock-release
+# only) so a failure before WORK even exists below still releases it; it is
+# replaced with the combined trap the moment WORK exists.
+BACKUP_LOCK="$BACKUP_DIR/.lock"
+dx_lock_acquire "$BACKUP_LOCK" "${DX_TUNNEL_LOCK_TIMEOUT:-5}" || exit 1
+trap 'dx_lock_release "$BACKUP_LOCK" >/dev/null 2>&1 || true' EXIT
+
 [ -d "$BACKUP_DIR/current" ] || { echo "Error: no backup mirror at $BACKUP_DIR/current. Run dx-backup first." >&2; exit 1; }
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dx-restore.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
+trap 'rm -rf "$WORK"; dx_lock_release "$BACKUP_LOCK" >/dev/null 2>&1 || true' EXIT
 TARGETS="$WORK/targets.txt"
 STATUS="$WORK/status.tsv"
 
