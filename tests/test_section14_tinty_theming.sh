@@ -498,7 +498,21 @@ assert_file_contains "$LUALINE_NIX" 'theme = "tinted"' "lualine uses tinted them
 assert_file_not_contains "$LUALINE_NIX" 'theme = "rose-pine"' "lualine no longer hard-codes rose-pine"
 assert_file_contains "$ROSE_PINE_NIX" "pkgs.vimPlugins.rose-pine" "Rose Pine remains packaged as fallback"
 
-assert_file_contains "$RUNNER" "0-27" "test runner help advertises current section range"
+# Behavioural, not textual: KNOWN_SECTIONS is the runner's real dispatch
+# table, and --help's advertised range must track its last entry rather than
+# a literal that goes stale every time a new section is added (it did: this
+# assertion named "0-27" long after KNOWN_SECTIONS grew past 27).
+known_sections="$(sed -n 's/^KNOWN_SECTIONS="\(.*\)"$/\1/p' "$RUNNER")"
+last_known_section="${known_sections##* }"
+runner_help_output="$(bash "$RUNNER" --help 2>&1)"
+case "$runner_help_output" in
+    *"(0-$last_known_section)"*)
+        test_pass "test runner help advertises current section range"
+        ;;
+    *)
+        test_fail "test runner help advertises current section range (expected (0-$last_known_section), got: $runner_help_output)"
+        ;;
+esac
 assert_file_contains "$RUNNER" 'run_test "$SCRIPT_DIR/test_section14_tinty_theming.sh" "14"' "test runner explicitly runs section 14"
 assert_file_not_contains "$FLAKE_NIX" "stylix" "Stylix dependency was not added"
 
