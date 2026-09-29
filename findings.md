@@ -302,9 +302,9 @@ Every review ID and where it lands.
 - [ ] **WP6.6** Transactional mirror: per-backup lock shared with restore;
   stage, verify hashes, publish generation by atomic pointer. *Red:*
   truncated archive leaves the previous snapshot usable. (Astra F5)
-- [ ] **WP6.7** Healthcheck validates full lease identity and a completion
+- [x] **WP6.7** Healthcheck validates full lease identity and a completion
   marker. *Red:* stale lease file → unhealthy. (Astra F7)
-- [ ] **WP6.8** Healthcheck program fixed; `DX_BOOTSTRAP_PATH` transported as
+- [x] **WP6.8** Healthcheck program fixed; `DX_BOOTSTRAP_PATH` transported as
   data. *Red:* path containing `$(printf injected >&2)` produces no side
   effect. (Astra F8)
 - [ ] **WP6.9** Restore: one-pass parent-dir dedupe, bounded transport,

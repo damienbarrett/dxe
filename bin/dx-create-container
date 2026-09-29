@@ -75,16 +75,14 @@ DX_IMAGE_IDENTITY="$(dx_runtime_image_identity "$DX_IMAGE")" || {
 # by construction -- reachable through the same docker exec/container exec
 # plane Container Station's own health display already uses, never the
 # guest's tailnet path, so a transient network issue never reports the
-# guest unhealthy. Reuses the existing execution-lease/current-symlink
-# state dx-status's Bootstrap Generation section already reads (no new
-# guest-side marker): healthy once the guest has leased the SAME generation
-# bootstrap's own launcher published as current (bin/lib/dx-ssh-common.sh's
-# dx_bootstrap_launch_command) -- exactly the "no drift" case
-# dx_bootstrap_report_drift already names. $DX_BOOTSTRAP_PATH is
-# interpolated here (a host-known, fixed guest path, never user data);
-# every other variable in the command is guest-side and must stay literal,
-# hence the backslash-escaped $.
-DX_HEALTHCHECK_CMD="cur=\$(readlink \"$DX_BOOTSTRAP_PATH/current\" 2>/dev/null) || exit 1; gen=\${cur#generations/}; [ -n \"\$gen\" ] || exit 1; ls \"$DX_BOOTSTRAP_PATH\"/.locks/leases/\"\$gen\".* >/dev/null 2>&1"
+# guest unhealthy. Validates the full lease identity plus a bootstrap
+# completion marker (readiness, not mere generation ownership -- Astra F7)
+# via bin/lib/dx-ssh-common.sh's dx_bootstrap_health_command, a single fixed
+# program with no configuration interpolated into it (D6, Astra F8):
+# $DX_BOOTSTRAP_PATH crosses as container-environment DATA below (--env),
+# read by the probe itself as "$DX_BOOTSTRAP_PATH", never as text spliced
+# into the generated program.
+DX_HEALTHCHECK_CMD="$(dx_bootstrap_health_command)"
 
 CREATE_ARGS=(
     --name "$DX_CONTAINER_NAME"
@@ -100,6 +98,7 @@ CREATE_ARGS=(
     --env "DX_NIX_STORAGE_MODE=$DX_NIX_STORAGE_MODE"
     --env "DX_IMAGE_IDENTITY=$DX_IMAGE_IDENTITY"
     --env "DX_GUEST_SYSTEM=$DX_GUEST_SYSTEM"
+    --env "DX_BOOTSTRAP_PATH=$DX_BOOTSTRAP_PATH"
     --memory "$DX_CONTAINER_MEMORY"
     --cpus "$DX_CONTAINER_CPUS"
     # No bind address: each adapter prepends its own guest SSH address
