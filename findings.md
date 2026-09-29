@@ -270,7 +270,7 @@ Every review ID and where it lands.
   intact (run unprivileged). (Astra F1)
 - [x] 321c4db **WP6.2** Detached-HEAD and stash/tag reachability in whole-repo
   selection. *Red:* detached local commit yields entries and `.git`. (Astra F2)
-- [ ] **WP6.3** Restore directory selection joins paths as data. *Red:*
+- [x] c1b0feb **WP6.3** Restore directory selection joins paths as data. *Red:*
   `a&b`, `#`, backslash, leading hyphen. (Astra F9)
 - [ ] **WP6.4** One owned-resource check before adopt/attach/start/stop/kill/
   delete; schema and system labels validated. *Red:* foreign running
@@ -377,3 +377,4 @@ Every review ID and where it lands.
 - **2026-09-30** Fourth local kcov run: contracts and sections 3/22 green under kcov; `test_persist_backup_select.sh` failed WP6.1's chmod-000 case because the image runs as root (Astra F1 warned about this). Fix in progress: drop privileges with `setpriv` when root, classed skip otherwise.
 - **2026-09-30** Permission-denied case drops to uid 65534 via `setpriv` when root (classed skip without it); verified 94/94 as root under kcov in the image.
 - **2026-09-30** WP4.2 landed (7 commits through 41822f3): `dx_wait_until` with `DX_SLEEP`; `container_wait_stopped`, `dx_bootstrap_confirm_publication`, `dx_lock_acquire`, both `dx-sync-bootstrap` loops migrated (the 30-iteration loop now honours `DX_BOOTSTRAP_WAIT_TIMEOUT`); `dx-wait-ssh` keeps its wall-clock loop by design and only takes the `DX_SLEEP` seam; the launcher grace loop is guest heredoc text (WP5.2). Suite 36 (`test_host_util.sh`) registered in all runners. Two small documented behaviour refinements in `dx_lock_acquire` (identity check up front; no double timeout message on symlink refusal).
+- **2026-09-30** WP6.3 landed (945d15d, c1b0feb): restore directory selection joins paths as data through one `dx_backup_restore_list_prefixed`; tab/newline names rejected explicitly; overlapping selections de-duplicated. `DXE_SKIP_SLOW_TESTS=1` skips the two 60,000-target cases honestly (CI still runs them). Restore suite 45 → 48 (+2 skips under the flag).
