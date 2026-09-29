@@ -350,9 +350,27 @@ accident. Inside `$DX_BACKUP_DIR/$DX_CONTAINER_NAME`:
 
 | Path | Contents |
 | --- | --- |
-| `current/` | One mirror of the at-risk set. No dated generations — every run updates the same tree in place. |
-| `manifest.tsv` | `path<TAB>size<TAB>mtime<TAB>sha256` for every mirrored file, written atomically (via a temp file plus `mv`) only after a run's transfer fully succeeds. |
+| `current` | A symlink to the published `generations/<id>/` (never a plain directory once a run has published through it). Reads (`dx-restore`, `--dry-run`) go through this path exactly as before; only `dx-backup`'s publish step ever repoints it. |
+| `generations/<id>/` | One full mirror of the at-risk set as of that run, plus that run's own `manifest.tsv` (`path<TAB>size<TAB>mtime<TAB>sha256` for every mirrored file). Unchanged files are hard-linked forward from the previous generation, never copied or edited in place; only a changed file's fresh bytes land as new files. |
+| `.lock/` | A per-mirror lock directory (`bin/lib/dx-host-util.sh`'s `dx_lock_acquire`), shared by `dx-backup` and `dx-restore`. |
 | `last-run.log` | One line per completed run: timestamp and the transfer summary. |
+
+**Generations and locking (Astra F5).** A run that changes anything stages
+its transfer into a brand-new `generations/<id>/` — carrying every unchanged
+entry forward from the previous generation as a hard link, landing only the
+fetched files there, and verifying each fetched file's hash against the
+selection's own listing — and publishes it by repointing the `current`
+symlink only once every one of those steps has fully succeeded. A truncated
+transfer, a hash mismatch between listing and transfer, or a failed publish
+all leave the previously published generation untouched; only the current
+generation plus the one it replaced are ever retained, older ones are
+pruned. `dx-backup` and `dx-restore` take the same per-mirror lock before
+touching `current` or a generation, so two overlapping backups, or a backup
+and a restore, can never interleave their own reads or writes of the
+mirror — the second one refuses (or waits, up to a bounded timeout) rather
+than reading or writing a partly-published state. `--dry-run`/`--summary`
+never take this lock and never create the mirror directory: they only read
+the guest listing and the previously published generation's manifest.
 
 **What is captured (the at-risk set).** `dx-backup` runs a selector inside the
 guest, as `dx`, over `/persist`. For every git work tree it finds there (a
