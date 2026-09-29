@@ -87,14 +87,20 @@ dx_destructive_plan_and_verify() {
     dx_runtime_docker_destructive_plan_and_verify "$@"
 }
 
+# dx_wait_until's predicate for container_wait_stopped (WP4.2 / Fable A6):
+# succeeds once the container is no longer running; otherwise prints the
+# same "Waiting for container ... to stop..." notice this loop has always
+# printed before backing off, and fails so dx_wait_until waits out the
+# interval and tries again.
+container_wait_stopped_check() {
+    container_is_running "$1" || return 0
+    echo "Waiting for container $1 to stop..."
+    return 1
+}
+
 container_wait_stopped() {
-    local name="$1" timeout="$2" elapsed=0
-    while container_is_running "$name"; do
-        [ "$elapsed" -lt "$timeout" ] || return 1
-        echo "Waiting for container $name to stop..."
-        sleep 1
-        elapsed=$((elapsed + 1))
-    done
+    local name="$1" timeout="$2"
+    dx_wait_until "$timeout" 1 container_wait_stopped_check "$name"
 }
 
 # Parse an exact --uuid argument/value pair from ps output.
