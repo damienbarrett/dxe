@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+
+create_volumes_main() {
 dx_require_container_cli
 
 # Ensures every persistent volume exists. container_ensure_volume is itself
@@ -26,3 +28,5 @@ echo "Ensuring persist volume $DX_PERSIST_VOLUME..."
 container_ensure_volume "$DX_PERSIST_VOLUME"
 echo "Ensuring bootstrap volume $DX_BOOTSTRAP_VOLUME..."
 container_ensure_volume "$DX_BOOTSTRAP_VOLUME"
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then create_volumes_main "$@"; fi
