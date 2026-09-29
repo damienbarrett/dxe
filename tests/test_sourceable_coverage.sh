@@ -1859,6 +1859,7 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     # successful GC/recovery flow; these probes keep its defensive boundaries
     # observable without ever touching a mounted guest Nix store.
     root="$fixture/default-profile-branches"
+    export DX_BOOTSTRAP_SCRATCH_DIR="$root/scratch"
     profiles="$root/var/nix/profiles"
     target="$root/store/default-profile"
     mkdir -p "$target/bin" "$target/etc/ssl/certs" "$profiles"
@@ -1873,14 +1874,17 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     ! nix_image_default_profile_store_path "$root" >/dev/null 2>&1 || exit 1
     : > "$target/etc/ssl/certs/ca-bundle.crt"
 
-    unset DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET
+    # Contract 2 (refactor-v2-final.md): the retained target is now bridged
+    # via dx_persist_image_default_profile_target, never the exported
+    # DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET.
+    rm -f "$DX_BOOTSTRAP_SCRATCH_DIR/image-default-profile-target"
     ! DX_NIX_ROOT="$root" nix_restore_image_default_profile >/dev/null 2>&1 || exit 1
     ln -s unavailable "$root/store/unavailable"
-    DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET="$root/store/unavailable"
+    dx_persist_image_default_profile_target "$root/store/unavailable"
     ! DX_NIX_ROOT="$root" nix_restore_image_default_profile >/dev/null 2>&1 || exit 1
-    DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET=/tmp
+    dx_persist_image_default_profile_target /tmp
     ! DX_NIX_ROOT="$root" nix_restore_image_default_profile >/dev/null 2>&1 || exit 1
-    DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET="$target"
+    dx_persist_image_default_profile_target "$target"
     rm "$target/etc/ssl/certs/ca-bundle.crt"
     ! DX_NIX_ROOT="$root" nix_restore_image_default_profile >/dev/null 2>&1 || exit 1
     : > "$target/etc/ssl/certs/ca-bundle.crt"

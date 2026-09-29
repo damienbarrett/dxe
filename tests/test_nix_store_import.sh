@@ -21,6 +21,12 @@ source "$CONTAINER_DIR/bootstrap/base-and-storage.sh"
 source "$CONTAINER_DIR/bootstrap/system.sh"
 
 fixture="$(mktemp -d /tmp/dxe-nix-import.XXXXXX)"
+# Contract 2/3/5 (refactor-v2-final.md): record_durable_nix_identity,
+# capture_nix_image_default_profile, and prepare_nix_volume all bridge
+# their values across a bootstrap phase boundary through this scratch
+# directory instead of an exported global; isolate it under this file's own
+# fixture root.
+export DX_BOOTSTRAP_SCRATCH_DIR="$fixture/scratch"
 test_group="dxe-import-$RANDOM"
 test_user="dxe-import-$RANDOM"
 test_gid=42420
@@ -68,7 +74,7 @@ chmod 0755 "$default_image/store/default-profile/bin/sh" "$default_image/store/d
 ln -s "$default_image/store/default-profile" "$default_image/var/nix/profiles/default-1-link"
 ln -s default-1-link "$default_image/var/nix/profiles/default"
 if DX_NIX_ROOT="$default_image" capture_nix_image_default_profile "$default_image" \
-    && [ "${DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET:-}" = "$default_image/store/default-profile" ] \
+    && [ "$(dx_read_image_default_profile_target)" = "$default_image/store/default-profile" ] \
     && DX_NIX_ROOT="$default_image" nix_image_bootstrap_store_paths "$default_image" | grep -qx /nix/store/default-profile; then
     test_pass "image default profile target is retained in bootstrap GC roots"
 else
