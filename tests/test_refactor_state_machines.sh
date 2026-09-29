@@ -152,6 +152,36 @@ expect_reject "DX_CONTAINER_RESTART_POLICY rejects an unknown value" dx_config_v
 # caller with a typo would pass silently.
 expect_reject "dx_config_validate_value rejects an unknown field name" dx_config_validate_value DX_NOT_A_FIELD x
 
+# Fable A5: DX_BOOTSTRAP_SOURCE's default read ${DX_CONTEXT_DIR:-...} from
+# the environment, which only produced the right result because
+# DX_CONTEXT_DIR happens to precede DX_BOOTSTRAP_SOURCE in
+# DXE_CONFIG_FIELDS -- nothing documented or tested that ordering
+# dependency. Prove independence directly: resolve the same root .env
+# twice, once with the registry's natural field order and once with
+# DX_BOOTSTRAP_SOURCE moved to the front, and require the same resolved
+# DX_BOOTSTRAP_SOURCE both times.
+order_root="$fixture/bootstrap-source-order"
+mkdir -p "$order_root"
+printf '%s\n' 'DX_CONTEXT_DIR=${DX_PROJECT_ROOT}/custom-context' > "$order_root/.env"
+natural_bootstrap_source="$(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    dx_init_config "$order_root" >/dev/null 2>&1
+    printf '%s' "$DX_BOOTSTRAP_SOURCE"
+)"
+reordered_bootstrap_source="$(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    reordered_fields="DX_BOOTSTRAP_SOURCE"
+    for f in $DXE_CONFIG_FIELDS; do [ "$f" = DX_BOOTSTRAP_SOURCE ] || reordered_fields="$reordered_fields $f"; done
+    DXE_CONFIG_FIELDS="$reordered_fields"
+    dx_init_config "$order_root" >/dev/null 2>&1
+    printf '%s' "$DX_BOOTSTRAP_SOURCE"
+)"
+[ "$natural_bootstrap_source" = "$reordered_bootstrap_source" ] \
+    && test_pass "DX_BOOTSTRAP_SOURCE's default does not depend on DXE_CONFIG_FIELDS order" \
+    || test_fail "DX_BOOTSTRAP_SOURCE's default does not depend on DXE_CONFIG_FIELDS order (natural=$natural_bootstrap_source reordered=$reordered_bootstrap_source)"
+
 # Cross-field agreement (qnap-dxe-plan.md DQ3: "Invalid cross-field
 # combinations fail before contacting either runtime"): DX_REMOTE_HOST is
 # required for docker-ssh and forbidden for apple. Exercised through a full

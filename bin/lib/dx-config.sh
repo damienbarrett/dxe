@@ -33,7 +33,12 @@ dx_config_default() {
         DX_SSH_KEY_PUB) printf '%s/dx_key.pub' "$DX_PROJECT_ROOT" ;;
         DX_SSH_CONNECT_TIMEOUT) printf '%s' 15 ;;
         DX_CONTEXT_DIR) printf '%s/container/aarch64-darwin-apple-container-dx-nixos-26.05' "$DX_PROJECT_ROOT" ;;
-        DX_BOOTSTRAP_SOURCE) printf '%s' "${DX_CONTEXT_DIR:-$DX_PROJECT_ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05}" ;;
+        # Fable A5: derived from DX_CONTEXT_DIR's own default (a direct
+        # call, not "${DX_CONTEXT_DIR:-...}" read from the environment) so
+        # this is correct regardless of where DX_BOOTSTRAP_SOURCE falls in
+        # DXE_CONFIG_FIELDS -- the previous form only produced the right
+        # value because DX_CONTEXT_DIR happened to precede it there.
+        DX_BOOTSTRAP_SOURCE) dx_config_default DX_CONTEXT_DIR ;;
         DX_BOOTSTRAP_VOLUME) printf '%s' dx-bootstrap ;;
         DX_BOOTSTRAP_PATH) printf '%s' /guest-bootstrap ;;
         DX_BOOTSTRAP_WAIT_TIMEOUT) printf '%s' 30 ;;
