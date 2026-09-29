@@ -256,6 +256,26 @@ Every review ID and where it lands.
   deleted; sync body moves to `bin/lib/dx-bootstrap-sync.sh`. *Red:* reworded
   success line must still make start fail when the lease never matches.
   (Fable A2)
+  *Design note (2026-09-30, agent research, no code yet):* new
+  `bin/lib/dx-bootstrap-sync.sh` sourced after `dx-container.sh` holding
+  `dx_bootstrap_sync <container> <source> <path>` (the whole sync body; the
+  guest heredoc copied byte-for-byte; returns 0 published / 3 unchanged / 1
+  error; generation id handed back by dynamic scoping so the "Syncing…"
+  line keeps its real-time order), `dx_bootstrap_sync_result_write` (tmp +
+  `mv -f`, two lines) and `dx_bootstrap_sync_result_read` (own bounded
+  reader: exactly `outcome=` and `generation=`, never sourced; `dx-config.sh`
+  is off-limits to that task). Trap found: once the tar pipeline lives in a
+  function called as `f || status=$?`, errexit is suspended, so that one
+  pipeline needs an explicit `if ! …; then return 1; fi`. Entrypoints: sync
+  parses `--result-file`; start passes a mktemp path, reads it, and fails
+  loudly when missing or malformed; delete `dx_bootstrap_sync_published_generation`
+  and its two comment references in `dx-container.sh`. Tests: Red = fixture
+  copy of `bin/` with a reworded fake sync + never-matching lease must fail
+  the start (today: drift warning, exit 0); plus missing/malformed result
+  file, missing source, lock held/timeout (`DX_SLEEP`); section 9's
+  unit block for the deleted parser becomes read/write round-trip cases.
+  Uncovered-today branches also worth cases: container absent, unsafe
+  `DX_BOOTSTRAP_PATH`, entrypoint never ready.
 - [ ] **WP5.2** One rendered publication-lock protocol
   (`bin/lib/dx-bootstrap-protocol.sh`) used by launcher and sync; one contract
   fixture (live owner, previous boot, reused PID, ownerless) run against all
