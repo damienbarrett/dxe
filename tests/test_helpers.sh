@@ -223,9 +223,27 @@ test_section() {
 # its own top, and a `grep -q` pipeline can read a real match as absent under
 # pipefail the same way bin/lib/dx-container.sh's container_is_running/
 # container_exists did before their fix (tests/test_section20_skip_integration.sh).
+#
+# Fable D11: SKIP_INTEGRATION is checked by hand in twelve suites (each
+# gating its whole file before ever calling this) and, until now, never
+# here -- so a suite that calls requires_container directly, without its
+# own hand-check, still did live container discovery under
+# --skip-integration whenever a container genuinely was not present (the
+# common case): the skip message just did not say --skip-integration was
+# involved. Made that explicit rather than changing WHEN this skips (still
+# exactly "no usable container was found" -- section 20's
+# requires_container_reports_running case above proves a real match is
+# still honoured even with SKIP_INTEGRATION=true inherited from
+# `run_all_tests.sh --skip-integration`, so this intentionally does not
+# skip out from under a container that actually is there). Not changing
+# the twelve suites' own hand-checks (they gate before ever reaching here).
 requires_container() {
     if ! command -v container >/dev/null 2>&1 || ! container list --quiet 2>/dev/null | stdin_matches -F -x -- "$DX_CONTAINER_NAME"; then
-        test_skip "Container '$DX_CONTAINER_NAME' is not running"
+        if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+            test_skip "Container '$DX_CONTAINER_NAME' is not running (--skip-integration)"
+        else
+            test_skip "Container '$DX_CONTAINER_NAME' is not running"
+        fi
         return 1
     fi
     return 0

@@ -142,8 +142,9 @@ check test "$(record_count)" -eq "$((n_before + 1))"
 check test "$(last_record | cut -f1)" = fail
 rm -f "$g_file"
 
-# --- (h) finish exits non-zero when zero cases were recorded (nested bash,
-# its own empty results file).
+# --- (h) finish exits 3 (not 1 -- reserved for an actual failure) when
+# zero cases were recorded (nested bash, its own empty results file). Fable
+# D11.
 if SCRIPT_DIR="$SCRIPT_DIR" bash -c '
     source "$SCRIPT_DIR/lib/harness.sh"
     DXE_TEST_RESULTS="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-empty.XXXXXX")"
@@ -154,7 +155,7 @@ if SCRIPT_DIR="$SCRIPT_DIR" bash -c '
 else
     h_status=$?
 fi
-check test "$h_status" -ne 0
+check test "$h_status" -eq 3
 
 # --- (i) finish exits non-zero when one case failed, and zero when every
 # recorded case passed.
@@ -330,6 +331,210 @@ check contains "$(cat "$r_log")" "call-one"
 check contains "$(cat "$r_log")" "call-two"
 rm -rf "$r_dir"
 rm -f "$r_log"
+
+# =========================================================================
+# WP1.3 -- fixture isolation and skip semantics (Fable D9, D11)
+# =========================================================================
+
+# --- (s) with_fixture points HOME, XDG_STATE_HOME and TMPDIR under a fresh
+# directory in the CALLING shell, and unsets every already-set DXE_CONFIG_*
+# variable.
+s_out="$(SCRIPT_DIR="$SCRIPT_DIR" bash -c '
+    source "$SCRIPT_DIR/lib/harness.sh"
+    unset XDG_STATE_HOME
+    DXE_CONFIG_RESOLVED=1
+    DXE_CONFIG_SNAPSHOT_VERSION=1
+    DXE_CONFIG_ORIGIN_DX_RUNTIME=env
+    export DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION DXE_CONFIG_ORIGIN_DX_RUNTIME
+    dxe_s_before_home="$HOME"
+    with_fixture
+    echo "fixture=$DXE_FIXTURE_DIR"
+    echo "home=$HOME"
+    echo "before_home=$dxe_s_before_home"
+    echo "xdg=$XDG_STATE_HOME"
+    echo "tmpdir=$TMPDIR"
+    echo "resolved=${DXE_CONFIG_RESOLVED:-UNSET}"
+    echo "snapver=${DXE_CONFIG_SNAPSHOT_VERSION:-UNSET}"
+    echo "origin=${DXE_CONFIG_ORIGIN_DX_RUNTIME:-UNSET}"
+')"
+check contains "$s_out" "resolved=UNSET"
+check contains "$s_out" "snapver=UNSET"
+check contains "$s_out" "origin=UNSET"
+s_fixture="$(printf '%s\n' "$s_out" | sed -n 's/^fixture=//p')"
+s_home="$(printf '%s\n' "$s_out" | sed -n 's/^home=//p')"
+s_before_home="$(printf '%s\n' "$s_out" | sed -n 's/^before_home=//p')"
+s_xdg="$(printf '%s\n' "$s_out" | sed -n 's/^xdg=//p')"
+s_tmpdir="$(printf '%s\n' "$s_out" | sed -n 's/^tmpdir=//p')"
+check test -n "$s_fixture"
+check test "$s_home" != "$s_before_home"
+case "$s_home" in
+    "$s_fixture"/*) s_home_ok=yes ;;
+    *) s_home_ok=no ;;
+esac
+check test "$s_home_ok" = yes
+case "$s_xdg" in
+    "$s_fixture"/*) s_xdg_ok=yes ;;
+    *) s_xdg_ok=no ;;
+esac
+check test "$s_xdg_ok" = yes
+case "$s_tmpdir" in
+    "$s_fixture"/*) s_tmpdir_ok=yes ;;
+    *) s_tmpdir_ok=no ;;
+esac
+check test "$s_tmpdir_ok" = yes
+
+# --- (s2) a SECOND with_fixture call in the same process gets a fresh
+# directory (never reuses the first fixture) but keeps anchoring the "real"
+# baseline to the ORIGINAL environment captured by the first call, never to
+# the first fixture's own fake HOME.
+s2_out="$(SCRIPT_DIR="$SCRIPT_DIR" bash -c '
+    source "$SCRIPT_DIR/lib/harness.sh"
+    unset XDG_STATE_HOME
+    dxe_s2_real_home="$HOME"
+    with_fixture
+    dxe_s2_first_fixture="$DXE_FIXTURE_DIR"
+    dxe_s2_first_real="$DXE_HARNESS_FIXTURE_REAL_HOME"
+    with_fixture
+    echo "second_fixture_differs=$([ "$DXE_FIXTURE_DIR" != "$dxe_s2_first_fixture" ] && echo yes || echo no)"
+    echo "real_still_original=$([ "$DXE_HARNESS_FIXTURE_REAL_HOME" = "$dxe_s2_real_home" ] && echo yes || echo no)"
+    echo "real_unchanged_by_second_call=$([ "$DXE_HARNESS_FIXTURE_REAL_HOME" = "$dxe_s2_first_real" ] && echo yes || echo no)"
+')"
+check contains "$s2_out" "second_fixture_differs=yes"
+check contains "$s2_out" "real_still_original=yes"
+check contains "$s2_out" "real_unchanged_by_second_call=yes"
+
+# --- (t) finish fails when every recorded case is a skip and the suite's
+# own source ($0) carries no `# skip-ok:` header. A `bash -c` invocation's
+# $0 is literally "bash" (no readable file backs it), so this is also the
+# "no header at all" case.
+if SCRIPT_DIR="$SCRIPT_DIR" bash -c '
+    source "$SCRIPT_DIR/lib/harness.sh"
+    DXE_TEST_RESULTS="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-t-results.XXXXXX")"
+    export DXE_TEST_RESULTS
+    skip --class live "no container"
+    finish
+' >/dev/null 2>&1; then
+    t_status=0
+else
+    t_status=$?
+fi
+check test "$t_status" -ne 0
+
+# --- (u) finish does NOT force-fail an all-skip run when the suite's own
+# source carries a `# skip-ok:` header -- a real file, so $0 actually
+# resolves to something readable.
+u_file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-u-suite.XXXXXX")"
+cat > "$u_file" <<EOF
+#!/bin/bash
+# skip-ok: every case in this fixture legitimately requires live infra
+source "$SCRIPT_DIR/lib/harness.sh"
+DXE_TEST_RESULTS="\$(mktemp "\${TMPDIR:-/tmp}/dxe-harness-u-results.XXXXXX")"
+export DXE_TEST_RESULTS
+skip --class live "no container"
+finish
+EOF
+if bash "$u_file" >/dev/null 2>&1; then
+    u_status=0
+else
+    u_status=$?
+fi
+check test "$u_status" -eq 0
+rm -f "$u_file"
+
+# --- (u2) the (t) case again, but through a REAL, readable file with no
+# `# skip-ok:` line -- distinct from (t)'s "$0 is literally not a file at
+# all" path through the same guard.
+u2_file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-u2-suite.XXXXXX")"
+cat > "$u2_file" <<EOF
+#!/bin/bash
+# no skip-ok header on this suite
+source "$SCRIPT_DIR/lib/harness.sh"
+DXE_TEST_RESULTS="\$(mktemp "\${TMPDIR:-/tmp}/dxe-harness-u2-results.XXXXXX")"
+export DXE_TEST_RESULTS
+skip --class live "no container"
+finish
+EOF
+if bash "$u2_file" >/dev/null 2>&1; then
+    u2_status=0
+else
+    u2_status=$?
+fi
+check test "$u2_status" -ne 0
+rm -f "$u2_file"
+
+# --- (v) finish's summary prints a second "Skipped classes:" line, with
+# per-class counts, only when at least one skip was recorded.
+v_out="$(SCRIPT_DIR="$SCRIPT_DIR" bash -c '
+    source "$SCRIPT_DIR/lib/harness.sh"
+    DXE_TEST_RESULTS="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-v-results.XXXXXX")"
+    export DXE_TEST_RESULTS
+    expect_exit 0 true >/dev/null
+    skip --class live "one"
+    skip --class live "two"
+    skip --class destructive "three"
+    finish
+' 2>&1)"
+check contains "$v_out" "Skipped classes:"
+check contains "$v_out" "live=2"
+check contains "$v_out" "destructive=1"
+
+v2_out="$(SCRIPT_DIR="$SCRIPT_DIR" bash -c '
+    source "$SCRIPT_DIR/lib/harness.sh"
+    DXE_TEST_RESULTS="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-v2-results.XXXXXX")"
+    export DXE_TEST_RESULTS
+    expect_exit 0 true >/dev/null
+    finish
+' 2>&1)"
+check reject contains "$v2_out" "Skipped classes:"
+
+# --- (w) finish fails when the real (pre-fixture) ~/.local/state/dxe tree
+# changed during a with_fixture suite (Fable D9). Runs in a nested bash -c
+# whose HOME is a throwaway temp dir standing in for "the real HOME" --
+# this never touches the actual developer machine's home. The real HOME is
+# captured by with_fixture's first call, before it redirects HOME to the
+# fixture; the rogue write below lands in the ORIGINAL (pre-fixture) tree,
+# simulating something that failed to isolate.
+w_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-w-realhome.XXXXXX")"
+if SCRIPT_DIR="$SCRIPT_DIR" W_HOME="$w_home" bash -c '
+    HOME="$W_HOME"
+    unset XDG_STATE_HOME
+    export HOME
+    source "$SCRIPT_DIR/lib/harness.sh"
+    DXE_TEST_RESULTS="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-w-results.XXXXXX")"
+    export DXE_TEST_RESULTS
+    with_fixture >/dev/null
+    expect_exit 0 true >/dev/null
+    mkdir -p "$W_HOME/.local/state/dxe/known_hosts.d"
+    : > "$W_HOME/.local/state/dxe/known_hosts.d/rogue"
+    finish
+' >/dev/null 2>&1; then
+    w_status=0
+else
+    w_status=$?
+fi
+check test "$w_status" -ne 0
+rm -rf "$w_home"
+
+# --- (x) sanity: finish does NOT report a breach when with_fixture was
+# used and the real tree was genuinely never touched.
+x_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-x-realhome.XXXXXX")"
+if SCRIPT_DIR="$SCRIPT_DIR" X_HOME="$x_home" bash -c '
+    HOME="$X_HOME"
+    unset XDG_STATE_HOME
+    export HOME
+    source "$SCRIPT_DIR/lib/harness.sh"
+    DXE_TEST_RESULTS="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-x-results.XXXXXX")"
+    export DXE_TEST_RESULTS
+    with_fixture >/dev/null
+    expect_exit 0 true >/dev/null
+    finish
+' >/dev/null 2>&1; then
+    x_status=0
+else
+    x_status=$?
+fi
+check test "$x_status" -eq 0
+rm -rf "$x_home"
 
 rm -f "$RESULTS"
 
