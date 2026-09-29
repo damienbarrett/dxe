@@ -75,6 +75,14 @@ Every plan document below is listed under exactly one of these.
   restore drill, the disposable-spike destructive-lifecycle
   reaffirmation, the canary's own rebuild + recreate, and the production
   profile) complete.
+- [`findings.md`](findings.md) — Consolidated findings plan, combining three
+  independent reviews of the repository at `4e8c5cc` dated 2026-09-29
+  (`docs/reviews/2026-09-29-astra.md`, `docs/reviews/2026-09-29-muse.md`,
+  `docs/reviews/2026-09-29-fable.md`; index at `docs/reviews/README.md`).
+  Records decision D-1, which resolves the recorded conflict below between
+  `declarative-nix-plan-a.md` #12 and `refactor-v2-final.md` Phase 4: the
+  coverage metric (WP1.5) lands first. Revisit trigger: stated inside the
+  document, under "Revisit trigger:" at the top.
 - [`declarative-nix-plan-a.md`](declarative-nix-plan-a.md) — Audit proposing
   incremental Bash-to-Nix/Home Manager conversions. It puts Nix evaluation and
   coverage gates first, followed by smaller configuration conversions and the
@@ -87,7 +95,8 @@ Every plan document below is listed under exactly one of these.
   against that ratio's measurement at `7ffa66b`, and its Phase 4 gate
   re-measures the same ratio. If #12 lands first, both are against a metric
   shape that no longer exists. Undecided which lands first; no owner named
-  for either document.
+  for either document. The ordering is decided in `findings.md` D-1: the
+  metric lands first.
 - [`refactor-v2-final.md`](refactor-v2-final.md) — Follow-on bootstrap
   refactor plan. Its identity/publication threading, explicit Nix-volume state,
   and claim-cleanup phases remain open; the proposed sourceable-test split and
@@ -95,4 +104,5 @@ Every plan document below is listed under exactly one of these.
   still uses the environment variables this plan proposes to remove.
 
   **Recorded conflict.** Phase 4's coverage-ratchet gate vs.
-  `declarative-nix-plan-a.md` #12 remains live — see that entry above.
+  `declarative-nix-plan-a.md` #12 remains live — see that entry above. The
+  ordering is decided in `findings.md` D-1: the metric lands first.
