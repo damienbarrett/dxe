@@ -871,7 +871,13 @@ prepare_nix_volume_impl() {
             ;;
     esac
     echo "Setting up dedicated Nix volume..."
-    local raw_path="/var/lib/dx-nix-raw"
+    # DX_NIX_RAW_PATH is a test-only override (mirrors DX_NIX_DISK_SIZE
+    # below): production never sets it, so the default is unchanged. It lets
+    # a sourceable-probe fixture point this at a plain writable temp
+    # directory instead of requiring real root to populate
+    # /var/lib/dx-nix-raw, which is what lets the mkfs/truncate/mount error
+    # paths below be exercised as unit tests at all.
+    local raw_path="${DX_NIX_RAW_PATH:-/var/lib/dx-nix-raw}"
     local dev=""
     local fs_type="btrfs"
     local mount_opts="compress=zstd:3,noatime,space_cache=v2,discard=async"
@@ -922,9 +928,9 @@ prepare_nix_volume_impl() {
                 return 1
             fi
             if [ "$fs_type" == "btrfs" ]; then
-                mkfs.btrfs -f -L dx-nix -m single -d single "$dev"
+                mkfs.btrfs -f -L dx-nix -m single -d single "$dev" || { echo "Error: mkfs.btrfs failed for $dev" >&2; return 1; }
             else
-                mkfs.ext4 -F -L dx-nix "$dev"
+                mkfs.ext4 -F -L dx-nix "$dev" || { echo "Error: mkfs.ext4 failed for $dev" >&2; return 1; }
             fi
         fi
     else
@@ -933,11 +939,11 @@ prepare_nix_volume_impl() {
         if [ ! -f "$dev" ]; then
             local disk_size="${DX_NIX_DISK_SIZE:-64G}"
             echo "Creating $disk_size sparse image file at $dev..."
-            truncate -s "$disk_size" "$dev"
+            truncate -s "$disk_size" "$dev" || { echo "Error: truncate failed for $dev" >&2; return 1; }
             if [ "$fs_type" == "btrfs" ]; then
-                mkfs.btrfs -f -L dx-nix -m single -d single "$dev"
+                mkfs.btrfs -f -L dx-nix -m single -d single "$dev" || { echo "Error: mkfs.btrfs failed for $dev" >&2; return 1; }
             else
-                mkfs.ext4 -F -L dx-nix "$dev"
+                mkfs.ext4 -F -L dx-nix "$dev" || { echo "Error: mkfs.ext4 failed for $dev" >&2; return 1; }
             fi
         fi
     fi
@@ -945,7 +951,7 @@ prepare_nix_volume_impl() {
     # Mount the volume
     echo "Mounting $dev to /nix..."
     mkdir -p /mnt/tmp-nix
-    mount -t "$fs_type" -o "$mount_opts" "$dev" /mnt/tmp-nix
+    mount -t "$fs_type" -o "$mount_opts" "$dev" /mnt/tmp-nix || { echo "Error: mount failed for $dev" >&2; return 1; }
     DX_NIX_VOLUME_ALREADY_MOUNTED=false
     DX_NIX_VOLUME_ROOT=/mnt/tmp-nix
     DX_NIX_VOLUME_DEVICE="$dev"
