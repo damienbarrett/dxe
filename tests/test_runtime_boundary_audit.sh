@@ -2,11 +2,14 @@
 set -uo pipefail
 
 # Branch 11 / Phase 1-2 (qnap-dxe-plan.md DQ2, Phase 1 item 6): automated
-# source audit. Fails if any file under bin/ OTHER THAN the two runtime
-# adapters themselves (bin/lib/dx-runtime-apple.sh, bin/lib/dx-runtime-docker.sh
-# -- extended to the latter in Phase 2, since it is the docker-ssh adapter's
+# source audit. Fails if any file under bin/ OTHER THAN the runtime adapters
+# themselves (bin/lib/dx-runtime-apple.sh, bin/lib/dx-runtime-docker.sh --
+# extended to the latter in Phase 2, since it is the docker-ssh adapter's
 # own legitimate home for both a real local `container` reference and the
-# literal token "container" as a remote `docker container <verb>` argument)
+# literal token "container" as a remote `docker container <verb>` argument;
+# further extended, WP8.3 step 3, to bin/lib/dx-runtime-docker-*.sh -- the
+# facade's own four implementation files the docker-ssh adapter was split
+# into, each carrying the same legitimate `docker container <verb>` text)
 # invokes a raw Apple `container` lifecycle verb
 # (list/inspect/exec/run/create/start/stop/kill/delete/rm/image/volume/
 # logs/export/stats/system). tests/ may still call `container` directly
@@ -62,7 +65,7 @@ audit_bin_tree() {
     while IFS= read -r -d '' relfile; do
         file="$root/$relfile"
         [ -f "$file" ] || continue
-        case "$file" in */lib/dx-runtime-apple.sh|*/lib/dx-runtime-docker.sh) continue ;; esac
+        case "$file" in */lib/dx-runtime-apple.sh|*/lib/dx-runtime-docker.sh|*/lib/dx-runtime-docker-*.sh) continue ;; esac
         while IFS= read -r line; do
             [ -n "$line" ] || continue
             # Pure comment lines (only whitespace before the '#') are never
@@ -236,6 +239,46 @@ if [ -z "$(audit_bin_tree "$fixture")" ]; then
     test_pass "audit exempts bin/lib/dx-runtime-docker.sh itself (Phase 2's own adapter)"
 else
     test_fail "audit exempts bin/lib/dx-runtime-docker.sh itself (Phase 2's own adapter)"
+fi
+rm -f "$fixture/bin/lib/dx-runtime-docker.sh"
+fixture_commit "$fixture" "remove dx-runtime-docker.sh"
+
+# --- WP8.3 step 3: the docker-ssh adapter's own split implementation files
+# (bin/lib/dx-runtime-docker-transport.sh, -identity.sh, -lifecycle.sh,
+# -lock.sh) carry the exact same genuine Docker CLI syntax
+# (`dx_runtime_docker_cli container inspect ...`, `docker container rm
+# ...`, ...) the monolithic file did -- each needs the same exemption, by
+# name, or the split itself would trip this audit on real, unchanged
+# production code.
+for split_file in dx-runtime-docker-transport.sh dx-runtime-docker-identity.sh \
+    dx-runtime-docker-lifecycle.sh dx-runtime-docker-lock.sh; do
+    cat > "$fixture/bin/lib/$split_file" <<'EOF'
+dx_runtime_docker_container_running() { dx_runtime_docker_ssh_exec "$1" container inspect --format '{{.State.Running}}' "$2"; }
+EOF
+    fixture_commit "$fixture" "add $split_file"
+    if [ -z "$(audit_bin_tree "$fixture")" ]; then
+        test_pass "audit exempts bin/lib/$split_file (WP8.3 step 3's docker adapter split)"
+    else
+        test_fail "audit exempts bin/lib/$split_file (WP8.3 step 3's docker adapter split)"
+    fi
+    rm -f "$fixture/bin/lib/$split_file"
+    fixture_commit "$fixture" "remove $split_file"
+done
+
+# The */lib/dx-runtime-docker-*.sh glob requires a literal hyphen right
+# after "docker" -- a similarly-named file that is NOT one of the four real
+# split files (no hyphen: "dockerish", not "docker-ish") must still be
+# caught, proving the exemption is scoped to the split's own naming
+# convention and not just any file whose name happens to start with
+# "dx-runtime-docker".
+cat > "$fixture/bin/lib/dx-runtime-dockerish.sh" <<'EOF'
+dx_runtime_dockerish_container_running() { container inspect "$1"; }
+EOF
+fixture_commit "$fixture" "add dx-runtime-dockerish.sh (not a real split file)"
+if [ -n "$(audit_bin_tree "$fixture")" ]; then
+    test_pass "the dx-runtime-docker-*.sh exemption does not extend to a similarly-named non-split file"
+else
+    test_fail "the dx-runtime-docker-*.sh exemption does not extend to a similarly-named non-split file"
 fi
 rm -rf "$fixture"
 
