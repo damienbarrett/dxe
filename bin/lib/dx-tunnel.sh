@@ -372,3 +372,119 @@ dx_tunnel_stop_all() {
     if [ "$found" = false ]; then if [ "$direction" = forward ]; then echo "No dx-forward forwards found for $DX_CONTAINER_NAME."; else echo "No dx-reverse reverse forwards found for $DX_CONTAINER_NAME."; fi; fi
     return "$failed"
 }
+
+# --- CLI front end shared by bin/dx-forward and bin/dx-reverse (WP8.3 step 5;
+# findings.md, docs/reviews/2026-09-29-fable.md A7) --------------------------
+#
+# The two entrypoints were 44-line mirror images: same usage/parse/collect/
+# dispatch shape, differing only in which side of the mapping is the unique,
+# non-privileged "key" (deduplicated, used for the tunnel's own socket/lock
+# path) and which is the privilege-allowed "peer" -- forward keys on the host
+# port, reverse keys on the guest port; dx_tunnel_start/stop/list/stop_all
+# above already take that same "key_port"/"peer_port" shape, parameterized
+# by direction, so the CLI layer can be too. Every entrypoint-visible string
+# (usage text, error messages, port-label wording) is reproduced exactly,
+# including which of the two error paths returns immediately and which
+# falls through to still run its command (see dx_tunnel_cli below) --
+# preserved for behavioral identity even where it looks asymmetric.
+dx_tunnel_cli_key_label() { if [ "$1" = forward ]; then printf 'host'; else printf 'guest'; fi; }
+dx_tunnel_cli_peer_label() { if [ "$1" = forward ]; then printf 'guest'; else printf 'host'; fi; }
+dx_tunnel_cli_label_title() { case "$1" in host) printf 'Host' ;; guest) printf 'Guest' ;; esac; }
+
+dx_tunnel_cli_usage() {
+    local direction="$1" key peer
+    key="$(dx_tunnel_cli_key_label "$direction")"
+    peer="$(dx_tunnel_cli_peer_label "$direction")"
+    cat <<EOF
+Usage:
+  dx-$direction <${peer}_port> [<${peer}_port> ...]
+  dx-$direction <${peer}_port>:<${key}_port> [<${peer}_port>:<${key}_port> ...]
+  dx-$direction --list | --stop <${key}_port> | --stop-all
+EOF
+}
+
+# Parses one CLI argument into a "key_port:peer_port" mapping (the same
+# order dx_tunnel_start/dx_tunnel_stop take): a bare port applies to both
+# sides, and a colon form is always written "<peer>:<key>" -- forward's
+# "<guest_port>:<host_port>", reverse's "<host_port>:<guest_port>".
+dx_tunnel_cli_parse_arg() {
+    local direction="$1" arg="$2" key peer key_port peer_port
+    key="$(dx_tunnel_cli_key_label "$direction")"
+    peer="$(dx_tunnel_cli_peer_label "$direction")"
+    case "$arg" in
+        *:*)
+            case "$arg" in
+                *:*:*) echo "Error: Invalid $direction '$arg'. Use <${peer}_port> or <${peer}_port>:<${key}_port>." >&2; return 1 ;;
+            esac
+            peer_port=${arg%%:*}; key_port=${arg#*:}
+            ;;
+        *) peer_port=$arg; key_port=$arg ;;
+    esac
+    dx_tunnel_validate_port "$peer_port" "$peer" true || return
+    dx_tunnel_validate_port "$key_port" "$key" false || return
+    printf '%s:%s\n' "$key_port" "$peer_port"
+}
+
+# Collects every argument into DX_TUNNEL_CLI_MAPPINGS, refusing a key port
+# (the deduplicated side) requested more than once.
+dx_tunnel_cli_collect() {
+    local direction="$1"; shift
+    local arg mapping key_port seen=" " key_label
+    key_label="$(dx_tunnel_cli_key_label "$direction")"
+    DX_TUNNEL_CLI_MAPPINGS=()
+    for arg in "$@"; do
+        mapping="$(dx_tunnel_cli_parse_arg "$direction" "$arg")" || return
+        key_port=${mapping%%:*}
+        case "$seen" in
+            *" $key_port "*) echo "Error: $(dx_tunnel_cli_label_title "$key_label") port $key_port was requested more than once." >&2; return 1 ;;
+        esac
+        seen="$seen$key_port "
+        DX_TUNNEL_CLI_MAPPINGS+=("$mapping")
+    done
+}
+
+# The test-injectable wait-for-ssh command, one env var per direction
+# (DX_FORWARD_WAIT_SSH / DX_REVERSE_WAIT_SSH, unchanged names), defaulting
+# to bin/dx-wait-ssh -- $DX_LIB_DIR is bin/ itself (bin/dx-lib.sh's own
+# BASH_SOURCE-derived directory, exported before this file is ever sourced),
+# the same absolute path each entrypoint's own $SCRIPT_DIR/dx-wait-ssh used
+# to resolve.
+dx_tunnel_cli_wait_ssh() {
+    if [ "$1" = forward ]; then printf '%s\n' "${DX_FORWARD_WAIT_SSH:-$DX_LIB_DIR/dx-wait-ssh}"
+    else printf '%s\n' "${DX_REVERSE_WAIT_SSH:-$DX_LIB_DIR/dx-wait-ssh}"; fi
+}
+
+# bin/dx-forward and bin/dx-reverse's shared body: forward_main/reverse_main
+# each call this as `dx_tunnel_cli forward "$@"` / `dx_tunnel_cli reverse
+# "$@"` -- the only direction-specific lines left in either entrypoint.
+dx_tunnel_cli() {
+    local direction="$1"; shift
+    dx_tunnel_direction_valid "$direction" || return 1
+    local key_label mapping
+    key_label="$(dx_tunnel_cli_key_label "$direction")"
+    [ "$#" -gt 0 ] || { dx_tunnel_cli_usage "$direction"; return 1; }
+    case "$1" in
+        -h|--help) dx_tunnel_cli_usage "$direction" ;;
+        --list)
+            [ "$#" -eq 1 ] || { echo "Error: --list does not accept port arguments." >&2; return 1; }
+            dx_tunnel_list "$direction"
+            ;;
+        --stop)
+            [ "$#" -eq 2 ] || { echo "Error: Usage: dx-$direction --stop <${key_label}_port>" >&2; return 1; }
+            dx_tunnel_validate_port "$2" "$key_label" false || return
+            dx_tunnel_stop "$direction" "$2"
+            ;;
+        --stop-all)
+            [ "$#" -eq 1 ] || { echo "Error: --stop-all does not accept port arguments." >&2; return 1; }
+            dx_tunnel_stop_all "$direction"
+            ;;
+        -*) echo "Error: Unknown option '$1'." >&2; return 1 ;;
+        *)
+            dx_tunnel_cli_collect "$direction" "$@" || return
+            dx_tunnel_require_prerequisites "$(dx_tunnel_cli_wait_ssh "$direction")" || return
+            for mapping in "${DX_TUNNEL_CLI_MAPPINGS[@]}"; do
+                dx_tunnel_start "$direction" "${mapping%%:*}" "${mapping#*:}" || return
+            done
+            ;;
+    esac
+}

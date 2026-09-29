@@ -129,18 +129,21 @@ unset -f ps
 ) && test_pass "live create reservations cannot be stolen before container creation" || test_fail "live create reservations cannot be stolen before container creation"
 
 source "$BASE_DIR/bin/dx-forward"
-if [ "$(parse_all_forwards 5173 8000:8001)" = $'5173:5173\n8001:8000' ]; then test_pass "forward wrapper parses direction-specific mappings"; else test_fail "forward wrapper parses direction-specific mappings"; fi
-if parse_all_forwards 80 >/dev/null 2>&1; then test_fail "forward wrapper rejects privileged host ports"; else test_pass "forward wrapper rejects privileged host ports"; fi
+if dx_tunnel_cli_collect forward 5173 8000:8001 && [ "$(printf '%s\n' "${DX_TUNNEL_CLI_MAPPINGS[@]}")" = $'5173:5173\n8001:8000' ]; then test_pass "forward wrapper parses direction-specific mappings"; else test_fail "forward wrapper parses direction-specific mappings"; fi
+if dx_tunnel_cli_collect forward 80 >/dev/null 2>&1; then test_fail "forward wrapper rejects privileged host ports"; else test_pass "forward wrapper rejects privileged host ports"; fi
 source "$BASE_DIR/bin/dx-reverse"
-if [ "$(parse_all_reverses 5432 3000:13000)" = $'5432:5432\n13000:3000' ]; then test_pass "reverse wrapper parses direction-specific mappings"; else test_fail "reverse wrapper parses direction-specific mappings"; fi
+if dx_tunnel_cli_collect reverse 5432 3000:13000 && [ "$(printf '%s\n' "${DX_TUNNEL_CLI_MAPPINGS[@]}")" = $'5432:5432\n13000:3000' ]; then test_pass "reverse wrapper parses direction-specific mappings"; else test_fail "reverse wrapper parses direction-specific mappings"; fi
 
 assert_file_not_contains "$BASE_DIR/bin/dx-forward" 'DX_FORWARD_TEST_MODE' "forward has no production test seam"
 assert_file_not_contains "$BASE_DIR/bin/dx-reverse" 'DX_REVERSE_TEST_MODE' "reverse has no production test seam"
 assert_file_not_contains "$BASE_DIR/bin/dx-reclaim" 'df -h "\$@" | sed' "reclaim filesystem reporting does not require guest sed"
 assert_file_contains_literal "$BASE_DIR/bin/dx-reclaim" 'export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"' "reclaim uses the GC-rooted essentials profile PATH"
 if (
-    # Sourcing dx-forward/dx-reverse above (for their parse_all_* helpers)
-    # pulled in bin/lib/dx-config.sh, which resolved and exported the real
+    # Sourcing dx-forward/dx-reverse above (for dx_tunnel_cli_collect,
+    # bin/lib/dx-tunnel.sh -- WP8.3 step 5 merged the two entrypoints'
+    # separate parse_all_forwards/parse_all_reverses helpers into this one
+    # shared, direction-parameterized function) pulled in
+    # bin/lib/dx-config.sh, which resolved and exported the real
     # DXE configuration snapshot into this shell: DXE_CONFIG_RESOLVED=1,
     # DXE_CONFIG_SNAPSHOT_VERSION, DX_PROJECT_ROOT, every DX_* field, and
     # every DXE_CONFIG_ORIGIN_* origin tag. dx_init_config honours an

@@ -2,43 +2,5 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
-DX_FORWARD_WAIT_SSH="${DX_FORWARD_WAIT_SSH:-$SCRIPT_DIR/dx-wait-ssh}"
-FORWARD_MAPPINGS=()
-
-usage() { cat <<'EOF'
-Usage:
-  dx-forward <guest_port> [<guest_port> ...]
-  dx-forward <guest_port>:<host_port> [<guest_port>:<host_port> ...]
-  dx-forward --list | --stop <host_port> | --stop-all
-EOF
-}
-fail() { echo "Error: $*" >&2; return 1; }
-validate_port() { dx_tunnel_validate_port "$@"; }
-parse_forward_arg() {
-    local arg="$1" guest_port host_port
-    case "$arg" in
-        *:*) case "$arg" in *:*:*) fail "Invalid forward '$arg'. Use <guest_port> or <guest_port>:<host_port>."; return 1 ;; esac; guest_port=${arg%%:*}; host_port=${arg#*:} ;;
-        *) guest_port=$arg; host_port=$arg ;;
-    esac
-    validate_port "$guest_port" guest true || return
-    validate_port "$host_port" host false || return
-    printf '%s:%s\n' "$host_port" "$guest_port"
-}
-collect_forwards() {
-    local arg mapping host seen=" "
-    FORWARD_MAPPINGS=()
-    for arg in "$@"; do mapping="$(parse_forward_arg "$arg")" || return; host=${mapping%%:*}; case "$seen" in *" $host "*) fail "Host port $host was requested more than once."; return 1 ;; esac; seen="$seen$host "; FORWARD_MAPPINGS+=("$mapping"); done
-}
-parse_all_forwards() { local mapping; collect_forwards "$@" || return; for mapping in "${FORWARD_MAPPINGS[@]}"; do printf '%s\n' "$mapping"; done; }
-forward_main() {
-    [ "$#" -gt 0 ] || { usage; return 1; }
-    case "$1" in
-        -h|--help) usage ;;
-        --list) [ "$#" -eq 1 ] || fail "--list does not accept port arguments."; dx_tunnel_list forward ;;
-        --stop) [ "$#" -eq 2 ] || { fail "Usage: dx-forward --stop <host_port>"; return 1; }; validate_port "$2" host false; dx_tunnel_stop forward "$2" ;;
-        --stop-all) [ "$#" -eq 1 ] || { fail "--stop-all does not accept port arguments."; return 1; }; dx_tunnel_stop_all forward ;;
-        -*) fail "Unknown option '$1'." ;;
-        *) collect_forwards "$@"; dx_tunnel_require_prerequisites "$DX_FORWARD_WAIT_SSH"; local mapping; for mapping in "${FORWARD_MAPPINGS[@]}"; do dx_tunnel_start forward "${mapping%%:*}" "${mapping#*:}"; done ;;
-    esac
-}
+forward_main() { dx_tunnel_cli forward "$@"; }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then forward_main "$@"; fi
