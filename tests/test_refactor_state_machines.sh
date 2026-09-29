@@ -199,7 +199,9 @@ mkdir -p "$cross_root"
 (
     for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
     unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    # DX_NIX_STORAGE_MODE=direct-volume (Astra F10, Muse C1): the runtime/
+    # storage-mode compatibility matrix below requires it for docker-ssh.
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_NIX_STORAGE_MODE=direct-volume
     dx_init_config "$cross_root" >/dev/null 2>&1
 ) && test_pass "DX_RUNTIME=docker-ssh with a valid DX_REMOTE_HOST resolves" || test_fail "DX_RUNTIME=docker-ssh with a valid DX_REMOTE_HOST resolves"
 (
@@ -213,6 +215,53 @@ mkdir -p "$cross_root"
     unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
     dx_init_config "$cross_root" >/dev/null 2>&1
 ) && test_pass "DX_RUNTIME=apple (default) with no DX_REMOTE_HOST resolves" || test_fail "DX_RUNTIME=apple (default) with no DX_REMOTE_HOST resolves"
+
+# Astra F10 / Muse C1: DX_RUNTIME and DX_NIX_STORAGE_MODE are not
+# independent knobs -- bin/dx-create-container's own "Volume roles"
+# comment records that Apple always stages the Nix volume for the guest to
+# reformat (DX_NIX_STORAGE_MODE=apple-image is the only mode whose
+# guest-side probe matches that shape) while the Docker adapter always
+# mounts it directly at /nix (docs/refactor/direct-volume-storage.md's
+# direct-volume mode). DX_RUNTIME=docker-ssh with the apple-image default
+# reproduces Astra F10's finding exactly: a QNAP-shaped profile that
+# dx_config_validate_cross_fields accepts today and that then fails deep
+# inside guest bootstrap instead of at resolution time.
+astra_f10_root="$fixture/astra-f10"
+mkdir -p "$astra_f10_root"
+(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=apple-image
+    dx_init_config "$astra_f10_root" >/dev/null 2>&1
+) && test_fail "DX_RUNTIME=docker-ssh with DX_NIX_STORAGE_MODE=apple-image refuses to resolve (Astra F10)" \
+    || test_pass "DX_RUNTIME=docker-ssh with DX_NIX_STORAGE_MODE=apple-image refuses to resolve (Astra F10)"
+
+cross_fields_rejection="$(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=apple-image
+    DX_NIX_VOLUME=dx-nix DX_PERSIST_VOLUME=dx-persist DX_BOOTSTRAP_VOLUME=dx-bootstrap
+    dx_config_validate_cross_fields 2>&1 1>/dev/null || true
+)"
+if printf '%s\n' "$cross_fields_rejection" | stdin_matches -F -- "DX_RUNTIME" \
+    && printf '%s\n' "$cross_fields_rejection" | stdin_matches -F -- "DX_NIX_STORAGE_MODE"; then
+    test_pass "the runtime/storage-mode refusal names both fields"
+else
+    test_fail "the runtime/storage-mode refusal names both fields (got: $cross_fields_rejection)"
+fi
+
+# The three named-volume roles must never collide (Astra F10, Muse C1): a
+# shared name would let one role's guest-side traffic reach another role's
+# volume.
+volume_collision_root="$fixture/volume-collision"
+mkdir -p "$volume_collision_root"
+(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    DX_NIX_VOLUME=shared-volume-name DX_PERSIST_VOLUME=shared-volume-name
+    dx_init_config "$volume_collision_root" >/dev/null 2>&1
+) && test_fail "duplicate DX_NIX_VOLUME/DX_PERSIST_VOLUME names refuse to resolve" \
+    || test_pass "duplicate DX_NIX_VOLUME/DX_PERSIST_VOLUME names refuse to resolve"
 
 # The checked-in example profile (qnap-dxe-plan.md DQ3) parses cleanly under
 # the same strict data grammar as any other profile -- placeholder values

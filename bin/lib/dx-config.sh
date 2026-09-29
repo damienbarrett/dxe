@@ -175,6 +175,40 @@ dx_config_validate_cross_fields() {
             }
             ;;
     esac
+
+    # Runtime <-> Nix storage-mode compatibility (Astra F10, Muse C1).
+    # DX_RUNTIME and DX_NIX_STORAGE_MODE are not independent knobs: each
+    # runtime's adapter mounts the Nix volume at a fixed place of its own
+    # choosing (bin/dx-create-container's own "Volume roles" comment).
+    # Apple always stages the volume at /var/lib/dx-nix-raw for the guest
+    # to reformat and remount onto /nix -- DX_NIX_STORAGE_MODE=apple-image
+    # is the only mode whose guest-side probe (base-and-storage.sh's
+    # prepare_nix_volume_impl) matches that shape. The Docker adapter
+    # always mounts the volume directly at /nix (docs/refactor/
+    # direct-volume-storage.md) -- DX_NIX_STORAGE_MODE=direct-volume is the
+    # only mode whose guest-side probe (`findmnt -n -o TARGET /nix`)
+    # matches THAT shape. A DX_RUNTIME=docker-ssh profile with the
+    # apple-image default (Astra F10's exact reproduction) passes this far
+    # today and only fails deep inside guest bootstrap; reject it here
+    # instead, before any runtime call.
+    case "${DX_RUNTIME:-}:${DX_NIX_STORAGE_MODE:-}" in
+        apple:apple-image) : ;;
+        docker-ssh:direct-volume) : ;;
+        *)
+            echo "Error: DX_RUNTIME=${DX_RUNTIME:-} is not compatible with DX_NIX_STORAGE_MODE=${DX_NIX_STORAGE_MODE:-} (supported: DX_RUNTIME=apple with DX_NIX_STORAGE_MODE=apple-image, or DX_RUNTIME=docker-ssh with DX_NIX_STORAGE_MODE=direct-volume)." >&2
+            return 1
+            ;;
+    esac
+
+    # The three named-volume roles must never collide (Astra F10, Muse C1):
+    # a shared name would let one role's guest-side traffic reach another
+    # role's volume.
+    if [ "${DX_NIX_VOLUME:-}" = "${DX_PERSIST_VOLUME:-}" ] \
+        || [ "${DX_NIX_VOLUME:-}" = "${DX_BOOTSTRAP_VOLUME:-}" ] \
+        || [ "${DX_PERSIST_VOLUME:-}" = "${DX_BOOTSTRAP_VOLUME:-}" ]; then
+        echo "Error: DX_NIX_VOLUME, DX_PERSIST_VOLUME, and DX_BOOTSTRAP_VOLUME must all be distinct volume names." >&2
+        return 1
+    fi
 }
 
 dx_config_parse_error() {
