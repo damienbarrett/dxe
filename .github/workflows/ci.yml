@@ -17,9 +17,13 @@ jobs:
         run: find bin tests container -type f \( -name '*.sh' -o -path 'bin/dx*' \) -print0 | xargs -0 -n1 bash -n
       # ShellCheck is pinned rather than taken from the runner image. 0.11.0
       # aborts with "Non-exhaustive patterns in checkCmd" on `x="$(source f)"`,
-      # which is exactly how the import-purity contract in
-      # tests/test_refactor_contracts.sh proves libraries are side-effect free.
-      # Verified: 0.10.0 clean, 0.11.0 crashes. Re-test before bumping.
+      # which is exactly how the import-purity contract is written in both
+      # tests/test_refactor_contracts.sh and tests/test_section9_host_scripts.sh
+      # (each proves libraries are side-effect free the same way). Verified:
+      # 0.10.0 clean on the whole tree, 0.11.0 crashes on exactly those two
+      # files. Re-test before bumping, and again when nixos-26.05 (the guest's
+      # own pin) becomes the CI pin -- that is the next scheduled point to
+      # re-check whether 0.11.x still crashes on this construct.
       - name: ShellCheck
         run: |
           find bin tests container -type f \( -name '*.sh' -o -path 'bin/dx*' \) -print0 \

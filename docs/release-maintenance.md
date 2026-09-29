@@ -196,6 +196,11 @@ bump" problem (Problem 1) is resolved as of Branch 12 — see its own status
 section — so this waiver is re-scoped rather than closed: the mechanism
 exists and is tested, only the live application to the primary remains.
 
+**Owner and revisit trigger (WP9.3).** Owner: the user (Damien Barrett, the
+`Decision maker` above). Trigger: the next time an operator actually runs
+the documented pin-bump procedure against the primary guest (the `Expiry`
+above).
+
 **Note on test enforcement.** `tests/test_section2_containerfile.sh` asserts
 the literal `FROM` line, so it stays green throughout this mismatch. It pins
 the expected digest; it does not prove the pin follows the locked
