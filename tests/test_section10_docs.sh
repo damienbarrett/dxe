@@ -150,6 +150,26 @@ done < <(find "$REVIEWS_DIR" -maxdepth 1 -type f -name '*.md' -not -name 'README
 
 rm -f "$REVIEWS_README_LINKS"
 
+# --- docs/README.md maps entry points -> operating docs -> decisions ->
+# evidence -> reviews (WP9.2, Muse F2). Assert it exists and links every
+# operating doc that lives directly under docs/ (maxdepth 1 *.md, excluding
+# itself) -- otherwise a newcomer following the map can land on it and still
+# not find the doc they need. Matched on basename, the same tolerant idiom
+# docs/reviews/README.md's check above uses, so the link may be written
+# relative ("lifecycle.md") or repo-rooted ("docs/lifecycle.md").
+DOCS_README="$BASE_DIR/docs/README.md"
+assert_file_exists "$DOCS_README" "docs/README.md map exists"
+while IFS= read -r docs_readme_target; do
+    [ -n "$docs_readme_target" ] || continue
+    doc_name="$(basename "$docs_readme_target")"
+    [ "$doc_name" = "README.md" ] && continue
+    if [ -f "$DOCS_README" ] && grep -Fq -- "$doc_name" "$DOCS_README"; then
+        test_pass "docs/README.md links $doc_name"
+    else
+        test_fail "docs/README.md links $doc_name"
+    fi
+done < <(find "$BASE_DIR/docs" -maxdepth 1 -type f -name '*.md' | sort)
+
 all_docs="$README $BASE_DIR/docs/lifecycle.md $CONFIG_DOC $BASE_DIR/docs/guest.md $BASE_DIR/docs/troubleshooting.md $BASE_DIR/docs/release-maintenance.md $BASE_DIR/docs/qnap-runbook.md"
 for command in "$BASE_DIR"/bin/dx*; do
     [ -f "$command" ] || continue

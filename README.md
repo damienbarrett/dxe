@@ -121,6 +121,7 @@ show the configured prefix-key help.
 
 ## Documentation
 
+- [Documentation map: entry points, operating docs, decisions, evidence, and reviews](docs/README.md)
 - [Lifecycle, helpers, migration, and recovery](docs/lifecycle.md)
 - [Configuration, profiles, and `dx-mount`](docs/configuration.md)
 - [Guest bootstrap, persistence, optional AI tools, NixVim, and theming](docs/guest.md)
