@@ -419,6 +419,24 @@ dx_backup_restore_targets() {
 # same size class.
 DX_BACKUP_HASH_PATHS_ARG_THRESHOLD=1000
 
+# Shared threshold decision (Astra R4 / WP6.9): given $3 (a count of items
+# $2's file holds, one per line), decide whether that batch should ship $2
+# into the guest as a file via dx_backup_ship_list_to_guest, or stay small
+# enough for the caller's own positional-argument fast path. Prints nothing
+# (success, rc 0) at or under DX_BACKUP_HASH_PATHS_ARG_THRESHOLD -- the
+# caller takes the positional path. Above it, ships $2 and prints the
+# resulting guest path (success, rc 0); a ship failure is never masked --
+# it propagates as a non-zero return with no output, so a caller must never
+# fall back to the positional path on a failed ship (the very ARG_MAX risk
+# this threshold exists to avoid). Shared by dx_backup_restore_status's
+# hash-paths batching and dx_backup_restore_push's directory-precreation and
+# ownership batching below.
+dx_backup_ship_list() {
+    local container_name="$1" host_list="$2" count="$3"
+    [ "$count" -gt "$DX_BACKUP_HASH_PATHS_ARG_THRESHOLD" ] || return 0
+    dx_backup_ship_list_to_guest "$container_name" "$host_list"
+}
+
 # For each relative path in $3 (one per line), compare the LOCAL mirror copy
 # ($2/current/<path>) against the guest's current content, batched in one
 # `--hash-paths` (or, above DX_BACKUP_HASH_PATHS_ARG_THRESHOLD,
@@ -514,48 +532,94 @@ dx_backup_restore_status() {
 
 # Push $3 (relative paths, one per line) from $2/current/ into the guest at
 # $DX_BACKUP_GUEST_ROOT, preserving modes and restoring dx ownership.
+#
+# Astra R4 / WP6.9: rewritten to bound the number of `container exec` calls
+# regardless of the target count -- the old shape forked one `chown` exec
+# PER restored file (2,000 targets meant 2,000 execs; live-measured at
+# ~2,005 total against a 2,000-file fixture with bin/dx-restore's old,
+# unfiltered push list). Every phase below is now at most ONE exec at or
+# under DX_BACKUP_HASH_PATHS_ARG_THRESHOLD items, or ships the list and pays
+# exactly one more batched exec (plus best-effort cleanup) above it -- the
+# same shape Branch 17 already established for the fetch/status paths,
+# reused here via dx_backup_ship_list.
 dx_backup_restore_push() {
     local container_name="$1" backup_dir="$2" targets="$3"
-    local path dir
-    local -a target_list=() dir_list=()
+    local path rc=0
+    local -a target_list=()
     while IFS= read -r path || [ -n "$path" ]; do
         [ -n "$path" ] || continue
         target_list+=("$path"); done < "$targets"
     [ "${#target_list[@]}" -gt 0 ] || return 0
 
-    for path in "${target_list[@]}"; do
-        dir="$(dirname "$path")"
-        while [ "$dir" != . ] && [ -n "$dir" ]; do
-            case " ${dir_list[*]-} " in
-                # `:` (not a bare `;;`) so this no-op branch is itself a
-                # traceable command -- an empty case arm registers no
-                # coverage hit even when selected, the same reason a bare
-                # subshell-closing `)` doesn't (see run-coverage-linux.sh's
-                # KCOV_SUBSHELL_TERMINATOR).
-                *" $dir "*) : ;;
-                *) dir_list+=("$dir") ;;
-            esac
-            dir="$(dirname "$dir")"
-        done
-    done
-    if [ "${#dir_list[@]}" -gt 0 ]; then
-        # Single line: this codebase's convention for a guest sh -c body (see
-        # bin/dx-put) -- a multi-line quoted argument only registers a
-        # coverage hit on its first line, not each interior line.
-        dx_runtime_exec -u root "$container_name" sh -c 'root="$1"; shift; for d in "$@"; do mkdir -p "$root/$d" && chown dx:dx "$root/$d"; done' -- "$DX_BACKUP_GUEST_ROOT" "${dir_list[@]}"
+    # --- Ancestor directories: one awk pass over the targets file (never a
+    # per-path `dirname` fork) emits every ancestor of every target -- the
+    # same set the old per-path dirname-walk loop collected, just without
+    # forking `dirname` twice per path per level to do it -- deduped with
+    # this file's own LC_ALL=C sort -u convention (see dx_backup_diff,
+    # dx_backup_write_manifest_atomic above). mkdir -p + chown dx:dx each
+    # one, batched into a single exec, or, above the threshold, shipped and
+    # run through one `xargs -0` exec. Single line (this file's own
+    # convention, see dx-put and this file's other sh -c bodies): a
+    # multi-line quoted argument only registers a kcov coverage hit on its
+    # first line.
+    local dirs_file dir_count
+    dirs_file="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-push-dirs.XXXXXX")" || return 1
+    awk -F/ '{ n = split($0, parts, "/"); prefix = ""; for (i = 1; i < n; i++) { prefix = (prefix == "" ? parts[i] : prefix "/" parts[i]); print prefix } }' "$targets" | LC_ALL=C sort -u > "$dirs_file"
+    dir_count="$(wc -l < "$dirs_file" | tr -d '[:space:]')"
+    if [ "${dir_count:-0}" -gt 0 ]; then
+        local dirs_guest_list
+        if dirs_guest_list="$(dx_backup_ship_list "$container_name" "$dirs_file" "$dir_count")"; then
+            if [ -n "$dirs_guest_list" ]; then
+                dx_runtime_exec -u root "$container_name" sh -c 'root="$1"; list="$2"; tr "\n" "\0" < "$list" | xargs -0 sh -c '\''r="$1"; shift; for d; do mkdir -p "$r/$d" && chown dx:dx "$r/$d"; done'\'' -- "$root"' -- "$DX_BACKUP_GUEST_ROOT" "$dirs_guest_list" || rc=$?
+                dx_backup_remove_guest_list "$container_name" "$dirs_guest_list"
+            else
+                local -a dir_list=()
+                while IFS= read -r path; do dir_list+=("$path"); done < "$dirs_file"
+                dx_runtime_exec -u root "$container_name" sh -c 'root="$1"; shift; for d; do mkdir -p "$root/$d" && chown dx:dx "$root/$d"; done' -- "$DX_BACKUP_GUEST_ROOT" "${dir_list[@]}" || rc=$?
+            fi
+        else
+            rc=1
+        fi
     fi
+    rm -f "$dirs_file"
+    [ "$rc" -eq 0 ] || return "$rc"
 
-    # COPYFILE_DISABLE=1: live-verified on dx-test (2026-09-27) that without
-    # it, macOS tar embeds a com.apple.provenance xattr as a PAX extended
-    # header GNU tar in the guest doesn't recognise ("Ignoring unknown
-    # extended header keyword") -- harmless (extraction still succeeds) but
-    # noisy. Same guard bin/dx-put already uses for the identical
-    # host-to-guest tar-creation direction.
+    # --- One incremental tar transfer, unchanged (Branch 17's own
+    # unidirectional shape: stdin-only host tar create, stdout-only guest
+    # extract, never both live on the same exec). COPYFILE_DISABLE=1:
+    # live-verified on dx-test (2026-09-27) that without it, macOS tar
+    # embeds a com.apple.provenance xattr as a PAX extended header GNU tar
+    # in the guest doesn't recognise ("Ignoring unknown extended header
+    # keyword") -- harmless (extraction still succeeds) but noisy. Same
+    # guard bin/dx-put already uses for the identical host-to-guest
+    # tar-creation direction.
     printf '%s\n' "${target_list[@]}" | tr '\n' '\0' \
         | COPYFILE_DISABLE=1 tar -C "$backup_dir/current" --exclude '._*' --null -T - -cf - \
-        | dx_runtime_exec -i -u dx "$container_name" tar -xf - -C "$DX_BACKUP_GUEST_ROOT"
+        | dx_runtime_exec -i -u dx "$container_name" tar -xf - -C "$DX_BACKUP_GUEST_ROOT" || return $?
 
-    for path in "${target_list[@]}"; do
-        dx_runtime_exec -u root "$container_name" chown dx:dx "$DX_BACKUP_GUEST_ROOT/$path"
-    done
+    # --- Ownership: one batched `chown -h dx:dx` (never plain `chown`,
+    # which follows a symlink's target instead of re-owning the symlink
+    # itself -- a real restore target can be a symlink, see
+    # dx_backup_restore_list_prefixed's `-type f -o -type l`) over
+    # pre-joined full guest paths, positional at or under the threshold or
+    # shipped and run through one `xargs -0` exec above it, same shape as
+    # the directory pass above.
+    local files_file
+    files_file="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-push-files.XXXXXX")" || return 1
+    for path in "${target_list[@]}"; do printf '%s/%s\n' "$DX_BACKUP_GUEST_ROOT" "$path"; done > "$files_file"
+    local files_guest_list
+    if files_guest_list="$(dx_backup_ship_list "$container_name" "$files_file" "${#target_list[@]}")"; then
+        if [ -n "$files_guest_list" ]; then
+            dx_runtime_exec -u root "$container_name" sh -c 'tr "\n" "\0" < "$1" | xargs -0 chown -h dx:dx' -- "$files_guest_list" || rc=$?
+            dx_backup_remove_guest_list "$container_name" "$files_guest_list"
+        else
+            local -a full_paths=()
+            while IFS= read -r path; do full_paths+=("$path"); done < "$files_file"
+            dx_runtime_exec -u root "$container_name" chown -h dx:dx "${full_paths[@]}" || rc=$?
+        fi
+    else
+        rc=1
+    fi
+    rm -f "$files_file"
+    return "$rc"
 }
