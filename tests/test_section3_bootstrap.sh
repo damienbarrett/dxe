@@ -24,7 +24,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -1277,20 +1277,20 @@ p9_fresh_output="$({
     chown() { printf 'chown %s\n' "$*" >> "$p9_fresh_calls"; }
     nix_image_store_import_required() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_fresh_calls"; return 1; }
     nix_image_store_identity() { printf 'MUST-NOT-BE-CALLED\n' >> "$p9_fresh_calls"; return 1; }
-    nix_install_image_essentials_root() { printf 'install_root %s pending=%s\n' "$*" "${DX_NIX_PENDING_IMAGE_STORE_IDENTITY:-<unset>}" >> "$p9_fresh_calls"; }
+    nix_install_image_essentials_root() { printf 'install_root %s\n' "$*" >> "$p9_fresh_calls"; }
     DX_IMAGE_IDENTITY=sha256:1100000000000000000000000000000000000000000000000000000000000000
-    populate_prepared_nix_volume_in_place "$p9_root_fresh"
+    populate_prepared_nix_volume_in_place "$p9_root_fresh" 0 0
     echo "marker=$(cat "$p9_root_fresh/.dx-image-identity-v1" 2>/dev/null)"
     echo "pending-after-return=${DX_NIX_PENDING_IMAGE_STORE_IDENTITY:-<unset>}"
 } 2>&1)"
 if printf '%s\n' "$p9_fresh_output" | stdin_matches -F 'marker=sha256:1100000000000000000000000000000000000000000000000000000000000000' \
     && printf '%s\n' "$p9_fresh_output" | stdin_matches -F 'pending-after-return=<unset>' \
     && grep -qF -- 'install_root' "$p9_fresh_calls" \
-    && grep -qF -- 'pending=1100000000000000000000000000000000000000000000000000000000000000' "$p9_fresh_calls" \
+    && grep -qF -- '1100000000000000000000000000000000000000000000000000000000000000' "$p9_fresh_calls" \
     && ! grep -qF -- 'MUST-NOT-BE-CALLED' "$p9_fresh_calls"; then
-    test_pass "populate_prepared_nix_volume_in_place: marker absent -> writes it, publishes roots keyed by DX_IMAGE_IDENTITY, never calls nix_image_store_identity, and the pending identity never survives the one call it steers"
+    test_pass "populate_prepared_nix_volume_in_place: marker absent -> writes it, publishes roots keyed by DX_IMAGE_IDENTITY passed as an explicit fourth argument (Contract 1, Fable B6 item 4), never calls nix_image_store_identity, and DX_NIX_PENDING_IMAGE_STORE_IDENTITY is never set at all"
 else
-    test_fail "populate_prepared_nix_volume_in_place: marker absent -> writes it, publishes roots keyed by DX_IMAGE_IDENTITY, never calls nix_image_store_identity, and the pending identity never survives the one call it steers (output: $p9_fresh_output; calls: $(cat "$p9_fresh_calls" 2>/dev/null))"
+    test_fail "populate_prepared_nix_volume_in_place: marker absent -> writes it, publishes roots keyed by DX_IMAGE_IDENTITY passed as an explicit fourth argument (Contract 1, Fable B6 item 4), never calls nix_image_store_identity, and DX_NIX_PENDING_IMAGE_STORE_IDENTITY is never set at all (output: $p9_fresh_output; calls: $(cat "$p9_fresh_calls" 2>/dev/null))"
 fi
 
 # 3b (Branch 11 / Phase 4, Finding 7 -- the real first-boot failure on a
@@ -2158,12 +2158,12 @@ p13_d1_log="$p13_fixture/case-d1.log"
     nix_image_store_import_required() { printf 'MUST-NOT-IMPORT_REQUIRED %s\n' "$*" >> "$p13_d1_log"; return 0; }
     nix_verify_no_bootstrap_path_collision() { printf 'MUST-NOT-COLLISION %s\n' "$*" >> "$p13_d1_log"; return 0; }
     nix_store_import_registered() { printf 'MUST-NOT-REGISTERED %s\n' "$*" >> "$p13_d1_log"; }
-    populate_prepared_nix_volume
+    populate_prepared_nix_volume 0 0
     echo "exit=$?"
 ) >"$p13_fixture/case-d1.out" 2>&1 || true
 p13_d1_expected="IDENTITY
 SEED /nix $p13_d1_root 0 0
-ROOTS $p13_d1_root 0 0"
+ROOTS $p13_d1_root 0 0 fakeidentity"
 if [ "$(cat "$p13_d1_log" 2>/dev/null)" = "$p13_d1_expected" ] \
     && grep -qxF 'exit=0' "$p13_fixture/case-d1.out"; then
     test_pass "populate_prepared_nix_volume: a fresh root (no store/) seeds the volume and publishes essentials roots, in order, never the import trio"
@@ -2185,15 +2185,15 @@ p13_d2_log="$p13_fixture/case-d2.log"
     nix_image_store_identity() { printf 'MUST-NOT-IDENTITY\n' >> "$p13_d2_log"; printf '%s\n' fakeidentity; }
     nix_seed_volume() { printf 'MUST-NOT-SEED %s\n' "$*" >> "$p13_d2_log"; }
     nix_install_image_essentials_root() { printf 'MUST-NOT-ROOTS %s\n' "$*" >> "$p13_d2_log"; }
-    nix_image_store_import_required() { printf 'IMPORT_REQUIRED %s\n' "$*" >> "$p13_d2_log"; return 0; }
+    nix_image_store_import_required() { printf 'IMPORT_REQUIRED %s\n' "$*" >> "$p13_d2_log"; printf '%s\n' fakeidentity; return 0; }
     nix_verify_no_bootstrap_path_collision() { printf 'COLLISION %s\n' "$*" >> "$p13_d2_log"; return 0; }
     nix_store_import_registered() { printf 'REGISTERED %s\n' "$*" >> "$p13_d2_log"; }
-    populate_prepared_nix_volume
+    populate_prepared_nix_volume 0 0
     echo "exit=$?"
 ) >"$p13_fixture/case-d2.out" 2>&1 || true
 p13_d2_expected="IMPORT_REQUIRED /nix $p13_d2_root
 COLLISION /nix $p13_d2_root
-REGISTERED $p13_d2_root 0 0"
+REGISTERED $p13_d2_root 0 0 fakeidentity"
 if [ "$(cat "$p13_d2_log" 2>/dev/null)" = "$p13_d2_expected" ] \
     && grep -qxF 'exit=0' "$p13_fixture/case-d2.out"; then
     test_pass "populate_prepared_nix_volume: a reused root (store/ present, no collision) imports the registered closure, in order, never the seed trio"
@@ -2214,7 +2214,7 @@ p13_d3_log="$p13_fixture/case-d3.log"
     nix_store_import_registered() { printf 'MUST-NOT-REGISTERED %s\n' "$*" >> "$p13_d3_log"; }
     umount() { printf 'MUST-NOT-UMOUNT\n' >> "$p13_d3_log"; }
     mount() { printf 'MUST-NOT-MOUNT\n' >> "$p13_d3_log"; }
-    populate_prepared_nix_volume
+    populate_prepared_nix_volume 0 0
     echo "exit=$?"
 ) >"$p13_fixture/case-d3.out" 2>&1 || true
 p13_d3_expected="IMPORT_REQUIRED /nix $p13_d3_root
@@ -2334,6 +2334,81 @@ else
 fi
 
 rm -rf "$p13_fixture"
+
+# P14 (refactor-v2-final.md Contract 1, Fable B6 item 4): "a verified clean
+# skip performs no marker write" -- the Phase 1 gate -- made mode-aware.
+# DX_NIX_PENDING_IMAGE_STORE_IDENTITY is gone; the publication decision now
+# lives in dx_write_pending_image_identity's own pending record
+# (.dx-image-store-identity.pending). This proves both modes through the
+# real functions, not stubs of them: apple-image's verified-match skip must
+# leave the existing marker byte-for-byte untouched and never create a
+# pending record, and direct-volume mode -- whose own populate function
+# never calls dx_write_pending_image_identity at all -- must never create
+# .dx-image-store-identity even after publish_nix_image_store_identity (the
+# later, mode-agnostic phase) runs unconditionally against it.
+p14_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p14-clean-skip.XXXXXX")"
+
+# (a) apple-image mode: an already-registered, content-verified volume.
+p14_apple_root="$p14_fixture/apple-volume"
+mkdir -p "$p14_apple_root/store"
+p14_apple_identity="1010101010101010101010101010101010101010101010101010101010101010"
+printf '%s\n' "$p14_apple_identity" > "$p14_apple_root/.dx-image-store-identity"
+p14_apple_marker_before="$(cat "$p14_apple_root/.dx-image-store-identity")"
+p14_apple_out="$p14_fixture/apple.out"
+(
+    DX_NIX_VOLUME_ROOT="$p14_apple_root"
+    DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
+    DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
+    DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
+    grep() { if [ "$*" = "-q /nix $DX_NIX_VOLUME_FS_TYPE /etc/fstab" ]; then return 0; fi; command grep "$@"; }
+    umount() { :; }
+    mount() { :; }
+    nix_image_store_identity() { printf '%s\n' "$p14_apple_identity"; }
+    nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/p14-essentials; }
+    run_as_dx() { return 0; }
+    nix_install_image_essentials_root() { :; }
+    populate_prepared_nix_volume 0 0
+    echo "populate_exit=$?"
+    publish_nix_image_store_identity "$p14_apple_root"
+    echo "publish_exit=$?"
+) >"$p14_apple_out" 2>&1 || true
+if grep -qxF 'populate_exit=0' "$p14_apple_out" \
+    && grep -qxF 'publish_exit=0' "$p14_apple_out" \
+    && [ ! -e "$p14_apple_root/.dx-image-store-identity.pending" ] \
+    && [ "$(cat "$p14_apple_root/.dx-image-store-identity" 2>/dev/null)" = "$p14_apple_marker_before" ]; then
+    test_pass "P14 (Contract 1 gate): apple-image verified clean skip writes no pending record and leaves the identity marker byte-for-byte untouched"
+else
+    test_fail "P14 (Contract 1 gate): apple-image verified clean skip writes no pending record and leaves the identity marker byte-for-byte untouched (out: $(cat "$p14_apple_out"); pending: $([ -e "$p14_apple_root/.dx-image-store-identity.pending" ] && echo present || echo absent))"
+fi
+
+# (b) direct-volume mode: an already-registered, content-verified volume,
+# reached through populate_prepared_nix_volume_in_place directly (P9's own
+# style). publish_nix_image_store_identity is still called afterward,
+# exactly as bootstrap_phases calls it unconditionally regardless of mode.
+p14_direct_root="$p14_fixture/direct-volume"
+mkdir -p "$p14_direct_root/store"
+printf 'sha256:2020202020202020202020202020202020202020202020202020202020202020\n' > "$p14_direct_root/.dx-image-identity-v1"
+p14_direct_out="$p14_fixture/direct.out"
+(
+    nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/p14-direct-essentials; }
+    run_as_dx() { return 0; }
+    nix_install_image_essentials_root() { :; }
+    DX_IMAGE_IDENTITY=sha256:2020202020202020202020202020202020202020202020202020202020202020
+    populate_prepared_nix_volume_in_place "$p14_direct_root" 0 0
+    echo "populate_exit=$?"
+    publish_nix_image_store_identity "$p14_direct_root"
+    echo "publish_exit=$?"
+) >"$p14_direct_out" 2>&1 || true
+if grep -qxF 'populate_exit=0' "$p14_direct_out" \
+    && grep -qxF 'publish_exit=0' "$p14_direct_out" \
+    && [ ! -e "$p14_direct_root/.dx-image-store-identity.pending" ] \
+    && [ ! -e "$p14_direct_root/.dx-image-store-identity" ]; then
+    test_pass "P14 (Contract 1 gate, Fable B6 item 4, mode-aware): direct-volume mode never writes .dx-image-store-identity, even after publish_nix_image_store_identity runs unconditionally"
+else
+    test_fail "P14 (Contract 1 gate, Fable B6 item 4, mode-aware): direct-volume mode never writes .dx-image-store-identity, even after publish_nix_image_store_identity runs unconditionally (out: $(cat "$p14_direct_out"))"
+fi
+
+rm -rf "$p14_fixture"
 
 print_summary
 exit_with_code

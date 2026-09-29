@@ -1757,20 +1757,22 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     root="$fixture/core-nix-branches"
     mkdir -p "$root/store" "$root/var/nix"
     chown() { :; }
-    DX_NIX_PENDING_IMAGE_STORE_IDENTITY=bad
-    nix_install_image_essentials_root "$root" 1000 1000 >/dev/null 2>&1 || true
-    DX_NIX_PENDING_IMAGE_STORE_IDENTITY=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    # Contract 1 (refactor-v2-final.md, Fable B6 item 4): the image identity
+    # is a required fourth positional argument now, never
+    # DX_NIX_PENDING_IMAGE_STORE_IDENTITY.
+    identity_valid=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    nix_install_image_essentials_root "$root" 1000 1000 bad >/dev/null 2>&1 || true
     nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/root; }
     ln() { return 1; }
-    nix_install_image_essentials_root "$root" 1000 1000 >/dev/null 2>&1 || true
+    nix_install_image_essentials_root "$root" 1000 1000 "$identity_valid" >/dev/null 2>&1 || true
     unset -f ln
-    nix_install_image_essentials_root "$root" 1000 1000
+    nix_install_image_essentials_root "$root" 1000 1000 "$identity_valid"
 
     # A failed root enumeration must remove the private stage before returning
     # so a later bootstrap cannot mistake it for a published root set.
     rm -rf "$root/var/nix/gcroots"/dx-image-roots-*
     nix_image_bootstrap_store_paths() { return 1; }
-    nix_install_image_essentials_root "$root" 1000 1000 >/dev/null 2>&1 || true
+    nix_install_image_essentials_root "$root" 1000 1000 "$identity_valid" >/dev/null 2>&1 || true
 
     seed="$root/seed"; target="$root/target"
     mkdir -p "$seed/store/a" "$target"
@@ -1806,18 +1808,25 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     nix_image_store_identity() { printf '%s\n' identity; }
     nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/root; }
     run_as_dx() { return 0; }
+    # Contract 1: identity/publication-decision threading now goes through
+    # dx_write_pending_image_identity's own non-sourced pending record, never
+    # DX_NIX_PENDING_IMAGE_STORE_IDENTITY. A verified-match skip (this
+    # fixture's marker content already agrees with the stubbed identity)
+    # writes no pending record at all -- exercised for real here -- so the
+    # publish path below is exercised separately, by writing one directly.
     nix_image_store_import_required /nix "$root/gate" >/dev/null 2>&1 || true
     chown() { :; }
-    DX_NIX_PENDING_IMAGE_STORE_IDENTITY=identity
+    dx_write_pending_image_identity "$root/gate" cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
     publish_nix_image_store_identity "$root/gate"
 
     # A directory at the image identity marker is not an absent marker: the
     # gate must retain the computed identity for a retry rather than silently
-    # treating the directory as a valid publication.
+    # treating the directory as a valid publication -- now via the pending
+    # record file, surfaced to the caller as this function's own stdout.
     mkdir -p "$root/gate-directory/.dx-image-store-identity"
-    unset DX_NIX_PENDING_IMAGE_STORE_IDENTITY
-    nix_image_store_import_required /nix "$root/gate-directory"
-    [ "${DX_NIX_PENDING_IMAGE_STORE_IDENTITY:-}" = identity ]
+    gate_directory_identity="$(nix_image_store_import_required /nix "$root/gate-directory")"
+    [ "$gate_directory_identity" = identity ]
+    [ "$(cat "$root/gate-directory/.dx-image-store-identity.pending" 2>/dev/null)" = identity ]
 
     # Exercise the portable sourceable fallback used on Darwin. It still
     # replaces a validated marker atomically and leaves no temporary file.
@@ -1829,7 +1838,7 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     unset -f uname
     [ -f "$fallback_marker" ] && [ "$(cat "$fallback_marker")" = fallback ] && [ ! -e "$fallback_temporary" ]
 
-    DX_NIX_VOLUME_ALREADY_MOUNTED=true DX_NIX_VOLUME_ROOT="$root" populate_prepared_nix_volume
+    DX_NIX_VOLUME_ALREADY_MOUNTED=true DX_NIX_VOLUME_ROOT="$root" populate_prepared_nix_volume 0 0
 
     # Branch 11 / Phase 3: publish_nix_volume_image_identity's chown/
     # publish failure branch (never reached by the Section 3 happy-path
@@ -1926,7 +1935,7 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     nix_image_store_import_required() { return 1; }
     nix_install_image_essentials_root() { :; }
     umount() { :; }; mount() { :; }; grep() { return 0; }
-    populate_prepared_nix_volume
+    populate_prepared_nix_volume 0 0
 )
 (
     root="$fixture/activation-marker-failure"

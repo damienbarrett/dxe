@@ -8,6 +8,7 @@
 # behaviourally, instead of comparing grep line numbers in this file's
 # source text.
 bootstrap_phases() {
+    local owner_uid owner_gid
     configure_single_user_nix
     install_essentials
     link_system_bash
@@ -15,7 +16,15 @@ bootstrap_phases() {
     prepare_nix_volume
     materialize_auth_files
     create_user
-    populate_prepared_nix_volume
+    # Contract 1 (refactor-v2-final.md, Fable B6 item 6): the owner uid/gid
+    # is resolved exactly once, here, after create_user has run -- never
+    # re-derived inside populate_prepared_nix_volume or its in-place
+    # counterpart. The 2>/dev/null fallback stays (moved to this single call
+    # site) so sourceable probes that shadow these phase functions without
+    # materialising a real dx account keep working.
+    owner_uid="$(id -u dx 2>/dev/null || printf '%s' 0)"
+    owner_gid="$(id -g dx 2>/dev/null || printf '%s' 0)"
+    populate_prepared_nix_volume "$owner_uid" "$owner_gid"
     verify_remount_prerequisites
     nix_restore_image_default_profile
     ensure_essentials_valid

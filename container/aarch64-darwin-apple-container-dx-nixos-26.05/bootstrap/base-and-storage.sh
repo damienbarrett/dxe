@@ -125,6 +125,11 @@ nix_store_import_registered() {
     local destination_root="$1"
     local owner_uid="$2"
     local owner_gid="$3"
+    # Contract 1: the image identity nix_image_store_import_required already
+    # computed, threaded through as a fourth positional argument rather than
+    # recomputed or read back from the environment. ${4:-}: defensive only
+    # (set -u); nix_install_image_essentials_root validates the shape.
+    local identity="${4:-}"
     local target_store
 
     mkdir -p "$destination_root/store" "$destination_root/var/nix" "$destination_root/var/log/nix"
@@ -136,14 +141,24 @@ nix_store_import_registered() {
         return 1
     fi
     nix_verify_imported_bootstrap_paths "$destination_root" || return 1
-    nix_install_image_essentials_root "$destination_root" "$owner_uid" "$owner_gid"
+    nix_install_image_essentials_root "$destination_root" "$owner_uid" "$owner_gid" "$identity"
 }
 
 nix_install_image_essentials_root() {
     local destination_root="$1"
     local owner_uid="$2"
     local owner_gid="$3"
-    local gcroots stage final identity path final_name bootstrap_paths
+    # Contract 1 (refactor-v2-final.md, Fable B6 item 4): the image identity
+    # is a required fourth positional argument. Earlier code smuggled it
+    # through the exported DX_NIX_PENDING_IMAGE_STORE_IDENTITY environment
+    # variable; every caller now computes or threads it explicitly instead,
+    # and this function validates the 64-hex shape at its own boundary
+    # rather than falling back to recomputing nix_image_store_identity. The
+    # ${4:-} default is defensive only (this file runs under set -u): an
+    # absent identity fails the format check below exactly like an invalid
+    # one, never silently substituting a real value.
+    local identity="${4:-}"
+    local gcroots stage final path final_name bootstrap_paths
 
     gcroots="$destination_root/var/nix/gcroots"
     mkdir -p "$gcroots"
@@ -152,7 +167,6 @@ nix_install_image_essentials_root() {
     rm -rf "$gcroots"/.dx-image-roots-stage.*
     # Publish a complete new root set before pruning the old one. A kill at
     # any point therefore leaves at least one valid set for the GC scanner.
-    identity="${DX_NIX_PENDING_IMAGE_STORE_IDENTITY:-$(nix_image_store_identity)}" || return 1
     if ! [[ "$identity" =~ ^[0123456789abcdef]{64}$ ]]; then
         echo "Error: refusing to publish GC roots with an invalid image identity." >&2
         return 1
@@ -518,6 +532,26 @@ nix_target_store_uri() {
     printf '%s\n' "local?store=/nix/store&real=$destination_root/store&state=$destination_root/var/nix&log=$destination_root/var/log/nix"
 }
 
+# Contract 1 (refactor-v2-final.md, Fable B6 items 1/4): the pending-publish
+# record replacing the exported DX_NIX_PENDING_IMAGE_STORE_IDENTITY. It is a
+# plain, non-sourced file living beside the final `.dx-image-store-identity`
+# marker (same volume_root, so it survives the apple-image remount exactly
+# the way the environment variable used to survive across bootstrap_main's
+# own phases) -- written only when a marker rewrite is actually needed, read
+# and consumed exactly once by publish_nix_image_store_identity, and never
+# exported. Its mere presence *is* the publication decision: nothing reads
+# it for any other purpose, so there is no separate boolean to smuggle.
+dx_write_pending_image_identity() {
+    local destination_root="$1"
+    local identity="$2"
+    local marker="$destination_root/.dx-image-store-identity.pending"
+    local temporary
+    dx_validate_atomic_marker_path "$marker" "pending image store identity marker" || return 1
+    temporary="$(mktemp "$destination_root/.dx-image-store-identity.pending.XXXXXX")" || return 1
+    printf '%s\n' "$identity" > "$temporary" || { rm -f "$temporary"; return 1; }
+    dx_publish_atomic_marker "$temporary" "$marker" "pending image store identity marker"
+}
+
 nix_image_store_import_required() {
     local source_root="$1"
     local destination_root="$2"
@@ -528,18 +562,24 @@ nix_image_store_import_required() {
     [ -n "$roots" ] || return 0
     marker="$destination_root/.dx-image-store-identity"
     if ! dx_validate_atomic_marker_path "$marker" "image store identity marker"; then
-        DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$identity"
-        export DX_NIX_PENDING_IMAGE_STORE_IDENTITY
+        dx_write_pending_image_identity "$destination_root" "$identity" || return 1
+        printf '%s\n' "$identity"
         return 0
     fi
     if [ -f "$marker" ] && [ "$(cat "$marker")" = "$identity" ]; then
         target_store="$(nix_target_store_uri "$destination_root")"
         if run_as_dx "nix --extra-experimental-features 'nix-command flakes' store verify --store '$target_store' --recursive --no-trust$roots" >/dev/null 2>&1; then
+            # Verified clean skip: the identity is still surfaced to the
+            # caller (so nix_install_image_essentials_root's bounded
+            # crash-recovery re-publish below need not recompute it), but no
+            # pending record is written -- this is the one branch that must
+            # perform no marker write at all.
+            printf '%s\n' "$identity"
             return 1
         fi
     fi
-    DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$identity"
-    export DX_NIX_PENDING_IMAGE_STORE_IDENTITY
+    dx_write_pending_image_identity "$destination_root" "$identity" || return 1
+    printf '%s\n' "$identity"
     return 0
 }
 
@@ -620,51 +660,75 @@ nix_verify_no_bootstrap_path_collision() {
 publish_nix_image_store_identity() {
     local destination_root="${1:-/nix}"
     local marker="$destination_root/.dx-image-store-identity"
-    local temporary=""
+    local pending="$destination_root/.dx-image-store-identity.pending"
+    local identity temporary=""
 
-    [ -n "${DX_NIX_PENDING_IMAGE_STORE_IDENTITY:-}" ] || return 0
+    # Contract 1: the publication decision is now the pending record's mere
+    # presence (Fable B6 item 4), never the exported
+    # DX_NIX_PENDING_IMAGE_STORE_IDENTITY. A verified clean skip
+    # (nix_image_store_import_required's own matching-marker branch) never
+    # wrote this file, so this is a no-op there -- and mode-aware for free:
+    # direct-volume mode never calls dx_write_pending_image_identity either,
+    # so this file never exists on that path, and .dx-image-store-identity
+    # itself stays an apple-image-only artefact.
+    [ -f "$pending" ] && [ ! -L "$pending" ] || return 0
+    identity="$(cat "$pending" 2>/dev/null)" || return 0
+    [ -n "$identity" ] || { rm -f "$pending"; return 0; }
+    if ! [[ "$identity" =~ ^[0123456789abcdef]{64}$ ]]; then
+        echo "Error: refusing to publish an invalid image identity from the pending record." >&2
+        return 1
+    fi
     temporary="$(mktemp "$destination_root/.dx-image-store-identity.XXXXXX")" || return 1
-    printf '%s\n' "$DX_NIX_PENDING_IMAGE_STORE_IDENTITY" > "$temporary"
+    printf '%s\n' "$identity" > "$temporary"
     if ! chown dx:dx "$temporary" \
         || ! dx_publish_atomic_marker "$temporary" "$marker" "image store identity marker"; then
         rm -f "$temporary"
         return 1
     fi
-    unset DX_NIX_PENDING_IMAGE_STORE_IDENTITY
+    # Only clear the pending record once publication has actually completed:
+    # a failure here (bad ownership, a directory squatting on the final
+    # marker path, a lost race) must leave the identity available for a
+    # retry, exactly as the removed DX_NIX_PENDING_IMAGE_STORE_IDENTITY
+    # export stayed set until the same point.
+    rm -f "$pending"
 }
 
 populate_prepared_nix_volume() {
-    local owner_uid owner_gid import_started
+    # Contract 1 (Fable B6 item 6): owner uid/gid are resolved exactly once,
+    # by bootstrap_phases after create_user, and threaded in positionally.
+    # The old "id -u dx 2>/dev/null || printf 0" fallback inside this
+    # function was test convenience only; it is gone from production, and
+    # every caller -- production and test alike -- now supplies real values.
+    # The ${1:-0}/${2:-0} defaults are defensive only (this file runs under
+    # set -u); they are not a production fallback.
+    local owner_uid="${1:-0}"
+    local owner_gid="${2:-0}"
+    local import_started identity
     local volume_root="${DX_NIX_VOLUME_ROOT:?Nix volume was not prepared}"
 
     if [ "${DX_NIX_VOLUME_IN_PLACE:-false}" = true ]; then
-        populate_prepared_nix_volume_in_place "$volume_root"
+        populate_prepared_nix_volume_in_place "$volume_root" "$owner_uid" "$owner_gid"
         return
     fi
 
     if [ "${DX_NIX_VOLUME_ALREADY_MOUNTED:-false}" = true ]; then
         return 0
     fi
-    # The production order creates dx between prepare and populate.  Retain a
-    # root fallback for sourceable mount probes, which deliberately exercise
-    # this compatibility wrapper without materialising system accounts.
-    owner_uid="$(id -u dx 2>/dev/null || printf '%s' 0)"
-    owner_gid="$(id -g dx 2>/dev/null || printf '%s' 0)"
     migrate_durable_nix_identity_if_needed "$volume_root"
     import_started=$SECONDS
     if [ ! -d "$volume_root/store" ]; then
-        DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$(nix_image_store_identity 2>/dev/null || true)"
-        export DX_NIX_PENDING_IMAGE_STORE_IDENTITY
+        identity="$(nix_image_store_identity 2>/dev/null || true)"
         nix_seed_volume /nix "$volume_root" "$owner_uid" "$owner_gid"
-        nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid"
-    elif nix_image_store_import_required /nix "$volume_root"; then
+        nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid" "$identity"
+        [ -z "$identity" ] || dx_write_pending_image_identity "$volume_root" "$identity"
+    elif identity="$(nix_image_store_import_required /nix "$volume_root")"; then
         nix_verify_no_bootstrap_path_collision /nix "$volume_root" || return 1
-        nix_store_import_registered "$volume_root" "$owner_uid" "$owner_gid"
+        nix_store_import_registered "$volume_root" "$owner_uid" "$owner_gid" "$identity"
     else
         echo "Image Nix essentials identity is unchanged; skipping image-store import."
         # Re-publish roots even for a matching image marker. This is bounded
         # crash recovery for an interruption during a prior root refresh.
-        nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid"
+        nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid" "$identity"
     fi
     echo "Nix volume image import completed in $((SECONDS - import_started))s."
 
@@ -733,17 +797,15 @@ publish_nix_volume_image_identity() {
 # reboot of a used direct-volume guest, deterministically. The volume's own
 # content cannot witness "which image" here (see the design note); do not
 # pretend it can. Never call nix_image_store_import_required/
-# nix_image_store_identity in this function, and never let
-# DX_NIX_PENDING_IMAGE_STORE_IDENTITY survive past it: the temporary-
-# environment prefix below (`VAR=value nix_install_image_essentials_root
-# ...`) scopes it to that one call only (verified: a plain assignment
-# would NOT do this -- bash has no per-function variable scope without
-# `local`, but a temporary-environment prefix on a simple command, function
-# call included, is POSIX-scoped to that command alone and never touches
-# the caller's own variable state), so publish_nix_image_store_identity
+# nix_image_store_identity in this function. Contract 1 (refactor-v2-
+# final.md): roots_identity is passed to nix_install_image_essentials_root
+# as its own explicit fourth positional argument below, never through
+# DX_NIX_PENDING_IMAGE_STORE_IDENTITY (removed) or the pending-publish
+# record dx_write_pending_image_identity writes for the apple-image path --
+# this function never calls that helper, so publish_nix_image_store_identity
 # (called unconditionally, mode-agnostic, later in bootstrap_main) always
-# finds it unset here and publishes nothing -- .dx-image-store-identity is
-# an apple-image-only artefact. DX_IMAGE_IDENTITY (already validated above,
+# finds no pending record here and publishes nothing -- .dx-image-store-
+# identity is an apple-image-only artefact. DX_IMAGE_IDENTITY (already validated above,
 # host-provided, stable per image) stands in as nix_install_image_essentials_root's
 # own GC-roots versioning key instead: same image across reboots publishes
 # the roots directory once and skips re-staging on every later boot; a
@@ -761,12 +823,18 @@ publish_nix_volume_image_identity() {
 # whole-store hash comparison.
 populate_prepared_nix_volume_in_place() {
     local volume_root="$1"
-    local owner_uid owner_gid import_started
+    # Contract 1 (Fable B6 item 6): owner uid/gid arrive as positional
+    # arguments from populate_prepared_nix_volume (itself threaded from
+    # bootstrap_phases, resolved once after create_user); the old
+    # per-function "id -u dx" fallback is gone from production. The
+    # ${2:-0}/${3:-0} defaults are defensive only (this file runs under
+    # set -u); they are not a production fallback.
+    local owner_uid="${2:-0}"
+    local owner_gid="${3:-0}"
+    local import_started
     local image_identity identity_marker recorded_identity roots_identity
     local roots root target_store
 
-    owner_uid="$(id -u dx 2>/dev/null || printf '%s' 0)"
-    owner_gid="$(id -g dx 2>/dev/null || printf '%s' 0)"
     migrate_durable_nix_identity_if_needed "$volume_root"
 
     if [ ! -d "$volume_root/store" ]; then
@@ -804,7 +872,7 @@ populate_prepared_nix_volume_in_place() {
     identity_marker="$volume_root/.dx-image-identity-v1"
     if [ ! -f "$identity_marker" ]; then
         publish_nix_volume_image_identity "$volume_root" "$image_identity" || return 1
-        DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$roots_identity" nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid" || return 1
+        nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid" "$roots_identity" || return 1
     else
         recorded_identity="$(cat "$identity_marker" 2>/dev/null || true)"
         if [ "$recorded_identity" != "$image_identity" ]; then
@@ -824,7 +892,7 @@ populate_prepared_nix_volume_in_place() {
             return 1
         fi
         echo "Image Nix essentials verified; skipping image-store import."
-        DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$roots_identity" nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid" || return 1
+        nix_install_image_essentials_root "$volume_root" "$owner_uid" "$owner_gid" "$roots_identity" || return 1
     fi
     echo "Nix volume image import completed in $((SECONDS - import_started))s."
 }

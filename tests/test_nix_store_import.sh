@@ -85,21 +85,22 @@ else
     test_fail "remount repair replaces a deleted default generation with a direct retained target"
 fi
 default_gcroots="$fixture/default-gcroots"
-DX_NIX_PENDING_IMAGE_STORE_IDENTITY="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-if DX_NIX_ROOT="$default_image" nix_install_image_essentials_root "$default_gcroots" "$test_uid" "$test_gid" \
-    && [ "$(readlink "$default_gcroots/var/nix/gcroots/dx-image-roots-v2-${DX_NIX_PENDING_IMAGE_STORE_IDENTITY}/default-profile")" = /nix/store/default-profile ]; then
+# Contract 1 (refactor-v2-final.md, Fable B6 item 4): the image identity is
+# now a required fourth positional argument, never
+# DX_NIX_PENDING_IMAGE_STORE_IDENTITY.
+default_gcroots_identity="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+if DX_NIX_ROOT="$default_image" nix_install_image_essentials_root "$default_gcroots" "$test_uid" "$test_gid" "$default_gcroots_identity" \
+    && [ "$(readlink "$default_gcroots/var/nix/gcroots/dx-image-roots-v2-${default_gcroots_identity}/default-profile")" = /nix/store/default-profile ]; then
     test_pass "retained image default target is published as a GC root"
 else
     test_fail "retained image default target is published as a GC root"
 fi
-unset DX_NIX_PENDING_IMAGE_STORE_IDENTITY
 root_layout_upgrade="$fixture/root-layout-upgrade"
 root_layout_identity="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 mkdir -p "$root_layout_upgrade/var/nix/gcroots/dx-image-roots-$root_layout_identity"
 ln -s /nix/store/old-layout-root "$root_layout_upgrade/var/nix/gcroots/dx-image-roots-$root_layout_identity/old-layout-root"
 nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/default-profile; }
-DX_NIX_PENDING_IMAGE_STORE_IDENTITY="$root_layout_identity"
-if nix_install_image_essentials_root "$root_layout_upgrade" "$test_uid" "$test_gid" \
+if nix_install_image_essentials_root "$root_layout_upgrade" "$test_uid" "$test_gid" "$root_layout_identity" \
     && [ -L "$root_layout_upgrade/var/nix/gcroots/dx-image-roots-v2-$root_layout_identity/default-profile" ] \
     && [ "$(readlink "$root_layout_upgrade/var/nix/gcroots/dx-image-roots-v2-$root_layout_identity/default-profile")" = /nix/store/default-profile ] \
     && [ ! -e "$root_layout_upgrade/var/nix/gcroots/dx-image-roots-$root_layout_identity" ]; then
@@ -108,7 +109,6 @@ else
     test_fail "same-identity root publication upgrades an old layout before pruning it"
 fi
 unset -f nix_image_bootstrap_store_paths
-unset DX_NIX_PENDING_IMAGE_STORE_IDENTITY
 source "$CONTAINER_DIR/bootstrap/base-and-storage.sh"
 rm "$default_image/var/nix/profiles/default"
 mkdir "$default_image/var/nix/profiles/live-profile"
@@ -296,8 +296,7 @@ else
 fi
 if (
     nix_image_bootstrap_store_paths() { :; }
-    DX_NIX_PENDING_IMAGE_STORE_IDENTITY="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-    ! nix_install_image_essentials_root "$fixture/empty-roots" "$test_uid" "$test_gid"
+    ! nix_install_image_essentials_root "$fixture/empty-roots" "$test_uid" "$test_gid" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 ); then
     test_pass "empty image GC root sets are rejected"
 else
@@ -740,10 +739,13 @@ else
 fi
 
 # A failed marker publication must not strand a temp file that could be read as
-# a successful import on a later boot.
+# a successful import on a later boot. Contract 1 (Fable B6 item 4): the
+# publication decision is now dx_write_pending_image_identity's own pending
+# record, never DX_NIX_PENDING_IMAGE_STORE_IDENTITY.
 marker_root="$fixture/marker-root"
 mkdir -p "$marker_root"
-DX_NIX_PENDING_IMAGE_STORE_IDENTITY=marker-test
+marker_test_identity="$(printf '%064d' 0)"
+dx_write_pending_image_identity "$marker_root" "$marker_test_identity"
 chown() { return 1; }
 if publish_nix_image_store_identity "$marker_root"; then
     test_fail "failed image marker ownership prevents publication"
@@ -751,29 +753,34 @@ else
     test_pass "failed image marker ownership prevents publication"
 fi
 unset -f chown
-if ! find "$marker_root" -maxdepth 1 -name '.dx-image-store-identity.*' -print -quit | grep -q . \
+if ! find "$marker_root" -maxdepth 1 -name '.dx-image-store-identity.*' ! -name '.dx-image-store-identity.pending' -print -quit | grep -q . \
     && [ ! -e "$marker_root/.dx-image-store-identity" ]; then
     test_pass "failed image marker publication cleans temporary state"
 else
     test_fail "failed image marker publication cleans temporary state"
 fi
+if [ "$(cat "$marker_root/.dx-image-store-identity.pending" 2>/dev/null)" = "$marker_test_identity" ]; then
+    test_pass "failed image marker publication retains the pending record for a retry"
+else
+    test_fail "failed image marker publication retains the pending record for a retry"
+fi
 
 # A directory at the image identity marker must not become a false-success
-# destination for `mv`: the pending identity remains set so the next boot can
+# destination for `mv`: the pending record remains so the next boot can
 # retry after the durable state is repaired.
 directory_image_marker="$fixture/directory-image-marker"
 mkdir -p "$directory_image_marker/.dx-image-store-identity"
-DX_NIX_PENDING_IMAGE_STORE_IDENTITY=directory-marker-test
+directory_marker_test_identity="$(printf '%064d' 1)"
+dx_write_pending_image_identity "$directory_image_marker" "$directory_marker_test_identity"
 directory_image_status=0
 publish_nix_image_store_identity "$directory_image_marker" >/dev/null 2>&1 || directory_image_status=$?
 if [ "$directory_image_status" -ne 0 ] \
-    && [ -n "${DX_NIX_PENDING_IMAGE_STORE_IDENTITY:-}" ] \
+    && [ "$(cat "$directory_image_marker/.dx-image-store-identity.pending" 2>/dev/null)" = "$directory_marker_test_identity" ] \
     && [ -z "$(find "$directory_image_marker/.dx-image-store-identity" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
     test_pass "directory-valued image identity markers fail without nested temporary files"
 else
     test_fail "directory-valued image identity markers fail without nested temporary files"
 fi
-unset DX_NIX_PENDING_IMAGE_STORE_IDENTITY
 
 # A root-set refresh must never first delete the old roots.  This models a
 # kill/failure between staging and publication: the next boot still has a
@@ -781,10 +788,10 @@ unset DX_NIX_PENDING_IMAGE_STORE_IDENTITY
 roots_root="$fixture/gc-roots"
 mkdir -p "$roots_root/var/nix/gcroots/dx-image-roots-old"
 ln -s /nix/store/old-root "$roots_root/var/nix/gcroots/dx-image-roots-old/old-root"
-DX_NIX_PENDING_IMAGE_STORE_IDENTITY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+roots_identity="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 nix_image_bootstrap_store_paths() { printf '%s\n' /nix/store/new-root; }
 mv() { return 1; }
-if nix_install_image_essentials_root "$roots_root" "$test_uid" "$test_gid"; then
+if nix_install_image_essentials_root "$roots_root" "$test_uid" "$test_gid" "$roots_identity"; then
     test_fail "interrupted GC-root publication reports failure"
 else
     test_pass "interrupted GC-root publication reports failure"
@@ -795,15 +802,14 @@ if [ -L "$roots_root/var/nix/gcroots/dx-image-roots-old/old-root" ]; then
 else
     test_fail "interrupted GC-root publication retains the only prior valid roots"
 fi
-if nix_install_image_essentials_root "$roots_root" "$test_uid" "$test_gid" \
-    && [ -L "$roots_root/var/nix/gcroots/dx-image-roots-v2-${DX_NIX_PENDING_IMAGE_STORE_IDENTITY}/new-root" ] \
+if nix_install_image_essentials_root "$roots_root" "$test_uid" "$test_gid" "$roots_identity" \
+    && [ -L "$roots_root/var/nix/gcroots/dx-image-roots-v2-${roots_identity}/new-root" ] \
     && [ ! -e "$roots_root/var/nix/gcroots/dx-image-roots-old" ]; then
     test_pass "completed GC-root publication atomically replaces stale root sets"
 else
     test_fail "completed GC-root publication atomically replaces stale root sets"
 fi
 unset -f nix_image_bootstrap_store_paths
-unset DX_NIX_PENDING_IMAGE_STORE_IDENTITY
 
 # A migration marker is a trust boundary: it must never be followed through a
 # symlink before either the recursive repair or compatibility-marker publish.
