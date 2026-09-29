@@ -233,7 +233,13 @@ dx_backup_remove_guest_list() {
 }
 
 # One incremental tar transfer: everything named (one TSV line per file) in
-# $3, read from $DX_BACKUP_GUEST_ROOT in the guest, landing in $2/current/.
+# $3, read from $DX_BACKUP_GUEST_ROOT in the guest, landing in $2.
+#
+# $2 is a plain destination directory, extracted into directly -- NEVER the
+# published `current/` mirror itself (Astra F5 / WP6.6): every caller now
+# passes a fresh, not-yet-published generation directory (see
+# dx_backup_generation_commit below), so a truncated or failed transfer
+# never touches anything a reader of `current` can observe.
 #
 # Two unidirectional execs (Branch 17; see this file's module comment
 # above), never one bidirectional one:
@@ -247,10 +253,10 @@ dx_backup_remove_guest_list() {
 # (active in every caller: bin/dx-backup, bin/dx-restore) abort the
 # function before cleanup runs.
 dx_backup_fetch_paths() {
-    local container_name="$1" backup_dir="$2" fetch_lines="$3" count
+    local container_name="$1" dest_dir="$2" fetch_lines="$3" count
     count="$(wc -l < "$fetch_lines" | tr -d '[:space:]')"
     [ "${count:-0}" -gt 0 ] || return 0
-    mkdir -p "$backup_dir/current"
+    mkdir -p "$dest_dir"
 
     local host_list guest_list rc=0
     host_list="$(mktemp "${TMPDIR:-/tmp}/dxe-backup-fetch-list.XXXXXX")" || return 1
@@ -270,7 +276,7 @@ dx_backup_fetch_paths() {
         # independent regular-file copy instead, so a duplicate can never
         # produce a self-referential hardlink record.
         if dx_runtime_exec -u dx "$container_name" tar -C "$DX_BACKUP_GUEST_ROOT" --exclude '._*' --hard-dereference --null -T "$guest_list" -cf - </dev/null \
-            | tar -xf - -C "$backup_dir/current"; then
+            | tar -xf - -C "$dest_dir"; then
             rc=0
         else
             rc=$?
@@ -284,25 +290,261 @@ dx_backup_fetch_paths() {
     return "$rc"
 }
 
-# Delete every path in $2 (one per line, relative to current/) from the
-# mirror at $1/current/, then prune any directory left empty by that removal.
-dx_backup_remove_paths() {
-    local backup_dir="$1" remove_paths="$2" path
-    [ -s "$remove_paths" ] || return 0
-    while IFS= read -r path; do
-        [ -n "$path" ] || continue
-        rm -f -- "$backup_dir/current/$path"; done < "$remove_paths"
-    # -mindepth 1 excludes current/ itself: it must survive even when the
-    # mirror ends up holding nothing (the next backup still needs it to
-    # exist, and dx-restore treats its absence as "no backup taken yet").
-    find "$backup_dir/current" -mindepth 1 -type d -empty -delete 2>/dev/null || true
-}
-
 dx_backup_write_manifest_atomic() {
     local manifest="$1" content_file="$2" tmp
     tmp="$(mktemp "$(dirname "$manifest")/.manifest.XXXXXX")" || return 1
     LC_ALL=C sort "$content_file" > "$tmp"
     mv -f "$tmp" "$manifest"
+}
+
+# ---------------------------------------------------------------------------
+# Astra F5 / WP6.6: generations, so a backup is a single all-or-nothing
+# publish
+#
+# Before this, dx-backup extracted changed files straight over current/ and
+# only manifest.tsv was published atomically (dx_backup_write_manifest_atomic
+# above) -- a stream failure partway through extraction left current/
+# partly overwritten under the OLD manifest, concurrent runs could interleave
+# their own extraction/removal/manifest-replacement, and dx-restore read
+# that same physical mirror, so it could observe the intermediate state too.
+#
+# Now every run that has anything to change (fetch_count or remove_count > 0)
+# builds a WHOLE NEW generations/<id>/ directory: every unchanged entry is
+# carried forward from the previous generation as a hard link (never
+# copying, and never mutating the previous generation's own files), only the
+# fetched files' fresh bytes land there, each fetched file's hash is
+# verified against the selection's own listing (a file that changed between
+# listing and transfer must never be silently committed), and that
+# generation's own manifest.tsv is written -- all BEFORE the generation is
+# published (the `current` symlink is flipped to point at it). A truncated
+# transfer, a hash mismatch, or a failed publish all leave the PREVIOUS
+# generation -- still the one `current` points at -- untouched. dx-backup
+# and dx-restore share one lock (bin/lib/dx-host-util.sh's dx_lock_acquire)
+# over the mirror directory itself, so two overlapping backups (or a backup
+# and a restore) can never interleave their own reads/writes of `current` or
+# the generation being built.
+# ---------------------------------------------------------------------------
+
+# A fresh, sortable, effectively-unique generation id -- matches this
+# codebase's established guest-side bootstrap generation id shape exactly
+# (bin/lib/dx-bootstrap-sync.sh: `date -u +%Y%m%dT%H%M%SZ`-$$).
+dx_backup_generation_new_id() {
+    printf '%s-%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$$"
+}
+
+# Prints the bare generation id (no "generations/" prefix) BACKUP_DIR/current
+# currently points at. Fails (prints nothing) when there is no current
+# generation yet (the very first backup), the pointer is missing, or its
+# target does not look like one of ours (`generations/<id>`, never trusted
+# further than that shape) -- every one of those is an ordinary "nothing
+# published yet" case to this function's callers, never an error here.
+dx_backup_generation_current() {
+    local backup_dir="$1" target
+    [ -L "$backup_dir/current" ] || return 1
+    target="$(readlink "$backup_dir/current")" || return 1
+    case "$target" in
+        generations/*) printf '%s\n' "${target#generations/}" ;;
+        *) return 1 ;;
+    esac
+}
+
+# The path to the CURRENTLY PUBLISHED generation's own manifest.tsv, or a
+# nonexistent path under generations/ when there is no current generation
+# yet -- dx_backup_diff already treats a missing old_manifest as "empty", so
+# the call site never needs its own separate first-run branch.
+dx_backup_generation_manifest_path() {
+    local backup_dir="$1" id
+    if id="$(dx_backup_generation_current "$backup_dir")"; then
+        printf '%s/generations/%s/manifest.tsv\n' "$backup_dir" "$id"
+    else
+        printf '%s/generations/.none/manifest.tsv\n' "$backup_dir"
+    fi
+}
+
+# Hard-link every regular file/symlink under PREV_DIR into the same relative
+# path under NEW_DIR, except any path listed (one per line, relative) in
+# SKIP_FILE -- the paths this run is fetching fresh or has removed, which
+# must never be linked to the previous generation's own copy (mutating a
+# hard-linked file in place would corrupt that previous, supposedly
+# immutable, generation too). `ln -P` (not the bare default `ln`): a mirrored
+# SYMLINK entry's target is a guest-side path that most often does not
+# exist, or means something else entirely, on the HOST -- the default `ln`
+# hard-links to a symlink's RESOLVED target (confirmed directly while
+# designing this function), which would fail outright or link to the wrong
+# file; `-P` hard-links the symlink directory entry itself, exactly like
+# every other file here. `cp -al`'s recursive hard-link copy (the common GNU
+# idiom for exactly this generation-snapshot shape) does not exist on
+# macOS's `cp` -- hence the explicit per-file `ln` here instead, at the cost
+# of one process per carried-forward file/directory (this is local
+# filesystem work, not a remote round trip -- Astra R4's own concern -- so
+# that cost is not the same class of problem).
+#
+# Never mutates PREV_DIR. NEW_DIR's own parent directories are created as
+# needed; PREV_DIR's directory structure is otherwise not replicated for
+# directories that end up carrying nothing forward (an entirely-removed
+# subtree therefore never reappears as an empty directory in NEW_DIR).
+dx_backup_generation_carry_forward() {
+    local prev_dir="$1" new_dir="$2" skip_file="$3"
+    [ -d "$prev_dir" ] || return 0
+    local all_sorted skip_sorted carry rc=0
+    all_sorted="$(mktemp "${TMPDIR:-/tmp}/dxe-backup-carry-all.XXXXXX")" || return 1
+    skip_sorted="$(mktemp "${TMPDIR:-/tmp}/dxe-backup-carry-skip.XXXXXX")" || { rm -f "$all_sorted"; return 1; }
+    carry="$(mktemp "${TMPDIR:-/tmp}/dxe-backup-carry-list.XXXXXX")" || { rm -f "$all_sorted" "$skip_sorted"; return 1; }
+    ( cd "$prev_dir" && find . -type f -o -type l ) | sed 's#^\./##' | LC_ALL=C sort > "$all_sorted"
+    LC_ALL=C sort "$skip_file" > "$skip_sorted"
+    comm -23 "$all_sorted" "$skip_sorted" > "$carry"
+
+    if [ -s "$carry" ]; then
+        # Ancestor directories, precreated in one pass (same awk dirname-
+        # levels idiom as dx_backup_restore_push's own directory pass
+        # below): never a per-file `dirname` fork, and `mkdir -p` is only
+        # ever asked for a directory that some carried-forward file actually
+        # needs.
+        local dirs
+        dirs="$(mktemp "${TMPDIR:-/tmp}/dxe-backup-carry-dirs.XXXXXX")" || { rm -f "$all_sorted" "$skip_sorted" "$carry"; return 1; }
+        awk -F/ '{ n = split($0, parts, "/"); prefix = ""; for (i = 1; i < n; i++) { prefix = (prefix == "" ? parts[i] : prefix "/" parts[i]); print prefix } }' "$carry" | LC_ALL=C sort -u > "$dirs"
+        while IFS= read -r d || [ -n "$d" ]; do
+            [ -n "$d" ] || continue
+            mkdir -p "$new_dir/$d" || { rc=1; break; }
+        done < "$dirs"
+        rm -f "$dirs"
+        if [ "$rc" -eq 0 ]; then
+            local rel
+            while IFS= read -r rel || [ -n "$rel" ]; do
+                [ -n "$rel" ] || continue
+                ln -P "$prev_dir/$rel" "$new_dir/$rel" || { rc=1; break; }
+            done < "$carry"
+        fi
+    fi
+    rm -f "$all_sorted" "$skip_sorted" "$carry"
+    return "$rc"
+}
+
+# For each path in FETCH_LINES (path<TAB>size<TAB>mtime<TAB>sha256, the same
+# listing format dx_backup_diff/dx_backup_sum_sizes use), verify the copy
+# just extracted under DEST_DIR/<path> hashes to the SAME sha256 the
+# selection recorded at listing time (Astra F5, RED 4). A path that changed
+# on the guest between the listing pass and the archive transfer -- however
+# briefly -- must never be silently committed as part of a snapshot that
+# claims to be that listing; every mismatch is named on stderr, and the
+# whole check fails (so the generation is never published) rather than
+# stopping at the first one, so an operator sees every affected path at once.
+dx_backup_verify_fetched() {
+    local dest_dir="$1" fetch_lines="$2" path expected_hash actual_line actual_hash rc=0
+    while IFS="$(printf '\t')" read -r path _ _ expected_hash || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
+        actual_line="$(dx_pbs_hash_entry "$dest_dir/$path" 2>/dev/null)" || actual_line=""
+        actual_hash="$(printf '%s\n' "$actual_line" | cut -f3)"
+        if [ -z "$actual_hash" ] || [ "$actual_hash" != "$expected_hash" ]; then
+            echo "Error: $path changed between listing and transfer; refusing to commit an inconsistent snapshot." >&2
+            rc=1
+        fi
+    done < "$fetch_lines"
+    return "$rc"
+}
+
+# Point BACKUP_DIR/current at generations/GENERATION (Astra F5's publish
+# step). `ln -sfn`, not `mv`: this codebase's guest-side bootstrap generation
+# publish (bin/lib/dx-bootstrap-sync.sh) uses a temp symlink plus `mv -Tf`,
+# but that -T (no-target-directory) flag is GNU-only and the guest there is
+# always Linux; this runs on the HOST, which is routinely macOS, where `mv`
+# has no such flag and, when the destination is a symlink TO A DIRECTORY
+# (exactly what `current` already is after the first publish), silently
+# moves the source INSIDE that directory instead of replacing the symlink,
+# reporting success -- confirmed directly against this host's own `mv` while
+# designing this function. `ln -sfn` (`-f`: replace an existing destination;
+# `-n`: treat that destination as the plain file/symlink it is, never
+# descend into it as a directory) is the standard portable idiom for this
+# exact swap on both BSD and GNU, at the cost of true single-syscall
+# atomicity (`-f` unlinks, then a fresh `symlink()` -- two syscalls, not one
+# `rename()`): every reader of `current` in this codebase (dx-backup,
+# dx-restore) holds the very same lock this publish runs under, so no such
+# reader can ever observe that narrow a window.
+#
+# Refuses -- rather than calling `ln -sfn` at all -- when `current` already
+# exists and is NOT a symlink: that is exactly the shape every mirror this
+# generation model predates has (every run used to extract straight over a
+# real current/ directory), and `ln -sfn` against a real directory was
+# confirmed, while designing this function, to silently place the new
+# symlink INSIDE it (reporting success) rather than replacing it -- silently
+# leaving `current` on the OLD content forever while polluting it with a
+# stray entry on every subsequent run. A pre-existing mirror in that shape
+# needs an explicit one-time migration before it can be published into
+# again; this function fails loudly instead of guessing.
+dx_backup_generation_publish() {
+    local backup_dir="$1" generation="$2"
+    [ -d "$backup_dir/generations/$generation" ] || { echo "Error: generation $generation does not exist; refusing to publish it." >&2; return 1; }
+    if [ -e "$backup_dir/current" ] && [ ! -L "$backup_dir/current" ]; then
+        echo "Error: $backup_dir/current exists and is not a symlink (a pre-generation-model mirror?); refusing to publish over it." >&2
+        return 1
+    fi
+    ln -sfn "generations/$generation" "$backup_dir/current"
+}
+
+# Delete every directory under BACKUP_DIR/generations/ EXCEPT the id(s) named
+# in "$@" (current, and -- until the NEXT successful backup -- the
+# generation it replaced, per Astra F5's recommendation to retain the
+# previous generation). Never touches `current` itself, and never touches
+# anything outside generations/.
+dx_backup_generation_prune() {
+    local backup_dir="$1"; shift
+    local gens_dir="$backup_dir/generations" entry name keep found
+    [ -d "$gens_dir" ] || return 0
+    for entry in "$gens_dir"/*; do
+        [ -e "$entry" ] || continue
+        name="${entry##*/}"
+        found=0
+        for keep in "$@"; do
+            [ "$name" = "$keep" ] && { found=1; break; }
+        done
+        [ "$found" -eq 1 ] || rm -rf "$entry"
+    done
+}
+
+# The whole "build the next generation, verify it, publish it, retire the one
+# before it" sequence (Astra F5), called by bin/dx-backup only when there is
+# something to change (fetch_count or remove_count > 0 -- a no-op run never
+# reaches here, so `current` and every existing generation are untouched).
+# LISTING is the fresh, full guest listing (written into the new
+# generation's own manifest.tsv); FETCH_LINES/REMOVE_LINES are
+# dx_backup_diff's own outputs. Prints the new generation id on success.
+# Every failure path removes the not-yet-published new generation directory
+# and returns nonzero with nothing printed, leaving the previously published
+# generation -- and its manifest -- exactly as they were.
+dx_backup_generation_commit() {
+    local container_name="$1" backup_dir="$2" listing="$3" fetch_lines="$4" remove_lines="$5"
+    local prev_id new_id new_dir skip_file rc=0
+    prev_id="$(dx_backup_generation_current "$backup_dir" || true)"
+    new_id="$(dx_backup_generation_new_id)"
+    new_dir="$backup_dir/generations/$new_id"
+    [ ! -e "$new_dir" ] && [ ! -L "$new_dir" ] || { echo "Error: generation $new_id already exists." >&2; return 1; }
+    mkdir -p "$new_dir" || return 1
+
+    skip_file="$(mktemp "${TMPDIR:-/tmp}/dxe-backup-skip.XXXXXX")" || { rm -rf "$new_dir"; return 1; }
+    cut -f1 "$fetch_lines" > "$skip_file"
+    [ ! -s "$remove_lines" ] || cat "$remove_lines" >> "$skip_file"
+
+    if [ -n "$prev_id" ]; then
+        dx_backup_generation_carry_forward "$backup_dir/generations/$prev_id" "$new_dir" "$skip_file" || rc=1
+    fi
+    rm -f "$skip_file"
+    [ "$rc" -eq 0 ] || { rm -rf "$new_dir"; return 1; }
+
+    if [ -s "$fetch_lines" ]; then
+        dx_backup_fetch_paths "$container_name" "$new_dir" "$fetch_lines" || { rm -rf "$new_dir"; return 1; }
+        dx_backup_verify_fetched "$new_dir" "$fetch_lines" || { rm -rf "$new_dir"; return 1; }
+    fi
+
+    dx_backup_write_manifest_atomic "$new_dir/manifest.tsv" "$listing" || { rm -rf "$new_dir"; return 1; }
+
+    dx_backup_generation_publish "$backup_dir" "$new_id" || { rm -rf "$new_dir"; return 1; }
+
+    if [ -n "$prev_id" ]; then
+        dx_backup_generation_prune "$backup_dir" "$new_id" "$prev_id"
+    else
+        dx_backup_generation_prune "$backup_dir" "$new_id"
+    fi
+    printf '%s\n' "$new_id"
 }
 
 # ---------------------------------------------------------------------------
