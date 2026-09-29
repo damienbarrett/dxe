@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+
+start_container_main() {
 dx_require_container_cli
 
 if ! container_exists "$DX_CONTAINER_NAME"; then
@@ -49,3 +51,5 @@ else
     # purely diagnostic, and must never fail the start.
     dx_bootstrap_report_drift "$dx_running_generation" "$dx_published_generation" "$DX_CONTAINER_NAME"
 fi
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then start_container_main "$@"; fi
