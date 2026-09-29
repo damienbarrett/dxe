@@ -72,8 +72,12 @@ DX_PBS_BUILTIN_PATH_DENY=('home/dx/.local/state/dx-ai/generations/*/profile' hom
 # through every recursive call for the same reason DX_PBS_BUILTIN_* are
 # globals.
 #
-# An indexed array, one element per pattern, for the same CWD-glob-expansion
-# reason as DX_PBS_BUILTIN_COMPONENT_DENY above.
+# An indexed array, one element per pattern -- for the same CWD-glob-
+# expansion reason as DX_PBS_BUILTIN_COMPONENT_DENY above, AND so that
+# dx_pbs_list_driver's `DX_PBS_EXTRA_DENY=("$@")` keeps every extra pattern
+# its own element (never a `$*`-joined string): a pattern containing a
+# space, or a sibling pattern passed alongside it, can then never bleed
+# into another.
 DX_PBS_EXTRA_DENY=()
 
 # True (0) if $1, a path relative to the backup root (no leading slash), is
@@ -402,7 +406,18 @@ dx_pbs_emit_repo() {
 dx_pbs_list_driver() {
     local reason_mode="$1" root="$2" repos_file repo relroot special_count
     shift 2
-    DX_PBS_EXTRA_DENY="$*"
+    # DX_PBS_EXTRA_DENY=("$@"), not DX_PBS_EXTRA_DENY="$*": "$*" joins every
+    # remaining positional argument into ONE space-separated string,
+    # flattening N separate extra-deny patterns (DX_BACKUP_EXCLUDE_FILE is
+    # one pattern per line, each its own positional argument by the time it
+    # reaches here -- see bin/dx-backup) into a single record before
+    # dx_pbs_path_denied ever sees them. That breaks a pattern containing a
+    # space (it silently merges with whichever pattern follows it) and,
+    # even for space-free patterns, makes it impossible to tell where one
+    # pattern ends and the next begins. An array preserves each argument as
+    # its own element, matched one at a time, exactly like
+    # DX_PBS_BUILTIN_PATH_DENY above.
+    DX_PBS_EXTRA_DENY=("$@")
     root="${root%/}"
     [ -d "$root" ] || { echo "Error: backup root $root does not exist or is not a directory." >&2; return 1; }
 
