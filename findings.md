@@ -314,10 +314,10 @@ Every review ID and where it lands.
 
 ### WP7 — Nix hygiene (each lands with its `checks` entry; CI-verified)
 
-- [ ] **WP7.3** `guest-tools.nix` mapping → `dxPackages`, inventory list and
+- [x] f11664c **WP7.3** `guest-tools.nix` mapping → `dxPackages`, inventory list and
   `checks.inventory`; duplicate `home.packages` and duplicate
   `dx-keyring.sh` definition removed; `sed` scrapes retired. (Fable C3, Muse B4)
-- [ ] **WP7.4** Typed shell integration: `programs.starship/direnv/yazi/
+- [x] f11664c **WP7.4** Typed shell integration: `programs.starship/direnv/yazi/
   lazygit`, `home.sessionPath`, `programs.nushell.settings`;
   `checks.<shell>-integration`. (Fable C4)
 - [ ] **WP7.5** `writeShellApplication` wrappers for installed guest commands
@@ -401,3 +401,4 @@ Every review ID and where it lands.
 - **2026-09-30** User decisions: (1) remove gemini-cli from `aiPackages`, `DX_AI_TOOLS` and the `dx-herdr` message (queued behind WP7.3/7.4, which owns `flake.nix`); (2) coverage floor from the local run; (3) push now and at each work-package boundary (pushed at e59346e); (5) WP6.2 retention policy kept; (6) WP4.3 matrix kept strict. Coverage cases for the registry heredoc (5b79360), the selector/lock branches (33a3ec6, c39da97) and the section 19 fixture (e59346e) landed; bootstrap storage happy paths (agent B2) pending, then re-measure and set the floor.
 - **2026-09-30** Host load diagnosis: the 59 `agy` processes are tmux sessions `antigravity_scrape_<id>` created by `agent-stats` (`usage` alias → `run-stats.sh` → `bin/run-stats-rust`, cwd `agent-stats/rust`), one per `usage` run since 26 Sep, never killed. The Python scraper has `finally: kill_session()`; the Rust port evidently does not. Not this repository's bug; reported to the user.
 - **2026-09-30** Host shutdown imminent: all in-flight agents told to commit WIP in their worktrees. Resume checklist: `git worktree list` for unmerged agent branches (WP7.3/7.4 Nix, WP8.3 adapter split, WP5.1 sync result file, WP6.7/6.8 healthcheck, WP1.6 helper purity, WP6.9 restore batching, B2 bootstrap coverage); cherry-pick each onto the branch; run the kcov gate via the Apple runtime on a fresh snapshot; set `scope_exec_lines_floor`; then gemini removal, WP1.4/1.7, WP5.2, WP6.4-6.6, WP7.5-7.8, WP8.1/8.2/8.4, WP9.
+- **2026-09-30** WP7.3/WP7.4 landed (f11664c): `guest-tools.nix` mapping drives `dxPackages`, `checks.inventory`/`inventory-list`/`{bash,fish,nushell}-integration` (built for aarch64 in the container), typed starship/direnv/yazi/lazygit, `home.sessionPath`; duplicates removed. Open: section 14 case "test runner help advertises current section range" fails (expects the old `0-27` literal; help now says `0-36`; fix under WP1.4). Bootstrap coverage cases (B2) and WP5.1: designs only, saved in `docs/evidence/20260930/agent-design-notes.md` and the WP5.1 note; the fstab-append-as-root hazard is recorded there.
