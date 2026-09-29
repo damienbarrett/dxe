@@ -66,10 +66,19 @@ source "$SCRIPT_DIR/lib/fake-tools.sh"
 # This shell's own results file, isolated from anything else on the
 # filesystem and from other suites -- set explicitly (rather than letting
 # the harness lazily mktemp one) so every check below knows exactly which
-# file to inspect.
+# file to inspect. DXE_TEST_RESULTS_OWNER is claimed here too (normally only
+# _dxe_harness_results_file itself stamps it, the first time a case is
+# recorded): this process is choosing its OWN file up front rather than
+# going through the lazy mint, so it must also claim ownership up front, or
+# the owner check that same function now runs (Fable D10/CI -- see
+# tests/lib/harness.sh) would see this $RESULTS as an inherited leftover
+# from nothing (no ancestor set DXE_TEST_RESULTS_OWNER to this pid either)
+# and silently replace it with an auto-minted file of its own the moment the
+# first case below gets recorded.
 RESULTS="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-selftest.XXXXXX")"
 DXE_TEST_RESULTS="$RESULTS"
-export DXE_TEST_RESULTS
+DXE_TEST_RESULTS_OWNER="$$"
+export DXE_TEST_RESULTS DXE_TEST_RESULTS_OWNER
 
 record_count() { wc -l < "$RESULTS" | tr -d ' '; }
 last_record() { tail -n1 "$RESULTS"; }
@@ -100,18 +109,22 @@ check test "$(record_count)" -eq "$((n_before + 1))"
 check test "$(last_record | cut -f1)" = fail
 
 # --- (d) a failing expect_stdout prints the captured stdout. Run in a
-# nested bash -c with its own DXE_TEST_RESULTS (so this process's file, and
-# the counts already asserted above, are untouched), and assert the nested
-# process's own output contains the captured text.
-nested_results="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-nested.XXXXXX")"
-d_out="$(SCRIPT_DIR="$SCRIPT_DIR" DXE_TEST_RESULTS="$nested_results" bash -c '
+# nested bash -c, a genuinely new process (its own $$), so the results-file
+# owner check (Fable D10/CI) mints it a PRIVATE file rather than adopting
+# whatever this OUTER process's own DXE_TEST_RESULTS is inherited as -- this
+# process's file, and the counts already asserted above, stay untouched.
+# The nested script reports its own file's line count and last record back
+# over stdout, since the outer script no longer knows (or needs to know)
+# that file's path in advance.
+d_out="$(SCRIPT_DIR="$SCRIPT_DIR" bash -c '
     source "$SCRIPT_DIR/lib/harness.sh"
     expect_stdout "goodbye" printf "hello world"
+    echo "lines=$(wc -l < "$DXE_TEST_RESULTS" | tr -d " ")"
+    echo "record=$(tail -n1 "$DXE_TEST_RESULTS")"
 ')"
 check contains "$d_out" "hello world"
-check test "$(wc -l < "$nested_results" | tr -d ' ')" -eq 1
-check grep -q "^fail	" "$nested_results"
-rm -f "$nested_results"
+check contains "$d_out" "lines=1"
+check contains "$d_out" "record=fail"
 
 # --- (e) expect_stdout 'hello' printf 'hello world' passes.
 n_before="$(record_count)"
@@ -625,6 +638,57 @@ bash -c 'exec sleep 5' & cc_pid=$!
 check reject wait_for_pid_exit "$cc_pid" 3
 kill "$cc_pid" 2>/dev/null || true
 wait "$cc_pid" 2>/dev/null || true
+
+# =========================================================================
+# Root cause found in CI: DXE_TEST_RESULTS is exported, so a suite that
+# runs ANOTHER suite as a plain child process (`bash tests/test_sectionN.sh`,
+# as test_section20_skip_integration.sh does for 15/16/17) used to hand its
+# own results file down by ordinary environment inheritance. The child's
+# own first test_pass/test_fail/skip appended onto the PARENT's file, and
+# the child's own finish/exit_with_code then deleted that shared file as
+# its last step -- so an earlier real failure (or even the parent's own
+# prior pass lines) leaked into an unrelated later suite's tally, and
+# whichever suite ran after the child inherited a `finish` deleted out from
+# under it. _dxe_harness_results_file's owner check (DXE_TEST_RESULTS_OWNER
+# above) is the by-construction fix; this proves it end to end against a
+# REAL nested suite process, not just a synthetic condition.
+# =========================================================================
+
+# --- (ee) An OUTER script records one case of its own, then runs a real
+# nested SUITE FILE (its own `bash` process, inheriting the outer's
+# DXE_TEST_RESULTS/OWNER purely by ordinary environment inheritance -- no
+# explicit override, exactly test_section20_skip_integration.sh's shape)
+# that records two cases of its own and calls finish. The outer's own
+# results file must still show exactly its own one line afterwards (proven
+# by the outer script itself reading $DXE_TEST_RESULTS AFTER the nested run
+# returns -- environment inheritance is one-way, so the child's own
+# reassignment cannot have touched the parent's shell variable regardless
+# of what this check does; what could break it is the child appending
+# INTO the same file, which is exactly what the owner check prevents), and
+# the nested run's own summary must report only its own two cases, never
+# three.
+ee_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-ee.XXXXXX")"
+ee_nested_file="$ee_dir/test_ee_nested.sh"
+cat > "$ee_nested_file" <<EOF
+#!/bin/bash
+source "$SCRIPT_DIR/lib/harness.sh"
+expect_exit 0 true >/dev/null
+expect_exit 0 true >/dev/null
+finish
+EOF
+ee_outer_file="$ee_dir/outer.sh"
+cat > "$ee_outer_file" <<EOF
+#!/bin/bash
+source "$SCRIPT_DIR/lib/harness.sh"
+expect_exit 0 true >/dev/null
+bash "$ee_nested_file"
+echo "outer_lines=\$(wc -l < "\$DXE_TEST_RESULTS" | tr -d ' ')"
+EOF
+ee_out="$(bash "$ee_outer_file" 2>&1)" && ee_status=0 || ee_status=$?
+check test "$ee_status" -eq 0
+check contains "$ee_out" "2 passed"
+check contains "$ee_out" "outer_lines=1"
+rm -rf "$ee_dir"
 
 rm -f "$RESULTS"
 
