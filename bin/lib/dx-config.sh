@@ -35,44 +35,61 @@ DXE_CONFIG_SNAPSHOT_VERSION_CURRENT=1
 #   @field:NAME  -- NAME's own default (DX_BOOTSTRAP_SOURCE's default is
 #                   exactly DX_CONTEXT_DIR's, independent of field order --
 #                   see dx_config_default)
-DXE_CONFIG_REGISTRY=$'DX_RUNTIME\tenum:apple,docker-ssh\t=apple
-DX_REMOTE_HOST\toptname\t=
-DX_GUEST_SYSTEM\tenum:aarch64-linux,x86_64-linux\t=aarch64-linux
-DX_NIX_STORAGE_MODE\tenum:apple-image,direct-volume\t=apple-image
-DX_CONTAINER_RESTART_POLICY\tenum:no,unless-stopped\t=no
-DX_CONTAINER_NAME\tname\t=dx-host
-DX_IMAGE\timage\t=dx-nixos-26.05
-DX_SSH_PORT\tport\t=2222
-DX_SSH_KEY\tabspath\t@root:dx_key
-DX_SSH_KEY_PUB\tabspath\t@root:dx_key.pub
-DX_SSH_CONNECT_TIMEOUT\tposint\t=15
-DX_CONTEXT_DIR\tabspath\t@root:container/aarch64-darwin-apple-container-dx-nixos-26.05
-DX_BOOTSTRAP_SOURCE\tabspath\t@field:DX_CONTEXT_DIR
-DX_BOOTSTRAP_VOLUME\tname\t=dx-bootstrap
-DX_BOOTSTRAP_PATH\tabspath\t=/guest-bootstrap
-DX_BOOTSTRAP_WAIT_TIMEOUT\tposint\t=30
-DX_BOOTSTRAP_CONFIRM_TIMEOUT\tposint\t=5
-DX_GUEST_ACTIVATION_TIMEOUT\tposint\t=1800
-DX_GUEST_ACTIVATION_ATTEMPTS\tposint\t=2
-DX_GUEST_ACTIVATION_RETRY_DELAY\tposint\t=5
-DX_NIX_VOLUME\tname\t=dx-nix
-DX_NIX_MOUNT\tabspath\t=/nix
-DX_NIX_DISK\tabspath\t@home:.dx-cache/nix-store.img
-DX_NIX_DISK_SIZE\tsize\t=64G
-DX_PERSIST_VOLUME\tname\t=dx-persist
-DX_GIT_MOUNT_SOURCE\toptpath\t=
-DX_GIT_MOUNT_TARGET\tabspath\t=/workspace
-DX_GUEST_WORKDIR\toptpath\t=
-DX_CONTAINER_MEMORY\tsize\t=12G
-DX_CONTAINER_CPUS\tposint\t=4
-DX_CONTAINER_VOLUME_DIR\tabspath\t@home:Library/Application Support/com.apple.container/volumes
-DX_STOP_GRACE_SECONDS\tposint\t=5
-DX_STOP_COMMAND_TIMEOUT\tposint\t=15
-DX_STOP_WAIT_TIMEOUT\tposint\t=5
-DX_DELETE_COMMAND_TIMEOUT\tposint\t=15
-DX_MOUNT_IDENTITY_DIR\tabspath\t@home:.dx-cache/mount-identities
-DX_TUNNEL_LOCK_TIMEOUT\tposint\t=5
-DX_BACKUP_DIR\tabspath\t@home:Backups/dxe-persist'
+# A heredoc body, unlike a multi-line `$'...'` assignment, is never traced
+# by kcov's bash line instrumentation past its opening line -- see the
+# `cat <<'EOF'` launcher in dx_bootstrap_launch_command (bin/lib/
+# dx-ssh-common.sh), which kcov reports at 100% for the same reason. `read
+# -d ''` reads until a NUL byte, which this heredoc never contains, so it
+# always hits EOF and returns 1 -- entrypoints source dx-lib.sh under
+# `set -e`, so the `|| true` is required here. `read` with a single
+# variable name strips only leading/trailing IFS whitespace from the whole
+# record (verified against this shell's own read builtin); every embedded
+# tab and newline in the table below, including the final field's trailing
+# newline before the closing delimiter, survives untouched -- confirmed
+# byte-for-byte identical to the previous `$'...\t...'` form via `printf
+# '%s' "$DXE_CONFIG_REGISTRY" | od -c`, and behaviourally pinned by section
+# 21's registry-defaults fixture case (tests/fixtures/
+# config-registry-defaults.txt).
+read -r -d '' DXE_CONFIG_REGISTRY <<'DXE_REGISTRY' || true
+DX_RUNTIME	enum:apple,docker-ssh	=apple
+DX_REMOTE_HOST	optname	=
+DX_GUEST_SYSTEM	enum:aarch64-linux,x86_64-linux	=aarch64-linux
+DX_NIX_STORAGE_MODE	enum:apple-image,direct-volume	=apple-image
+DX_CONTAINER_RESTART_POLICY	enum:no,unless-stopped	=no
+DX_CONTAINER_NAME	name	=dx-host
+DX_IMAGE	image	=dx-nixos-26.05
+DX_SSH_PORT	port	=2222
+DX_SSH_KEY	abspath	@root:dx_key
+DX_SSH_KEY_PUB	abspath	@root:dx_key.pub
+DX_SSH_CONNECT_TIMEOUT	posint	=15
+DX_CONTEXT_DIR	abspath	@root:container/aarch64-darwin-apple-container-dx-nixos-26.05
+DX_BOOTSTRAP_SOURCE	abspath	@field:DX_CONTEXT_DIR
+DX_BOOTSTRAP_VOLUME	name	=dx-bootstrap
+DX_BOOTSTRAP_PATH	abspath	=/guest-bootstrap
+DX_BOOTSTRAP_WAIT_TIMEOUT	posint	=30
+DX_BOOTSTRAP_CONFIRM_TIMEOUT	posint	=5
+DX_GUEST_ACTIVATION_TIMEOUT	posint	=1800
+DX_GUEST_ACTIVATION_ATTEMPTS	posint	=2
+DX_GUEST_ACTIVATION_RETRY_DELAY	posint	=5
+DX_NIX_VOLUME	name	=dx-nix
+DX_NIX_MOUNT	abspath	=/nix
+DX_NIX_DISK	abspath	@home:.dx-cache/nix-store.img
+DX_NIX_DISK_SIZE	size	=64G
+DX_PERSIST_VOLUME	name	=dx-persist
+DX_GIT_MOUNT_SOURCE	optpath	=
+DX_GIT_MOUNT_TARGET	abspath	=/workspace
+DX_GUEST_WORKDIR	optpath	=
+DX_CONTAINER_MEMORY	size	=12G
+DX_CONTAINER_CPUS	posint	=4
+DX_CONTAINER_VOLUME_DIR	abspath	@home:Library/Application Support/com.apple.container/volumes
+DX_STOP_GRACE_SECONDS	posint	=5
+DX_STOP_COMMAND_TIMEOUT	posint	=15
+DX_STOP_WAIT_TIMEOUT	posint	=5
+DX_DELETE_COMMAND_TIMEOUT	posint	=15
+DX_MOUNT_IDENTITY_DIR	abspath	@home:.dx-cache/mount-identities
+DX_TUNNEL_LOCK_TIMEOUT	posint	=5
+DX_BACKUP_DIR	abspath	@home:Backups/dxe-persist
+DXE_REGISTRY
 
 # Looks up NAME's registry row and prints "kind<TAB>default" (everything
 # after the first tab); returns 1 with no output for an unregistered name.
