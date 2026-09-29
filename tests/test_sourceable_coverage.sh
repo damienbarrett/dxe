@@ -1838,7 +1838,10 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     unset -f uname
     [ -f "$fallback_marker" ] && [ "$(cat "$fallback_marker")" = fallback ] && [ ! -e "$fallback_temporary" ]
 
-    DX_NIX_VOLUME_ALREADY_MOUNTED=true DX_NIX_VOLUME_ROOT="$root" populate_prepared_nix_volume 0 0
+    # Contract 3 (refactor-v2-final.md, Fable B6 item 3): the mode-tagged
+    # Nix-volume record replaces DX_NIX_VOLUME_ALREADY_MOUNTED/ROOT.
+    DX_BOOTSTRAP_SCRATCH_DIR="$root/scratch" dx_write_nix_volume_record already-mounted "$root"
+    DX_BOOTSTRAP_SCRATCH_DIR="$root/scratch" populate_prepared_nix_volume 0 0
 
     # Branch 11 / Phase 3: publish_nix_volume_image_identity's chown/
     # publish failure branch (never reached by the Section 3 happy-path
@@ -1933,7 +1936,10 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     DX_NIX_IDENTITY_MIGRATION_REQUIRED=true migrate_durable_nix_identity_if_needed "$root" >/dev/null 2>&1 || true
     unset -f mv
 
-    DX_NIX_VOLUME_ALREADY_MOUNTED=false DX_NIX_VOLUME_ROOT="$root" DX_NIX_VOLUME_FS_TYPE=fake DX_NIX_VOLUME_MOUNT_OPTS=none DX_NIX_VOLUME_DEVICE=fake
+    # Contract 3 (refactor-v2-final.md, Fable B6 item 3): the mode-tagged
+    # Nix-volume record replaces the DX_NIX_VOLUME_* globals.
+    export DX_BOOTSTRAP_SCRATCH_DIR="$root/scratch"
+    dx_write_nix_volume_record prepared "$root" fake fake none
     migrate_durable_nix_identity_if_needed() { :; }
     nix_image_store_import_required() { return 1; }
     nix_install_image_essentials_root() { :; }

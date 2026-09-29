@@ -46,6 +46,106 @@ dx_read_durable_identity_record() {
     cat "$file" 2>/dev/null || true
 }
 
+# Contract 3 (refactor-v2-final.md, Fable B6 item 3): a versioned,
+# mode-tagged, non-sourceable record replacing the exported
+# DX_NIX_VOLUME_ALREADY_MOUNTED/ROOT/DEVICE/FS_TYPE/MOUNT_OPTS/IN_PLACE
+# globals. prepare_nix_volume writes it; populate_prepared_nix_volume reads
+# it through the bounded parser below, never sources it. Three modes, not
+# two -- the code has always had three shapes:
+#   mode=already-mounted -- requires root; rejects device/fs/opts.
+#   mode=prepared         -- requires root, device, fs, and opts.
+#   mode=in-place          -- requires root=/nix; rejects device/fs/opts
+#                              (direct-volume mode; Fable B6 item 3 -- a
+#                              two-mode record rejects every QNAP boot).
+# The guarantee is that a stale record is never reused after an
+# interruption, not that it is always deleted: the reader validates mode,
+# and field completeness/shape for that mode, and rejects anything else,
+# rather than trusting the writer's own cleanup.
+dx_write_nix_volume_record() {
+    local mode="$1" root="$2" device="${3:-}" fs="${4:-}" opts="${5:-}"
+    if [ -z "$root" ]; then
+        echo "Error: refusing to write a Nix-volume record with no root." >&2
+        return 1
+    fi
+    if [ "$mode" = already-mounted ] || [ "$mode" = in-place ]; then
+        if [ -n "$device" ] || [ -n "$fs" ] || [ -n "$opts" ]; then
+            echo "Error: mode=$mode rejects device/fs/opts fields." >&2
+            return 1
+        fi
+    elif [ "$mode" = prepared ]; then
+        if [ -z "$device" ] || [ -z "$fs" ] || [ -z "$opts" ]; then
+            echo "Error: mode=prepared requires root, device, fs, and opts." >&2
+            return 1
+        fi
+    else
+        echo "Error: refusing to write a Nix-volume record with unknown mode '$mode'." >&2
+        return 1
+    fi
+    local dir file temporary
+    dir="$(dx_bootstrap_scratch_dir)"
+    mkdir -p "$dir" || return 1
+    file="$dir/nix-volume-record"
+    dx_validate_atomic_marker_path "$file" "Nix volume record" || return 1
+    temporary="$(mktemp "$dir/.nix-volume-record.XXXXXX")" || return 1
+    if ! {
+        printf 'mode=%s\n' "$mode"
+        printf 'root=%s\n' "$root"
+        printf 'device=%s\n' "$device"
+        printf 'fs=%s\n' "$fs"
+        printf 'opts=%s\n' "$opts"
+    } > "$temporary"; then
+        rm -f "$temporary"
+        return 1
+    fi
+    dx_publish_atomic_marker "$temporary" "$file" "Nix volume record"
+}
+
+dx_read_nix_volume_record() {
+    local file
+    file="$(dx_bootstrap_scratch_dir)/nix-volume-record"
+    [ -f "$file" ] && [ ! -L "$file" ] || return 1
+    cat "$file"
+}
+
+# Deliberately assigns nix_volume_mode/root/device/fs/opts WITHOUT `local`
+# -- the sole caller, populate_prepared_nix_volume, declares those names
+# `local` in its own frame (the same dynamic-scoping pattern
+# dx_parse_durable_identity_record already uses). Rejects a
+# malformed/incomplete/wrong-mode record outright rather than reusing it.
+dx_parse_nix_volume_record() {
+    local record="$1"
+    local line
+    nix_volume_mode=""
+    nix_volume_root=""
+    nix_volume_device=""
+    nix_volume_fs=""
+    nix_volume_opts=""
+    while IFS= read -r line; do
+        case "$line" in
+            mode=*) nix_volume_mode="${line#mode=}" ;;
+            root=*) nix_volume_root="${line#root=}" ;;
+            device=*) nix_volume_device="${line#device=}" ;;
+            fs=*) nix_volume_fs="${line#fs=}" ;;
+            opts=*) nix_volume_opts="${line#opts=}" ;;
+        esac
+    done <<<"$record"
+
+    if [ "$nix_volume_mode" = already-mounted ] || [ "$nix_volume_mode" = in-place ]; then
+        if [ -z "$nix_volume_root" ] || [ -n "$nix_volume_device" ] || [ -n "$nix_volume_fs" ] || [ -n "$nix_volume_opts" ]; then
+            echo "Error: refusing an invalid Nix-volume record for mode=$nix_volume_mode." >&2
+            return 1
+        fi
+    elif [ "$nix_volume_mode" = prepared ]; then
+        if [ -z "$nix_volume_root" ] || [ -z "$nix_volume_device" ] || [ -z "$nix_volume_fs" ] || [ -z "$nix_volume_opts" ]; then
+            echo "Error: refusing an incomplete Nix-volume record for mode=prepared." >&2
+            return 1
+        fi
+    else
+        echo "Error: refusing an unrecognized Nix-volume record mode '${nix_volume_mode:-<empty>}'." >&2
+        return 1
+    fi
+}
+
 # Marker paths are durable state and must be either absent or a regular file.
 # In particular, GNU mv treats a directory destination as a request to move
 # the temporary file inside it, which can make a publication appear to

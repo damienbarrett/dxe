@@ -24,7 +24,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded dx_bootstrap_scratch_dir dx_persist_durable_identity_record dx_read_durable_identity_record essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id dx_parse_durable_identity_record create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded dx_bootstrap_scratch_dir dx_persist_durable_identity_record dx_read_durable_identity_record dx_write_nix_volume_record dx_read_nix_volume_record dx_parse_nix_volume_record essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id dx_parse_durable_identity_record create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -111,6 +111,12 @@ fi
 
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bootstrap-test.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
+
+# Declared once so ShellCheck (SC2154) sees every later dx_parse_nix_volume_
+# record call site below as an assignment, not an undeclared read;
+# dx_parse_nix_volume_record assigns these names dynamically (Contract 3,
+# refactor-v2-final.md), by design, in the caller's own frame.
+nix_volume_mode="" nix_volume_root="" nix_volume_device="" nix_volume_fs="" nix_volume_opts=""
 mkdir -p "$fixture/nix/store/profile/bin" "$fixture/nix/var/nix/profiles/per-user/root"
 ln -s "$fixture/nix/store/profile" "$fixture/nix/var/nix/profiles/per-user/root/profile"
 export DX_ESSENTIALS_ROOT=$fixture
@@ -521,6 +527,7 @@ else
 fi
 
 p_pnv_output="$({
+    export DX_BOOTSTRAP_SCRATCH_DIR="$fixture/p-pnv-scratch"
     grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
     findmnt() { [ "$*" = '-n -o TARGET,FSTYPE /nix' ] && printf '%s\n' '/nix btrfs' || return 1; }
     prepare_nix_volume
@@ -1030,6 +1037,7 @@ fi
 # findmnt for the real FSTYPE, rather than merely no longer being fooled by
 # accident.
 p7_fp_log="$fixture/p7-findmnt-false-positive.log"
+export DX_BOOTSTRAP_SCRATCH_DIR="$fixture/p7-fp-scratch"
 p7_fp_output="$({
     grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
     findmnt() {
@@ -1050,6 +1058,7 @@ fi
 # True positive: when FSTYPE genuinely matches, the already-mounted
 # short-circuit must still fire.
 p7_tp_log="$fixture/p7-findmnt-true-positive.log"
+export DX_BOOTSTRAP_SCRATCH_DIR="$fixture/p7-tp-scratch"
 p7_tp_output="$({
     grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
     findmnt() {
@@ -1057,7 +1066,9 @@ p7_tp_output="$({
         if [ "$*" = '-n -o TARGET,FSTYPE /nix' ]; then printf '%s\n' '/nix btrfs'; else return 1; fi
     }
     prepare_nix_volume_impl
-    echo "already_mounted=$DX_NIX_VOLUME_ALREADY_MOUNTED root=$DX_NIX_VOLUME_ROOT"
+    record="$(dx_read_nix_volume_record)"
+    dx_parse_nix_volume_record "$record"
+    echo "already_mounted=$([ "$nix_volume_mode" = already-mounted ] && echo true || echo false) root=$nix_volume_root"
 } 2>&1)"
 if printf '%s\n' "$p7_tp_output" | stdin_matches -F 'is already a btrfs mount' \
     && printf '%s\n' "$p7_tp_output" | stdin_matches -F 'already_mounted=true root=/nix'; then
@@ -1078,6 +1089,7 @@ p8_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p8-direct-volume.XXXXXX")"
 # absent-variable default (the P7 true-positive scenario, replayed with the
 # mode named explicitly instead of relying on the fallback).
 p8_explicit_apple_log="$p8_fixture/explicit-apple-findmnt.log"
+export DX_BOOTSTRAP_SCRATCH_DIR="$p8_fixture/explicit-apple-scratch"
 p8_explicit_apple_output="$({
     DX_NIX_STORAGE_MODE=apple-image
     grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
@@ -1086,7 +1098,9 @@ p8_explicit_apple_output="$({
         if [ "$*" = '-n -o TARGET,FSTYPE /nix' ]; then printf '%s\n' '/nix btrfs'; else return 1; fi
     }
     prepare_nix_volume_impl
-    echo "already_mounted=$DX_NIX_VOLUME_ALREADY_MOUNTED root=$DX_NIX_VOLUME_ROOT"
+    record="$(dx_read_nix_volume_record)"
+    dx_parse_nix_volume_record "$record"
+    echo "already_mounted=$([ "$nix_volume_mode" = already-mounted ] && echo true || echo false) root=$nix_volume_root"
 } 2>&1)"
 if printf '%s\n' "$p8_explicit_apple_output" | stdin_matches -F 'already_mounted=true root=/nix'; then
     test_pass "prepare_nix_volume_impl: an explicit DX_NIX_STORAGE_MODE=apple-image behaves exactly like the default"
@@ -1161,8 +1175,11 @@ p8_mounted_output="$({
     mkfs.btrfs() { printf 'mkfs.btrfs %s\n' "$*" >> "$p8_mounted_log"; }
     mkfs.ext4() { printf 'mkfs.ext4 %s\n' "$*" >> "$p8_mounted_log"; }
     record_durable_nix_identity() { printf '%s\n' "$*" >> "$p8_identity_log"; }
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p8_fixture/mounted-scratch"
     prepare_nix_volume_impl
-    echo "root=$DX_NIX_VOLUME_ROOT in_place=$DX_NIX_VOLUME_IN_PLACE already_mounted=${DX_NIX_VOLUME_ALREADY_MOUNTED:-unset}"
+    record="$(dx_read_nix_volume_record)"
+    dx_parse_nix_volume_record "$record"
+    echo "root=$nix_volume_root in_place=$([ "$nix_volume_mode" = in-place ] && echo true || echo false) already_mounted=$([ "$nix_volume_mode" = already-mounted ] && echo true || echo unset)"
 } 2>&1)"
 if printf '%s\n' "$p8_mounted_output" | stdin_matches -x 'root=/nix in_place=true already_mounted=unset' \
     && [ "$(cat "$p8_identity_log")" = /nix ] \
@@ -1502,10 +1519,10 @@ p9_dispatch_output="$({
     nix_install_image_essentials_root() { echo "roots-published"; }
     umount() { echo "MUST-NOT-UMOUNT"; }
     mount() { echo "MUST-NOT-MOUNT"; }
-    DX_NIX_VOLUME_ROOT="$p9_root_dispatch"
-    DX_NIX_VOLUME_IN_PLACE=true
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p9_fixture/dispatch-scratch"
+    dx_write_nix_volume_record in-place "$p9_root_dispatch"
     export DX_IMAGE_IDENTITY=sha256:7700000000000000000000000000000000000000000000000000000000000000
-    populate_prepared_nix_volume
+    populate_prepared_nix_volume 0 0
 } 2>&1)"
 if printf '%s\n' "$p9_dispatch_output" | stdin_matches -F 'roots-published' \
     && ! printf '%s\n' "$p9_dispatch_output" | stdin_matches -F 'MUST-NOT-UMOUNT' \
@@ -1818,6 +1835,7 @@ mkdir -p "$p12_raw_mount"
 p12_mount_out="$p12_fixture/mount-fail.out"
 (
     export DX_NIX_RAW_PATH="$p12_raw_mount"
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p12_raw_mount/scratch"
     grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
     findmnt() { return 1; }
     blkid() { return 1; }
@@ -1829,8 +1847,8 @@ p12_mount_out="$p12_fixture/mount-fail.out"
     mount() { echo 'mount: wrong fs type' >&2; return 32; }
     prepare_nix_volume
     echo "prepare_exit=$?"
-    echo "root=${DX_NIX_VOLUME_ROOT:-unset}"
-    populate_prepared_nix_volume
+    echo "root=$(dx_read_nix_volume_record >/dev/null 2>&1 && echo set || echo unset)"
+    populate_prepared_nix_volume 0 0
 ) >"$p12_mount_out" 2>&1 || true
 if ! grep -qxF 'prepare_exit=0' "$p12_mount_out" \
     && grep -qxF 'root=unset' "$p12_mount_out" \
@@ -1850,6 +1868,7 @@ mkdir -p "$p12_raw_mkfs"
 p12_mkfs_out="$p12_fixture/mkfs-fail.out"
 (
     export DX_NIX_RAW_PATH="$p12_raw_mkfs"
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p12_raw_mkfs/scratch"
     grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
     findmnt() { return 1; }
     blkid() { return 1; }
@@ -1861,8 +1880,8 @@ p12_mkfs_out="$p12_fixture/mkfs-fail.out"
     mount() { :; }
     prepare_nix_volume
     echo "prepare_exit=$?"
-    echo "root=${DX_NIX_VOLUME_ROOT:-unset}"
-    populate_prepared_nix_volume
+    echo "root=$(dx_read_nix_volume_record >/dev/null 2>&1 && echo set || echo unset)"
+    populate_prepared_nix_volume 0 0
 ) >"$p12_mkfs_out" 2>&1 || true
 if ! grep -qxF 'prepare_exit=0' "$p12_mkfs_out" \
     && grep -qxF 'root=unset' "$p12_mkfs_out" \
@@ -1883,6 +1902,7 @@ mkdir -p "$p12_raw_truncate"
 p12_truncate_out="$p12_fixture/truncate-fail.out"
 (
     export DX_NIX_RAW_PATH="$p12_raw_truncate"
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p12_raw_truncate/scratch"
     grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
     findmnt() { return 1; }
     blkid() { return 1; }
@@ -1894,8 +1914,8 @@ p12_truncate_out="$p12_fixture/truncate-fail.out"
     mount() { :; }
     prepare_nix_volume
     echo "prepare_exit=$?"
-    echo "root=${DX_NIX_VOLUME_ROOT:-unset}"
-    populate_prepared_nix_volume
+    echo "root=$(dx_read_nix_volume_record >/dev/null 2>&1 && echo set || echo unset)"
+    populate_prepared_nix_volume 0 0
 ) >"$p12_truncate_out" 2>&1 || true
 if ! grep -qxF 'prepare_exit=0' "$p12_truncate_out" \
     && grep -qxF 'root=unset' "$p12_truncate_out" \
@@ -1975,7 +1995,7 @@ p13_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p13-storage.XXXXXX")"
 # recording stubs, pinning their exact argv, not mere no-ops -- mkfs.ext4
 # is a MUST-NOT sentinel. Closes base-and-storage.sh:974-980.
 p13_raw_a="$p13_fixture/dx-nix-raw-a"
-mkdir -p "$p13_raw_a"
+mkdir -p "$p13_raw_a" "$p13_raw_a/scratch"
 p13_a_out="$p13_fixture/case-a.out"
 p13_a_truncate_log="$p13_fixture/case-a-truncate.log"
 p13_a_mkfs_btrfs_log="$p13_fixture/case-a-mkfs-btrfs.log"
@@ -1985,6 +2005,7 @@ p13_a_identity_log="$p13_fixture/case-a-identity.log"
 (
     export DX_NIX_RAW_PATH="$p13_raw_a"
     export DX_NIX_DISK_SIZE=8G
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p13_raw_a/scratch"
     grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
     findmnt() { return 1; }
     blkid() { return 1; }
@@ -1996,23 +2017,25 @@ p13_a_identity_log="$p13_fixture/case-a-identity.log"
     record_durable_nix_identity() { printf '%s\n' "$*" >> "$p13_a_identity_log"; }
     prepare_nix_volume
     echo "prepare_exit=$?"
-    printf 'ALREADY_MOUNTED=%s\n' "${DX_NIX_VOLUME_ALREADY_MOUNTED:-unset}"
-    printf 'ROOT=%s\n' "${DX_NIX_VOLUME_ROOT:-unset}"
-    printf 'DEVICE=%s\n' "${DX_NIX_VOLUME_DEVICE:-unset}"
-    printf 'FS_TYPE=%s\n' "${DX_NIX_VOLUME_FS_TYPE:-unset}"
-    printf 'MOUNT_OPTS=%s\n' "${DX_NIX_VOLUME_MOUNT_OPTS:-unset}"
+    record="$(dx_read_nix_volume_record)"
+    dx_parse_nix_volume_record "$record"
+    printf 'MODE=%s\n' "${nix_volume_mode:-unset}"
+    printf 'ROOT=%s\n' "${nix_volume_root:-unset}"
+    printf 'DEVICE=%s\n' "${nix_volume_device:-unset}"
+    printf 'FS_TYPE=%s\n' "${nix_volume_fs:-unset}"
+    printf 'MOUNT_OPTS=%s\n' "${nix_volume_opts:-unset}"
 ) >"$p13_a_out" 2>&1 || true
 p13_a_dev="$p13_raw_a/nix-store.btrfs"
 if grep -qF 'Bootstrap phase: Nix volume prepare/mount completed in' "$p13_a_out" \
     && grep -qxF 'prepare_exit=0' "$p13_a_out" \
-    && grep -qxF 'ALREADY_MOUNTED=false' "$p13_a_out" \
+    && grep -qxF 'MODE=prepared' "$p13_a_out" \
     && grep -qxF 'ROOT=/mnt/tmp-nix' "$p13_a_out" \
     && grep -qxF "DEVICE=$p13_a_dev" "$p13_a_out" \
     && grep -qxF 'FS_TYPE=btrfs' "$p13_a_out" \
     && grep -qxF 'MOUNT_OPTS=compress=zstd:3,noatime,space_cache=v2,discard=async' "$p13_a_out"; then
-    test_pass "prepare_nix_volume: a successful sparse-image prepare reports completion and publishes all five DX_NIX_VOLUME_* variables"
+    test_pass "prepare_nix_volume: a successful sparse-image prepare reports completion and publishes a mode=prepared Nix-volume record"
 else
-    test_fail "prepare_nix_volume: a successful sparse-image prepare reports completion and publishes all five DX_NIX_VOLUME_* variables (output: $(cat "$p13_a_out"))"
+    test_fail "prepare_nix_volume: a successful sparse-image prepare reports completion and publishes a mode=prepared Nix-volume record (output: $(cat "$p13_a_out"))"
 fi
 if [ "$(cat "$p13_a_truncate_log" 2>/dev/null)" = "-s 8G $p13_a_dev" ]; then
     test_pass "prepare_nix_volume: the sparse image is truncated with the exact size and path argv"
@@ -2041,12 +2064,13 @@ fi
 # Calls prepare_nix_volume_impl directly (no phase-timing text is under
 # test here). Closes base-and-storage.sh:914-916.
 p13_raw_b="$p13_fixture/dx-nix-raw-b"
-mkdir -p "$p13_raw_b"
+mkdir -p "$p13_raw_b" "$p13_raw_b/scratch"
 p13_b_out="$p13_fixture/case-b.out"
 p13_b_mkfs_btrfs_log="$p13_fixture/case-b-mkfs-btrfs.log"
 p13_b_mkfs_ext4_log="$p13_fixture/case-b-mkfs-ext4.log"
 (
     export DX_NIX_RAW_PATH="$p13_raw_b"
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p13_raw_b/scratch"
     grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 1; fi; command grep "$@"; }
     findmnt() { return 1; }
     blkid() { return 1; }
@@ -2057,8 +2081,10 @@ p13_b_mkfs_ext4_log="$p13_fixture/case-b-mkfs-ext4.log"
     mkfs.ext4() { printf '%s\n' "$*" >> "$p13_b_mkfs_ext4_log"; }
     prepare_nix_volume_impl
     echo "impl_exit=$?"
-    printf 'FS_TYPE=%s\n' "${DX_NIX_VOLUME_FS_TYPE:-unset}"
-    printf 'MOUNT_OPTS=%s\n' "${DX_NIX_VOLUME_MOUNT_OPTS:-unset}"
+    record="$(dx_read_nix_volume_record)"
+    dx_parse_nix_volume_record "$record"
+    printf 'FS_TYPE=%s\n' "${nix_volume_fs:-unset}"
+    printf 'MOUNT_OPTS=%s\n' "${nix_volume_opts:-unset}"
 ) >"$p13_b_out" 2>&1 || true
 p13_b_dev="$p13_raw_b/nix-store.ext4"
 if grep -qF 'Warning: Kernel does not support btrfs. Falling back to ext4.' "$p13_b_out" \
@@ -2082,13 +2108,14 @@ fi
 # device is formatted. (c2) umount fails -> refuses with the CAP_SYS_ADMIN
 # recovery text, before ever touching mkfs. Closes base-and-storage.sh:948-957.
 p13_raw_c="$p13_fixture/dx-nix-raw-c"
-mkdir -p "$p13_raw_c"
+mkdir -p "$p13_raw_c" "$p13_raw_c/scratch-c1"
 
 p13_c1_out="$p13_fixture/case-c1.out"
 p13_c1_mkfs_btrfs_log="$p13_fixture/case-c1-mkfs-btrfs.log"
 p13_c1_mkfs_ext4_log="$p13_fixture/case-c1-mkfs-ext4.log"
 (
     export DX_NIX_RAW_PATH="$p13_raw_c"
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p13_raw_c/scratch-c1"
     is_block_device() { [ "$1" = /dev/fake-block ]; }
     grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
     findmnt() { case "$*" in "-n -o SOURCE $p13_raw_c") printf '%s\n' /dev/fake-block ;; *) return 1 ;; esac; }
@@ -2145,11 +2172,10 @@ p13_d1_root="$p13_fixture/dx-nix-volume-d1"
 mkdir -p "$p13_d1_root"
 p13_d1_log="$p13_fixture/case-d1.log"
 (
-    DX_NIX_VOLUME_ROOT="$p13_d1_root"
-    DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
-    DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
-    DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
-    grep() { if [ "$*" = "-q /nix $DX_NIX_VOLUME_FS_TYPE /etc/fstab" ]; then return 0; fi; command grep "$@"; }
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p13_d1_root/scratch"
+    p13_fs_type=dxe-cov-probe
+    dx_write_nix_volume_record prepared "$p13_d1_root" /dev/dxe-cov-fake "$p13_fs_type" dxe-cov-opts
+    grep() { if [ "$*" = "-q /nix $p13_fs_type /etc/fstab" ]; then return 0; fi; command grep "$@"; }
     umount() { :; }
     mount() { :; }
     nix_image_store_identity() { printf '%s\n' IDENTITY >> "$p13_d1_log"; printf '%s\n' fakeidentity; }
@@ -2175,11 +2201,10 @@ p13_d2_root="$p13_fixture/dx-nix-volume-d2"
 mkdir -p "$p13_d2_root/store"
 p13_d2_log="$p13_fixture/case-d2.log"
 (
-    DX_NIX_VOLUME_ROOT="$p13_d2_root"
-    DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
-    DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
-    DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
-    grep() { if [ "$*" = "-q /nix $DX_NIX_VOLUME_FS_TYPE /etc/fstab" ]; then return 0; fi; command grep "$@"; }
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p13_d2_root/scratch"
+    p13_fs_type=dxe-cov-probe
+    dx_write_nix_volume_record prepared "$p13_d2_root" /dev/dxe-cov-fake "$p13_fs_type" dxe-cov-opts
+    grep() { if [ "$*" = "-q /nix $p13_fs_type /etc/fstab" ]; then return 0; fi; command grep "$@"; }
     umount() { :; }
     mount() { :; }
     nix_image_store_identity() { printf 'MUST-NOT-IDENTITY\n' >> "$p13_d2_log"; printf '%s\n' fakeidentity; }
@@ -2205,10 +2230,8 @@ p13_d3_root="$p13_fixture/dx-nix-volume-d3"
 mkdir -p "$p13_d3_root/store"
 p13_d3_log="$p13_fixture/case-d3.log"
 (
-    DX_NIX_VOLUME_ROOT="$p13_d3_root"
-    DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
-    DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
-    DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p13_d3_root/scratch"
+    dx_write_nix_volume_record prepared "$p13_d3_root" /dev/dxe-cov-fake dxe-cov-probe dxe-cov-opts
     nix_image_store_import_required() { printf 'IMPORT_REQUIRED %s\n' "$*" >> "$p13_d3_log"; return 0; }
     nix_verify_no_bootstrap_path_collision() { printf 'COLLISION %s\n' "$*" >> "$p13_d3_log"; return 1; }
     nix_store_import_registered() { printf 'MUST-NOT-REGISTERED %s\n' "$*" >> "$p13_d3_log"; }
@@ -2245,16 +2268,14 @@ cp /etc/fstab "$p13_fstab_snapshot" 2>/dev/null || : > "$p13_fstab_snapshot"
 if [ "$(id -u)" -eq 0 ]; then
     p13_e1_out="$p13_fixture/case-e1.out"
     (
-        DX_NIX_VOLUME_ROOT="$p13_e_root"
-        DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
-        DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
-        DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
+        export DX_BOOTSTRAP_SCRATCH_DIR="$p13_e_root/scratch-e1"
+        dx_write_nix_volume_record prepared "$p13_e_root" /dev/dxe-cov-fake dxe-cov-probe dxe-cov-opts
         nix_image_store_import_required() { return 1; }
         nix_install_image_essentials_root() { :; }
         umount() { :; }
         mount() { :; }
         blkid() { [ "$*" = '-L dx-nix' ] && return 0 || command blkid "$@"; }
-        populate_prepared_nix_volume
+        populate_prepared_nix_volume 0 0
         echo "exit=$?"
     ) >"$p13_e1_out" 2>&1 || true
     if grep -qxF 'exit=0' "$p13_e1_out" \
@@ -2268,16 +2289,14 @@ if [ "$(id -u)" -eq 0 ]; then
 
     p13_e2_out="$p13_fixture/case-e2.out"
     (
-        DX_NIX_VOLUME_ROOT="$p13_e_root"
-        DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
-        DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
-        DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
+        export DX_BOOTSTRAP_SCRATCH_DIR="$p13_e_root/scratch-e2"
+        dx_write_nix_volume_record prepared "$p13_e_root" /dev/dxe-cov-fake dxe-cov-probe dxe-cov-opts
         nix_image_store_import_required() { return 1; }
         nix_install_image_essentials_root() { :; }
         umount() { :; }
         mount() { :; }
         blkid() { return 1; }
-        populate_prepared_nix_volume
+        populate_prepared_nix_volume 0 0
         echo "exit=$?"
     ) >"$p13_e2_out" 2>&1 || true
     if grep -qxF 'exit=0' "$p13_e2_out" \
@@ -2291,16 +2310,14 @@ if [ "$(id -u)" -eq 0 ]; then
 else
     p13_e_out="$p13_fixture/case-e-nonroot.out"
     (
-        DX_NIX_VOLUME_ROOT="$p13_e_root"
-        DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
-        DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
-        DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
+        export DX_BOOTSTRAP_SCRATCH_DIR="$p13_e_root/scratch-e"
+        dx_write_nix_volume_record prepared "$p13_e_root" /dev/dxe-cov-fake dxe-cov-probe dxe-cov-opts
         nix_image_store_import_required() { return 1; }
         nix_install_image_essentials_root() { :; }
         umount() { :; }
         mount() { :; }
         blkid() { return 1; }
-        populate_prepared_nix_volume
+        populate_prepared_nix_volume 0 0
         echo "exit=$?"
     ) >"$p13_e_out" 2>&1 || true
     p13_e_fstab_unchanged=false
@@ -2356,11 +2373,10 @@ printf '%s\n' "$p14_apple_identity" > "$p14_apple_root/.dx-image-store-identity"
 p14_apple_marker_before="$(cat "$p14_apple_root/.dx-image-store-identity")"
 p14_apple_out="$p14_fixture/apple.out"
 (
-    DX_NIX_VOLUME_ROOT="$p14_apple_root"
-    DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
-    DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
-    DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
-    grep() { if [ "$*" = "-q /nix $DX_NIX_VOLUME_FS_TYPE /etc/fstab" ]; then return 0; fi; command grep "$@"; }
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p14_apple_root/scratch"
+    p14_fs_type=dxe-cov-probe
+    dx_write_nix_volume_record prepared "$p14_apple_root" /dev/dxe-cov-fake "$p14_fs_type" dxe-cov-opts
+    grep() { if [ "$*" = "-q /nix $p14_fs_type /etc/fstab" ]; then return 0; fi; command grep "$@"; }
     umount() { :; }
     mount() { :; }
     nix_image_store_identity() { printf '%s\n' "$p14_apple_identity"; }
@@ -2508,6 +2524,64 @@ fi
 
 unset DX_BOOTSTRAP_SCRATCH_DIR
 rm -rf "$p15_fixture"
+
+# P16 (refactor-v2-final.md Contract 3, Fable B6 item 3): the mode-tagged
+# Nix-volume record's bounded reader/parser, proven directly rather than
+# only through prepare_nix_volume_impl's own three write sites. The plan's
+# original two-mode record (already-mounted/prepared) rejects every
+# direct-volume (QNAP) boot; mode=in-place is the third mode this record
+# must accept -- root=/nix, no device/fs/opts -- which is the Red case this
+# gate calls for.
+p16_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p16-volume-record.XXXXXX")"
+export DX_BOOTSTRAP_SCRATCH_DIR="$p16_fixture/scratch"
+
+# (a) mode=in-place: accepted with just a root, rejected the moment any of
+# device/fs/opts is also present (a record a writer never should have
+# produced, but the reader must still refuse it rather than trust it).
+if dx_write_nix_volume_record in-place /nix \
+    && [ "$(dx_read_nix_volume_record)" = "$(printf 'mode=in-place\nroot=/nix\ndevice=\nfs=\nopts=')" ] \
+    && (dx_parse_nix_volume_record "$(dx_read_nix_volume_record)" && [ "$nix_volume_mode" = in-place ] && [ "$nix_volume_root" = /nix ]) \
+    && ! dx_parse_nix_volume_record "$(printf 'mode=in-place\nroot=/nix\ndevice=/dev/fake\nfs=\nopts=')" 2>/dev/null \
+    && ! dx_parse_nix_volume_record "$(printf 'mode=in-place\nroot=\ndevice=\nfs=\nopts=')" 2>/dev/null; then
+    test_pass "P16 (Contract 3 gate, Fable B6 item 3): the Nix-volume record accepts mode=in-place (root=/nix, no device/fs/opts) and rejects a record with a rejected field or no root"
+else
+    test_fail "P16 (Contract 3 gate, Fable B6 item 3): the Nix-volume record accepts mode=in-place (root=/nix, no device/fs/opts) and rejects a record with a rejected field or no root"
+fi
+
+# (b) mode=already-mounted: same shape rule as in-place (root only).
+if dx_write_nix_volume_record already-mounted /nix \
+    && dx_parse_nix_volume_record "$(dx_read_nix_volume_record)" \
+    && [ "$nix_volume_mode" = already-mounted ] && [ "$nix_volume_root" = /nix ]; then
+    test_pass "P16: the Nix-volume record accepts mode=already-mounted with just a root"
+else
+    test_fail "P16: the Nix-volume record accepts mode=already-mounted with just a root"
+fi
+
+# (c) mode=prepared: requires all four of root/device/fs/opts; a writer
+# that omits one is refused outright (never persisted half-written), and a
+# reader handed an incomplete record it did not itself write is refused too.
+if ! dx_write_nix_volume_record prepared /mnt/tmp-nix /dev/fake btrfs 2>/dev/null \
+    && ! dx_parse_nix_volume_record "$(printf 'mode=prepared\nroot=/mnt/tmp-nix\ndevice=/dev/fake\nfs=btrfs\nopts=')" 2>/dev/null \
+    && dx_write_nix_volume_record prepared /mnt/tmp-nix /dev/fake btrfs noatime \
+    && dx_parse_nix_volume_record "$(dx_read_nix_volume_record)" \
+    && [ "$nix_volume_mode" = prepared ] && [ "$nix_volume_device" = /dev/fake ] && [ "$nix_volume_fs" = btrfs ] && [ "$nix_volume_opts" = noatime ]; then
+    test_pass "P16: the Nix-volume record requires all four fields for mode=prepared, both writing and reading"
+else
+    test_fail "P16: the Nix-volume record requires all four fields for mode=prepared, both writing and reading"
+fi
+
+# (d) An unrecognized mode is refused outright -- never reused as a stale
+# or malformed record (the contract's own "never reuse a stale record"
+# guarantee).
+if ! dx_write_nix_volume_record bogus-mode /nix 2>/dev/null \
+    && ! dx_parse_nix_volume_record "$(printf 'mode=bogus-mode\nroot=/nix\ndevice=\nfs=\nopts=')" 2>/dev/null; then
+    test_pass "P16: the Nix-volume record rejects an unrecognized mode outright, both writing and reading"
+else
+    test_fail "P16: the Nix-volume record rejects an unrecognized mode outright, both writing and reading"
+fi
+
+unset DX_BOOTSTRAP_SCRATCH_DIR
+rm -rf "$p16_fixture"
 
 print_summary
 exit_with_code
