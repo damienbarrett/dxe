@@ -291,6 +291,52 @@ mkdir -p "$example_root"
         && [ "$DX_CONTAINER_MEMORY" = 8G ] && [ "$DX_CONTAINER_CPUS" = 4 ]
 ) && test_pass "tests/profiles/qnap-example.env resolves a valid docker-ssh configuration" || test_fail "tests/profiles/qnap-example.env resolves a valid docker-ssh configuration"
 
+# kcov attribution of the registry literal: DXE_CONFIG_REGISTRY moved from
+# a multi-line `$'...\t...'` assignment to a `read -r -d '' ... <<'EOF'`
+# heredoc (bin/lib/dx-config.sh's own comment above the assignment) so
+# kcov's bash line tracer, which never visits a heredoc body past its
+# opening line (dx_bootstrap_launch_command's `cat <<'EOF'` in
+# dx-ssh-common.sh is the existing 100%-covered precedent), stops counting
+# the table's 38 body lines as uncovered executable statements. Line
+# coverage proves a line ran, not that it ran correctly (constitution.md),
+# so the real proof is behavioural: every field's kind and default,
+# captured into tests/fixtures/config-registry-defaults.txt from the
+# pre-refactor `$'...'` form with DX_PROJECT_ROOT and HOME pinned to
+# synthetic values (so the fixture does not depend on this machine's real
+# paths), must still match exactly after the rewrite -- proven byte-for-
+# byte identical already (printf '%s' "$DXE_CONFIG_REGISTRY" | od -c) since
+# `read` with a single variable strips only leading/trailing IFS
+# whitespace from the whole record, never an embedded tab or newline.
+registry_fixture="$BASE_DIR/tests/fixtures/config-registry-defaults.txt"
+registry_actual="$fixture/registry-actual.txt"
+registry_actual_count=0
+(
+    DX_PROJECT_ROOT=/fixture-root
+    HOME=/fixture-home
+    for registry_name in $DXE_CONFIG_FIELDS; do
+        registry_kind="$(dx_config_kind "$registry_name")" || registry_kind=""
+        registry_default="$(dx_config_default "$registry_name")"
+        printf '%s\t%s\t%s\n' "$registry_name" "$registry_kind" "$registry_default"
+    done
+) > "$registry_actual"
+for registry_name in $DXE_CONFIG_FIELDS; do registry_actual_count=$((registry_actual_count + 1)); done
+[ "$registry_actual_count" -eq 38 ] \
+    && test_pass "the config registry has exactly 38 fields" \
+    || test_fail "the config registry has exactly 38 fields (got $registry_actual_count)"
+if diff -q "$registry_fixture" "$registry_actual" >/dev/null 2>&1; then
+    test_pass "the heredoc registry's dx_config_kind/dx_config_default per field match the pre-refactor fixture"
+else
+    test_fail "the heredoc registry's dx_config_kind/dx_config_default per field match the pre-refactor fixture (diff: $(diff "$registry_fixture" "$registry_actual" 2>&1))"
+fi
+registry_unresolved=""
+for registry_name in $DXE_CONFIG_FIELDS; do
+    registry_kind="$(dx_config_kind "$registry_name")" || registry_kind=""
+    [ -n "$registry_kind" ] || registry_unresolved="$registry_unresolved $registry_name"
+done
+[ -z "$registry_unresolved" ] \
+    && test_pass "every DXE_CONFIG_FIELDS name resolves a non-empty dx_config_kind" \
+    || test_fail "every DXE_CONFIG_FIELDS name resolves a non-empty dx_config_kind (missing:$registry_unresolved)"
+
 # Process identity and lock reclamation use PID plus process start, never PID alone.
 lock="$fixture/live.lock"
 dx_lock_acquire "$lock" 1

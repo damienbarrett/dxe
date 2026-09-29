@@ -1,0 +1,38 @@
+DX_RUNTIME	enum:apple,docker-ssh	apple
+DX_REMOTE_HOST	optname	
+DX_GUEST_SYSTEM	enum:aarch64-linux,x86_64-linux	aarch64-linux
+DX_NIX_STORAGE_MODE	enum:apple-image,direct-volume	apple-image
+DX_CONTAINER_RESTART_POLICY	enum:no,unless-stopped	no
+DX_CONTAINER_NAME	name	dx-host
+DX_IMAGE	image	dx-nixos-26.05
+DX_SSH_PORT	port	2222
+DX_SSH_KEY	abspath	/fixture-root/dx_key
+DX_SSH_KEY_PUB	abspath	/fixture-root/dx_key.pub
+DX_SSH_CONNECT_TIMEOUT	posint	15
+DX_CONTEXT_DIR	abspath	/fixture-root/container/aarch64-darwin-apple-container-dx-nixos-26.05
+DX_BOOTSTRAP_SOURCE	abspath	/fixture-root/container/aarch64-darwin-apple-container-dx-nixos-26.05
+DX_BOOTSTRAP_VOLUME	name	dx-bootstrap
+DX_BOOTSTRAP_PATH	abspath	/guest-bootstrap
+DX_BOOTSTRAP_WAIT_TIMEOUT	posint	30
+DX_BOOTSTRAP_CONFIRM_TIMEOUT	posint	5
+DX_GUEST_ACTIVATION_TIMEOUT	posint	1800
+DX_GUEST_ACTIVATION_ATTEMPTS	posint	2
+DX_GUEST_ACTIVATION_RETRY_DELAY	posint	5
+DX_NIX_VOLUME	name	dx-nix
+DX_NIX_MOUNT	abspath	/nix
+DX_NIX_DISK	abspath	/fixture-home/.dx-cache/nix-store.img
+DX_NIX_DISK_SIZE	size	64G
+DX_PERSIST_VOLUME	name	dx-persist
+DX_GIT_MOUNT_SOURCE	optpath	
+DX_GIT_MOUNT_TARGET	abspath	/workspace
+DX_GUEST_WORKDIR	optpath	
+DX_CONTAINER_MEMORY	size	12G
+DX_CONTAINER_CPUS	posint	4
+DX_CONTAINER_VOLUME_DIR	abspath	/fixture-home/Library/Application Support/com.apple.container/volumes
+DX_STOP_GRACE_SECONDS	posint	5
+DX_STOP_COMMAND_TIMEOUT	posint	15
+DX_STOP_WAIT_TIMEOUT	posint	5
+DX_DELETE_COMMAND_TIMEOUT	posint	15
+DX_MOUNT_IDENTITY_DIR	abspath	/fixture-home/.dx-cache/mount-identities
+DX_TUNNEL_LOCK_TIMEOUT	posint	5
+DX_BACKUP_DIR	abspath	/fixture-home/Backups/dxe-persist
