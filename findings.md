@@ -320,13 +320,13 @@ Every review ID and where it lands.
 - [x] f11664c **WP7.4** Typed shell integration: `programs.starship/direnv/yazi/
   lazygit`, `home.sessionPath`, `programs.nushell.settings`;
   `checks.<shell>-integration`. (Fable C4)
-- [ ] **WP7.5** `writeShellApplication` wrappers for installed guest commands
+- [x] c6c7ebb **WP7.5** `writeShellApplication` wrappers for installed guest commands
   with `runtimeInputs`; `checks.scripts-hermetic`. (Fable C5)
-- [ ] **WP7.6** `agy` pin shape check replaces value assertions; derivation
+- [x] 8e8f0b3 **WP7.6** `agy` pin shape check replaces value assertions; derivation
   slimmed with `meta`; skew note recorded. (Fable C6, Muse B6)
-- [ ] **WP7.7** NixVim typed modules for comment/ts-context/tmux-navigator;
+- [x] 8e7261f **WP7.7** NixVim typed modules for comment/ts-context/tmux-navigator;
   `checks.nvim` via `mkTestDerivationFromNixvimModule`. (Fable C7)
-- [ ] **WP7.8** `allowUnfreePredicate`; stable via `legacyPackages`. (Fable C8)
+- [x] aa2e9b1 **WP7.8** `allowUnfreePredicate`; stable via `legacyPackages`. (Fable C8)
 
 ### WP8 — Structural splits
 
@@ -420,3 +420,4 @@ Every review ID and where it lands.
 - **2026-09-30** WP1.7 landed (6d05c4e, 1eb7f3b, d4b7375, 2358cad, d47aae8): harness `wait_until`/`wait_for_pid_exit`; `DXE_TEST_RESULTS_OWNER` makes nested suite processes mint their own results file (section 20's workaround now redundant); section 22 has zero bare sleeps and its two elapsed-seconds cases assert through the `DX_SLEEP` transcript; a contract forbids bare `sleep N` in `# tier: unit` files plus the de-flaked list. Remaining bare-sleep inventory for WP1.4: sections 11, 14, 16, 17, 23 (13 hits), 27, sourceable coverage.
 - **2026-09-30** WP8.1 Phases 0-2 and Contract 5 landed (a1f9b2b, 96ce338, c4a2d87, deabddd, 327f6bb): identity, publication decision, default-profile target and the Nix-volume state are threaded positionally or through four bounded scratch records under `DX_BOOTSTRAP_SCRATCH_DIR` (default `/run/dx-bootstrap`); eleven exported globals removed; the clean-skip-writes-no-marker gate is mode-aware. Section 3: 219 → 241. Deviation recorded in `refactor-v2-final.md`: sibling phases bridge through the scratch dir because `bootstrap_phases` must call phases uncaptured (WP4.4 test). Phase 3 is host-side (claims) and Phase 4 (file split) remain. Live-tier validation on `dx-test` is required before promotion: this changes bootstrap's runtime data flow.
 - **2026-09-30** WP9.5 landed (eab62eb) and the EPIPE-drain contract now points at `dx-bootstrap-sync.sh` (0d94864).
+- **2026-09-30** WP7.5-7.8 landed (c6c7ebb, 8e7261f, 8e8f0b3, aa2e9b1) plus the section 14 help-range fix (5b636d7): hermetic `writeShellApplication` wrappers for installed guest commands with `checks.scripts-hermetic`; `checks.agy-pin-shape` replaces the literal aarch64 pin assertions (the custom `unpackPhase` stays: the fetchurl name has no `.tar.gz` suffix on purpose); typed NixVim modules with `checks.nvim`; `allowUnfreePredicate` naming exactly claude-code and antigravity-cli. Real builds green on aarch64, eval green on both systems, zero warnings. WP7 complete.
