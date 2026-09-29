@@ -206,7 +206,7 @@ dx_pbs_find_repos() {
         fi
         [ -d "$entry" ] || continue
         dirname "$entry"
-    done < "$out"
+    done < "$out" # KCOV_LOOP_TERMINATOR
     rm -f "$out"
 }
 
@@ -626,7 +626,7 @@ dx_pbs_list_driver() {
         relroot="${repo#"$root"/}"
         [ "$relroot" != "$repo" ] || relroot="."
         dx_pbs_emit_repo "$repo" "$relroot" "$reason_mode" "$repos_file" || had_error=1
-    done < "$repos_file"
+    done < "$repos_file" # KCOV_LOOP_TERMINATOR
 
     rm -f "$repos_file"
     echo "Selector summary: ${special_count:-0} special file(s) (socket/fifo/device) skipped." >&2
@@ -703,7 +703,7 @@ dx_pbs_list_outside_repos() {
         else
             printf '%s\t%s\n' "$relpath" "$hashed"
         fi
-    done < "$out"
+    done < "$out" # KCOV_LOOP_TERMINATOR
     rc=$?
     rm -f "$out"
     return "$rc"
