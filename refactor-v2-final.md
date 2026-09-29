@@ -20,6 +20,83 @@ behavior, or public CLI behavior.
 **Revisit trigger:** when Phase 1 (identity and publication threading) is
 next scheduled, or when the coverage ratchet is next re-measured.
 
+**2026-09-30 update (WP8.1):** Phases 0–2 landed against the seven
+corrections in `docs/reviews/2026-09-29-fable.md` "B6", plus Contract 5
+(B6 item 5), as four separate commits on `refactor/findings-2026-09-29`:
+
+- **Contract 1** (identity + publication decision): landed.
+  `DX_NIX_PENDING_IMAGE_STORE_IDENTITY` is gone from production.
+  `nix_install_image_essentials_root` and `nix_store_import_registered`
+  take the image identity as an explicit fourth positional argument;
+  `nix_image_store_import_required` threads it back to its caller via
+  stdout. The publication decision is a small non-sourced pending record
+  (`dx_write_pending_image_identity`, `<volume-root>/.dx-image-store-
+  identity.pending`) `publish_nix_image_store_identity` consumes and
+  clears only on a successful publish (left in place on failure, for a
+  retry). B6 item 6's owner uid/gid fallback is resolved once in
+  `bootstrap_phases` after `create_user` and threaded positionally into
+  `populate_prepared_nix_volume`/`populate_prepared_nix_volume_in_place`.
+  Gate: section 3's P14 case (mode-aware — apple-image's verified clean
+  skip writes no pending record; direct-volume never creates
+  `.dx-image-store-identity` at all, even after `publish_nix_image_store_
+  identity` runs unconditionally later).
+- **Contract 2** (image default-profile target): landed.
+  `capture_nix_image_default_profile` persists the resolved path via
+  `dx_persist_image_default_profile_target`; `nix_image_bootstrap_store_
+  paths` and `nix_restore_image_default_profile` read it back via
+  `dx_read_image_default_profile_target` (both in `bootstrap/common.sh`),
+  never `DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET`. Gate: section 3's P17 case.
+- **Contract 3** (Nix-volume record): landed, with B6 item 3's third mode.
+  `prepare_nix_volume` writes a mode-tagged record (`dx_write_nix_volume_
+  record`: `mode=already-mounted|prepared|in-place`, `root=`, `device=`,
+  `fs=`, `opts=`); `populate_prepared_nix_volume` reads it via
+  `dx_read_nix_volume_record`/`dx_parse_nix_volume_record`. `mode=in-place`
+  (direct-volume/QNAP) requires `root=/nix` and rejects device/fs/opts, the
+  same shape as `mode=already-mounted`; `mode=prepared` requires all four
+  fields. `DX_NIX_VOLUME_ALREADY_MOUNTED/ROOT/DEVICE/FS_TYPE/MOUNT_OPTS/
+  IN_PLACE` are gone from production. Gate: section 3's P16 case (the
+  record reader, including the `mode=in-place` red case B6 item 3 calls
+  for).
+- **Contract 5** (durable identity / `create_user`, B6 item 5): landed.
+  `record_durable_nix_identity` returns a bounded `identity=<uid:gid>` /
+  `migrate=<bool>` record on stdout instead of exporting
+  `DX_NIX_DURABLE_UID`/`DX_NIX_DURABLE_GID`; `create_user` takes that
+  record as an explicit positional argument (`dx_parse_durable_identity_
+  record`) and returns its own final identity in the same shape.
+  `DX_NIX_IDENTITY_MIGRATION_REQUIRED` is unchanged (still read later by
+  `migrate_durable_nix_identity_if_needed`); `DX_PERSIST_IDENTITY_
+  MIGRATION_REQUIRED` is removed outright (write-only in production).
+  Gate: section 3's P15 case.
+- **Cross-phase bridging:** all three contracts above needed a value to
+  survive from one bootstrap phase to a later one (`prepare_nix_volume` to
+  `populate_prepared_nix_volume`/`create_user`, `capture_nix_image_default_
+  profile` to `nix_restore_image_default_profile`) without an exported
+  global, while `bootstrap_phases` keeps calling each phase as a bare,
+  uncaptured statement (section 3's P8/B8 shadowed-function order test
+  depends on this). `bootstrap/common.sh` adds one small scratch directory
+  for this, `dx_bootstrap_scratch_dir` (`DX_BOOTSTRAP_SCRATCH_DIR`,
+  default `/run/dx-bootstrap`, test-only override, mirroring `DX_NIX_RAW_
+  PATH`'s own pattern) — living outside `/nix` so it survives the
+  apple-image `/nix` remount the same way the removed exported globals
+  did. This mechanism is not literally what the phased sequence below
+  describes for Phase 1/2 (positional bootstrap_main arguments); seams
+  crossing sibling bootstrap phases still need a durable side channel
+  given the constraint above, and a plain shell variable in `bootstrap_
+  phases`' own frame would work identically without it — the scratch
+  directory was chosen so the record is inspectable/durable across a
+  crash, consistent with this plan's existing state-file conventions
+  (markers, claim records). Recorded here as an implementation note, not a
+  plan amendment.
+- **Phase 3** (claim/lock identity): not attempted under this work item.
+  `dx_lock_acquire`/`dx_nix_volume_claim_acquire` are host-side
+  (`bin/lib/dx-host-util.sh`, `bin/lib/dx-container.sh`), outside this
+  work item's file scope (guest `container/.../bootstrap/*` and `tests/*`
+  only).
+- Line references throughout "Target contracts" below are from the
+  695-line pre-refactor file and are now doubly stale (the file grew to
+  ~1,010 lines before this work, and every function these contracts touch
+  has since moved again). Locate by function name, not line number.
+
 ## Goals
 
 - Make the image-store identity **and the decision to publish its marker** values
@@ -80,6 +157,19 @@ environment variable, and it is removed from production code and tests.
 
 Phase gate: a test proving a verified clean skip performs **no marker write**.
 
+**Landed 2026-09-30, one deviation:** identity and the publish decision are
+not literally threaded through `bootstrap_main`'s own arguments — see the
+2026-09-30 status update above. `nix_image_store_import_required` still
+computes identity once and is the sole place the publish decision is
+decided; it now returns identity via stdout to its immediate caller
+(`populate_prepared_nix_volume`, same call chain, real positional
+threading from there down to `nix_install_image_essentials_root`) and
+persists the publish decision as a pending-record file for `publish_nix_
+image_store_identity` — a separate, later bootstrap phase — to consume,
+rather than that phase receiving it as a `bootstrap_main`-passed argument.
+`DX_NIX_PENDING_IMAGE_STORE_IDENTITY` itself is confirmed gone from
+production and tests.
+
 ### 2. Image default-profile target (priority 1)
 
 Three consumers, not one:
@@ -105,6 +195,16 @@ Contract: resolution returns a value (replacing `capture_nix_image_default_profi
 as a global-setter) which `bootstrap_main` holds and passes to all three
 consumers. It is never silently re-derived from a mutable global.
 
+**Landed 2026-09-30, one deviation:** `capture_nix_image_default_profile`
+persists the value (`dx_persist_image_default_profile_target`) rather than
+`bootstrap_main` holding it directly, for the same reason as contract 1 —
+its three consumers are reached from separate later bootstrap phases, and
+`bootstrap_phases` cannot capture a phase's return value without breaking
+the B8 phase-order test. `nix_image_bootstrap_store_paths` keeps its
+recompute fallback for the case nothing was persisted.
+`DX_NIX_IMAGE_DEFAULT_PROFILE_TARGET` is confirmed gone from production
+and tests.
+
 ### 3. Nix-volume preparation record (priority 2)
 
 The original plan required a record carrying all five preparation outputs in a
@@ -129,6 +229,24 @@ reader must validate mode, version, and field completeness and reject anything
 else, rather than relying on the writer's cleanup.
 
 Invalid-field handling is tested before the writer changes.
+
+**Landed 2026-09-30, with two deviations from the literal contract text
+above, both reasoned in the 2026-09-30 status update:** the record has
+three modes, not two (`mode=in-place` for direct-volume/QNAP — B6 item 3);
+and `populate_prepared_nix_volume`'s actual signature is
+`populate_prepared_nix_volume <owner-uid> <owner-gid>` — it reads the
+volume record itself via `dx_read_nix_volume_record`/`dx_parse_nix_volume_
+record` rather than receiving `<state-file>` as an argument, and the image
+identity/publish-decision/profile-target values are not threaded through
+this call at all (identity flows positionally within the same call chain
+that already has it — `nix_image_store_import_required` down to
+`nix_install_image_essentials_root` — per contract 1; the profile target
+is read independently by its own two consumers per contract 2). The
+`<state-file>` argument shape could not be preserved literally without
+either breaking section 3's B8 phase-order test (bootstrap_phases must
+call each phase as a bare, uncaptured statement) or reopening the DX_NIX_
+PENDING_IMAGE_STORE_IDENTITY-style hidden-state problem this plan exists to
+close.
 
 ### 4. Claims and lock identity (priority 3)
 
@@ -171,7 +289,7 @@ Contract, choosing the **narrower** of the two options the review posed:
 
 ## Phased sequence
 
-### Phase 0 — Freeze behavior
+### Phase 0 — Freeze behavior (landed 2026-09-30, folded into Phases 1–2's own commits)
 
 Add **green** characterization tests only, covering identity consistency, volume
 state across mounted/new/import/failure paths, and claim contention. Record the
@@ -184,7 +302,7 @@ phase. Phase 0 establishes a passing baseline and moves no files.
 Gate: baseline reproducible with the Verification commands; new tests describe
 the intended contract, not implementation source text.
 
-### Phase 1 — Thread identity and the publication decision
+### Phase 1 — Thread identity and the publication decision (landed 2026-09-30)
 
 **Red:** call every affected function with an identity, a publication decision,
 and a profile target; assert the same identity reaches import, GC roots, and
@@ -203,7 +321,13 @@ Exit: no production `DX_NIX_PENDING_IMAGE_STORE_IDENTITY`; one identity per
 bootstrap; marker and GC-root tests pass for fresh, matching, mismatching,
 invalid, and interrupted-import cases.
 
-### Phase 2 — Explicit volume state and profile target
+Landed: `DX_NIX_PENDING_IMAGE_STORE_IDENTITY` is gone from production; the
+status-trap fix was already in place before this phase started (confirmed,
+not re-touched). See the 2026-09-30 status update above for the mechanism
+(positional fourth argument plus the pending-record file) and the gate
+(section 3 P14).
+
+### Phase 2 — Explicit volume state and profile target (landed 2026-09-30)
 
 **Red:** preparation emits a valid mode-tagged record for each branch shape,
 rejects malformed/incomplete/wrong-mode records, handles already-mounted and
@@ -233,7 +357,14 @@ than reintroducing the substring-grep bug it fixed.
 Exit: no `export` of preparation outputs; cleanup covered under success, mount
 failure, import failure, and interrupted-process simulation.
 
-### Phase 3 — One claim cleanup path
+Landed: the five `DX_NIX_VOLUME_*` globals are gone from production,
+replaced by the mode-tagged record described in the 2026-09-30 status
+update above, with the third mode (`mode=in-place`) B6 item 3 identified.
+`setup_nix_volume`/`setup_nix_volume_impl` were already absent from this
+tree before this phase started (confirmed via the guard test in section 3,
+not re-touched).
+
+### Phase 3 — One claim cleanup path (not attempted — host-side, out of scope; see the 2026-09-30 status update above)
 
 **Red:** contention, same-owner idempotence, stale takeover, malformed and
 multiline claims, unsafe names, lock timeout, `mktemp` failure, publication
