@@ -2,43 +2,5 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
-DX_REVERSE_WAIT_SSH="${DX_REVERSE_WAIT_SSH:-$SCRIPT_DIR/dx-wait-ssh}"
-REVERSE_MAPPINGS=()
-
-usage() { cat <<'EOF'
-Usage:
-  dx-reverse <host_port> [<host_port> ...]
-  dx-reverse <host_port>:<guest_port> [<host_port>:<guest_port> ...]
-  dx-reverse --list | --stop <guest_port> | --stop-all
-EOF
-}
-fail() { echo "Error: $*" >&2; return 1; }
-validate_port() { dx_tunnel_validate_port "$@"; }
-parse_reverse_arg() {
-    local arg="$1" host_port guest_port
-    case "$arg" in
-        *:*) case "$arg" in *:*:*) fail "Invalid reverse '$arg'. Use <host_port> or <host_port>:<guest_port>."; return 1 ;; esac; host_port=${arg%%:*}; guest_port=${arg#*:} ;;
-        *) host_port=$arg; guest_port=$arg ;;
-    esac
-    validate_port "$host_port" host true || return
-    validate_port "$guest_port" guest false || return
-    printf '%s:%s\n' "$guest_port" "$host_port"
-}
-collect_reverses() {
-    local arg mapping guest seen=" "
-    REVERSE_MAPPINGS=()
-    for arg in "$@"; do mapping="$(parse_reverse_arg "$arg")" || return; guest=${mapping%%:*}; case "$seen" in *" $guest "*) fail "Guest port $guest was requested more than once."; return 1 ;; esac; seen="$seen$guest "; REVERSE_MAPPINGS+=("$mapping"); done
-}
-parse_all_reverses() { local mapping; collect_reverses "$@" || return; for mapping in "${REVERSE_MAPPINGS[@]}"; do printf '%s\n' "$mapping"; done; }
-reverse_main() {
-    [ "$#" -gt 0 ] || { usage; return 1; }
-    case "$1" in
-        -h|--help) usage ;;
-        --list) [ "$#" -eq 1 ] || fail "--list does not accept port arguments."; dx_tunnel_list reverse ;;
-        --stop) [ "$#" -eq 2 ] || { fail "Usage: dx-reverse --stop <guest_port>"; return 1; }; validate_port "$2" guest false; dx_tunnel_stop reverse "$2" ;;
-        --stop-all) [ "$#" -eq 1 ] || { fail "--stop-all does not accept port arguments."; return 1; }; dx_tunnel_stop_all reverse ;;
-        -*) fail "Unknown option '$1'." ;;
-        *) collect_reverses "$@"; dx_tunnel_require_prerequisites "$DX_REVERSE_WAIT_SSH"; local mapping; for mapping in "${REVERSE_MAPPINGS[@]}"; do dx_tunnel_start reverse "${mapping%%:*}" "${mapping#*:}"; done ;;
-    esac
-}
+reverse_main() { dx_tunnel_cli reverse "$@"; }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then reverse_main "$@"; fi

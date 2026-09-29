@@ -168,6 +168,78 @@ rm -f "$dxe_s19_tunnel_result"
 [ "${c:-1}" -eq 0 ] && test_pass "WP3.4: no ssh call is made while the host is unreachable" \
     || test_fail "WP3.4: no ssh call is made while the host is unreachable"
 
+# --- WP8.3 step 5 (findings.md; docs/reviews/2026-09-29-fable.md A7):
+# dx-forward/dx-reverse were merged into one dx_tunnel_cli in
+# bin/lib/dx-tunnel.sh, with each entrypoint reduced to a two-line
+# `<direction>_main` body. These cases were captured against the
+# pre-merge, still-separate bin/dx-forward and bin/dx-reverse (each its
+# own ~44-line argument parser) and must read identically post-merge:
+# the exact --help usage text per direction, and a representative set of
+# --stop/--list/unknown-option argument-handling error messages and exit
+# codes. Container-free: every path here fails argument validation
+# before ever touching a container, SSH, or the real tunnel state
+# directory (isolated below via DX_TUNNEL_STATE_DIR regardless).
+dxe_s19_cli_state="$(mktemp -d "$CALLER_TMPDIR/dxe-s19-cli-state.XXXXXX")"
+
+dxe_s19_check() {
+    local desc="$1" expected_out="$2" expected_rc="$3" out rc
+    shift 3
+    out="$(DX_TUNNEL_STATE_DIR="$dxe_s19_cli_state" "$@" 2>&1)"; rc=$?
+    if [ "$out" = "$expected_out" ] && [ "$rc" -eq "$expected_rc" ]; then
+        test_pass "$desc"
+    else
+        test_fail "$desc (rc=$rc, output: $out)"
+    fi
+}
+
+dxe_s19_check "dx-forward --help prints the pinned usage text" \
+"Usage:
+  dx-forward <guest_port> [<guest_port> ...]
+  dx-forward <guest_port>:<host_port> [<guest_port>:<host_port> ...]
+  dx-forward --list | --stop <host_port> | --stop-all" 0 \
+    "$BASE_DIR/bin/dx-forward" --help
+
+dxe_s19_check "dx-reverse --help prints the pinned usage text" \
+"Usage:
+  dx-reverse <host_port> [<host_port> ...]
+  dx-reverse <host_port>:<guest_port> [<host_port>:<guest_port> ...]
+  dx-reverse --list | --stop <guest_port> | --stop-all" 0 \
+    "$DX_REVERSE" --help
+
+dxe_s19_check "dx-forward --stop with no port argument reports its usage" \
+    "Error: Usage: dx-forward --stop <host_port>" 1 \
+    "$BASE_DIR/bin/dx-forward" --stop
+
+dxe_s19_check "dx-forward --stop with a non-numeric port is rejected" \
+    "Error: host port 'notaport' is not an integer." 1 \
+    "$BASE_DIR/bin/dx-forward" --stop notaport
+
+dxe_s19_check "dx-forward --list refuses extra port arguments" \
+    "Error: --list does not accept port arguments." 1 \
+    "$BASE_DIR/bin/dx-forward" --list extra
+
+dxe_s19_check "dx-forward rejects an unknown option" \
+    "Error: Unknown option '--bogus'." 1 \
+    "$BASE_DIR/bin/dx-forward" --bogus
+
+dxe_s19_check "dx-reverse --stop with no port argument reports its usage" \
+    "Error: Usage: dx-reverse --stop <guest_port>" 1 \
+    "$DX_REVERSE" --stop
+
+dxe_s19_check "dx-reverse --stop with a non-numeric port is rejected" \
+    "Error: guest port 'notaport' is not an integer." 1 \
+    "$DX_REVERSE" --stop notaport
+
+dxe_s19_check "dx-reverse --list refuses extra port arguments" \
+    "Error: --list does not accept port arguments." 1 \
+    "$DX_REVERSE" --list extra
+
+dxe_s19_check "dx-reverse rejects an unknown option" \
+    "Error: Unknown option '--bogus'." 1 \
+    "$DX_REVERSE" --bogus
+
+rm -rf "$dxe_s19_cli_state"
+
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
     test_skip "dx-reverse live round trip skipped by --skip-integration"
     print_summary
