@@ -39,7 +39,7 @@ dx_ai_boot_id() {
         if [ "$key" = btime ] && [ -z "$extra" ]; then
             case "$value" in ''|*[!0-9]*) return 1 ;; *) printf 'btime:%s\n' "$value"; return 0 ;; esac
         fi
-    done < "$proc_root/stat"
+    done < "$proc_root/stat" # KCOV_LOOP_TERMINATOR
     return 1
 }
 
