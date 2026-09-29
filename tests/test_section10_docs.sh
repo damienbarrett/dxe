@@ -167,6 +167,33 @@ for pair in 'DX_CONTAINER_NAME|dx-host' 'DX_IMAGE|dx-nixos-26.05' 'DX_SSH_PORT|2
     if grep -F -- "$name" "$CONFIG_DOC" | stdin_matches -F -- "$value"; then test_pass "$name documented default matches registry"; else test_fail "$name documented default matches registry"; fi
 done
 
+# Fable A5's refactor / Muse C2: docs/gen-config-table.sh prints the
+# defaults table straight from bin/lib/dx-config.sh's own
+# DXE_CONFIG_REGISTRY, so the two can never drift apart. Extract the
+# committed "### Generated defaults reference" table the same way the
+# plans.md/reviews sections above walk this file line by line, and assert
+# it is byte-identical to the generator's current output.
+GENERATED_CONFIG_TABLE="$(bash "$BASE_DIR/docs/gen-config-table.sh")"
+committed_config_table=""
+in_generated_config_table=0
+while IFS= read -r config_doc_line; do
+    case "$config_doc_line" in
+        '### Generated defaults reference') in_generated_config_table=1; continue ;;
+        '### '*) in_generated_config_table=0 ;;
+    esac
+    [ "$in_generated_config_table" -eq 1 ] || continue
+    case "$config_doc_line" in
+        '|'*) committed_config_table="$committed_config_table$config_doc_line
+" ;;
+    esac
+done < "$CONFIG_DOC"
+committed_config_table=${committed_config_table%$'\n'}
+if [ "$committed_config_table" = "$GENERATED_CONFIG_TABLE" ]; then
+    test_pass "docs/configuration.md's generated defaults table matches docs/gen-config-table.sh"
+else
+    test_fail "docs/configuration.md's generated defaults table matches docs/gen-config-table.sh"
+fi
+
 assert_file_contains_literal "$CONFIG_DOC" 'Root `.env` and profiles are data files' "configuration trust boundary is explicit"
 assert_file_contains_literal "$CONFIG_DOC" 'Do not source a profile' "profiles are not advertised as sourceable code"
 assert_file_contains_literal "$CONFIG_DOC" '${DX_PROJECT_ROOT}' "the sole data expansion is documented"
