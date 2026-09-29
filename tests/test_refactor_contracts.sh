@@ -62,6 +62,9 @@ source "$ROOT/bin/lib/dx-container.sh"
 container() { case "$*" in 'image list --quiet') printf '%s\n' contract-image:latest ;; *) return 1 ;; esac; }
 check container_image_exists contract-image
 check reject container_image_exists absent-image
+# WP1.8 (Fable D6): scope the fake to exactly the two checks above -- this
+# file's own leaking-override contract (below) would otherwise flag it.
+unset -f container
 
 source "$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib/dx-keyring.sh"
 check dx_keyring_address_valid unix:path=/tmp/dbus-test
@@ -317,5 +320,90 @@ for entrypoint_path in "$ROOT"/bin/dx*; do
     [ "$entrypoint_name" != dx-lib.sh ] || continue
     check entrypoint_conforms "$entrypoint_name"
 done
+
+# --- WP1.8 (Fable D6): a column-0 (not indented -- and, by every test
+# file's own convention already used throughout this repository, therefore
+# never inside a `( … )` subshell, function, or case body) definition of a
+# coreutils or runtime-boundary command as a shell function shadows that
+# command for every LATER line that runs in the same shell process --
+# including code deep inside test_helpers.sh or a sourced production
+# library -- for as long as it stays defined. test_refactor_state_machines.sh
+# :305-311 shows the correct discipline this contract enforces: define, use
+# for the case(s) that need it, then `unset -f` the name before anything
+# else in the file can be shadowed by it.
+LEAK_PATTERN='^(mv|cp|rm|stat|chown|chmod|install|ln|mkdir|find|date|sleep|kill|nix|docker|container|ssh|git|jq|tar|useradd|mount|umount|truncate|mkfs\.[a-z0-9]+|findmnt|blkid|setpriv|id)\(\)[[:space:]]*\{'
+
+# Scans every test_*.sh directly under $1 (no recursion -- every suite in
+# this repository lives flat under tests/) for LEAK_PATTERN matches at
+# column 0, and reports each one with no LATER `unset -f` line naming it.
+# awk reads the file itself rather than piping a captured "rest of the
+# file" string through `grep -q`: `grep -q` exits at its first match and
+# closes its read end, and under `set -o pipefail` (this file's own line 2)
+# the resulting SIGPIPE on the upstream write can fail an otherwise-true
+# "already unset" case -- the identical SIGPIPE-under-pipefail defect
+# `bootstrap_invokes` below is already written to avoid, encountered again
+# while developing this very detector.
+scan_leaking_overrides() {
+    local dir="$1" file name lineno defline matches=""
+    for file in "$dir"/test_*.sh; do
+        [ -f "$file" ] || continue
+        while IFS=: read -r lineno defline; do
+            name="$(printf '%s' "$defline" | sed -E 's/^([A-Za-z0-9_.]+)\(\).*/\1/')"
+            if awk -v n="$lineno" -v target="$name" '
+                NR > n && /^[[:space:]]*unset[[:space:]]+-f[[:space:]]/ {
+                    line = $0
+                    sub(/^[[:space:]]*unset[[:space:]]+-f[[:space:]]+/, "", line)
+                    split(line, names, /[[:space:]]+/)
+                    for (i in names) if (names[i] == target) found = 1
+                }
+                END { exit (found ? 0 : 1) }
+            ' "$file"; then
+                :
+            else
+                matches="$matches$file:$lineno: $name()"$'\n'
+            fi
+        done < <(grep -nE "$LEAK_PATTERN" "$file")
+    done
+    printf '%s' "$matches"
+}
+leak_detected() { [ -n "$(scan_leaking_overrides "$1")" ]; }
+
+# Self-proof before the real scan is trusted (test_runtime_boundary_audit.sh's
+# own red/green discipline): a real leak must be caught, a column-0
+# override properly wrapped in a `( … )` subshell must not, and a column-0
+# override followed later in the same file by its own `unset -f` must not.
+leak_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-leak-contract.XXXXXX")"
+mkdir -p "$leak_fixture/red" "$leak_fixture/green-subshell" "$leak_fixture/green-unset"
+cat > "$leak_fixture/red/test_leak_example.sh" <<'EOF'
+#!/bin/bash
+mv() { :; }
+echo done
+EOF
+cat > "$leak_fixture/green-subshell/test_leak_example.sh" <<'EOF'
+#!/bin/bash
+(
+    mv() { :; }
+    echo done
+)
+EOF
+cat > "$leak_fixture/green-unset/test_leak_example.sh" <<'EOF'
+#!/bin/bash
+mv() { :; }
+echo done
+unset -f mv
+EOF
+check leak_detected "$leak_fixture/red"
+check reject leak_detected "$leak_fixture/green-subshell"
+check reject leak_detected "$leak_fixture/green-unset"
+rm -rf "$leak_fixture"
+
+# The real gate: no tests/test_*.sh may define a column-0 coreutils/
+# boundary-command override that outlives the file without an `unset -f`.
+real_leaks="$(scan_leaking_overrides "$ROOT/tests")"
+if [ -n "$real_leaks" ]; then
+    echo "FAIL: leaking column-0 override(s) found (WP1.8):" >&2
+    printf '%s' "$real_leaks" >&2
+    failures=$((failures + 1))
+fi
 
 [ "$failures" -eq 0 ]

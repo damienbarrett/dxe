@@ -195,6 +195,16 @@ else
     test_fail "AI publication accepts the same candidate after its opencode executable is added"
 fi
 
+# WP1.8 (Fable D6): mv() above exists only to emulate GNU mv -T/-Tf for
+# dx_ai_publish_generation/dx_ai_recover_generation/dx_ai_main's pointer-
+# switch and lock-reclaim paths, which macOS's own mv lacks. None of the
+# tool-manifest, dx_ai_verify, or agy/DQ7 cases between here and the next
+# real AI publication call ever reach a mv -T/-Tf codepath, so unset it for
+# that stretch -- it cannot then shadow anything else that happens to call
+# a plain `mv` in between. Redefined identically just before the next case
+# that needs it (the noagy end-to-end dx_ai_main run below).
+unset -f mv
+
 # dx_ai_verify must validate the generation's own inventory before trusting
 # anything on PATH -- a stale/foreign binary earlier in PATH must not stand
 # in for a missing generation executable.
@@ -650,6 +660,21 @@ else
     test_fail "dx_ai_tools_for_system prints DQ7's exact unsupported-tool diagnostic"
 fi
 unset -f jq
+
+# Re-establish the mv -T/-Tf emulation (see the WP1.8 note above, where it
+# was unset) for the dx_ai_main run below, which publishes a real
+# generation and so exercises dx_ai_publish_pointer's mv -Tf switch.
+mv() {
+    printf '%s\n' "$*" >> "$mv_calls_log"
+    case "${1:-}" in
+        -Tf) rm -f "$3"; "$real_mv" -f "$2" "$3" ;;
+        -T)
+            [ ! -e "$3" ] && [ ! -L "$3" ] || return 1
+            "$real_mv" "$2" "$3"
+            ;;
+        *) "$real_mv" "$@" ;;
+    esac
+}
 
 # End-to-end: a sourced dx_ai_main run on a system whose agy pin is null
 # stages a generation whose .tools-manifest and published executables
