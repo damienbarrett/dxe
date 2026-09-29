@@ -230,9 +230,29 @@ assert_file_not_contains "$DX_AI_SCRIPT" "touch /persist/home/dx/.claude.json" "
 assert_file_contains "$DX_AI_SCRIPT" "printf '%s\\\\n' '{}' > \"\$persist_home/.claude.json\"" "guest dx-ai initializes empty Claude config as JSON"
 AGY_PIN="$CONTAINER_DIR/pins/agy.json"
 assert_file_contains_literal "$AGY_PIN" '"version": "1.0.5"' "agy pin uses a version with OAuth persistence fixes"
-assert_file_contains_literal "$AGY_PIN" "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.0.5-5009297080451072/linux-arm/cli_linux_arm64.tar.gz" "agy pin uses the 1.0.5 Linux arm64 tarball"
-assert_file_contains_literal "$AGY_PIN" "sha512-j5LtbiYWbdq1lbOXXkfpH90cC/c7OTviUodjHMrgcCpjcuvqJej71Jl6v22budIzaIaKW/oMeifL0hEJgcUBmA==" "agy pin has the expected 1.0.5 SRI hash"
 assert_file_not_contains "$FLAKE_NIX" 'version = "1.0.0";' "agy derivation is not pinned to the OAuth persistence bug version"
+
+# WP7.6 (docs/reviews/2026-09-29-fable.md finding C6, corrects Muse B6):
+# checks.<system>.agy-pin-shape (a pure Nix assert, flake.nix) replaces the
+# literal aarch64-linux-only URL/hash assertions this used to be -- those
+# asserted nothing about x86_64-linux, so the version/URL/hash skew Muse B6
+# read as undocumented drift was, in fact, the only state CI accepted. The
+# shape check covers every per-system pin (sha512- prefix, version and arch
+# named in the URL) and ignores the "note" key WP7.6 adds to record that
+# today's version gap between systems is expected.
+assert_file_contains_literal "$AGY_PIN" '"note"' "agy pin records why its per-system versions currently differ"
+if command -v nix >/dev/null 2>&1; then
+    for system in aarch64-linux x86_64-linux; do
+        if nix build --no-write-lock-file --no-link "$CONTAINER_DIR#checks.$system.agy-pin-shape" 2>/dev/null; then
+            test_pass "checks.$system.agy-pin-shape: every per-system agy pin is well-formed"
+        else
+            test_fail "checks.$system.agy-pin-shape: every per-system agy pin is well-formed"
+        fi
+    done
+else
+    test_skip "nix not available, skipping checks.aarch64-linux.agy-pin-shape"
+    test_skip "nix not available, skipping checks.x86_64-linux.agy-pin-shape"
+fi
 assert_file_contains_literal "$DX_AI_SCRIPT" '$persist_home/.gemini/antigravity-cli' "guest dx-ai prepares persisted agy state directory"
 assert_file_contains "$CONTAINER_DIR/bootstrap/activation.sh" "/persist/home/dx/.gemini/antigravity-cli" "bootstrap prepares persisted agy state directory"
 

@@ -130,12 +130,18 @@
           # architecture binary to reach the closure by construction, not by
           # a runtime check.
           agySystemPin = agyPin.${system} or null;
+          # WP7.6 (docs/reviews/2026-09-29-fable.md finding C6, corrects
+          # Muse B6): built with `unstable` (not `pkgs`) so its `meta.license
+          # = unfree` below falls under the SAME allowUnfreePredicate as the
+          # rest of aiPackages (WP7.8) -- it is unconditionally part of that
+          # closure anyway (`with unstable; [ ... agy ... ]` below), so this
+          # is not a new dependency, just naming the one it already had.
           agy =
-            if agySystemPin == null then null else pkgs.stdenv.mkDerivation rec {
+            if agySystemPin == null then null else unstable.stdenv.mkDerivation {
               pname = "antigravity-cli";
               version = agySystemPin.version;
 
-              src = pkgs.fetchurl {
+              src = unstable.fetchurl {
                 # An explicit name keeps this derivation's store-path name stable
                 # (antigravity-cli-src) across pin refreshes, independent of
                 # whatever filename Google's manifest happens to use -- dx-ai.sh's
@@ -147,14 +153,22 @@
                 hash = agySystemPin.hash;
               };
 
-              nativeBuildInputs = [ pkgs.autoPatchelfHook ];
-              buildInputs = [ pkgs.stdenv.cc.cc ];
+              nativeBuildInputs = [ unstable.autoPatchelfHook ];
+              buildInputs = [ unstable.stdenv.cc.cc.lib ];
 
+              # Not stdenv's default unpackPhase in disguise: `src`'s `name`
+              # above deliberately drops the `.tar.gz` suffix (for a stable
+              # store path across pin refreshes), and stdenv's own unpack
+              # dispatches purely on that suffix. Without it, a `.tar.gz`
+              # with no recognisable extension is copied into the build
+              # directory verbatim, still compressed -- this has to unpack
+              # it explicitly.
               unpackPhase = ''
                 runHook preUnpack
                 tar -xzf $src
                 runHook postUnpack
               '';
+              sourceRoot = ".";
 
               dontConfigure = true;
               dontBuild = true;
@@ -164,6 +178,19 @@
                 install -Dm755 antigravity $out/bin/agy
                 runHook postInstall
               '';
+
+              meta = {
+                mainProgram = "agy";
+                license = nixpkgs.lib.licenses.unfree;
+                sourceProvenance = [ nixpkgs.lib.sourceTypes.binaryNativeCode ];
+                # Every key of pins/agy.json except the human-readable "note"
+                # (WP7.6) is a system this derivation can be native for; a
+                # system missing from this list is an evaluation error even
+                # if the `agySystemPin == null` guard above were bypassed,
+                # not just a runtime check.
+                platforms = nixpkgs.lib.attrNames
+                  (nixpkgs.lib.filterAttrs (k: v: k != "note" && v != null) agyPin);
+              };
             };
 
           # Optional AI CLI tools kept out of the default install.
@@ -260,6 +287,41 @@
             alias-is-identity =
               assert self.homeConfigurations.dx.activationPackage.drvPath
                   == self.homeConfigurations."dx-aarch64-linux".activationPackage.drvPath;
+              pkgs.emptyFile;
+
+            # WP7.6 (docs/reviews/2026-09-29-fable.md finding C6, corrects
+            # Muse B6): a pure-Nix shape contract over EVERY per-system pin
+            # entry (pins/agy.json, ignoring its "note" key), replacing
+            # test_section6_tools.sh's old literal assertion of the
+            # aarch64-linux version/URL/hash, which asserted nothing about
+            # x86_64-linux -- so a `dx-ai update` that moved the x86_64 pin
+            # was free to write any shape at all there. This does not
+            # assert the two systems' versions match (WP7.6's "note" key
+            # records that today's skew is expected, not a bug); it asserts
+            # every pin present is at least well-formed: an SRI sha512
+            # hash, and a URL that actually names its own version and
+            # architecture rather than, say, one pin's URL pasted under the
+            # other system's key.
+            agy-pin-shape =
+              let
+                archTag = {
+                  aarch64-linux = "linux-arm";
+                  x86_64-linux = "linux-x64";
+                };
+                systemPins = nixpkgs.lib.filterAttrs (k: _: k != "note") agyPin;
+                pinShapeOk = system': pin:
+                  pin == null || (
+                    nixpkgs.lib.hasPrefix "sha512-" pin.hash
+                    && nixpkgs.lib.hasInfix pin.version pin.url
+                    && nixpkgs.lib.hasInfix (archTag.${system'} or "\x00unsupported") pin.url
+                  );
+              in
+              assert nixpkgs.lib.all
+                (system': pinShapeOk system' (agyPin.${system'} or null))
+                supportedSystems;
+              assert nixpkgs.lib.all
+                (system': nixpkgs.lib.elem system' supportedSystems)
+                (nixpkgs.lib.attrNames systemPins);
               pkgs.emptyFile;
 
             # WP7.3 (docs/reviews/2026-09-29-fable.md finding C3, Muse B4):
