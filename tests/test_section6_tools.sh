@@ -238,10 +238,43 @@ else
     test_fail "codex is in aiPackages"
 fi
 
+# findings.md's 2026-09-30 Progress log ("User decisions") records gemini-cli's
+# removal from the optional AI tools bundle (Google retired the free/Pro-Ultra
+# tier CLI in favour of Antigravity CLI; WP2.2 had kept it and acknowledged
+# nixpkgs' removal notice, but the user decided to drop it rather than keep
+# suppressing the warning). Two independent proofs it stays gone: the text of
+# aiPackages itself (here), and the actual built package set further below
+# (guarded by `command -v nix`, mirroring Section 5's checks.<system> loop) --
+# either one alone could miss a re-add through an indirection the other
+# doesn't see.
 if printf '%s\n' "$AI_PACKAGES_BLOCK" | stdin_matches -E "gemini-cli"; then
-    test_pass "gemini-cli is in aiPackages"
+    test_fail "gemini-cli is not in aiPackages"
 else
-    test_fail "gemini-cli is in aiPackages"
+    test_pass "gemini-cli is not in aiPackages"
+fi
+
+declared_ai_tools="$(sed -n 's/^DX_AI_TOOLS="\(.*\)"$/\1/p' "$DX_AI_SCRIPT")"
+if printf '%s\n' " $declared_ai_tools " | stdin_matches -E ' gemini '; then
+    test_fail "gemini is not in DX_AI_TOOLS"
+else
+    test_pass "gemini is not in DX_AI_TOOLS"
+fi
+
+if command -v nix >/dev/null 2>&1; then
+    for ai_tools_system in aarch64-linux x86_64-linux; do
+        if ai_tools_paths="$(nix eval --json --no-write-lock-file "$CONTAINER_DIR#packages.$ai_tools_system.ai-tools.paths" 2>&1)"; then
+            if printf '%s\n' "$ai_tools_paths" | stdin_matches "gemini"; then
+                test_fail "checks.$ai_tools_system ai-tools package set does not contain gemini-cli (${ai_tools_paths})"
+            else
+                test_pass "checks.$ai_tools_system ai-tools package set does not contain gemini-cli"
+            fi
+        else
+            test_fail "checks.$ai_tools_system ai-tools package set does not contain gemini-cli (nix eval failed: ${ai_tools_paths})"
+        fi
+    done
+else
+    test_skip "nix not available, skipping ai-tools gemini-cli absence check (aarch64-linux)"
+    test_skip "nix not available, skipping ai-tools gemini-cli absence check (x86_64-linux)"
 fi
 
 if printf '%s\n' "$AI_PACKAGES_BLOCK" | stdin_matches -E "claude-code"; then
@@ -376,7 +409,7 @@ assert_file_not_contains "$SHELL_NIX" "type -q starship" "fish no longer hand-gu
 assert_file_contains "$SHELL_NIX" "agy = \\\"agy --dangerously-skip-permissions\\\"" "shell.nix configures agy with --dangerously-skip-permissions"
 assert_file_contains "$SHELL_NIX" "claude = \\\"claude --dangerously-skip-permissions\\\"" "shell.nix configures claude with --dangerously-skip-permissions"
 assert_file_contains "$SHELL_NIX" "codex = \\\"codex --dangerously-bypass-approvals-and-sandbox\\\"" "shell.nix configures codex with --dangerously-bypass-approvals-and-sandbox"
-assert_file_contains "$SHELL_NIX" "gemini = \\\"gemini --yolo\\\"" "shell.nix configures gemini with --yolo"
+assert_file_not_contains "$SHELL_NIX" "gemini = " "shell.nix no longer configures a gemini alias"
 
 # --- Item 3 (fix/test-hardening): tmux_guest_resurrect_probe's live tmux- --
 # --- resurrect check was timing-flaky (found on Branch 16's live tier,    -

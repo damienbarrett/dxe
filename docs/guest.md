@@ -73,7 +73,7 @@ which bootstrap recreates `config.toml` from the checked-in defaults.
 
 ## Optional AI Tools
 
-Codex, Gemini, Claude, `agy` (Antigravity CLI), `herdr`, and `opencode` are intentionally not installed by
+Codex, Claude, `agy` (Antigravity CLI), `herdr`, and `opencode` are intentionally not installed by
 default. This keeps the standard DX environment free of AI CLIs, so they are not
 available in secure, restricted, or work environments unless you explicitly opt in.
 
@@ -87,7 +87,7 @@ dx-ai
 `dx-ai` copies the immutable `/guest-bootstrap` source into a new mutable
 generation under `/persist/home/dx/.local/state/dx-ai`, updates
 `nixpkgs-unstable` there, then atomically publishes that generation before
-installing or upgrading the `codex`, `gemini`, `claude`, `agy`, `herdr`, and `opencode`
+installing or upgrading the `codex`, `claude`, `agy`, `herdr`, and `opencode`
 commands in the guest user's Nix profile. It never modifies the published
 bootstrap. The `dx-ai` helper is installed into `~/.local/bin` by Home
 Manager, the same way `dx-theme` is installed.

@@ -163,7 +163,8 @@ check f6_summary_reports_one_failed
 # the cosmetic duplication F13 described, and nothing tied the two together.
 #
 # The two lists cannot be compared verbatim -- these are binary names, not Nix
-# attribute names (`claude` ships in `claude-code`, `gemini` in `gemini-cli`).
+# attribute names (`claude` ships in `claude-code`; gemini-cli was the same
+# kind of mismatch before findings.md's 2026-09-30 user decision dropped it).
 # The contract asserted is the one that catches the real mistake: every tool
 # dx-ai will demand has *some* package whose attribute name starts with it.
 declared_tools="$(sed -n 's/^DX_AI_TOOLS="\(.*\)"$/\1/p' "$container_dir/scripts/dx-ai.sh")"

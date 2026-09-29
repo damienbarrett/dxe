@@ -4,15 +4,16 @@ NIX_FLAGS=(--extra-experimental-features "nix-command flakes" --accept-flake-con
 # Single source of truth for the optional AI tools bundle. Keep the Nix
 # declaration (flake.nix's aiPackages), bin/dx-herdr, and docs/guest.md in sync
 # with this list by hand; they are outside this module's ownership.
-DX_AI_TOOLS="codex gemini claude agy herdr opencode"
+DX_AI_TOOLS="codex claude agy herdr opencode"
 # A generation published before OpenCode support has no .tools-manifest (see
 # dx_ai_generation_tools); its real, complete inventory was this five-tool
-# set, and validating or recovering it must use that instead of the current
-# DX_AI_TOOLS, which would demand an opencode executable that generation was
-# never asked to build.
+# set (gemini-cli was still installed at that point -- see findings.md's
+# 2026-09-30 user decision to drop it), and validating or recovering it must
+# use that instead of the current DX_AI_TOOLS, which would demand an
+# opencode executable that generation was never asked to build.
 DX_AI_LEGACY_TOOLS="codex gemini claude agy herdr"
 # The intersection of the agents dx-ai publishes and the integrations Herdr
-# ships. Herdr has no target for gemini or agy, so they are absent by design.
+# ships. Herdr has no target for agy, so it is absent by design.
 DX_AI_HERDR_INTEGRATIONS=(claude codex opencode)
 
 # dx-ai is packaged both as a Home Manager `home.file` (for normal guest use,
@@ -63,7 +64,7 @@ dx_ai_usage() {
     cat <<'EOF'
 Usage: dx-ai [--recover] [--supports <tool>]
 
-Install or update Codex, Gemini, Claude, Antigravity, Herdr, and OpenCode from an
+Install or update Codex, Claude, Antigravity, Herdr, and OpenCode from an
 immutable working generation under /persist. The published bootstrap is never modified.
 Use --recover to repoint current to its retained predecessor generation.
 Use --supports <tool> to check if a tool is known to this dx-ai generation.

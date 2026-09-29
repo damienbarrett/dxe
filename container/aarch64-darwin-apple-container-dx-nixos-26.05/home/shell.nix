@@ -157,7 +157,6 @@
     agy = "agy --dangerously-skip-permissions";
     claude = "claude --dangerously-skip-permissions";
     codex = "codex --dangerously-bypass-approvals-and-sandbox";
-    gemini = "gemini --yolo";
     usage = "/persist/git/agent-stats/run-stats.sh";
   };
 }

@@ -142,7 +142,7 @@ else
 fi
 
 assert_profile_command_present /tmp/test-dx-ai-profile codex "codex present in ai-tools profile"
-assert_profile_command_present /tmp/test-dx-ai-profile gemini "gemini present in ai-tools profile"
+assert_profile_command_absent /tmp/test-dx-ai-profile gemini "gemini absent from ai-tools profile"
 assert_profile_command_present /tmp/test-dx-ai-profile claude "claude present in ai-tools profile"
 assert_profile_command_present /tmp/test-dx-ai-profile agy "agy (Antigravity CLI) present in ai-tools profile"
 assert_profile_command_present /tmp/test-dx-ai-profile herdr "herdr present in ai-tools profile"
