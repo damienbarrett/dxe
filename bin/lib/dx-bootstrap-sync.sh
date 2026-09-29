@@ -72,7 +72,7 @@ dx_bootstrap_sync() {
     # either.
     content_digest="$(dx_bootstrap_content_digest "$source" || true)"
     if [ -n "$content_digest" ]; then
-    published="$(dx_runtime_exec "$container" sh -c '
+        published="$(dx_runtime_exec "$container" sh -c '
         root=$1
         [ -L "$root/current" ] || exit 0
         [ -f "$root/current/bootstrap.sh" ] || exit 0
@@ -89,7 +89,7 @@ dx_bootstrap_sync() {
             # generation it booted two restarts ago. Prune by boot id, which is the
             # part that makes a lease stale across a restart; publication still owns
             # the fuller process-identity retention pass.
-        dx_runtime_exec "$container" sh -c '
+            dx_runtime_exec "$container" sh -c '
             root=$1
             boot=$(cat /proc/sys/kernel/random/boot_id) || exit 0
             for lease in "$root/.locks/leases"/*; do
@@ -103,7 +103,7 @@ dx_bootstrap_sync() {
             # marker before resolving `current`, so a skip that stayed silent would
             # stall every restart with unchanged content for the launcher's full
             # grace period.
-        dx_runtime_exec "$container" sh -c '
+            dx_runtime_exec "$container" sh -c '
             root=$1
             touch "$root/.dx-bootstrap-ready"
             rm -f "$root/.dx-bootstrap-waiting"
