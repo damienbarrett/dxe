@@ -4,12 +4,12 @@
 # cross-process daemon-identity cache, dx_runtime_host_identity, the
 # collision-detection profile id, and the DQ6 label-verification/ownership
 # checks the lifecycle file's mutations call before they delete anything.
-# Split from bin/lib/dx-runtime-docker.sh (WP8.3 step 3; findings.md,
-# docs/reviews/2026-09-29-muse.md A2, docs/reviews/2026-09-29-astra.md R3);
-# that file remains the facade every caller sources and dispatches through,
-# and sources bin/lib/dx-runtime-docker-transport.sh before this file, so
-# dx_runtime_docker_ssh_raw/ssh_exec/cli are already defined by the time any
-# function below actually runs.
+# Split from, and one of the four files bin/lib/dx-runtime-docker.sh
+# sources (see docs/refactor/decisions/D8-docker-adapter-history.md for
+# the split's history); that file remains the facade every caller sources
+# and dispatches through, and sources bin/lib/dx-runtime-docker-transport.sh
+# before this file, so dx_runtime_docker_ssh_raw/ssh_exec/cli are already
+# defined by the time any function below actually runs.
 #
 # Safe to source: defines functions and constants only, no I/O, no command
 # dispatch, no shell options, at import time (same contract as every other
@@ -17,19 +17,17 @@
 
 # --- Docker binary path discovery (item 2; qnap-dxe-plan.md DQ1) ----------
 #
-# Confirmed by Phase 0 against the real NAS: the non-interactive SSH PATH
-# does not include the Container Station qpkg's own bin directory, so a
-# bare `command -v docker` over ssh finds nothing -- the absolute path must
-# be discovered once and reused. This snippet is POSIX-sh (ash/BusyBox-safe,
-# no bashisms) because it runs on the remote host's default non-interactive
-# shell, matching tests/qnap/lib/phase0-common.sh's
-# dxe_qpkg_binary_discovery_snippet/dxe_qnap_docker_discovery_remote_script
-# shape exactly -- same technique, a fresh production copy (that file lives
-# under tests/, this one under bin/lib/, so bin/ code cannot source it
-# without inverting the test/production dependency direction). It contains
-# no interpolated external data (the glob and command name are fixed
-# constants this file's own author wrote), so it is sent as ONE fixed
-# string via dx_runtime_docker_ssh_raw, not per-token quoted.
+# The non-interactive SSH PATH does not include the Container Station
+# qpkg's own bin directory, so a bare `command -v docker` over ssh finds
+# nothing -- the absolute path must be discovered once and reused. POSIX-sh
+# (ash/BusyBox-safe, no bashisms): it runs on the remote host's default
+# non-interactive shell. A fresh production copy of
+# tests/qnap/lib/phase0-common.sh's own discovery shape, not a `source` of
+# it (that file lives under tests/, this one under bin/lib/, so bin/ code
+# cannot source it without inverting the test/production dependency
+# direction). No interpolated external data (the glob and command name are
+# fixed constants), so it is sent as ONE fixed string via
+# dx_runtime_docker_ssh_raw, not per-token quoted.
 DX_RUNTIME_DOCKER_BIN_GLOB='/share/*/.qpkg/container-station/bin/docker'
 
 dx_runtime_docker_bin_discovery_script() {
@@ -39,11 +37,9 @@ dx_runtime_docker_bin_discovery_script() {
 
 # Discovers the Docker CLI's absolute path (one ssh round trip) and caches
 # it in DXE_RUNTIME_DOCKER_BIN, exported so a child process this one execs
-# or plainly invokes inherits it and never re-discovers it (qnap-dxe-plan.md
-# Phase 2's design note: "discovered once per run ... cached in the resolved
-# configuration snapshot, never re-read by children"). Idempotent: a second
-# call in the same process (or a process that inherited the export) is a
-# no-op.
+# or plainly invokes inherits it and never re-discovers it. Idempotent: a
+# second call in the same process (or a process that inherited the
+# export) is a no-op.
 
 dx_runtime_docker_discover_bin() {
     [ -z "${DXE_RUNTIME_DOCKER_BIN:-}" ] || return 0
@@ -61,24 +57,20 @@ dx_runtime_docker_discover_bin() {
     export DXE_RUNTIME_DOCKER_BIN
 }
 
-# --- Guest SSH address discovery (Branch 11 / Phase 5, DQ5) -----------------
+# --- Guest SSH address discovery (DQ5) -----------------
 #
 # The address the guest's own SSH server publishes on AND is reached at:
 # the NAS's Tailscale IPv4 address, discovered over the existing management
 # connection, never loopback/LAN/0.0.0.0, never persisted to any tracked
 # file. Reuses tests/qnap/lib/phase0-common.sh's proven discovery shape
-# (dxe_qnap_tailnet_addr_discovery_remote_script: the Tailscale qpkg CLI's
-# own "ip -4" first, falling back to reading the "tailscale0" interface
-# directly) as a FRESH production copy, not a `source` of that file -- the
-# same reason DX_RUNTIME_DOCKER_BIN_GLOB/dx_runtime_docker_bin_discovery_script
-# above are already a fresh copy of that file's own Docker-path discovery,
-# not a source of it: that file lives under tests/, this one under bin/lib/,
-# so bin/ code cannot depend on it without inverting the test/production
-# dependency direction. tests/test_docker_runtime_adapter.sh's own drift
-# guard sources BOTH files and asserts this function renders byte-identical
-# output to tests/qnap/lib/phase0-common.sh's own function for the same
-# glob input, so a future edit to either shape cannot silently diverge from
-# the other unnoticed.
+# (the Tailscale qpkg CLI's own "ip -4" first, falling back to reading the
+# "tailscale0" interface directly) as a fresh production copy, not a
+# `source` of that file -- same reason as the bin-discovery snippet above
+# (test/production dependency direction). tests/test_docker_runtime_adapter.sh's
+# own drift guard sources both files and asserts this function renders
+# byte-identical output to tests/qnap/lib/phase0-common.sh's own function
+# for the same glob input, so a future edit to either shape cannot silently
+# diverge from the other unnoticed.
 DX_RUNTIME_DOCKER_TAILSCALE_BIN_GLOB='/share/*/.qpkg/Tailscale/tailscale /share/*/.qpkg/Tailscale/bin/tailscale'
 
 dx_runtime_docker_guest_ssh_address_discovery_script() {
@@ -228,7 +220,7 @@ dx_runtime_docker_engine_compatible() {
     fi
 }
 
-# --- Cross-process daemon-identity cache (WP3.4 / Fable A1) ---------------
+# --- Cross-process daemon-identity cache ---------------
 #
 # dx_tunnel_key/dx_backup_resolve_dir/dx_ssh_known_hosts_dir (via
 # dx_profile_state_segment -> dx_runtime_host_identity, bin/lib/dx-host-util.sh)
@@ -237,19 +229,17 @@ dx_runtime_docker_engine_compatible() {
 # always cost an ssh round trip unless it happened to already be cached IN
 # THIS PROCESS, so a later process on an unreachable host -- exactly the
 # moment an operator wants `dx-forward --list`/`--stop` to work -- had to
-# dial out just to recompute a path for state that already exists locally;
-# worse, a failing `$(...)` used only as a printf argument does not abort
-# under errexit, so the identity segment silently became empty instead of
-# refusing (docs/reviews/2026-09-29-fable.md #A1). Persisting the resolved
-# daemon id once it is known -- 0600, atomic tmp+mv, directory 0700 -- lets
-# a later call, in a DIFFERENT process, resolve the SAME identity, and
-# therefore the SAME local paths, without ever touching the network again.
-# Scoped by DX_CONTAINER_NAME only (like dx_backup_resolve_dir/
-# dx_ssh_known_hosts_dir's own existing per-profile segment): a container
-# name is expected to name one profile, so repointing the same container
-# name at a different DX_REMOTE_HOST is the one case this cache does not
-# freshen until something else clears it (an accepted limitation, the same
-# shape as dx_backup_resolve_dir's own documented override-argument one).
+# dial out just to recompute a path for state that already exists locally
+# (D8 records the bug this cache fixed). Persisting the resolved daemon id
+# once it is known -- 0600, atomic tmp+mv, directory 0700 -- lets a later
+# call, in a DIFFERENT process, resolve the SAME identity, and therefore
+# the SAME local paths, without ever touching the network again. Scoped by
+# DX_CONTAINER_NAME only (like dx_backup_resolve_dir/dx_ssh_known_hosts_dir's
+# own existing per-profile segment): a container name is expected to name
+# one profile, so repointing the same container name at a different
+# DX_REMOTE_HOST is the one case this cache does not freshen until
+# something else clears it (an accepted limitation, the same shape as
+# dx_backup_resolve_dir's own documented override-argument one).
 dx_runtime_docker_daemon_id_cache_path() {
     printf '%s/dxe/%s/host-identity\n' "${XDG_STATE_HOME:-$HOME/.local/state}" "${DX_CONTAINER_NAME:?}"
 }
@@ -369,12 +359,12 @@ dx_runtime_docker_system_start() {
 # ID additionally catches an alias that silently starts resolving to a
 # different daemon underneath an unchanged name.
 #
-# WP3.4 / Fable A1: reads the on-disk daemon-id cache BEFORE ever dialling,
-# seeding DXE_RUNTIME_DOCKER_DAEMON_ID from it when this process has not
-# resolved one yet -- dx_runtime_docker_discover_daemon_id's own top guard
-# then short-circuits without touching the network at all. A cache miss
-# (first call anywhere, or the cache file is absent/unreadable) falls
-# through to the same live discovery as before, unchanged.
+# Reads the on-disk daemon-id cache BEFORE ever dialling, seeding
+# DXE_RUNTIME_DOCKER_DAEMON_ID from it when this process has not resolved
+# one yet -- dx_runtime_docker_discover_daemon_id's own top guard then
+# short-circuits without touching the network at all. A cache miss (first
+# call anywhere, or the cache file is absent/unreadable) falls through to
+# the same live discovery as before, unchanged.
 
 dx_runtime_docker_host_identity() {
     if [ -z "${DXE_RUNTIME_DOCKER_DAEMON_ID:-}" ]; then

@@ -3,12 +3,12 @@
 # its Docker-argv rendering of bin/lib/dx-runtime.sh's runtime-neutral
 # vocabulary), start/stop/kill/delete, image build/delete, volume
 # role/create/delete, the whole-operation destructive plan, volume usage
-# reporting, exec/logs/export/run_ephemeral, and the capability table.
-# Split from bin/lib/dx-runtime-docker.sh (WP8.3 step 3; findings.md,
-# docs/reviews/2026-09-29-muse.md A2, docs/reviews/2026-09-29-astra.md R3);
-# that file remains the facade every caller sources and dispatches through,
-# and sources bin/lib/dx-runtime-docker-transport.sh and
-# bin/lib/dx-runtime-docker-identity.sh before this file, so
+# reporting, exec/logs/export/run_ephemeral, and the capability table. One
+# of the four files bin/lib/dx-runtime-docker.sh sources (see
+# docs/refactor/decisions/D8-docker-adapter-history.md for the split's
+# history); that file remains the facade every caller sources and
+# dispatches through, and sources bin/lib/dx-runtime-docker-transport.sh
+# and bin/lib/dx-runtime-docker-identity.sh before this file, so
 # dx_runtime_docker_cli/require_bin/profile_id/verify_labels/*_labels are
 # already defined by the time any function below actually runs.
 #
@@ -36,8 +36,8 @@ dx_runtime_docker_image_exists() {
     dx_runtime_docker_cli image inspect "$1" >/dev/null 2>&1
 }
 
-# Branch 11 / Phase 3 (docs/refactor/direct-volume-storage.md section 5.1):
-# the runtime's own stable image identity, forwarded by
+# (docs/refactor/direct-volume-storage.md section 5.1): the runtime's own
+# stable image identity, forwarded by
 # bin/dx-create-container as DX_IMAGE_IDENTITY so the direct-volume guest
 # can detect an image bump on a reused volume without reaching the image's
 # own (hidden-under-the-mount) store. Structured, single-field query, the
@@ -69,8 +69,8 @@ dx_runtime_docker_container_running() {
 }
 
 dx_runtime_docker_container_list() {
-    # io.dxe.system (Branch 11 / Phase 4 design point E) is appended as a
-    # fourth column, keeping {{.Names}} first so bin/dx-status's own
+    # io.dxe.system is appended as a fourth column, keeping {{.Names}} first
+    # so bin/dx-status's own
     # column-1-anchored `grep "^${DX_CONTAINER_NAME}[[:space:]]"` still works
     # unmodified.
     dx_runtime_docker_cli ps "$@" --format 'table {{.Names}}	{{.Image}}	{{.Status}}	{{.Label "io.dxe.system"}}'
@@ -100,8 +100,8 @@ dx_runtime_docker_container_list() {
 #     "no"/"unless-stopped" verbatim, no translation needed);
 #   - the DQ6 labels, computed here (not passed by the caller -- they
 #     depend on DX_REMOTE_HOST, which only this adapter interprets).
-# The shared --publish "PORT:2222" spec (no bind address, Branch 11 /
-# Phase 5) is prepended with dx_runtime_docker_guest_ssh_address's own
+# The shared --publish "PORT:2222" spec (no bind address) is prepended
+# with dx_runtime_docker_guest_ssh_address's own
 # discovered Tailscale address before rendering it as Docker's -p flag --
 # never loopback, never the LAN, never 0.0.0.0 (DQ5). A discovery/
 # validation failure refuses before any remote mutation: no container is
@@ -116,9 +116,9 @@ DXE_RUNTIME_DOCKER_LABEL_SCHEMA=1
 
 # Populates DXE_RUNTIME_DOCKER_LABEL_ARGV with the five `--label k=v` pairs
 # every docker-ssh-created resource carries (qnap-dxe-plan.md DQ6, plus
-# io.dxe.system from Branch 11 / Phase 4 design point E -- the guest system
-# so an image/container/volume/lock can never be mistaken for a different
-# architecture). One line, not kcov's usual multi-line array-literal style:
+# io.dxe.system -- the guest system, so an image/container/volume/lock can
+# never be mistaken for a different architecture). One line, not kcov's
+# usual multi-line array-literal style:
 # kcov's line-based instrumentation does not reliably attribute a hit to
 # every continuation line of a multi-line array assignment (confirmed: the
 # 4 continuation lines of an earlier draft never registered a hit despite
@@ -140,11 +140,12 @@ dx_runtime_docker_container_create() {
                 case "$DXE_VOLSPEC_ROLE" in
                     nix) flags+=(--volume "$DXE_VOLSPEC_NAME:/nix:$DXE_VOLSPEC_MODE") ;;
                     git)
-                        # Branch 11 / Phase 5 (qnap-dxe-plan.md DQ8;
-                        # coordinating session's decision 4): a "git:"
-                        # volume's own NAME field is a controller-local
-                        # directory path (a bind mount), never a valid
-                        # remote bind source over SSH -- refuse here,
+                        # (qnap-dxe-plan.md DQ8; see D8 for the "git:
+                        # volumes are Apple-only" decision this refuses
+                        # under): a "git:" volume's own NAME field is a
+                        # controller-local directory path (a bind mount),
+                        # never a valid remote bind source over SSH --
+                        # refuse here,
                         # before any remote mutation, regardless of how
                         # the caller reached this vocabulary (bin/dx-mount's
                         # own guard is the fail-fast path for the common
@@ -167,7 +168,7 @@ dx_runtime_docker_container_create() {
             --cpus) flags+=(--cpus "$2"); shift 2 ;;
             --publish)
                 # bin/dx-create-container passes a neutral "PORT:2222" spec,
-                # no bind address (Branch 11 / Phase 5, DQ5); this is the one
+                # no bind address (DQ5); this is the one
                 # place a docker-ssh profile's guest address is actually
                 # rendered into a real Docker flag. A discovery/validation
                 # failure here refuses the whole create -- never a container
@@ -177,7 +178,7 @@ dx_runtime_docker_container_create() {
                 shift 2
                 ;;
             --restart-policy) flags+=(--restart "$2"); shift 2 ;;
-            # Branch 11 / Phase 6 (qnap-dxe-plan.md Phase 6 item 4): Docker's
+            # (qnap-dxe-plan.md Phase 6 item 4): Docker's
             # own flag names, no translation needed -- see
             # bin/lib/dx-runtime.sh's vocabulary comment and
             # docs/refactor/docker-adapter-mapping.md section 4 for why.
@@ -255,17 +256,16 @@ dx_runtime_docker_container_delete() {
 # The Containerfile's pinned base image reference. qnap-dxe-plan.md's
 # Phase 0 outcome: the real NAS refuses `docker build` outright for its
 # account ("QNAP's Docker wrapper creates a per-user build directory ...
-# and refuses it there for a non-default administrator"). Confirmed by the
-# coordinating session (2026-09-27): the Containerfile in this repository
-# is, and is meant to stay, a single "FROM <pinned-ref>@sha256:..." line --
-# the guest's actual content comes from the bootstrap volume, not image
-# layers -- so docker-ssh's "build" is exactly Phase 0's spike's proven
-# steps 2+3: pull the pinned reference, then tag it as the configured
-# image name. No remote build, no local build + save/load: never touches a
-# remote build context directory at all. Fails closed with a clear message
-# if the Containerfile ever contains anything beyond that one FROM line
-# (a second stage, a RUN/COPY instruction, ...) rather than silently
-# building only part of it or ignoring the rest.
+# and refuses it there for a non-default administrator"). The Containerfile
+# in this repository is, and must stay, a single "FROM <pinned-ref>@sha256:..."
+# line -- the guest's actual content comes from the bootstrap volume, not
+# image layers -- so docker-ssh's "build" instead pulls the pinned
+# reference, then tags it as the configured image name. No remote build,
+# no local build + save/load: never touches a remote build context
+# directory at all. Fails closed with a clear message if the Containerfile
+# ever contains anything beyond that one FROM line (a second stage, a
+# RUN/COPY instruction, ...) rather than silently building only part of it
+# or ignoring the rest.
 
 dx_runtime_docker_base_image_ref() {
     local context_dir="$1" containerfile significant_lines from_line
@@ -365,7 +365,7 @@ dx_runtime_docker_volume_delete() {
     dx_runtime_docker_cli volume rm "$@"
 }
 
-# --- Whole-operation destructive plan (Branch 11 / Phase 6, item 7) -------
+# --- Whole-operation destructive plan (item 7) -------
 #
 # The two functions above already verify DQ6 labels per resource, at
 # DELETE time -- a collision refuses that one call, but a factory reset or
@@ -385,8 +385,7 @@ dx_runtime_docker_volume_delete() {
 # exception in tests/test_runtime_boundary_audit.sh, the same shape
 # already granted to bin/dx-lock/bin/dx-status's own read-only lock view --
 # there is no dx_runtime_<op> contract equivalent to route through without
-# inventing a new contract operation, which only the one (unrelated)
-# health flag was pre-authorised for this phase.
+# inventing a new contract operation.
 #
 # Args: one "kind:name:role" triple per target resource (kind is
 # "container" or "volume", matching the labels above's own role values).
@@ -431,7 +430,7 @@ dx_runtime_docker_destructive_plan_and_verify() {
     return "$ok"
 }
 
-# Branch 11 / Phase 3 (qnap-dxe-plan.md Phase 3 item 5): a capability-aware
+# (qnap-dxe-plan.md Phase 3 item 5): a capability-aware
 # size report for bin/dx-reclaim. Docker has no host-side sparse image to
 # measure (DQ4); `docker system df -v` is the structured, Docker-native
 # usage query. Rather than requesting the whole `--format '{{json .}}'`
@@ -444,10 +443,10 @@ dx_runtime_docker_destructive_plan_and_verify() {
 # size as a plain scalar -- no JSON parsing needed on either side. The CLI's
 # volume formatter exposes `.Size` as Docker's own human-readable string
 # ("4.835MB", "0B", or "N/A" when the daemon has not computed it), NOT the
-# API's raw `.UsageData.Size` byte count -- verified live against a real
-# Container Station Docker (27.1.2) on 2026-09-27, where the byte-count
-# template failed with "can't evaluate field UsageData in type
-# *formatter.volumeContext". The human-readable string is printed verbatim,
+# API's raw `.UsageData.Size` byte count -- confirmed to fail against a
+# real Container Station Docker (27.1.2) with "can't evaluate field
+# UsageData in type *formatter.volumeContext". The human-readable string
+# is printed verbatim,
 # which is also what the Apple side's `du -sh` prints. "unknown" covers
 # every way Docker cannot say: the query fails outright, the volume is
 # absent from the report, or the size is empty/"N/A".
@@ -475,7 +474,7 @@ dx_runtime_docker_volume_usage() {
 # tests/test_sourceable_coverage.sh proves it for Apple. Docker's flag names
 # agree with Apple's (-i/-t/-u for exec, -n for logs' --tail); no
 # translation needed.
-# Branch 11 / Phase 5 (qnap-dxe-plan.md DQ8 item 5; docs/refactor/
+# (qnap-dxe-plan.md DQ8 item 5; docs/refactor/
 # remote-aware-ssh.md section 5): "docker exec -it" requests a pty from
 # the REMOTE Docker daemon, but the outer ssh transport carrying that
 # request also needs its OWN pty allocation for the remote pty to be
@@ -487,7 +486,7 @@ dx_runtime_docker_volume_usage() {
 # mistaken for a flag. bin/dx-enter is the only caller that ever passes
 # -it; every other caller (dx-gc, dx-reclaim, dx-status, bin/lib/
 # dx-backup.sh's -i phase, dx-sync-bootstrap) passes -i alone, -u alone,
-# both, or neither, and must keep working exactly as before (Branch 17's
+# both, or neither, and must keep working exactly as before (the existing
 # unidirectional-exec discipline) -- so the non-tty path below is
 # byte-for-byte what this function already did.
 #
@@ -542,10 +541,10 @@ dx_runtime_docker_export() {
 # (dx_runtime_apple_run_ephemeral) exists solely for Apple Container's own
 # "no runtime client exists: container is stopped" race
 # (docs/refactor/runtime-boundary.md); Docker over SSH has no documented
-# equivalent, so no retry is carried over here -- if Increment 8's live
-# gate or later characterisation work surfaces a distinct Docker-side race,
-# that is new evidence for a scoped retry then, not something to guess at
-# now (docs/refactor/docker-adapter-mapping.md section 5).
+# equivalent, so no retry is carried over here -- if a later live gate or
+# characterisation work surfaces a distinct Docker-side race, that is new
+# evidence for a scoped retry then, not something to guess at now
+# (docs/refactor/docker-adapter-mapping.md section 5).
 
 dx_runtime_docker_run_ephemeral() {
     dx_runtime_docker_cli run "$@"
@@ -554,13 +553,13 @@ dx_runtime_docker_run_ephemeral() {
 # --- Runtime capability queries (qnap-dxe-plan.md DQ2/DQ3/DQ4/DQ8) --------
 #
 # See docs/refactor/docker-adapter-mapping.md's capability table for why
-# each answer is what it is. raw_nix_disk (Branch 11 / Phase 5): no --
+# each answer is what it is. raw_nix_disk: no --
 # bin/dx-nix-disk's sparse Apple raw-disk-image mechanism has no Docker
 # equivalent at all (DQ8: "Apple-only; fail immediately with a clear
-# capability message"). container_healthcheck (Branch 11 / Phase 6,
-# qnap-dxe-plan.md Phase 6 item 4): yes -- the one neutral create-time
-# health flag pre-authorised for this phase; --health-cmd/--health-interval/
-# --health-retries render as Docker's own real create flags (above).
+# capability message"). container_healthcheck
+# (qnap-dxe-plan.md Phase 6 item 4): yes -- the one neutral create-time
+# health flag; --health-cmd/--health-interval/--health-retries render as
+# Docker's own real create flags (above).
 
 dx_runtime_docker_capability() {
     case "$1" in

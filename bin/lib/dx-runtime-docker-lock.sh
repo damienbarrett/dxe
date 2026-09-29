@@ -2,11 +2,11 @@
 # Docker-over-SSH remote per-profile lock (item 6): acquire/audit/release,
 # called directly by bin/dx-lock and (read-only) bin/dx-status -- not part
 # of the dx_runtime_<op> contract, since Apple's runtime is always local and
-# has no concurrent-invocation problem to solve. Split from
-# bin/lib/dx-runtime-docker.sh (WP8.3 step 3; findings.md, docs/reviews/
-# 2026-09-29-muse.md A2, docs/reviews/2026-09-29-astra.md R3); that file
-# remains the facade every caller sources and dispatches through, and
-# sources bin/lib/dx-runtime-docker-identity.sh and
+# has no concurrent-invocation problem to solve. One of the four files
+# bin/lib/dx-runtime-docker.sh sources (see docs/refactor/decisions/
+# D8-docker-adapter-history.md for the split's history); that file remains
+# the facade every caller sources and dispatches through, and sources
+# bin/lib/dx-runtime-docker-identity.sh and
 # bin/lib/dx-runtime-docker-lifecycle.sh before this file, so
 # dx_runtime_docker_profile_id and dx_runtime_docker_label_flags are already
 # defined by the time any function below actually runs.
@@ -17,11 +17,10 @@
 
 # --- Remote per-profile lock (item 6) --------------------------------------
 #
-# Not part of the Phase 1 dx_runtime_<op> contract (Apple's runtime is
+# Not part of the dx_runtime_<op> contract (Apple's runtime is
 # always local -- one controller, one daemon, no concurrent-invocation
 # problem to solve -- so it has no lock concept to dispatch to); called
-# directly by bin/dx-lock, the new entrypoint the coordinating session
-# authorised for this. Docker's one atomic "create, fail if already
+# directly by bin/dx-lock. Docker's one atomic "create, fail if already
 # present" primitive is container-NAME uniqueness (`docker volume create`
 # is idempotent and does NOT fail if the volume already exists, so it
 # cannot serve as an exclusion primitive; `docker create --name X` fails
@@ -52,9 +51,9 @@ dx_runtime_docker_lock_acquire() {
     local lock_name owner
     lock_name="$(dx_runtime_docker_lock_name)"
     owner="$(dx_runtime_docker_lock_owner_token)"
-    # Branch 11 / Phase 4: reuses the same shared label helper containers
-    # and volumes already call, so the lock picks up io.dxe.system (and any
-    # future addition) without duplicating the other four labels by hand.
+    # Reuses the same shared label helper containers and volumes already
+    # call, so the lock picks up io.dxe.system (and any future addition)
+    # without duplicating the other four labels by hand.
     dx_runtime_docker_label_flags lock
     dx_runtime_docker_cli create --name "$lock_name" \
         "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}" \
