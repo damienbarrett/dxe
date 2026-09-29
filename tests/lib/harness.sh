@@ -215,6 +215,48 @@ expect_file_eq() {
     return 0
 }
 
+# --- Bounded polling (Fable D10) ----------------------------------------
+#
+# wait_until 'cond' [max-attempts] -- polls `eval "$1"` up to $2 times
+# (default 50), sleeping between attempts via ${DX_SLEEP:-sleep} (the same
+# injectable seam bin/lib/dx-host-util.sh's dx_wait_until already honours,
+# WP4.2 / Fable A6) rather than a bare `sleep N`. This is that same
+# discipline applied to a TEST that must synchronise with a real external
+# condition -- a fixture file another process writes, a pid exiting -- so a
+# fixture can drive it deterministically by faking DX_SLEEP, and a real
+# caller still gets a real (if bounded) wait.
+#
+# Bounded by attempt COUNT, never by a wall-clock read (SECONDS, date,
+# etc.): a test asserting on wait_until's outcome asserts what happened
+# (the condition matched, or it did not within the bound), never how long
+# it took. Checks BEFORE ever sleeping, so an already-true condition
+# returns immediately with zero recorded sleeps -- dx_wait_until's own
+# contract, mirrored here.
+#
+# "$cond" is evaluated with `eval` in THIS shell (never a subshell), so a
+# condition that sets an outer local -- exactly the dynamic-scoping trick
+# dx_bootstrap_confirm_publication_check and dx_lock_acquire_check already
+# rely on -- is visible to the caller once wait_until returns.
+wait_until() {
+    local cond="$1" limit="${2:-50}" attempt=0
+    while :; do
+        eval "$cond" && return 0
+        attempt=$((attempt + 1))
+        [ "$attempt" -lt "$limit" ] || return 1
+        "${DX_SLEEP:-sleep}" 0.1
+    done
+}
+
+# wait_for_pid_exit PID [max-attempts] -- wait_until's predicate applied to
+# "has this pid stopped being alive" (kill -0 fails once it has), the other
+# half of the same bounded-attempts contract for a test that needs to know
+# a background process it started (or is watching) has actually gone away,
+# rather than guessing how long that takes with a fixed sleep.
+wait_for_pid_exit() {
+    local pid="$1" limit="${2:-50}"
+    wait_until "! kill -0 '$pid' 2>/dev/null" "$limit"
+}
+
 # --- Shared runtime fakes (Fable D5, E3) --------------------------------
 #
 # tests/lib/fake-tools.sh already covers the DX guest ssh boundary and the
