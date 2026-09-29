@@ -1,0 +1,1318 @@
+# Coverage ratchet history (retired `scope_share_basis_points` metric)
+
+Verbatim rebaseline history from `tests/coverage/ratchet.env` before the ratio metric was retired 2026-09-30 by findings.md WP1.5 / decision D-1 in favor of `tests/lib/coverage-metric.sh`'s `scope_exec_lines` floor / `unscoped_prod_exec_lines` ceiling. The last recorded value before retirement was `scope_share_basis_points=2097` (7,544 scope lines / 35,967 total lines).
+
+```
+# Refactor implementation baseline: 1,802 covered-scope lines / 9,120 shell lines
+# (1975 bp).
+#
+# Rebaselined 2026-08-01 to 1,838 / 9,342 after the umask, release-identity, and
+# CI-contract regression tests landed. Line coverage over the declared scope did
+# not move -- it is still 100% -- and no production logic left the scope. The
+# share fell only because `total_lines` counts tests/, so adding tests dilutes
+# the ratio.
+#
+# That is a known sharp edge in this metric: it makes writing tests look like a
+# regression. Lower this value only for that reason, and record why. A real
+# regression is production logic moving out of bin/lib, the bootstrap modules,
+# or scripts/lib -- never a test being added.
+#
+# Rebaselined 2026-08-04 to 2,187 / 11,196 (1953 bp) fixing the configure_guest
+# bootstrap-ordering defect (setup_keyring_service was called before
+# run_home_manager_activation had installed dbus-daemon into dx's profile,
+# silently killing bootstrap on a fresh recreate). The fix itself is a handful
+# of scope lines (the ai_tools_enabled flag/reorder in activation.sh and the
+# explicit diagnostic in persistence.sh); the red/green ordering test and the
+# silent-death regression test added to reach it are substantially larger.
+# Line coverage over the declared scope is still 100%, and no production logic
+# left the scope -- same known sharp edge as above.
+#
+# Corrected 2026-08-04 to the tree's actual 2,348 / 11,969 (1961 bp). The 1953
+# figure above was measured mid-change and never re-taken: the Herdr branch
+# finished at 1968 bp, so the committed gate was carrying 15 bp of slack it had
+# not earned, and would have passed a genuine regression of ~18 scope lines in
+# silence. Re-measure this number against the finished tree before committing
+# it -- a stale baseline is indistinguishable from a deliberately loosened one.
+#
+# 1957 is the finished value, measured against the completed tree: 2,348 /
+# 11,992 after the R4 body-transport fix (+4 scope lines in bin/lib), the
+# deletion of dx_ssh_append_common_options -- dead production code that existed
+# only to keep a coverage probe green -- and the F13, body-quoting, and
+# fake-ssh-decoder test additions (which dilute total_lines, per the sharp edge
+# noted above).
+# Re-measured 2026-08-15 to 2,390 / 12,197 (1959 bp) after
+# dx_bootstrap_lease_generation and dx_bootstrap_report_drift were added to
+# bin/lib/dx-container.sh. Scope grew, but the Section 9 behavior tests covering
+# them grew total_lines by more, so the share still nets down slightly -- the
+# sharp edge noted above. Measured against the finished tree, not mid-change:
+# an intermediate reading of 1961 was already stale by the time the tests for
+# that code were written.
+# Rebaselined 2026-08-16 to 2,584 / 13,340 (1937 bp) for the Herdr key-binding
+# and dx-theme work. Production logic moved *into* the scope, not out of it: the
+# config merger became bootstrap/herdr-config.sh (+194 net scope lines after the
+# inline seeder it replaced was deleted from activation.sh) and is held at 100%
+# like every other module there. The share still nets down because the behavior
+# tests that earned it -- the merger's own section, the Herdr theme block in
+# Section 14, the Layer 1 ordering test in Section 23, and the new coverage
+# probes -- added ~950 lines to total_lines. That is the known sharp edge above,
+# and it is the only reason this number moved. Measured against the finished
+# tree, after the theme hand-off guard and its tests landed.
+#
+# Raised 2026-08-21 to 3,695 / 16,298 (2267 bp) after the bootstrap ownership and
+# store-import work (`3adeecd`). This is the opposite of every entry above: the
+# share *rose* by 330 bp because that change moved a large amount of production
+# logic into the covered scope -- the store importer, identity probing, marker
+# publication, GC-root management, and the host-side volume claim -- faster than
+# its tests diluted total_lines.
+#
+# It was left at 1937 when that work landed, which is precisely the failure the
+# 2026-08-04 correction above describes, at twenty times the size: the gate was
+# carrying 330 bp of slack it had not earned, and would have passed roughly 540
+# scope lines of genuine regression in silence. Re-measured against the finished
+# tree on the branch, not mid-change.
+#
+# Lowered 2026-08-21 to 3,729 / 16,528 (2256 bp) for the bootstrap content
+# digest. This is the known sharp edge above and nothing else: production logic
+# moved *into* the scope, not out of it. dx_bootstrap_content_digest added 34
+# lines to bin/lib, while the tests that earned it -- the Section 9 digest
+# behavior cases, four re-sync cases in test_bootstrap_publication.sh, and the
+# coverage probes for both halves of the SHA-256 tool pick -- plus the skip and
+# lease-pruning logic in bin/dx-sync-bootstrap, which is outside the scope,
+# added 230 lines to total_lines.
+#
+# An intermediate reading of 2264 was taken before the last two regression tests
+# were written and was already stale when they landed -- exactly what the
+# 2026-08-04 correction above warns about. 2256 is the finished value, measured
+# against the completed tree. Line coverage over the declared scope is 100%.
+#
+# Rebaselined 2026-08-31 to 3,904 / 17,918 (2178 bp) after the stable-lock
+# disposition work. Line coverage over the declared scope is still 100%, and no
+# production logic left the scope -- scope_lines *grew*, 3,893 to 3,904, from
+# the SC2155 statement split in base-and-storage.sh and the ShellCheck
+# directives added to the bootstrap modules.
+#
+# The share fell because total_lines grew by 810 while scope grew by 11, and
+# almost all of that 810 is test code: tests/lib/audit-flake-lock.sh and its
+# Section 26 suite, the Section 16 runtime-race regressions, the Section 9 and
+# 23 developer-state fixes, and ShellCheck directives across the test tree.
+# That is the same known sharp edge recorded above -- writing tests looks like
+# a regression under this metric -- and is the one reason this value may be
+# lowered.
+#
+# Measured against the finished tree, after every test in that batch had
+# landed, per the 2026-08-04 warning. Verified identical in the primary and the
+# lock-refresh worktrees: the candidate differs only in flake.lock and a
+# documentation file, so no shell file differs and coverage is identical by
+# construction.
+#
+# Adjusted 2026-08-31 to 3,904 / 17,936 (2176 bp) after the retry-predicate
+# narrowing. scope_lines is unchanged -- bin/dx-migrate-persist is outside the
+# declared scope, which covers bin/lib rather than bin -- and total_lines grew
+# by 18, entirely the focused Section 16 case proving a distinct error sharing
+# a substring with the runtime-client race is not retried. Same test-dilution
+# edge as every entry above.
+#
+# Adjusted 2026-09-26 to 3,922 / 18,324 (2140 bp) on fix/ci-baseline. This
+# gate never actually ran on `main` between the last entry and this one --
+# CI's ShellCheck step had been red since 2026-08-21, stopping the Linux job
+# before it reached the coverage step -- so two changes landed on it
+# unmeasured:
+#
+# - `0f71be4` (Add OpenCode to the optional AI toolchain) grew scope_lines by
+#   18 (bootstrap/activation.sh) and total_lines by more, already leaving the
+#   tree at 3,922 / 18,299 (2143 bp) -- below the committed 2176 gate -- before
+#   this branch touched anything.
+# - This branch's own fixes are test-only (the stricter host/guest
+#   import-purity check in test_refactor_contracts.sh, and hoisting the ln -T
+#   shim in test_section17_dx_ai_runtime.sh above its first use), adding 25
+#   lines to total_lines and none to scope_lines.
+#
+# Re-measured 2026-09-26 against the committed tree, per the 2026-08-04 correction rule.
+# Line coverage over the declared scope is still 100%; no production logic
+# left the scope. Same test-dilution edge as every entry above, compounded by
+# a gate that had silently stopped running.
+#
+# Adjusted 2026-09-26 to 3,922 / 18,340 (2138 bp) after the probe diagnostics
+# fix. The share fell from 2140 to 2138 only because test-only lines were added:
+# the stdin-draining fix for the fallback-digest probe (`</dev/null` redirect in
+# tests/test_sourceable_coverage.sh) and the ERR-trap diagnostics. scope_lines
+# is unchanged at 3922, line coverage over the scope is still 100%, and no
+# production logic left the scope. Same test-dilution edge as documented above.
+# total_lines no longer counts kcov's own output directory (commit e7289aa).
+# Measured against the committed tree per the 2026-08-04 rule.
+#
+# Raised 2026-09-26 to 3,917 / 18,263 (2144 bp) after the OpenCode revert
+# (revert/opencode-partial, commits d5d74d7 and 43a7bf9). Unlike every
+# rebaseline above, the share *rose*: this file's rule says a risen share
+# is set to the measured value too, since carrying it below what was earned
+# is unexplained slack the same way carrying it above what was earned would
+# be a hidden regression.
+#
+# scope_lines fell by 5 (3,922 to 3,917): bootstrap/activation.sh lost the
+# two dx_prepare_owned_directory calls and two ln -sfnT symlinks that
+# persisted OpenCode's config/data directories, plus the mkdir that only
+# existed to support them -- the exact inverse of 0f71be4's own change to
+# this file. No production logic moved out of scope; it was deleted because
+# the feature it served was reverted, not refactored elsewhere. Line
+# coverage over the declared scope is still 100%.
+#
+# total_lines fell by 77 (18,340 to 18,263), matching `git diff --shortstat
+# main..HEAD -- '*.sh' 'bin/dx*'` (30 insertions, 107 deletions): flake.nix
+# (-1, the opencode aiPackages entry), dx-ai.sh (net -5: DX_AI_TOOLS and
+# DX_AI_HERDR_INTEGRATIONS lost opencode, and dx_ai_setup_credentials
+# reverted to its shorter pre-0f71be4 parameterless form together with its
+# call site), bin/dx-herdr (message text only, no line-count change), and
+# mostly the two Section 6/17 test files, which lost the OpenCode-only
+# fixtures, the macOS `ln -T` shim (a8ca75a, dead once its one caller --
+# the OpenCode creds-fixture test -- was deleted), and the OpenCode-only
+# assertions and Herdr-integration fixture lines, while keeping a handful of
+# assertions flipped to their "opencode is absent" form as real regression
+# guards.
+#
+# This is the opposite of the test-dilution edge documented throughout this
+# file: a feature and its tests were removed together, so both scope_lines
+# and total_lines fell, and scope_lines fell by less proportionally than
+# total_lines -- the share moved up rather than down. Measured on a clean
+# `git archive HEAD | tar -x` export of the finished branch tip (43a7bf9),
+# per the 2026-08-04 correction rule, via tests/run-coverage-linux.sh's own
+# Apple `container` provider path (script output: `covered=100%
+# scope_share=21.44%`).
+#
+# Lowered 2026-09-26 to 3,917 / 18,274 (2143 bp) on fix/test-image-fixture,
+# after removing the testImage avatar fetchurl fixture from flake.nix and
+# home.nix (both .nix, never counted in total_lines) and adding a Section 6
+# regression guard (assert_file_not_contains ... "avatars.githubusercontent.com")
+# to tests/test_section6_tools.sh so the mutable-URL fetch can't come back
+# silently. scope_lines is unchanged at 3,917 -- no production logic left the
+# scope, since flake.nix/home.nix were never in it -- and total_lines rose by
+# exactly 11, the guard assertion plus its explanatory comment. Same
+# test-dilution edge documented throughout this file: adding a test makes the
+# gate look like it regressed. Line coverage over the declared scope is still
+# 100%.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed tree
+# (0b3e4d9), per the 2026-08-04 correction rule, via tests/run-coverage-linux.sh's
+# own Apple `container` provider path: scope_lines=3917, total_lines=18274,
+# 3917*10000/18274=2143 (integer division); covered=100%.
+#
+# Lowered 2026-09-26 to 3,921 / 18,369 (2134 bp) on fix/container-running-sigpipe,
+# after fixing container_exists/container_is_running's SIGPIPE-under-pipefail
+# false negative (bin/lib/dx-container.sh's `dx_container_list_names ... |
+# grep -F -x -q` dropped `-q` in favor of the tests/test_helpers.sh
+# stdin_matches idiom). scope_lines *rose* by 4 (3,917 to 3,921): the fix
+# itself is net +4 lines in bin/lib/dx-container.sh (+6/-2, including the
+# explanatory comment), and no production logic left the scope. total_lines
+# rose by 95 (18,274 to 18,369), entirely the new regression block in
+# tests/test_section20_skip_integration.sh (+91 lines) proving the bug with a
+# large stub `container list` output under `set -o pipefail`, plus the 4
+# scope lines above. Same test-dilution edge documented throughout this file:
+# the regression test added to reach the fix outweighs the scope_lines it
+# earned, so the share falls even though scope_lines grew. Line coverage over
+# the declared scope is still 100%.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed tree
+# (ccc9fac), per the 2026-08-04 correction rule, via tests/run-coverage-linux.sh's
+# own Apple `container` provider path: scope_lines=3921, total_lines=18369,
+# 3921*10000/18369=2134 (integer division); covered=100%.
+#
+# Lowered 2026-09-26 to 3,921 / 18,491 (2120 bp) on test/live-tier-hygiene
+# (Branch 4b). scope_lines is unchanged at 3,921 -- this branch is test files
+# only (tests/test_helpers.sh, tests/test_section4_ssh.sh,
+# tests/test_section12_validate_linux.sh, tests/test_section14_tinty_theming.sh,
+# tests/test_section20_skip_integration.sh), and touches no file under
+# bin/lib or the guest bootstrap/scripts/lib trees, so no production logic
+# left the scope. total_lines rose by 122 (18,369 to 18,491), matching
+# `git diff --shortstat 596ac28..HEAD -- '*.sh' 'bin/dx*'` (146 insertions,
+# 24 deletions): the requires_container regression block in
+# tests/test_section20_skip_integration.sh, the Section 12 in-guest relay
+# (git archive/dx-put/dx-ssh) replacing a same-size skip-and-heuristic block,
+# and smaller additions to Sections 4 and 14. Same test-dilution edge
+# documented throughout this file: the regression tests and the in-guest
+# relay logic outweigh the (zero) scope_lines they add, so the share falls
+# even though scope_lines did not move. Line coverage over the declared
+# scope is still 100%.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed tree
+# (f3be4b7), per the 2026-08-04 correction rule, via tests/run-coverage-linux.sh's
+# own Apple `container` provider path: scope_lines=3921, total_lines=18491,
+# 3921*10000/18491=2120 (integer division); covered=100%.
+#
+# Lowered 2026-09-26 to 3,945 / 18,740 (2105 bp) on fix/guest-sigpipe-pipelines
+# (Branch 4c). scope_lines rose by 24 (3,921 to 3,945), entirely
+# bootstrap/activation.sh (+28/-4, matching `git diff --shortstat
+# 3e41f4a..HEAD -- container/.../bootstrap/activation.sh`): the extracted
+# ai_tools_opted_in predicate and its explanatory comment (the
+# SIGPIPE-under-pipefail fix for the AI-tools opt-in guard), plus the
+# comment and read-all idiom for the ownership-marker content check. No
+# production logic left the scope. total_lines rose by 249 (18,491 to
+# 18,740), matching `git diff --shortstat 3e41f4a..HEAD -- '*.sh' 'bin/dx*'`
+# (256 insertions, 7 deletions): the two new regression tests in
+# tests/test_section3_bootstrap.sh (the ai_tools_opted_in big-stub-list
+# probes and the ownership-marker characterisation test), the have_scheme
+# regression test and the continuum-token characterisation test in
+# tests/test_section14_tinty_theming.sh, and the (outside-scope)
+# scripts/dx-theme.sh and scripts/dx-theme-write-tool-themes.sh fixes and
+# their comments. Same test-dilution edge documented throughout this file:
+# the regression/characterisation tests outweigh the scope_lines they earned,
+# so the share falls even though scope_lines grew. Line coverage over the
+# declared scope is still 100%.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed tree
+# (f30aa8f), per the 2026-08-04 correction rule, via tests/run-coverage-linux.sh's
+# own Apple `container` provider path: scope_lines=3945, total_lines=18740,
+# 3945*10000/18740=2105 (integer division); covered=100%.
+#
+# Lowered 2026-09-26 to 3,945 / 18,918 (2085 bp) on fix/bootstrap-start-generation
+# (Branch 9 Step 1), after dx-status gained a "Bootstrap Generation" section
+# (requirement 4 of dx-start-plan.md: the generation actually booted must be
+# observable from the host, including after the guest has died). scope_lines
+# is unchanged at 3,945 -- the whole change is bin/dx-status (outside bin/lib)
+# and its Section 9 tests, so no production logic entered or left the scope.
+# total_lines rose by 178 (18,740 to 18,918), matching `git diff --shortstat
+# f30aa8f..91765b3 -- '*.sh' 'bin/dx*'` (178 insertions, 0 deletions): 39 lines
+# in bin/dx-status itself and 139 in the new tests/test_section9_host_scripts.sh
+# fixture (a fake `container` covering every subcommand dx-status issues, plus
+# six behaviour assertions: running with and without drift, a dead guest with
+# and without a recorded boot line past a 40-line tail, and the container-does-
+# not-exist case). Same test-dilution edge documented throughout this file:
+# the fixture needed to exercise a host-only diagnostic honestly outweighs the
+# (zero) scope_lines it added, so the share falls even though scope_lines did
+# not move. Line coverage over the declared scope is still 100%.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed tree
+# (91765b3), per the 2026-08-04 correction rule, via tests/run-coverage-linux.sh's
+# own Apple `container` provider path: scope_lines=3945, total_lines=18918,
+# 3945*10000/18918=2085 (integer division); covered=100%.
+#
+# Lowered 2026-09-26 to 3,945 / 20,584 (1916 bp) rebasing
+# feat/qnap-phase0-scripts (the QNAP Phase 0 inventory/spike scripts, the
+# ssh-based Docker-CLI-discovery rework, and the Section 1 leak-shape scan
+# added after real-NAS access confirmed the non-interactive PATH lacks both
+# Docker and Tailscale) onto the above (Branch 9 Step 1). scope_lines is
+# unchanged at 3,945 -- this branch touches no file under bin/lib or the
+# guest bootstrap/scripts/lib trees, so no production logic left the scope,
+# and line coverage over the declared scope remains 100% by construction.
+# total_lines rose by 1,666 (18,918 to 20,584), matching `git diff
+# --shortstat main..HEAD -- '*.sh' 'bin/dx*'` (1,671 insertions, 5
+# deletions) at the finished tip: new tests/qnap/*.sh (phase0-common.sh,
+# phase0-inventory.sh, phase0-spike.sh), tests/test_section27_qnap_scripts.sh,
+# the new leak-scan cases added to tests/test_section1_secrets.sh, a
+# handful of registration lines in tests/run_all_tests.sh,
+# tests/run-tier.sh, and tests/run-bash32-tests.sh, a same-line-count
+# literal fix in tests/test_section14_tinty_theming.sh (the runner-help
+# range assertion, "0-26" to "0-27", needed because this branch registers a
+# new section 27), and a ShellCheck SC2034 suppression comment in
+# lib/phase0-common.sh. tests/qnap/README.md (.md, not counted) is not part
+# of this delta. Same test-dilution edge documented throughout this file:
+# the new scripts and their tests are outside the declared kcov scope by
+# design (Phase 0 has no NAS-hosted production code to extract into
+# bin/lib), so the share falls even though nothing regressed.
+#
+# An intermediate reading of 1964 (predicted while resolving this file's own
+# rebase conflict, before the rebase had actually finished) undercounted
+# this branch's total total_lines delta by 504 -- it added only the last
+# adaptation commit's *net* delta on top of an earlier, already-superseded
+# partial measurement instead of the whole branch's delta against the new
+# base -- and was never the committed value; exactly the staleness the
+# 2026-08-04 correction rule warns about. 1916 below is measured against the
+# actually finished, fully rebased tip.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the rebased,
+# committed tree, per the 2026-08-04 correction rule, replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=3945, total_lines=20584, 3945*10000/20584=1916
+# (integer division); covered=100% (unchanged, no scope file touched).
+#
+# Lowered 2026-09-26 to 3,945 / 20,734 (1902 bp) on
+# fix/qnap-spike-build-context (the QNAP Phase 0 spike's build-context fix
+# and the per-step guarded-restart flag split). scope_lines is unchanged
+# at 3,945 -- both commits touch only tests/qnap/phase0-spike.sh,
+# tests/qnap/README.md (.md, not counted), and
+# tests/test_section27_qnap_scripts.sh, none of which is under bin/lib or
+# the guest bootstrap/scripts/lib trees, so no production logic left the
+# scope, and line coverage over the declared scope remains 100% by
+# construction. total_lines rose by 150 (20,584 to 20,734), matching
+# `git diff --shortstat 5a1f0c7..HEAD -- '*.sh' 'bin/dx*'` (168
+# insertions, 18 deletions): the streamed-tar build-context fix and its
+# Section 27 red assertions, the SIGPIPE-hygiene stub fix, and the
+# restart-flag-split's usage/step-8 changes plus its Section 27 test
+# updates and new dry-run assertions. Same test-dilution edge documented
+# throughout this file: the new/updated tests outweigh the (zero)
+# scope_lines they add, so the share falls even though scope_lines did
+# not move.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed
+# tree (85b908d), per the 2026-08-04 correction rule, replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=3945, total_lines=20734, 3945*10000/20734=1902
+# (integer division); covered=100% (unchanged, no scope file touched).
+# Raised 2026-09-26 to 4,008 / 19,159 (2091 bp) on fix/bootstrap-start-generation
+# (Branch 9 Step 2, D7 option 3). scope_lines rose by 63 (3,945 to 4,008),
+# matching `git diff --shortstat 43896c9..HEAD -- bin/lib/dx-container.sh
+# bin/lib/dx-config.sh` (net +62 in dx-container.sh: the
+# dx_bootstrap_sync_published_generation parser and the
+# dx_bootstrap_confirm_publication poll/timeout helper, plus a comment update;
+# net +1 in dx-config.sh: the DX_BOOTSTRAP_CONFIRM_TIMEOUT registry field).
+# `bin/dx-start-container` itself is outside the declared scope (bin/, not
+# bin/lib), so its own +18 net lines wiring the two helpers in do not count
+# toward scope_lines. No production logic left the scope. total_lines rose by
+# 241 (18,918 to 19,159), matching `git diff --shortstat 43896c9..HEAD --
+# '*.sh' 'bin/dx*'` (257 insertions, 16 deletions across all six changed
+# files): the config-registry and helper-function tests in
+# tests/test_refactor_state_machines.sh and tests/test_section9_host_scripts.sh,
+# and the five new end-to-end dx-start-container assertions in
+# tests/test_bootstrap_publication.sh. Unlike most entries above, the share
+# *rose*: scope_lines grew faster, proportionally, than total_lines this time,
+# so this is the "unearned slack" direction this file's own rule also requires
+# fixing, not the test-dilution edge. Line coverage over the declared scope is
+# still 100%.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed tree
+# (be12e4b), per the 2026-08-04 correction rule, via tests/run-coverage-linux.sh's
+# own Apple `container` provider path: scope_lines=4008, total_lines=19159,
+# 4008*10000/19159=2091 (integer division); covered=100%.
+#
+# The 2091 figure immediately above was measured against 43896c9 (this
+# branch's pre-rebase base), before rebasing onto the QNAP Phase 0 work
+# landed on main (the 1916 entry above). It was never the committed value
+# on the finished, rebased tip -- the same staleness the 1916 entry's own
+# "1964 was a stale mid-rebase prediction" correction already describes for
+# a different intermediate reading. Superseded by the entry immediately
+# below, measured after rebasing.
+#
+# Re-measured 2026-09-26 to 4,008 / 20,825 (1924 bp) after rebasing
+# fix/bootstrap-start-generation (Branch 9 Step 2: the
+# DX_BOOTSTRAP_CONFIRM_TIMEOUT field, the
+# dx_bootstrap_sync_published_generation/dx_bootstrap_confirm_publication
+# helpers, and the dx-start-container wiring above) onto the QNAP Phase 0
+# work already on main (the 1916 entry above). scope_lines is exactly the
+# sum of both branches' independent deltas (3,945 + 63 = 4,008 -- QNAP
+# touches no file under bin/lib or the guest bootstrap/scripts/lib trees,
+# so the two deltas don't interact); total_lines is the QNAP entry's
+# 20,584 plus this branch's own +241 (18,918 to 19,159, from the entry
+# above) = 20,825. No production logic left the scope. Line coverage over
+# the declared scope is still 100%.
+#
+# Measured directly against the current working tree at the finished
+# rebase (all *.sh files already fully merged; only this conflicted file
+# itself was still being resolved, and this file is not `.sh` and so does
+# not enter either count), replicating tests/run-coverage-linux.sh's own
+# scope_lines/total_lines computation: scope_lines=4008, total_lines=20825,
+# 4008*10000/20825=1924 (integer division); covered=100%. Re-run via
+# tests/run-coverage-linux.sh itself immediately after the rebase commit
+# landed, confirming covered=100% scope_share=19.24%.
+#
+# Re-measured 2026-09-26 to 4,008 / 20,975 (1910 bp) after rebasing
+# fix/bootstrap-start-generation once more, onto main at 55cf14e (the 1902
+# entry above, the QNAP spike build-context fix). The 1924 figure immediately
+# above was measured before that entry landed and was never the committed
+# value on the finished tip. scope_lines is unchanged from the previous
+# entry (4,008); total_lines is the 1902 entry's 20,734 plus this branch's
+# own +241. Line coverage over the declared scope is still 100%.
+#
+# The 1910 figure above is this branch's (fix/bootstrap-start-generation,
+# "Branch 9 Step 2") own committed value, landed on main as 08700a8. It was
+# superseded, without ever itself being wrong, by rebasing
+# fix/qnap-spike-run-defects (below) on top of it: that branch's own
+# 1865 entry was measured against its pre-rebase tip (a752fe3, based on
+# main@55cf14e, i.e. before 08700a8 landed), so it too was already stale
+# the moment 08700a8 became the new main. See the entry below this one for
+# the actually-finished, fully-rebased measurement -- neither 1910 nor
+# 1865 was ever the committed value at that tip.
+#
+# Lowered 2026-09-26 to 3,945 / 21,152 (1865 bp) on fix/qnap-spike-run-defects
+# (the QNAP Phase 0 spike's first-real-run defect fixes: step 5's ssh
+# quoting, step 9's base-image diff-guard false positive, the cleanup
+# loop's stdin-theft bug, the inventory's Docker Root Dir pool note, and
+# the user-requested replacement of step 3's remote docker build with
+# pull+tag). scope_lines is unchanged at 3,945 -- every changed file
+# (tests/qnap/phase0-spike.sh, tests/qnap/phase0-inventory.sh,
+# tests/qnap/README.md (.md, not counted), and
+# tests/test_section27_qnap_scripts.sh) is outside bin/lib and the guest
+# bootstrap/scripts/lib trees, so no production logic left the scope, and
+# line coverage over the declared scope remains 100% by construction.
+# total_lines rose by 418 (20,734 to 21,152), matching `git diff
+# --shortstat 55cf14e..HEAD -- '*.sh' 'bin/dx*'` (489 insertions, 71
+# deletions) at that (pre-rebase) tip: the five defect fixes' comments and
+# branching logic in phase0-spike.sh, the two new private-report fields
+# in phase0-inventory.sh, and -- the largest share -- the new/replaced
+# Section 27 stubs and assertions proving each fix bites (the
+# ssh_reparse_command/ssh_baseimage_diff/ssh_two_volumes/ssh_tag_only_image
+# stubs and their red/green cases). Same test-dilution edge documented
+# throughout this file: the regression tests needed to prove each fix
+# bites outweigh the (zero) scope_lines they add, so the share falls even
+# though scope_lines did not move.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed
+# tree (a752fe3), per the 2026-08-04 correction rule, replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=3945, total_lines=21152, 3945*10000/21152=1865
+# (integer division); covered=100% (unchanged, no scope file touched). As
+# noted above, this reading was itself superseded before it could ever be
+# the committed value on main, by fix/bootstrap-start-generation (08700a8)
+# landing first; see the next entry for the rebased, finished measurement.
+#
+# Placeholder pending the finished, fully-rebased measurement (this
+# conflict resolution commit does not itself claim a measured value --
+# see the next commit on this branch for the real one).
+#
+# Re-measured 2026-09-26 to 4,008 / 21,436 (1869 bp) on the actually
+# finished tip of fix/qnap-spike-run-defects, fully rebased onto main at
+# 08700a8 (fix/bootstrap-start-generation, Branch 9 Step 2 -- 4,008 /
+# 20,975, 1910 bp) plus the step 6 sha256-verification quoting fix added
+# after this branch's first report (same class of bug as step 5, just
+# silent instead of a hard syntax error). scope_lines is unchanged at
+# 4,008 -- this branch still touches no file under bin/lib or the guest
+# bootstrap/scripts/lib trees, so no production logic left the scope
+# either branch contributed, and line coverage over it remains 100% by
+# construction. total_lines is 08700a8's own 20,975 plus this branch's
+# total delta of +461, matching `git diff --shortstat main..HEAD -- '*.sh'
+# 'bin/dx*'` exactly (534 insertions, 73 deletions): the six defect fixes'
+# (steps 5, 6, 9, the cleanup loop, the inventory note, and step 3's
+# pull+tag replacement) comments and branching logic across
+# phase0-spike.sh/phase0-inventory.sh, and -- the largest share -- the
+# Section 27 stubs and assertions proving each one bites. Same
+# test-dilution edge documented throughout this file.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the finished,
+# rebased tip, per the 2026-08-04 correction rule, replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=4008, total_lines=21436, 4008*10000/21436=1869
+# (integer division); covered=100% (unchanged, no scope file touched).
+#
+# Lowered 2026-09-26 to 4,008 / 21,708 (1846 bp) on
+# fix/qnap-spike-tailnet-binding (qnap-dxe-plan.md DQ5, amended: guest SSH
+# now publishes on the NAS's own discovered Tailscale address rather than
+# loopback, with the controller connecting directly instead of jumping
+# through the NAS -- the second real spike run found that jump
+# "administratively prohibited" by the NAS's sshd). scope_lines is
+# unchanged at 4,008 -- every changed file (tests/qnap/phase0-spike.sh,
+# tests/qnap/lib/phase0-common.sh, tests/test_section27_qnap_scripts.sh,
+# plus the prose-only tests/qnap/README.md and qnap-dxe-plan.md, neither
+# .sh and so not counted) is outside bin/lib and the guest
+# bootstrap/scripts/lib trees, so no production logic left the scope, and
+# line coverage over it remains 100% by construction. total_lines rose by
+# 272 (21,436 to 21,708), matching `git diff --shortstat b59f719..HEAD --
+# '*.sh' 'bin/dx*'` exactly (317 insertions, 45 deletions): the new
+# tailnet-address discovery helper and step 5/7 rewrite in
+# phase0-spike.sh/phase0-common.sh, and -- the largest share, same
+# test-dilution edge documented throughout this file -- the new Section 27
+# stubs and assertions proving the new behavior (address discovery, the
+# fallback path, and the discovered-address happy path).
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the finished
+# tip, per the 2026-08-04 correction rule, replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=4008, total_lines=21708, 4008*10000/21708=1846
+# (integer division); covered=100% (unchanged, no scope file touched).
+#
+# Lowered 2026-09-26 to 4,008 / 21,852 (1834 bp) on fix/qnap-spike-listener
+# (the QNAP Phase 0 spike's step-5 listener fix: the pinned nixos/nix base
+# image has no busybox/nc/socat/python3/perl, confirmed locally, so step 5
+# now runs `nix shell nixpkgs#busybox --command busybox httpd` instead of a
+# fallback chain that always fell through to `exec sleep infinity`; step 7
+# polls the direct connect with a bounded retry instead of trying once,
+# since the listener now starts asynchronously). scope_lines is unchanged
+# at 4,008 -- the only changed files (tests/qnap/phase0-spike.sh,
+# tests/test_section27_qnap_scripts.sh, plus the prose-only
+# tests/qnap/README.md, not .sh and so not counted) are outside bin/lib and
+# the guest bootstrap/scripts/lib trees, so no production logic left the
+# scope, and line coverage over it remains 100% by construction.
+# total_lines rose by 144 (21,708 to 21,852), matching `git diff
+# --shortstat 3e2222d..HEAD -- '*.sh' 'bin/dx*'` exactly (161 insertions,
+# 17 deletions): the new listener command and step 7 bounded-retry loop in
+# phase0-spike.sh, and -- the largest share, same test-dilution edge
+# documented throughout this file -- the new Section 27 assertions proving
+# the new listener's dry-run content and the retry loop actually retries
+# (a hermetic nc-fails-then-succeeds stub).
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the finished
+# tip, per the 2026-08-04 correction rule, replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=4008, total_lines=21852, 4008*10000/21852=1834
+# (integer division); covered=100% (unchanged, no scope file touched).
+#
+# Raised 2026-09-26 to 4,158 / 21,641 (1921 bp) on feat/opencode (Branch 6,
+# increments 1-5: OpenCode re-landed complete -- original support, the
+# persistence helper, activation/dx-ai wiring with per-generation
+# manifests, and docs). scope_lines rose by 150 (4,008 to 4,158), matching
+# `git diff --shortstat 08700a8..HEAD -- container/.../bootstrap/activation.sh
+# container/.../bootstrap/persistence.sh
+# container/.../scripts/lib/dx-opencode-persistence.sh` (+18 in
+# activation.sh: the OpenCode persistence-library load, the bounded
+# root-side ancestor repair call, and the persistence call itself, all
+# gated behind the existing ai_tools_opted_in guard; +1 in persistence.sh:
+# .local/share joins .local and .local/state as a bounded owned ancestor;
+# +131 for the new scripts/lib/dx-opencode-persistence.sh itself). No
+# production logic left the scope; scripts/dx-ai.sh's own +126/-50 delta is
+# outside the declared scope (guest scripts/, not scripts/lib/) by design,
+# same as every other dx-ai.sh change in this file's history.
+#
+# Unlike most entries above, the share *rose*: scope_lines grew
+# proportionally faster than total_lines this time (150 scope lines out of
+# 666 total added, versus the scope's ~19% baseline share), so this is the
+# "unearned slack" direction this file's own rule requires fixing, not the
+# test-dilution edge documented throughout the rest of this file. Line
+# coverage over the declared scope is still 100%, confirmed via
+# tests/run-coverage-linux.sh's own Apple `container` provider path
+# (script output: `covered=100% scope_share=19.21%`).
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed
+# tree, per the 2026-08-04 correction rule, replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=4158, total_lines=21641, 4158*10000/21641=1921
+# (integer division); covered=100%.
+#
+# Lowered 2026-09-26 to 4,158 / 21,682 (1917 bp) after the finished tip of
+# feat/opencode (Branch 6): the dx_ai_load_opencode_persistence loader
+# coverage commit added 41 lines to tests/test_section17_dx_ai_runtime.sh
+# (three new cases proving the Home-Manager-installed and bootstrap-volume
+# loader candidates, and the fail-closed case), touching no file under
+# bin/lib or the guest bootstrap/scripts/lib trees. scope_lines is
+# unchanged at 4,158; total_lines rose from 21,641 to 21,682. Same
+# test-dilution edge documented throughout this file: the coverage test
+# added to reach the branch's own changed-code coverage goal outweighs
+# the (zero) scope_lines it added, so the share falls even though nothing
+# regressed. Line coverage over the declared scope is still 100%,
+# confirmed via a second tests/run-coverage-linux.sh run
+# (covered=100% scope_share=19.17%) after this rebaseline.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the finished,
+# committed tip of feat/opencode, per the 2026-08-04 correction rule:
+# scope_lines=4158, total_lines=21682, 4158*10000/21682=1917 (integer
+# division); covered=100%.
+#
+# Lowered 2026-09-26 to 4,158 / 22,559 (1843 bp) after rebasing feat/opencode
+# (Branch 6) onto main d5ca161. While this branch was in flight, main gained
+# 877 total_lines and no scope lines: the QNAP Phase 0 spike fixes
+# (tests/qnap/phase0-spike.sh and lib/phase0-common.sh: pull+tag, the ssh-hop
+# quoting fixes, the tailnet-only binding, and the nix-shell busybox
+# listener) plus their Section 27 tests in tests/test_section27_qnap_scripts.sh.
+# Those are host-side test tooling, counted in total_lines and outside the
+# declared scope by design, so scope_lines is unchanged at 4,158 and the share
+# falls from 1917 to 1843 for the same test-dilution reason documented
+# throughout this file. No production logic left the scope: the rebased
+# tree's bin/, container/ and docs/ are byte-identical to the live-validated
+# pre-rebase tip (`git diff --quiet <pre-rebase tip> HEAD -- bin container
+# docs` is empty).
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the rebased tip,
+# per the 2026-08-04 correction rule: scope_lines=4158, total_lines=22559,
+# 4158*10000/22559=1843 (integer division).
+#
+# Lowered 2026-09-26 to 4,158 / 22,822 (1821 bp) on test/herdr-acceptance
+# (Branch 7), after its two live acceptance tests for the completed Herdr
+# review's snapshot-recovery and history-cleanup cases. scope_lines is
+# unchanged at 4,158 -- both increments touch only
+# tests/test_section23_herdr.sh and tests/test_section10_docs.sh, neither
+# under bin/lib or the guest bootstrap/scripts/lib trees, so no production
+# logic left the scope, and line coverage over it remains 100% by
+# construction. total_lines rose by 263 (22,559 to 22,822), matching
+# `git diff --shortstat 9711f9e..HEAD -- '*.sh' 'bin/dx*'` exactly (263
+# insertions, 0 deletions): the corrupt/too-new snapshot-recovery live test
+# (153 lines), the history-cleanup live test plus its Section 10 docs
+# assertion (104 + 6 lines). Same test-dilution edge documented throughout
+# this file: the new live acceptance tests outweigh the (zero) scope_lines
+# they add, so the share falls even though nothing regressed.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed
+# tree (ee6eadc), per the 2026-08-04 correction rule, replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=4158, total_lines=22822, 4158*10000/22822=1821
+# (integer division); covered=100% (confirmed via
+# tests/run-coverage-linux.sh's own Apple `container` provider path, which
+# failed only the ratchet comparison against the stale 1843 baseline before
+# this rebaseline).
+#
+# Lowered 2026-09-27 to 4,158 / 23,019 (1806 bp) after Branch 14
+# (fix/dx-ai-no-source-builds): the new dx_ai_check_cached/dx_ai_ensure_cached
+# cache guard and its Section 17 fixtures (tests/test_section17_dx_ai_runtime.sh)
+# and the Section 6 nixpkgs-unstable-channel assertions
+# (tests/test_section6_tools.sh) added 460 total_lines and zero scope_lines:
+# dx-ai.sh lives under container/.../scripts/ (not scripts/lib), so it and its
+# tests are counted in total_lines but sit outside the declared scope by
+# design, same as every prior entry in this file. No production logic left
+# the scope. Line coverage over the declared scope is still 100%, confirmed
+# via `tests/run-coverage-linux.sh` (covered=100% scope_share=18.06%) after
+# this rebaseline.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of Branch 14's
+# finished tip, per the 2026-08-04 correction rule: scope_lines=4158,
+# total_lines=23019, 4158*10000/23019=1806 (integer division).
+#
+# Lowered 2026-09-27 to 4,158 / 23,282 (1785 bp) after rebasing
+# fix/dx-ai-no-source-builds (Branch 14) onto main cf9f35f. While this branch
+# was in flight, main gained Branch 7's two live Herdr acceptance tests
+# (tests/test_section23_herdr.sh, +257) and one Section 10 docs assertion
+# (+6): host-side tests, counted in total_lines and outside the declared
+# scope by design. scope_lines is unchanged at 4,158 (this branch's own
+# production change is in guest scripts/dx-ai.sh, outside the scope like
+# every dx-ai.sh change before it), so the share falls from 1806 to 1785 for
+# the same test-dilution reason documented throughout this file. This
+# branch's own files are byte-identical to the live-validated pre-rebase tip.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the rebased tip,
+# per the 2026-08-04 correction rule: scope_lines=4158, total_lines=23282,
+# 4158*10000/23282=1785 (integer division).
+#
+# Lowered 2026-09-26 to 4,144 / 22,772 (1819 bp) on
+# refactor/legacy-migration-cleanup (Branch 8), after removing the two
+# old-base guards (`guard_old_base` in bootstrap/system.sh and its call in
+# bootstrap.sh; the bin/dx-start-container guard block) once the old-base
+# guard gate (docs/refactor/migration-gates.md#old-base-guards) was signed
+# off. scope_lines fell by 14 (4,158 to 4,144), all of it guard_old_base's
+# removal from bootstrap/system.sh (in scope); no other scope file was
+# touched. Unlike every test-dilution entry above, this is genuine
+# production logic leaving the scope -- but it is exactly the gate-approved
+# kind this file's rule anticipates (a temporary guard retired by its own
+# migration gate once its dated inventory confirmed no guest still needs
+# it), not an unexplained regression.
+#
+# total_lines fell by 50 (22,822 to 22,772), matching `git diff --shortstat
+# ee6eadc..HEAD -- '*.sh' 'bin/dx*'` exactly (6 insertions, 56 deletions):
+# bootstrap.sh (-1, the guard_old_base call site), bootstrap/system.sh (-14,
+# the guard itself), bootstrap/base-and-storage.sh (net 0, a comment
+# reword fixing a dangling reference to the deleted guard),
+# bin/dx-start-container (its own host-side guard block, outside the
+# declared scope), and the two guards' dedicated tests in
+# tests/test_section3_bootstrap.sh and tests/test_bootstrap_publication.sh
+# (replaced with smaller "guard absent" assertions). Line coverage over the
+# declared scope is still 100%.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed
+# tree (24933e2), per the 2026-08-04 correction rule, replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=4144, total_lines=22772, 4144*10000/22772=1819
+# (integer division); covered=100% (confirmed via
+# tests/run-coverage-linux.sh's own Apple `container` provider path, which
+# failed only the ratchet comparison against the stale 1821 baseline before
+# this rebaseline).
+#
+# Lowered 2026-09-27 to 4,144 / 23,232 (1783 bp) after rebasing
+# refactor/legacy-migration-cleanup (Branch 8) onto main bf49f4d. While this
+# branch was in flight, main gained Branch 7's live Herdr acceptance tests
+# and Branch 14's dx-ai cache-guard tests (host-side and guest scripts/
+# tests, counted in total_lines and outside the declared scope by design):
+# total_lines rose from 22,772 to 23,232 while scope_lines stayed at this
+# branch's 4,144 (the guard_old_base removal), so the share falls from 1819
+# to 1783 for the same test-dilution reason documented throughout this
+# file. This branch's own files are byte-identical to the live-validated
+# pre-rebase tip.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the rebased tip,
+# per the 2026-08-04 correction rule: scope_lines=4144, total_lines=23232,
+# 4144*10000/23232=1783 (integer division).
+#
+# Raised 2026-09-27 to 4,212 / 23,497 (1792 bp) after Branch 15
+# (fix/keyring-bootstrap-recreate): the recreate/keyring defect fix adds
+# dx_resolve_keyring_bin and expands setup_keyring_service in guest
+# bootstrap/persistence.sh (in scope), plus its Section 3 red/green tests
+# and coverage-fixture updates (out of scope, total_lines only). This time
+# scope_lines grew (+54) faster than total_lines, so the share rises rather
+# than falls -- the same known sharp edge in the opposite direction. No
+# production logic left the scope.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of this branch's
+# finished tip, per the 2026-08-04 correction rule: scope_lines=4212,
+# total_lines=23497, 4212*10000/23497=1792 (integer division). Confirmed via
+# `tests/run-coverage-linux.sh` (covered=100% scope_share=17.92%).
+#
+# Lowered 2026-09-27 to 4,212 / 23,506 (1791 bp) after the live-tier fix in
+# tests/test_section3_bootstrap.sh (guard the recreate-resolution probe on
+# whether /persist can actually be created, not just on whether it already
+# exists -- found live when tests/run-tier.sh live ran Section 3 directly on
+# a bare macOS host, where creating a new top-level directory is refused,
+# unlike the throwaway Linux containers this was validated against). +9
+# total_lines, test-only; scope_lines unchanged. Same test-dilution edge as
+# every other entry in this file, in the falling direction this time.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the finished
+# tip: scope_lines=4212, total_lines=23506, 4212*10000/23506=1791 (integer
+# division).
+#
+# Lowered 2026-09-27 to 4,198 / 23,456 (1789 bp) after rebasing
+# fix/keyring-bootstrap-recreate (Branch 15) onto main 7f1a81d. While this
+# branch was in flight, main landed Branch 8 (guard_old_base removed: -14
+# scope lines, plus its tests/docs) and Branch 14's tests; net, scope_lines
+# is this branch's 4,198 (4,144 after Branch 8 plus the 54-line keyring
+# resolution fix) and total_lines 23,456, so the share moves from 1791 to
+# 1789. No production logic left the scope; this branch's own files are
+# byte-identical to the live-validated pre-rebase tip.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the rebased tip,
+# per the 2026-08-04 correction rule: scope_lines=4198, total_lines=23456,
+# 4198*10000/23456=1789 (integer division).
+#
+# Raised 2026-09-27 to 4,788 / 24,613 (1945 bp) on feat/persist-backup
+# (Branch 10, increments 1-4: the /persist backup selection-rule library,
+# dx-backup, and dx-restore). scope_lines rose by 630 (4,158 to 4,788),
+# matching `git diff --shortstat bf49f4d..HEAD -- bin/lib
+# container/.../bootstrap container/.../scripts/lib` exactly (630
+# insertions, 0 deletions): bin/lib/dx-backup.sh (256 new lines: manifest
+# diff/atomic-write, the incremental tar fetch, mirror pruning, and
+# restore's conflict check/push) and the guest selector,
+# container/.../scripts/lib/dx-persist-backup-select.sh (374 new lines:
+# repo discovery, the at-risk-whole check, the deny-list matcher, hashing,
+# the listing driver, and the --hash-paths restore-conflict probe). No
+# production logic left the scope.
+#
+# Unlike most entries above, the share *rose*: scope_lines grew
+# proportionally faster than total_lines this time (630 scope lines out of
+# 1,331 net total added, well above the scope's ~18% baseline share), so
+# this is the "unearned slack" direction this file's own rule requires
+# fixing, not the test-dilution edge documented throughout the rest of this
+# file. total_lines rose by 1,331 net (1,333 insertions, 2 deletions, `git
+# diff --shortstat bf49f4d..HEAD -- '*.sh' 'bin/dx*'`): the 630 scope lines
+# above, bin/dx-backup and bin/dx-restore (152 lines, outside the declared
+# scope by design -- bin/, not bin/lib -- same as every other bin/dx-*
+# change in this file's history), the three new test files
+# (tests/test_persist_backup_select.sh, tests/test_dx_backup.sh,
+# tests/test_dx_restore.sh), and the registration lines in
+# tests/run_all_tests.sh, tests/run-tier.sh, tests/run-coverage-contracts.sh,
+# and tests/run-bash32-tests.sh. Line coverage over the declared scope is
+# 100%, confirmed via tests/run-coverage-linux.sh's own Apple `container`
+# provider path (script output: `covered=100% scope_share=19.45%`).
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed
+# tree, per the 2026-08-04 correction rule: scope_lines=4788, total_lines=24613,
+# 4788*10000/24613=1945 (integer division).
+#
+# Raised 2026-09-27 to 4,805 / 24,660 (1948 bp) on feat/persist-backup
+# increments 5-6: registering DX_BACKUP_DIR in the config registry (the
+# field, its default, its path-field eligibility, and its absolute-path
+# validation in bin/lib/dx-config.sh), and the G4 live-guest fixes
+# (dx_pbs_sha256_stdin's cut-not-awk fix -- awk is absent from the dx
+# user's guest profile --, 2>/dev/null on the permission-denied find
+# pipelines walking root-owned /persist subtrees, and COPYFILE_DISABLE=1
+# on the restore-push tar creation). scope_lines rose by 17 (4,788 to
+# 4,805), matching `git diff --shortstat f1a2bc2..HEAD -- bin/lib
+# container/.../bootstrap container/.../scripts/lib` exactly (32
+# insertions, 15 deletions): the DX_BACKUP_DIR registry entries, the
+# guest selector's awk-removal and permission-denied fixes and their
+# explanatory comments, and the COPYFILE_DISABLE guard and its comment in
+# bin/lib/dx-backup.sh. No production logic left the scope. total_lines
+# rose by 47 (24,613 to 24,660), matching `git diff --shortstat
+# f1a2bc2..HEAD -- '*.sh' 'bin/dx*'` exactly (95 insertions, 48
+# deletions): the 17 scope lines above, dx_backup_resolve_dir's
+# simplification in bin/lib/dx-backup.sh (dropping the now-redundant
+# dx_backup_default_dir helper, since the config registry supplies the
+# default), the DX_BACKUP_DIR config assertions in
+# tests/test_refactor_state_machines.sh, the permission-denied regression
+# case in tests/test_persist_backup_select.sh, and
+# tests/test_dx_backup.sh's rework for the per-container BACKUP_ROOT path
+# (a BACKUP_ROOT local plus an end-to-end two-containers-one-base-dir
+# proof, replacing the old default-composition unit test now covered by
+# the config registry tests instead). Line coverage over the declared
+# scope is still 100%, confirmed via tests/run-coverage-linux.sh
+# (covered=100% scope_share=19.48%).
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed
+# tree, per the 2026-08-04 correction rule: scope_lines=4805, total_lines=24660,
+# 4805*10000/24660=1948 (integer division).
+#
+# Lowered 2026-09-27 to 4,810 / 24,718 (1945 bp) on feat/persist-backup
+# increment 7, two review follow-ups: the exact field-1 match fix for
+# dx_backup_restore_status's guest-hash lookup (a genuine suffix-path
+# substring-match bug), and a new regression test guarding the guest
+# selector's deny-list duplication (four inline `find` copies vs.
+# DX_PBS_BUILTIN_COMPONENT_DENY) rather than refactoring the four `find`
+# call sites. scope_lines rose by only 5 (4,805 to 4,810), matching `git
+# diff --shortstat 3c29641..HEAD -- bin/lib container/.../bootstrap
+# container/.../scripts/lib` exactly (6 insertions, 1 deletion): the
+# awk-to-exact-match fix and its explanatory comment in
+# bin/lib/dx-backup.sh. No production logic left the scope. total_lines
+# rose by 58 (24,660 to 24,718), matching `git diff --shortstat
+# 3c29641..HEAD -- '*.sh' 'bin/dx*'` exactly (59 insertions, 1 deletion):
+# the same 5 scope lines, the suffix-collision regression case in
+# tests/test_dx_restore.sh, and the deny-list-agreement regression test
+# in tests/test_persist_backup_select.sh -- the latter is pure test code
+# with zero scope lines, so it alone dilutes the share. Same
+# test-dilution edge documented throughout this file: the regression
+# tests needed to prove both fixes bite outweigh the (small) scope_lines
+# they earned, so the share falls even though nothing regressed. Line
+# coverage over the declared scope is still 100%.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed
+# tree, per the 2026-08-04 correction rule: scope_lines=4810, total_lines=24718,
+# 4810*10000/24718=1945 (integer division).
+#
+# Raised 2026-09-27 to 4,850 / 24,892 (1948 bp) after rebasing
+# feat/persist-backup (Branch 10) onto main 6d9a4ca. While this branch was
+# in flight, main landed Branch 8 (guard_old_base removed, -14 scope lines),
+# Branch 15 (+54 scope lines of keyring resolution) and their tests, plus
+# Branch 14's tests: net scope_lines 4,850 (this branch's 4,810 measured on
+# its own tip, +40 from main) and total_lines 24,892, so the share moves from
+# 1945 to 1948 -- the "unearned slack" direction this file's own rule
+# requires fixing, not the test-dilution edge. No production logic left the
+# scope; this branch's own files are byte-identical to the live-validated
+# pre-rebase tip.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the rebased tip,
+# per the 2026-08-04 correction rule: scope_lines=4850, total_lines=24892,
+# 4850*10000/24892=1948 (integer division).
+#
+# Raised 2026-09-27 to 4,228 / 23,595 (1791 bp) after
+# refactor/keyring-owned-by-dx-ai (Branch 16) moved guest keyring ownership
+# from bootstrap into scripts/lib/dx-keyring.sh (a shared, in-scope library)
+# and dx-ai/dx-keyring (out of scope). Net scope_lines change is +30: six
+# new library functions (dx_keyring_probe, _secrets_registered,
+# _clear_stale, _pids_matching, _start, _status) add far more than the
+# ~76 lines removed from bootstrap/persistence.sh and
+# bootstrap/activation.sh (dx_resolve_keyring_bin, setup_keyring_service,
+# the ai_tools_enabled flag and call site). No production logic left the
+# declared scope -- if anything, more of it moved in, since the library is
+# in-scope and the two commands wrapping it (scripts/dx-ai.sh,
+# scripts/dx-keyring.sh) are not, matching the existing dx-ai.sh precedent.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the finished
+# tip: scope_lines=4228, total_lines=23595, 4228*10000/23595=1791 (integer
+# division).
+#
+# Raised 2026-09-27 to 4,880 / 25,031 (1949 bp) after rebasing
+# refactor/keyring-owned-by-dx-ai (Branch 16) onto main 2acffa9. While this
+# branch was in flight, main landed Branch 10 (the /persist backup: +630
+# scope lines in bin/lib/dx-backup.sh and the guest selector, plus its
+# tests) so the branch's own 1791 measurement (taken on main 6d9a4ca) no
+# longer applies; on the rebased tree scope_lines is 4,880 (Branch 10's
+# 4,850 plus this branch's net +30 in scripts/lib/dx-keyring.sh after the
+# bootstrap removal) and total_lines 25,031, so the share is 1949 -- the
+# "unearned slack" direction this file's own rule requires fixing. No
+# production logic left the scope; this branch's own files are byte-identical
+# to the live-validated pre-rebase tip.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the rebased tip,
+# per the 2026-08-04 correction rule: scope_lines=4880, total_lines=25031,
+# 4880*10000/25031=1949 (integer division).
+#
+# Raised 2026-09-27 to 5,098 / 26,078 (1954 bp) on refactor/runtime-boundary
+# (Branch 11 Phase 1, qnap-dxe-plan.md DQ2: mechanical runtime-boundary
+# extraction, increments 0-4). scope_lines rose by 248 (4,850 to 5,098):
+# the two new files bin/lib/dx-runtime.sh (+80) and bin/lib/dx-runtime-
+# apple.sh (+159, every Apple `container` implementation moved behind
+# dx_runtime_apple_<op>) more than account for it, net of dx-container.sh's
+# own wrapper bodies shrinking (-11, now thin calls into the contract) and
+# dx-config.sh's DX_RUNTIME registry field (+20) and dx-backup.sh's net-zero
+# exec-call rename. No production logic left the scope; every line that
+# entered it (the two new files) is genuinely new indirection this phase
+# added, not code relocated from outside bin/lib. Unlike most entries above,
+# the share *rose*: scope_lines grew proportionally faster than total_lines
+# (248 of 1,186 net lines added, well above the scope's ~19% baseline
+# share), so this is the "unearned slack" direction this file's own rule
+# requires fixing, not the test-dilution edge documented throughout the
+# rest of this file. total_lines rose by 1,186 (24,892 to 26,078), matching
+# `git diff --shortstat 2acffa9..HEAD -- '*.sh' 'bin/dx*'` exactly (1,320
+# insertions, 134 deletions): the scope_lines above; 19 entrypoints' one-
+# line-per-call-site substitutions (`container <verb>` -> `dx_runtime_<op>`,
+# argument-for-argument, no line-count change per site); the new
+# tests/test_runtime_boundary_characterisation.sh (Increment 1, 26 cases
+# for the 9 files with no prior hermetic fake-container coverage) and
+# tests/test_runtime_boundary_audit.sh (Increment 4, Section 32); the
+# tests/test_sourceable_coverage.sh and tests/test_refactor_state_machines.sh
+# additions proving the new contract/adapter and DX_RUNTIME registry field
+# (Increment 2); and dx-migrate-persist's net shrink (its retry loop moved
+# into the adapter, -40/+12 at its three call sites). Line coverage over
+# the declared scope is 100%, confirmed via tests/run-coverage-linux.sh's
+# own Apple `container` provider path (script output: `covered=100%
+# scope_share=19.54%`).
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the finished
+# tip, per the 2026-08-04 correction rule, replicating tests/run-coverage-
+# linux.sh's own scope_lines/total_lines computation directly:
+# scope_lines=5098, total_lines=26078, 5098*10000/26078=1954 (integer
+# division); covered=100%.
+#
+# Raised 2026-09-27 to 5,128 / 26,217 (1955 bp) after rebasing
+# refactor/runtime-boundary (Branch 11 / Phase 1) onto main f3b7cb5. While
+# this branch was in flight, main landed Branch 16 (keyring ownership moved
+# into scripts/lib/dx-keyring.sh; bootstrap code removed) so both scope_lines
+# and total_lines moved slightly; on the rebased tree the share is 1955
+# against this branch's own 1954 -- the "unearned slack" direction this
+# file's own rule requires fixing. No production logic left the scope; this
+# branch's per-file deltas are identical before and after the rebase.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the rebased tip,
+# per the 2026-08-04 correction rule: scope_lines=5128, total_lines=26217,
+# 5128*10000/26217=1955 (integer division).
+#
+# Raised 2026-09-27 to 5,375 / 26,912 (1997 bp) for Branch 17
+# (fix/dx-backup-transfer-stall), rebased onto main 863c376 (Branch 11
+# Phase 1's runtime boundary). This branch adds real scope-line production
+# code (the two-phase transfer and ARG_MAX helpers in bin/lib/dx-backup.sh;
+# the --with-reason/--hash-paths-file modes in the guest selector) alongside
+# its tests, so the share moved up rather than down -- leaving the prior
+# 1955 baseline in place would be 42 bp of unearned slack (this file's own
+# rule: a baseline below the measured value is not allowed either). No
+# production logic left the scope.
+#
+# Measured on a clean local clone of the branch tip (not a `git archive`
+# export of a worktree: this branch was authored in a worktree, whose `.git`
+# is a file pointing at the main checkout's gitdir, which a container
+# mounting only the worktree cannot resolve -- `git clone --local
+# --no-hardlinks` into a scratch directory gives a self-contained repo with
+# the same tracked content, which is what CI's own actions/checkout also
+# produces), replicating tests/run-coverage-linux.sh's own scope_lines/
+# total_lines computation directly: scope_lines=5375, total_lines=26912,
+# 5375*10000/26912=1997 (integer division); covered=100%.
+#
+# Raised 2026-09-27 to 5,456 / 27,219 (2004 bp) for Branch 18
+# (fix/dx-backup-deny-list): the deny-list additions, the default
+# exclude-file resolver, and the nested-repository-boundary fix (mid-task
+# addition) all add real scope-line production code in
+# dx-persist-backup-select.sh and bin/lib/dx-backup.sh, alongside their
+# tests, so the share moved up rather than down -- leaving the prior 1997
+# baseline in place would be 7 bp of unearned slack (this file's own rule:
+# a baseline below the measured value is not allowed either). No
+# production logic left the scope.
+#
+# Measured on a clean local clone (`git clone --local --no-hardlinks`) of
+# the branch tip at 8ee92eb into a scratch directory, not a `git archive`
+# export of the worktree directly (this branch was authored in a worktree,
+# whose `.git` is a file pointing at the main checkout's gitdir -- the
+# same reason Branch 17's own entry above gives), replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=5456, total_lines=27219, 5456*10000/27219=2004
+# (integer division); covered=100%.
+#
+# Raised 2026-09-27 to 6,442 / 29,808 (2161 bp) for Branch 11 Phase 2
+# (feat/qnap-docker-adapter): this branch adds bin/lib/dx-runtime-docker.sh
+# (the docker-ssh runtime adapter) and bin/lib/dx-runtime.sh's shared
+# runtime-neutral container_create vocabulary, plus small additions to
+# bin/lib/dx-config.sh, dx-runtime-apple.sh, dx-container.sh, dx-tunnel.sh,
+# and dx-backup.sh, alongside their tests -- real production code in
+# scope, so the share moved up rather than down. Leaving the prior 1997
+# baseline in place would be 164 bp of unearned slack (this file's own
+# rule: a baseline below the measured value is not allowed either). No
+# production logic left the scope.
+#
+# Measured with `git archive HEAD | tar -x -C <tmpdir>` (this branch's own
+# worktree resolves natively here, run directly on the host rather than
+# inside a container, so the earlier `git clone --local` workaround was
+# not needed), replicating tests/run-coverage-linux.sh's own scope_lines/
+# total_lines computation directly: scope_lines=6442, total_lines=29808,
+# 6442*10000/29808=2161 (integer division); covered=100%.
+#
+# Raised 2026-09-27 to 6,523 / 30,115 (2166 bp) after rebasing
+# feat/qnap-docker-adapter onto main 217d57a (Branch 18 had landed
+# meanwhile, bringing its own scope lines and tests): the union of both
+# branches' scope-line growth moves the share up 5 bp from the 2161 this
+# branch measured against its own base, so the baseline follows the
+# measured value (a baseline below it is 5 bp of unearned slack). No
+# production logic left the scope. Measured on a clean `git archive HEAD |
+# tar -x` export with tests/run-coverage-linux.sh's own computation:
+# scope_lines=6523, total_lines=30115, 6523*10000/30115=2166 (integer
+# division).
+#
+# Lowered 2026-09-27 to 6,523 / 30,135 (2164 bp) on feat/qnap-docker-adapter
+# after CI run 36296075448 showed Section 33's two docker-discovery tests
+# depended on the controller having no real `docker` on its PATH (GitHub's
+# ubuntu runners ship /usr/bin/docker, so the refusal test failed there and
+# the qpkg-glob test passed for the wrong reason). The fix is test-only: the
+# fake management-plane ssh gains an opt-in remote-PATH override and both
+# tests pin it, one of them now asserting the discovered path outright --
+# 20 more lines under tests/, no scope line changed, 100% line coverage
+# unchanged. Same test-dilution edge as documented throughout this file: the
+# ratio fell because the denominator grew. Measured on a clean export of
+# the tracked files with tests/run-coverage-linux.sh's own computation:
+# scope_lines=6523, total_lines=30135, 6523*10000/30135=2164.
+#
+# Lowered 2026-09-27 to 6,876 / 31,926 (2153 bp) on fix/store-trust
+# (Branch 12: store-trust-plan.md Problems 1 and 2, plus
+# bin/dx-reset-nix-volume). This branch's base, 6688a7c, was itself already
+# at 6,761 / 31,237 -- 2164 bp by coincidence of rounding, not by the stale
+# 6,523/30,135 the comment above cites, which several other branches'
+# landings had already moved past without a rebaseline being needed (the
+# ratio held at 2164 through that drift). scope_lines rose by 115 (6,761 to
+# 6,876), matching `git diff --shortstat 6688a7c..HEAD -- bin/lib
+# container/.../bootstrap container/.../scripts/lib` exactly (115
+# insertions, 0 deletions): verify_remount_prerequisites and its comment in
+# bootstrap/common.sh (Problem 2), and
+# nix_verify_no_bootstrap_path_collision plus the
+# nix_verify_single_bootstrap_path_collision helper it was split into for a
+# kcov line-attribution fix, in bootstrap/base-and-storage.sh (Problem 1).
+# No production logic left the scope.
+#
+# total_lines rose by 689 (31,237 to 31,926), matching `git diff --shortstat
+# 6688a7c..HEAD -- '*.sh' 'bin/dx*'` exactly (690 insertions, 1 deletion):
+# the 115 scope lines above; bin/dx-reset-nix-volume itself (40 lines,
+# outside the declared scope by design -- bin/, not bin/lib, same as every
+# other bin/dx-* addition in this file's history); and the new/changed
+# tests across tests/test_section3_bootstrap.sh (Problem 1 and 2 fixture
+# blocks), tests/test_nix_store_import.sh (Problem 1's real-Nix Section 25
+# proof), tests/test_section9_host_scripts.sh and
+# tests/test_docker_runtime_adapter.sh (dx-reset-nix-volume's Apple and
+# docker-ssh behaviour), and tests/test_section10_docs.sh (one assertion
+# updated, not added). Same test-dilution edge documented throughout this
+# file: the tests needed to cover two new production functions and one new
+# entrypoint outweigh the (115) scope_lines they earned, so the share falls
+# even though real production logic entered the scope. Line coverage over
+# the declared scope is 100%, confirmed via `tests/run-coverage-linux.sh`
+# (covered=100%, exit 0 once this rebaseline is applied).
+#
+# Measured on a clean `git archive HEAD | tar -x` export of this branch's
+# tip (05ad11f), per the 2026-08-04 correction rule, replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=6876, total_lines=31926, 6876*10000/31926=2153
+# (integer division); covered=100%.
+#
+# Lowered 2026-09-28 to 6,772 / 31,634 (2140 bp) on fix/test-hardening (the
+#
+# Lowered 2026-09-28 to 6,768 / 31,630 (2139 bp) on fix/test-hardening (the
+# four open follow-ups: Section 27's fake ssh open-stdin hang,
+# dx_backup_restore_status's O(n^2) guest-hash lookup, Section 6's
+# tmux-resurrect probe timing flake, dx-status's missing keyring line).
+# Item 2 adds a handful of scope lines to bin/lib/dx-backup.sh (the
+# single-pass awk join replacing the per-target scan); all four items add
+# substantially more under tests/ (new RED/GREEN tests, including a
+# 60,000-target performance fixture for item 2). No production logic left
+# the scope -- same test-dilution edge as documented throughout this file.
+# An intermediate reading of 2140 was already stale (measured before the
+# coverage-driven single-line collapse of the awk join and the
+# local-hashes loop, which trimmed a few lines from both scope_lines and
+# total_lines) -- same lesson as this file's own 2026-08-15 note: measure
+# against the finished tree, not mid-change. 2139 is the finished value,
+# measured on a clean export of the tracked files (`git archive HEAD | tar
+# -x`) with this file's own computation: scope_lines=6768, total_lines=31630,
+# 6768*10000/31630=2139.
+#
+# Lowered 2026-09-28 to 6,883 / 32,323 (2129 bp) after rebasing
+# fix/test-hardening onto main 756d269 (Branch 12 had landed meanwhile): the
+# union of Branch 12's and this branch's test growth dilutes the share
+# further than either measured alone. No production logic left the scope;
+# coverage stays at 100%. Same test-dilution edge as documented throughout
+# this file. Measured on a clean `git archive HEAD | tar -x` export with
+# tests/run-coverage-linux.sh's own computation: scope_lines=6883,
+# total_lines=32323, 6883*10000/32323=2129.
+#
+# Lowered 2026-09-28 to 6,913 / 32,477 (2128 bp) after the item-2 live-finding
+# follow-up (dx_backup_restore_status hashes locally only present targets;
+# see that commit). A handful of new scope lines in bin/lib/dx-backup.sh
+# (the present-list extraction, the sentinel-seeded local-hash loop) are
+# outweighed by substantially more new test lines in
+# tests/test_dx_restore.sh (a RECORDING-stub test plus a new 60,000-target
+# all-absent fixture). No production logic left the scope; coverage stays
+# at 100%. Same test-dilution edge as documented throughout this file.
+# Measured on a clean `git archive HEAD | tar -x` export of this commit
+# with tests/run-coverage-linux.sh's own computation: scope_lines=6913,
+# total_lines=32477, 6913*10000/32477=2128.
+#
+# Lowered 2026-09-27 to 6,811 / 31,720 (2147 bp) on feat/qnap-arch-neutral
+# (Branch 11 Phase 4, increments 1-3: per-system flake outputs, keyed
+# Antigravity pins with the DQ7 unsupported-tool diagnostic, and the shared
+# scripts/lib/dx-guest-system.sh guest-system helper). scope_lines rose by
+# 50 (6,761 to 6,811 -- this branch's own base, `main` at 6688a7c, measured
+# directly since it postdates the 6,523 figure above by other landed
+# branches), matching `git diff --shortstat 6688a7c..HEAD -- bin/lib
+# container/.../bootstrap container/.../scripts/lib` exactly (51
+# insertions, 1 deletion): the new scripts/lib/dx-guest-system.sh (37
+# lines: the uname -m -> Nix system mapping and the DX_GUEST_SYSTEM
+# cross-check/refusal) and bootstrap/activation.sh's system-resolution
+# block (net +14). scripts/dx-ai.sh's own +66 net delta (116 insertions,
+# 50 deletions: the per-system agy manifest/pin/tools functions and the
+# dx_ai_load_guest_system loader) is outside the declared scope (guest
+# scripts/, not scripts/lib/) by design, same as every other dx-ai.sh
+# change in this file's history. No production logic left the scope.
+#
+# total_lines rose by 483 (31,237 to 31,720), matching `git diff
+# --shortstat 6688a7c..HEAD -- '*.sh' 'bin/dx*'` exactly (529 insertions,
+# 46 deletions): the new Section 3 guest-system-helper tests (agree/
+# disagree/unsupported architecture, plus the per-system Home Manager
+# activation-flake assertions), the Section 17 per-system pin/manifest/
+# diagnostic tests and their jq stand-ins (the pinned-ShellCheck/coverage
+# container has no real jq), the new Section 5 x86_64-linux packages/
+# homeConfigurations-alias nix-eval assertions, the third-env-token
+# characterisation update, and dx-ai.sh's own test surface. Same
+# test-dilution edge documented throughout this file: the new tests
+# outweigh the scope_lines they earned, so the share falls even though
+# scope_lines grew. Line coverage over the declared
+# scope is still 100%, confirmed via tests/run-coverage-linux.sh
+# (covered=100% scope_share=21.47%).
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed
+# tree (8189ed3), per the 2026-08-04 correction rule, replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=6811, total_lines=31720, 6811*10000/31720=2147
+# (integer division); covered=100%.
+#
+# Lowered 2026-09-28 to 6,811 / 31,866 (2137 bp) on feat/qnap-arch-neutral
+# increment 4 (the package-availability nix-eval assertions and
+# scripts/dx-verify-inventory.sh, the guest CLI inventory verifier).
+# scope_lines is unchanged at 6,811 -- dx-verify-inventory.sh lives under
+# guest scripts/, not scripts/lib/, same as every other guest command
+# script (dx-ai.sh, dx-keyring.sh) in this file's history, so it and its
+# tests sit outside the declared scope by design. No production logic left
+# the scope. total_lines rose by 146 (31,720 to 31,866), matching `git
+# diff --shortstat 8189ed3..9a3bc92 -- '*.sh' 'bin/dx*'` exactly (146
+# insertions, 0 deletions): the new script itself (40 lines), the two new
+# Section 5 x86_64-linux nix-eval assertions (21 lines), and the Section 6
+# existence/tracking/packaging/syntax/behavioral tests (85 lines). Same
+# test-dilution edge documented throughout this file. Line coverage over
+# the declared scope is still 100%, confirmed via tests/run-coverage-linux.sh.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed
+# tree (9a3bc92), per the 2026-08-04 correction rule, replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=6811, total_lines=31866, 6811*10000/31866=2137
+# (integer division); covered=100%.
+#
+# Lowered 2026-09-28 to 6,818 / 31,941 (2134 bp) on feat/qnap-arch-neutral
+# increment 5 (io.dxe.system added to every docker-ssh label set). scope_lines
+# rose by 7 (6,811 to 6,818), matching `git diff --shortstat 9a3bc92..93ecbae
+# -- bin/lib` (33 changed lines, net +7 after the dx_runtime_docker_lock_acquire
+# refactor removed its four hand-duplicated labels in exchange for one call
+# to the shared dx_runtime_docker_label_flags helper). No production logic
+# left the scope. total_lines rose by 75 (31,866 to 31,941), matching `git
+# diff --shortstat 9a3bc92..93ecbae -- '*.sh' 'bin/dx*'` exactly (95
+# insertions, 20 deletions across bin/lib/dx-runtime-docker.sh and
+# tests/test_docker_runtime_adapter.sh): the new Section 33 label
+# assertions for container/volume/lock creation and the container_list
+# format string, plus one existing assertion's deliberate update for the
+# label-order change. Same test-dilution edge documented throughout this
+# file. Line coverage over the declared scope is still 100%, confirmed via
+# tests/run-coverage-linux.sh.
+#
+# Measured on a clean `git archive HEAD | tar -x` export of the committed
+# tree (93ecbae), per the 2026-08-04 correction rule, replicating
+# tests/run-coverage-linux.sh's own scope_lines/total_lines computation
+# directly: scope_lines=6818, total_lines=31941, 6818*10000/31941=2134
+# (integer division); covered=100%.
+#
+# Lowered 2026-09-28 to 6,933 / 32,634 (2124 bp) after rebasing
+# feat/qnap-arch-neutral onto main 756d269 (Branch 12 had landed meanwhile):
+# the union of Branch 12's and Phase 4's test growth dilutes the share
+# further than either branch measured alone (2153 and 2134 against their own
+# bases). No production logic left the scope; 100% line coverage over the
+# declared scope is unchanged. Same test-dilution edge as documented
+# throughout this file. Measured on a clean `git archive HEAD | tar -x`
+# export with tests/run-coverage-linux.sh's own computation:
+# scope_lines=6933, total_lines=32634, 6933*10000/32634=2124.
+#
+# Lowered 2026-09-28 to 6,944 / 32,781 (2118 bp) fixing two live-gate
+# findings on the rebased branch: install_essential_packages naming its
+# Nix profile explicitly (Finding 1 -- a handful of scope lines in
+# bootstrap/common.sh) and dx-ai's agy refresh no longer resurrecting a
+# null system's pin (Finding 2 -- the fix itself is in
+# container/.../scripts/dx-ai.sh, outside this declared scope, so it does
+# not offset the share at all). Both fixes' own Red/Green tests (Section 3
+# and Section 17) are substantially larger than the scope-line growth, the
+# same test-dilution edge documented throughout this file. No production
+# logic left the scope; 100% line coverage over the declared scope is
+# unchanged (confirmed via tests/run-coverage-linux.sh). Measured on a
+# clean `git archive HEAD | tar -x` export with tests/run-coverage-linux.sh's
+# own computation: scope_lines=6944, total_lines=32781,
+# 6944*10000/32781=2118.
+#
+# Lowered 2026-09-28 to 6,944 / 32,895 (2110 bp) fixing two more live-gate
+# findings on the same branch: Section 17's null-agy end-to-end test
+# isolating itself from the host profile's inherited DX_GUEST_SYSTEM
+# (Finding 3 -- test-only, no scope-line change at all) and dx-status's
+# docker-ssh image_list column-shape fix (Finding 4 -- a one-line change
+# inside an existing bin/lib/dx-runtime-docker.sh line, replacing a colon
+# with a tab byte, so scope_lines does not move either). Both fixes' own
+# Red/Green tests add real test lines with zero offsetting scope growth --
+# the same test-dilution edge documented throughout this file. No
+# production logic left the scope; 100% line coverage over the declared
+# scope is unchanged, confirmed via tests/run-coverage-linux.sh. Measured
+# on a clean `git archive HEAD | tar -x` export with
+# tests/run-coverage-linux.sh's own computation: scope_lines=6944,
+# total_lines=32895, 6944*10000/32895=2110.
+#
+# Lowered 2026-09-28 to 6,981 / 33,442 (2087 bp) after rebasing
+# feat/qnap-arch-neutral onto main 583e6bb (Branch 12 and the hardening branch
+# had landed meanwhile): the union of all three branches' test growth dilutes
+# the share further than any measured alone. No production logic left the
+# scope; coverage stays at 100%. Same test-dilution edge as documented
+# throughout this file. Measured on a clean `git archive HEAD | tar -x`
+# export with tests/run-coverage-linux.sh's own computation:
+# scope_lines=6981, total_lines=33442, 6981*10000/33442=2087.
+#
+# Lowered 2026-09-28 to 6,981 / 33,512 (2083 bp) fixing Finding 5 on the
+# same branch: dx_runtime_docker_container_list's `ps` format string
+# (bin/lib/dx-runtime-docker.sh) changed `index .Labels` to `.Label` --
+# same line count, no scope-line change at all -- while its own Red/Green
+# tests (Section 33's fake, Section 9's extended dx-status characterisation
+# case) add real test lines. Same test-dilution edge documented throughout
+# this file. No production logic left the scope; 100% line coverage over
+# the declared scope is unchanged, confirmed via tests/run-coverage-linux.sh.
+# Measured on a clean `git archive HEAD | tar -x` export with
+# tests/run-coverage-linux.sh's own computation: scope_lines=6981,
+# total_lines=33512, 6981*10000/33512=2083.
+#
+# Raised 2026-09-28 to 7,026 / 33,653 (2087 bp) fixing Finding 6 on the
+# same branch: populate_prepared_nix_volume_in_place's corrected
+# direct-volume corruption check (bootstrap/base-and-storage.sh) adds a
+# genuinely larger, in-scope block (bounded bootstrap-root content
+# verification, replacing a short call to a function outside this file's
+# scope-share arithmetic) than its own Red/Green tests add in
+# tests/test_section3_bootstrap.sh -- the opposite of this file's usual
+# test-dilution direction, for once. 100% line coverage over the declared
+# scope is unchanged. Measured on a clean `git archive HEAD | tar -x`
+# export with tests/run-coverage-linux.sh's own computation:
+# scope_lines=7026, total_lines=33653, 7026*10000/33653=2087.
+#
+# Raised 2026-09-28 to 7,046 / 33,739 (2088 bp) fixing Finding 7 on the same
+# branch: stripping the sha256: algorithm prefix into a separate,
+# validated roots_identity before keying the direct-volume GC roots
+# (bootstrap/base-and-storage.sh) is a small but genuinely in-scope
+# addition; its own Red/Green tests in tests/test_section3_bootstrap.sh
+# (the real-nix_install_image_essentials_root roots-directory-naming
+# fixture and the invalid-shape refusal fixture) add more lines, but not
+# enough to offset it -- the scope share rises again, same direction as
+# Finding 6's correction and for the same reason. 100% line coverage over
+# the declared scope is unchanged. Measured on a clean `git archive HEAD |
+# tar -x` export with tests/run-coverage-linux.sh's own computation:
+# scope_lines=7046, total_lines=33739, 7046*10000/33739=2088.
+#
+# Raised 2026-09-28 to 7366 / 34890 (2111 bp) for Branch 11 Phase 5
+# (feat/qnap-remote-ssh): the guest-SSH-address operation in both adapters,
+# the remote-aware shared SSH builder with docker-ssh host-key pinning, the
+# atomic dx-export and the capability refusals all add real scope-line
+# production code, outweighing the tests they came with, so the share rose
+# from 2088; a baseline below the measured value is unearned slack (this
+# file's own rule). No production logic left the scope; coverage is 100%.
+# Measured on a clean `git archive HEAD | tar -x` export of the rebased tip
+# with tests/run-coverage-linux.sh's own computation.
+#
+# Lowered 2026-09-28 to 7,366 / 34,995 (2104 bp) at Phase 5's landing, for
+# two test-only follow-ups: the test-isolation commit (a shared
+# known-hosts-state snapshot helper and before/after tripwires in the three
+# files that drive the docker-ssh pin code) and the guard that keeps that
+# helper from aborting on a fresh runner with no state directory, plus its
+# regression test. 105 test lines, no production change at all --
+# scope_lines is unchanged at 7,366. That is this file's known sharp edge
+# and nothing else. Measured on a clean export of the finished tip.
+#
+# Raised 2026-09-28 to 7,530 / 35,725 (2107 bp) for Branch 11 Phase 6
+# (feat/qnap-lifecycle): dx-status's/dx-wait-ssh's shared login-shell probe
+# helper (bin/lib/dx-ssh-common.sh), the container_healthcheck capability
+# and its create-time flags (bin/lib/dx-runtime.sh,
+# bin/lib/dx-runtime-apple.sh, bin/lib/dx-runtime-docker.sh), and the
+# whole-operation destructive ownership proof
+# (bin/lib/dx-container.sh/dx-runtime-docker.sh) all add real scope-line
+# production code (7,366 -> 7,530), outweighing the tests they came with;
+# a baseline below the measured value is unearned slack (this file's own
+# rule). No production logic left the scope; coverage is 100%. Measured
+# on a clean `git archive HEAD | tar -x` export of the landed tip
+# (920c690) with tests/run-coverage-linux.sh's own computation.
+#
+# Lowered 2026-09-28 to 7,530 / 35,758 (2105 bp) at Phase 6's landing for
+# two test-only commits after that measurement: the SC2155 split that apt
+# ShellCheck 0.9.0 demanded in Section 9, and the sourceable-coverage probes
+# for the destructive-plan and health-flag branches that the isolated kcov
+# runner showed uncovered. 33 test lines, scope unchanged at 7,530 -- this
+# file's known sharp edge and nothing else. Measured on a clean export of
+# the finished tip; the isolated runner confirmed covered=100%.
+#
+# Lowered 2026-09-28 to 7,544 / 35,967 (2097 bp) for Branch 11 Phase 7
+# Increment 1 (feat/qnap-promotion): dx-restore --source-container=NAME
+# (docs/refactor/qnap-promotion.md section B). bin/lib/dx-backup.sh's
+# dx_backup_resolve_dir gained a small scope addition (an optional
+# override argument plus its explanatory comment, 7,530 -> 7,544), far
+# outweighed by the test lines the flag came with: 6 new cases in
+# tests/test_dx_restore.sh and 2 direct-unit cases in
+# tests/test_docker_runtime_adapter.sh, plus bin/dx-restore's own flag-
+# parsing lines -- counted in total_lines (bin/dx*) but not in scope
+# (bin/lib only). No production logic left the scope; coverage is still
+# 100%. Measured on a clean `git archive HEAD | tar -x` export of the
+# landed tip (296ba37) with tests/run-coverage-linux.sh's own
+# computation.
+```

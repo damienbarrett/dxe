@@ -61,9 +61,11 @@ case "$covered" in
         ;;
 esac
 
-scope_lines="$(find "$ROOT/bin/lib" "$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap" "$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib" -type f -name '*.sh' -exec wc -l {} + | awk 'END {print $1}')"
-total_lines="$(find "$ROOT/bin" "$ROOT/tests" "$ROOT/container" -type f \( -name '*.sh' -o -path "$ROOT/bin/dx*" \) -not -path "$OUT/*" -exec wc -l {} + | awk 'END {print $1}')"
-share=$((scope_lines * 10000 / total_lines))
-baseline="$(sed -n 's/^scope_share_basis_points=//p' "$SCRIPT_DIR/coverage/ratchet.env")"
-[ "$share" -ge "$baseline" ] || { echo "Error: covered shell scope share regressed from $baseline to $share basis points." >&2; exit 1; }
-printf 'covered=100%% scope_share=%d.%02d%%\n' "$((share / 100))" "$((share % 100))"
+# shellcheck source=lib/coverage-metric.sh
+source "$SCRIPT_DIR/lib/coverage-metric.sh"
+metric_out="$OUT/coverage-metric.env"
+dx_coverage_metric "$ROOT" "$summary" > "$metric_out"
+dx_coverage_ratchet_check "$metric_out" "$SCRIPT_DIR/coverage/ratchet.env"
+scope_exec_lines="$(sed -n 's/^scope_exec_lines=//p' "$metric_out")"
+unscoped_prod_exec_lines="$(sed -n 's/^unscoped_prod_exec_lines=//p' "$metric_out")"
+printf 'covered=100%% scope_exec_lines=%s unscoped_prod_exec_lines=%s\n' "$scope_exec_lines" "$unscoped_prod_exec_lines"
