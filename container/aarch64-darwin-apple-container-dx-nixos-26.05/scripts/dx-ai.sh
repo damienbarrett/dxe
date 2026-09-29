@@ -527,7 +527,19 @@ dx_ai_setup_credentials() {
     ln -sfnT "$persist_home/.claude.json" "$home/.claude.json"; ln -sfnT "$persist_home/.codex" "$home/.codex"
     ln -sfnT "$persist_home/.local/share/keyrings" "$home/.local/share/keyrings"
     settings="$persist_home/.claude/settings.json"; [ -s "$settings" ] || printf '%s\n' '{}' > "$settings"
-    if ! jq -e '.statusLine' "$settings" >/dev/null 2>&1; then tmp="$settings.tmp.$$"; jq '. + {statusLine: {type: "command", command: "dx-claude-statusline"}}' "$settings" > "$tmp"; mv "$tmp" "$settings"; fi
+    if ! jq -e '.statusLine' "$settings" >/dev/null 2>&1; then
+        jq -e 'type=="object"' "$settings" >/dev/null 2>&1 \
+            || { echo "Error: $settings is not a JSON object; refusing to rewrite it" >&2; return 1; }
+        tmp="$settings.tmp.$$"
+        jq '. + {statusLine: {type: "command", command: "dx-claude-statusline"}}' "$settings" > "$tmp"
+        if [ -s "$tmp" ]; then
+            mv "$tmp" "$settings"
+        else
+            rm -f "$tmp"
+            echo "Error: failed to update $settings; left unchanged" >&2
+            return 1
+        fi
+    fi
 }
 
 dx_ai_ensure_keyring() {

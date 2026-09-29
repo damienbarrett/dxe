@@ -1257,6 +1257,89 @@ else
     test_fail "the pre-existing real ~/.claude directory and its content survive untouched, not nested into"
 fi
 rm -rf "$hardening_fixture"
+
+# --- statusLine merge safety (Fable review 2026-09-29, finding B1):
+# `jq -e '.statusLine' "$settings"` fails identically for "key absent" and
+# "not JSON", and the merge that followed used to write straight to a temp
+# file and `mv` it over $settings with no check that the temp file held
+# anything -- an unparseable settings.json got clobbered with zero bytes.
+# dx_ai_setup_credentials runs in `||` context in dx_ai_main, so errexit is
+# suspended inside it; only an explicit check-and-return stops the clobber.
+statusline_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-creds-statusline.XXXXXX")"
+statusline_fixture="$(cd "$statusline_fixture" && pwd -P)"
+
+# (1) A non-JSON settings.json must fail loudly and survive untouched.
+corrupt_persist="$statusline_fixture/corrupt/persist/home/dx"
+corrupt_home="$statusline_fixture/corrupt/home/dx"
+mkdir -p "$corrupt_persist/.claude" "$corrupt_home"
+printf '%s' '{not json' > "$corrupt_persist/.claude/settings.json"
+cp "$corrupt_persist/.claude/settings.json" "$statusline_fixture/corrupt/before-settings.json"
+creds_ln_shim
+corrupt_stderr="$(dx_ai_setup_credentials "$corrupt_persist" "$corrupt_home" 2>&1 >/dev/null)"
+corrupt_status=$?
+creds_ln_unshim
+if [ "$corrupt_status" -ne 0 ]; then
+    test_pass "dx_ai_setup_credentials fails on a non-JSON settings.json"
+else
+    test_fail "dx_ai_setup_credentials fails on a non-JSON settings.json"
+fi
+if printf '%s\n' "$corrupt_stderr" | stdin_matches -F "Error:" \
+    && printf '%s\n' "$corrupt_stderr" | stdin_matches -F "$corrupt_persist/.claude/settings.json"; then
+    test_pass "the non-JSON settings.json error names the file"
+else
+    test_fail "the non-JSON settings.json error names the file"
+fi
+if cmp -s "$statusline_fixture/corrupt/before-settings.json" "$corrupt_persist/.claude/settings.json"; then
+    test_pass "a non-JSON settings.json is left byte-for-byte unchanged"
+else
+    test_fail "a non-JSON settings.json is left byte-for-byte unchanged"
+fi
+if ! ls "$corrupt_persist/.claude"/settings.json.tmp.* >/dev/null 2>&1; then
+    test_pass "a rejected settings.json merge leaves no temp file behind"
+else
+    test_fail "a rejected settings.json merge leaves no temp file behind"
+fi
+
+# (2a) A valid, empty settings.json gains statusLine and stays valid JSON.
+plain_persist="$statusline_fixture/plain/persist/home/dx"
+plain_home="$statusline_fixture/plain/home/dx"
+mkdir -p "$plain_persist/.claude" "$plain_home"
+printf '%s\n' '{}' > "$plain_persist/.claude/settings.json"
+creds_ln_shim
+dx_ai_setup_credentials "$plain_persist" "$plain_home" >/dev/null 2>&1
+plain_status=$?
+creds_ln_unshim
+if [ "$plain_status" -eq 0 ] \
+    && jq -e '.statusLine.command == "dx-claude-statusline"' "$plain_persist/.claude/settings.json" >/dev/null 2>&1; then
+    test_pass "a valid empty settings.json gains statusLine"
+else
+    test_fail "a valid empty settings.json gains statusLine"
+fi
+if jq empty "$plain_persist/.claude/settings.json" >/dev/null 2>&1; then
+    test_pass "settings.json remains valid JSON after gaining statusLine"
+else
+    test_fail "settings.json remains valid JSON after gaining statusLine"
+fi
+
+# (2b) A settings.json that already has statusLine is left byte-identical
+# (the merge is skipped entirely, not re-applied idempotently).
+preset_persist="$statusline_fixture/preset/persist/home/dx"
+preset_home="$statusline_fixture/preset/home/dx"
+mkdir -p "$preset_persist/.claude" "$preset_home"
+printf '%s\n' '{"statusLine":{"type":"command","command":"dx-claude-statusline"}}' > "$preset_persist/.claude/settings.json"
+cp "$preset_persist/.claude/settings.json" "$statusline_fixture/preset/before-settings.json"
+creds_ln_shim
+dx_ai_setup_credentials "$preset_persist" "$preset_home" >/dev/null 2>&1
+preset_status=$?
+creds_ln_unshim
+if [ "$preset_status" -eq 0 ] \
+    && cmp -s "$statusline_fixture/preset/before-settings.json" "$preset_persist/.claude/settings.json"; then
+    test_pass "a settings.json that already has statusLine is left byte-identical"
+else
+    test_fail "a settings.json that already has statusLine is left byte-identical"
+fi
+rm -rf "$statusline_fixture"
+
 # Reinstall the fixture-cleanup trap the blocks above replaced.
 trap 'chmod -R u+w "$ai_fixture" 2>/dev/null || true; rm -rf "$ai_fixture"' EXIT
 
