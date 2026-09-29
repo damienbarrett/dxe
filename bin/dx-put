@@ -3,6 +3,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+
+# Idempotently create a guest directory and hand ownership to dx.
+dx_put_ensure_guest_dir() {
+    local guest_dir="$1"
+    dx_runtime_exec "$DX_CONTAINER_NAME" bash -c '[ -d "$1" ] || (mkdir -p "$1" && chown dx:dx "$1")' -- "$guest_dir"
+}
+
+put_main() {
 dx_require_container_cli
 
 SOURCE="${1:-}"
@@ -19,12 +27,6 @@ if [ ! -e "$SOURCE" ]; then
 fi
 
 echo "Copying $SOURCE to $DX_CONTAINER_NAME:$DEST"
-
-# Idempotently create a guest directory and hand ownership to dx.
-dx_put_ensure_guest_dir() {
-    local guest_dir="$1"
-    dx_runtime_exec "$DX_CONTAINER_NAME" bash -c '[ -d "$1" ] || (mkdir -p "$1" && chown dx:dx "$1")' -- "$guest_dir"
-}
 
 if [ -d "$SOURCE" ]; then
     # Directory: standard cp -r semantics. A destination ending in / or
@@ -65,3 +67,5 @@ else
     dx_runtime_exec -i "$DX_CONTAINER_NAME" bash -c 'cat > "$1"' -- "$FINAL_DEST" < "$SOURCE"
     dx_runtime_exec "$DX_CONTAINER_NAME" chown dx:dx "$FINAL_DEST"
 fi
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then put_main "$@"; fi
