@@ -4,6 +4,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 "$SCRIPT_DIR/test_refactor_contracts.sh"
 "$SCRIPT_DIR/test_refactor_state_machines.sh"
+"$SCRIPT_DIR/test_host_util.sh"
 "$SCRIPT_DIR/test_bootstrap_publication.sh"
 "$SCRIPT_DIR/test_persist_backup_select.sh"
 "$SCRIPT_DIR/test_dx_backup.sh"

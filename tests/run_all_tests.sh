@@ -16,7 +16,7 @@ SKIP_INTEGRATION=false
 # Every section this runner can dispatch. An unknown --section= must fail rather
 # than report success over an empty run: tests/run-tier.sh selects whole tiers by
 # section number, so a silent no-op would shrink a tier without failing CI.
-KNOWN_SECTIONS="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35"
+KNOWN_SECTIONS="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36"
 
 for arg in "$@"; do
     case $arg in
@@ -30,7 +30,7 @@ for arg in "$@"; do
             echo "Usage: $0 [--section=N] [--skip-integration]"
             echo ""
             echo "Options:"
-            echo "  --section=N         Run only section N (0-35)"
+            echo "  --section=N         Run only section N (0-36)"
             echo "  --skip-integration  Skip integration tests and live checks"
             echo "  --help              Show this help message"
             exit 0
@@ -101,6 +101,8 @@ run_test "$SCRIPT_DIR/test_bootstrap_publication.sh" "22"
 run_test "$SCRIPT_DIR/test_harness.sh" "34"
 # WP1.5 / Fable D3: the two-number coverage metric, fixture-driven, no kcov.
 run_test "$SCRIPT_DIR/test_coverage_metric.sh" "35"
+# WP4.2 / Fable A6: dx_wait_until with an injectable clock.
+run_test "$SCRIPT_DIR/test_host_util.sh" "36"
 
 # Remaining integration tests (require the running guest or Linux)
 if [ "$SKIP_INTEGRATION" = false ]; then
