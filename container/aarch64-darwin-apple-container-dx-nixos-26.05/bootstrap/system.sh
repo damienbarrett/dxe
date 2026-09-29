@@ -5,7 +5,7 @@
 # picks: the official base creates /nix/var/nix/profiles/per-user/root/profile
 # (not on the image PATH), while other layouts use the XDG state dir or the
 # legacy ~/.nix-profile link. Resolve every candidate that exists to its
-# concrete /nix/store path -- setup_nix_volume (§2) remounts the persistent
+# concrete /nix/store path -- populate_prepared_nix_volume remounts the persistent
 # volume over /nix, replacing /nix/var, so profile symlinks dangle afterwards
 # while resolved store paths survive the pre-remount store merge.
 # /etc/os-release is world-readable by specification, and unprivileged guest

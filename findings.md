@@ -226,7 +226,7 @@ Every review ID and where it lands.
 
 ### WP4 — Seams
 
-- [ ] **WP4.1** Main-guarded entrypoints: `<name>_main` + `BASH_SOURCE`
+- [x] a570257..32dc43d **WP4.1** Main-guarded entrypoints: `<name>_main` + `BASH_SOURCE`
   guard, one file per commit, starting `dx-mount`, `dx-sync-bootstrap`,
   `dx-status`, `dx-herdr`, `dx-create-container`, `dx-wait-ssh`; then the
   rest. Remove each from `exclusions.txt` as it lands. *Red:* contract that
@@ -235,7 +235,7 @@ Every review ID and where it lands.
 - [ ] **WP4.2** `dx_wait_until <timeout> <interval> <cmd…>` with `DX_SLEEP`;
   migrate the seven loops one per commit; `dx-sync-bootstrap` honours
   `DX_BOOTSTRAP_WAIT_TIMEOUT`. (Fable A6)
-- [ ] **WP4.3** Config registry: validator rejects unknown names;
+- [x] 2f734a7..b6ddceb **WP4.3** Config registry: validator rejects unknown names;
   `DX_BOOTSTRAP_SOURCE` default independent of field order; runtime × storage
   × arch compatibility matrix and distinct volume roles enforced at
   resolution; then one `DXE_CONFIG_REGISTRY` table and a generated defaults
@@ -264,11 +264,11 @@ Every review ID and where it lands.
 
 ### WP6 — Astra correctness series (fault-injection fixtures from WP1)
 
-- [ ] **WP6.1** Backup scan completeness is a contract: traversal/Git/stat/
+- [x] fc29467..1faf347 **WP6.1** Backup scan completeness is a contract: traversal/Git/stat/
   hash errors abort; no mirror removal or manifest publish unless the whole
   selection succeeded. *Red:* `chmod 000` subtree leaves mirror and manifest
   intact (run unprivileged). (Astra F1)
-- [ ] **WP6.2** Detached-HEAD and stash/tag reachability in whole-repo
+- [x] 321c4db **WP6.2** Detached-HEAD and stash/tag reachability in whole-repo
   selection. *Red:* detached local commit yields entries and `.git`. (Astra F2)
 - [ ] **WP6.3** Restore directory selection joins paths as data. *Red:*
   `a&b`, `#`, backslash, leading hyphen. (Astra F9)
@@ -365,3 +365,8 @@ Every review ID and where it lands.
 - **2026-09-30** WP3.4 landed (addcb12, de9fefe): tunnel identity read from `~/.local/state/dxe/<container>/host-identity`, fails closed, zero dials on the tunnel path; `dx_profile_state_segment` shared by tunnels, backups and known-hosts; the adapter suite now isolates HOME (it had started writing real state). Accepted limitation to record: the daemon-id cache is scoped by container name only; every lifecycle preflight (`dx_runtime_docker_available`) still dials live and rewrites it, so only the tunnel path reads it without dialling, which is the intended fail-closed behaviour.
 - **2026-09-30** WP1.1 landed: `tests/lib/harness.sh` (results file, `expect_*`, `skip --class`, `finish`), `test_helpers.sh` shims, suites 34 (harness) and 35 (coverage metric) registered in all runners. Verified serially: sections 34, 35, 9, 21, 3, 17, 10, 20, 19, 0, 13, 22, 33, 28, 29 + contracts + Bash 3.2. Two section 22 and one section 21 wall-clock cases fail on this host with and without the change (A/B tested): the host carries a load average near 370 from 59 long-running `agy` processes outside this work, so timing assertions here are not trustworthy (Fable D10); CI is the arbiter for them. `scope_exec_lines_floor` still 0: local kcov run next.
 - **2026-09-30** First local kcov run (Apple runtime provider, image builds and runs): the isolated image had no `jq`, so section 17 failed 5 cases under coverage once WP3.1 made `dx_ai_setup_credentials` fail closed on an unparseable file (the old code silently emptied `settings.json` when `jq` was absent). `jq` added to `tests/coverage/Dockerfile`; rerun pending for the metric floor.
+- **2026-09-30** WP4.1 landed (33 commits, through 32dc43d): every `bin/dx*` entrypoint has `<name>_main` and the `BASH_SOURCE` guard; the contract in `test_refactor_contracts.sh` sources each one from a scratch copy of `bin/` under fakes and a watchdog. Exclusions unchanged until measured; the agent found the probe must not source the real tree (`dx-create-keys` would write a real keypair into the checkout).
+- **2026-09-30** WP4.3 landed (2f734a7, c6572ae, 4193b52, dc8ff21, b6ddceb): unknown fields rejected; `DX_BOOTSTRAP_SOURCE` default independent of field order; runtime × storage matrix (`apple:apple-image`, `docker-ssh:direct-volume` only) and pairwise-distinct volume roles enforced at resolution; one `DXE_CONFIG_REGISTRY` table backs the config API; `docs/gen-config-table.sh` generates the defaults table checked by section 10. The matrix exposed 17 adapter-suite fixtures that omitted the storage mode (fixed); all real QNAP profiles already set it.
+- **2026-09-30** Second local kcov run: section 17 green with `jq`; the run then failed in `test_sourceable_coverage.sh` (~line 1923) because its probe of the dead `setup_nix_volume_impl` now hits WP3.2's real mount check inside the container. Deletion of the dead functions and their nine probes (Fable B6.7 / D8, WP8.1) pulled forward as its own task; coverage floor still unmeasured.
+- **2026-09-30** WP6.1/WP6.2 landed (fc29467, d94da3d, 321c4db, 1faf347): the selector checks every find/git/stat/hash result, names each failing path, and exits non-zero; the standalone entrypoint has errexit; reachability is `git rev-list --all --not --remotes` (HEAD, stash and tags included; policy documented in the module: stash is at-risk, a local tag on a pushed commit is not, a query failure retains the whole repo and reports failure). Selector 77 → 94 cases, backup 50 → 53. Correction to Astra F1: `bin/dx-backup` already aborted on a failed listing (plain statement under errexit); the host test landed as a regression guard only.
+- **2026-09-30** Dead `setup_nix_volume{,_impl}` and their nine coverage-only probes deleted (11f5480, WP8.1 item pulled forward); stale comment in `system.sh` updated.
