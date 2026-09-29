@@ -54,6 +54,26 @@
 # neither. See dx_pbs_path_denied.
 DX_PBS_BUILTIN_COMPONENT_DENY=(node_modules target .direnv result 'result-*' __pycache__ .cache dist build .venv .tox .pytest_cache .mypy_cache .pnpm-store '.Trash-*' .tmp)
 
+# The SAME list, rendered ONCE as a `find` prune predicate:
+# ( -name a -o -name b -o ... ). Generated here, from
+# DX_PBS_BUILTIN_COMPONENT_DENY, rather than hand-duplicated as a literal
+# `-name`/`-o` chain at each of the four `find` call sites below
+# (dx_pbs_walk_repo_files's two branches, dx_pbs_list_outside_repos's two
+# branches): five independent hand-synced copies (the four plus this
+# variable) can silently drift the moment one is edited and the others are
+# not -- exactly the failure mode the matcher/walker equivalence property
+# test in tests/test_persist_backup_select.sh guards against. Every `find`
+# site below wraps this in its OWN `\( ... \)` group (a `-prune` predicate
+# needs the parens at the use site, not baked into the array, so a site
+# that ALSO prunes `.git` or nested-repo paths can `-o` them into the same
+# group).
+DX_PBS_COMPONENT_PRUNE=()
+for _dx_pbs_p in "${DX_PBS_BUILTIN_COMPONENT_DENY[@]}"; do
+    [ "${#DX_PBS_COMPONENT_PRUNE[@]}" -eq 0 ] || DX_PBS_COMPONENT_PRUNE+=(-o)
+    DX_PBS_COMPONENT_PRUNE+=(-name "$_dx_pbs_p")
+done
+unset _dx_pbs_p
+
 # Built-in path-shaped deny patterns, matched as an ANCHORED glob against the
 # full path relative to the backup root (e.g. /persist). Unlike the component
 # list above, these describe a specific location, not a bare directory name.
@@ -257,20 +277,12 @@ dx_pbs_walk_repo_files() {
     ( cd "$dir" 2>/dev/null || exit 0
       if [ "$keep_git" = keep-git ]; then
           find . \( \
-                -name node_modules -o -name target -o -name .direnv -o \
-                -name result -o -name 'result-*' -o -name __pycache__ -o \
-                -name .cache -o -name dist -o -name build -o -name .venv -o \
-                -name .tox -o -name .pytest_cache -o -name .mypy_cache -o \
-                -name .pnpm-store -o -name '.Trash-*' -o -name .tmp \
+                "${DX_PBS_COMPONENT_PRUNE[@]}" \
                 "${nested_prune[@]+"${nested_prune[@]}"}" \
             \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
       else
           find . \( -name .git -o \( \
-                -name node_modules -o -name target -o -name .direnv -o \
-                -name result -o -name 'result-*' -o -name __pycache__ -o \
-                -name .cache -o -name dist -o -name build -o -name .venv -o \
-                -name .tox -o -name .pytest_cache -o -name .mypy_cache -o \
-                -name .pnpm-store -o -name '.Trash-*' -o -name .tmp \
+                "${DX_PBS_COMPONENT_PRUNE[@]}" \
                 "${nested_prune[@]+"${nested_prune[@]}"}" \
             \) \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
       fi | while IFS= read -r -d '' entry; do printf '%s\0' "${entry#./}"; done
@@ -474,19 +486,11 @@ dx_pbs_list_outside_repos() {
 
     if [ "${#prune_expr[@]}" -gt 0 ]; then
         find "$root" \( \( "${prune_expr[@]}" \) -o \
-                -name node_modules -o -name target -o -name .direnv -o \
-                -name result -o -name 'result-*' -o -name __pycache__ -o \
-                -name .cache -o -name dist -o -name build -o -name .venv -o \
-                -name .tox -o -name .pytest_cache -o -name .mypy_cache -o \
-                -name .pnpm-store -o -name '.Trash-*' -o -name .tmp \
+                "${DX_PBS_COMPONENT_PRUNE[@]}" \
             \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
     else
         find "$root" \( \
-                -name node_modules -o -name target -o -name .direnv -o \
-                -name result -o -name 'result-*' -o -name __pycache__ -o \
-                -name .cache -o -name dist -o -name build -o -name .venv -o \
-                -name .tox -o -name .pytest_cache -o -name .mypy_cache -o \
-                -name .pnpm-store -o -name '.Trash-*' -o -name .tmp \
+                "${DX_PBS_COMPONENT_PRUNE[@]}" \
             \) -prune -o \( -type f -o -type l \) -print0 2>/dev/null
     fi | while IFS= read -r -d '' found; do
         relpath="${found#"$root"/}"
