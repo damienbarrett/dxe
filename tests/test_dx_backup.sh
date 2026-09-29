@@ -22,7 +22,16 @@ source "$BASE_DIR/bin/lib/dx-backup.sh"
 # only, no I/O at import time.
 # shellcheck source=../bin/lib/dx-runtime.sh
 source "$BASE_DIR/bin/lib/dx-runtime.sh"
+# Astra F5 / WP6.6: dx_lock_acquire/dx_lock_release/dx_process_start_identity,
+# needed in-process below to simulate a concurrently-held backup/restore lock
+# (RED 3) without spawning a second real process.
+# shellcheck source=../bin/lib/dx-host-util.sh
+source "$BASE_DIR/bin/lib/dx-host-util.sh"
 GUEST="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
+# Captured before PATH is ever extended with FAKE_DIR below, so a fake `ln`
+# installed later (Astra F5 RED 2, simulating a failed publish) can still
+# `exec` the REAL `ln` for every call it does not itself intercept.
+REAL_LN="$(command -v ln)"
 test_section "Persist backup: dx-backup capture (fake-container boundary)"
 
 FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dx-backup-test.XXXXXX")"
@@ -80,7 +89,7 @@ if printf '%s\n' "$dry_out" | stdin_matches -F '1 files, 6 bytes would be transf
 # --- First real run: transfers the set, writes manifest.tsv atomically. ---
 first_out="$("$BASE_DIR/bin/dx-backup" 2>&1)"
 if printf '%s\n' "$first_out" | stdin_matches -F '1 files, 6 bytes transferred.'; then test_pass "first run transfers the full at-risk set"; else test_fail "first run transfers the full at-risk set (got: $first_out)"; fi
-assert_file_exists "$BACKUP_ROOT/manifest.tsv" "manifest.tsv exists after the first run"
+assert_file_exists "$BACKUP_ROOT/current/manifest.tsv" "manifest.tsv exists after the first run"
 assert_file_exists "$BACKUP_ROOT/current/home/dx/loose.txt" "the mirrored file exists under current/"
 if [ "$(cat "$BACKUP_ROOT/current/home/dx/loose.txt")" = hello ]; then test_pass "the mirrored file has the right content"; else test_fail "the mirrored file has the right content"; fi
 assert_file_exists "$BACKUP_ROOT/last-run.log" "last-run.log exists after a real run"
@@ -111,7 +120,7 @@ fi
 [ -d "$BACKUP_ROOT/current" ] && test_pass "current/ itself always survives mirror pruning" || test_fail "current/ itself always survives mirror pruning"
 
 # --- Interruption (a failed fetch) leaves the previous manifest intact. ---
-manifest_before_interrupt="$(cat "$BACKUP_ROOT/manifest.tsv")"
+manifest_before_interrupt="$(cat "$BACKUP_ROOT/current/manifest.tsv")"
 printf 'brand new content that will never arrive\n' > "$FIXTURE/persist/home/dx/interrupt-me.txt"
 fake_tool_write "$FAKE_DIR" container '
 case "${1:-}" in
@@ -135,7 +144,7 @@ interrupted_out="$("$BASE_DIR/bin/dx-backup" 2>&1)"
 interrupted_rc=$?
 set -e
 [ "$interrupted_rc" -ne 0 ] && test_pass "a failed fetch reports a nonzero exit status" || test_fail "a failed fetch reports a nonzero exit status (got: $interrupted_out)"
-if [ "$(cat "$BACKUP_ROOT/manifest.tsv")" = "$manifest_before_interrupt" ]; then test_pass "interruption leaves the previous manifest intact"; else test_fail "interruption leaves the previous manifest intact"; fi
+if [ "$(cat "$BACKUP_ROOT/current/manifest.tsv")" = "$manifest_before_interrupt" ]; then test_pass "interruption leaves the previous manifest intact"; else test_fail "interruption leaves the previous manifest intact"; fi
 if [ ! -e "$BACKUP_ROOT/current/home/dx/interrupt-me.txt" ]; then test_pass "interruption does not leave a partial file behind"; else test_fail "interruption does not leave a partial file behind"; fi
 rm -f "$FIXTURE/persist/home/dx/interrupt-me.txt"
 
@@ -177,7 +186,7 @@ fi
 exit 1
 '
 DX_BACKUP_DIR="$listing_fail_backup_dir" "$BASE_DIR/bin/dx-backup" >/dev/null
-listing_fail_manifest_before="$(cat "$listing_fail_backup_dir/$DX_CONTAINER_NAME/manifest.tsv")"
+listing_fail_manifest_before="$(cat "$listing_fail_backup_dir/$DX_CONTAINER_NAME/current/manifest.tsv")"
 
 fake_tool_write "$FAKE_DIR" container '
 case "${1:-}" in
@@ -213,7 +222,7 @@ if [ -e "$listing_fail_backup_dir/$DX_CONTAINER_NAME/current/home/dx/keepme.txt"
 else
     test_fail "WP6.1: a mirror entry the partial listing omits survives a failed guest listing"
 fi
-if [ "$(cat "$listing_fail_backup_dir/$DX_CONTAINER_NAME/manifest.tsv")" = "$listing_fail_manifest_before" ]; then
+if [ "$(cat "$listing_fail_backup_dir/$DX_CONTAINER_NAME/current/manifest.tsv")" = "$listing_fail_manifest_before" ]; then
     test_pass "WP6.1: the manifest is not rewritten when the guest listing fails"
 else
     test_fail "WP6.1: the manifest is not rewritten when the guest listing fails"
@@ -476,7 +485,7 @@ printf 'home/dx/dup-me.txt\t11\t0\tdeadbeef\nhome/dx/dup-me.txt\t11\t0\tdeadbeef
 dup_backup_dir="$FIXTURE/dup-backups/$DX_CONTAINER_NAME"
 rm -rf "$FIXTURE/dup-backups"
 set +e
-dx_backup_fetch_paths "$DX_CONTAINER_NAME" "$dup_backup_dir" "$dup_fetch"
+dx_backup_fetch_paths "$DX_CONTAINER_NAME" "$dup_backup_dir/current" "$dup_fetch"
 dup_rc=$?
 set -e
 if [ "$dup_rc" -eq 0 ]; then
@@ -734,6 +743,529 @@ rm -f "$FIXTURE/persist/home/dx/default-drop-me.marker" "$FIXTURE/persist/home/d
 rm -rf "$XDG_CONFIG_HOME" "$DX_BACKUP_DIR"
 unset XDG_CONFIG_HOME
 export DX_BACKUP_DIR="$FIXTURE/backups"
+
+# ---------------------------------------------------------------------------
+# Astra F5 / WP6.6 (docs/reviews/2026-09-29-astra.md, "F5"): a backup is now
+# published as a whole generation, atomically, never extracted straight over
+# the currently-published mirror -- so a truncated transfer, a hash mismatch
+# between listing and transfer, a failed publish, or lock contention with a
+# concurrent backup/restore can never leave `current` (or its manifest)
+# showing a partly-applied run. Each RED case below runs in its own isolated
+# fixture (own DX_BACKUP_DIR/persist dir), so none of them disturb
+# test-container's own long-lived shared mirror state built up above.
+# ---------------------------------------------------------------------------
+
+# --- RED 1: a truncated archive after the first changed file. Two files are
+# changed on the guest; the archive exec streams back a complete, valid tar
+# of only the FIRST one, then exits non-zero without ever starting the
+# second -- exactly as if the guest process died right after finishing one
+# file. The previously published generation (and its manifest, and its
+# content) must remain byte-for-byte exactly as they were. ---
+F5_1_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-f5-truncate-test.XXXXXX")"
+F5_1_PERSIST="$F5_1_ROOT/persist"
+F5_1_BACKUP_DIR="$F5_1_ROOT/backups"
+mkdir -p "$F5_1_PERSIST/home/dx"
+printf 'alpha-v1\n' > "$F5_1_PERSIST/home/dx/alpha.txt"
+printf 'beta-v1\n' > "$F5_1_PERSIST/home/dx/beta.txt"
+
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$F5_1_PERSIST"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :;
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+DX_BACKUP_DIR="$F5_1_BACKUP_DIR" "$BASE_DIR/bin/dx-backup" >/dev/null
+F5_1_MIRROR="$F5_1_BACKUP_DIR/test-container"
+f5_1_gen1="$(readlink "$F5_1_MIRROR/current")"
+cp -R "$F5_1_MIRROR/current/" "$F5_1_ROOT/before-current/"
+
+printf 'alpha-v2\n' > "$F5_1_PERSIST/home/dx/alpha.txt"
+printf 'beta-v2\n' > "$F5_1_PERSIST/home/dx/beta.txt"
+
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$F5_1_PERSIST"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    case "$*" in
+        *"--hard-dereference"*)
+            (cd "$FIX_PERSIST" && tar -cf - home/dx/alpha.txt)
+            exit 1
+            ;;
+    esac
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+set +e
+f5_1_out="$(DX_BACKUP_DIR="$F5_1_BACKUP_DIR" "$BASE_DIR/bin/dx-backup" 2>&1)"
+f5_1_rc=$?
+set -e
+if [ "$f5_1_rc" -ne 0 ]; then
+    test_pass "Astra F5 RED 1: a truncated archive after the first changed file makes dx-backup exit non-zero"
+else
+    test_fail "Astra F5 RED 1: a truncated archive after the first changed file makes dx-backup exit non-zero (got: $f5_1_out)"
+fi
+if [ "$(readlink "$F5_1_MIRROR/current")" = "$f5_1_gen1" ]; then
+    test_pass "Astra F5 RED 1: current still points at the previously published generation"
+else
+    test_fail "Astra F5 RED 1: current still points at the previously published generation"
+fi
+if diff -rq "$F5_1_ROOT/before-current" "$F5_1_MIRROR/current" >/dev/null 2>&1; then
+    test_pass "Astra F5 RED 1: the previous mirror content (and its manifest) is byte-identical after the truncated run"
+else
+    test_fail "Astra F5 RED 1: the previous mirror content (and its manifest) is byte-identical after the truncated run"
+fi
+rm -rf "$F5_1_ROOT"
+
+# --- RED 2: an interrupted publication. The pointer-switch command itself
+# fails (a fake `ln` that intercepts only `-sfn` calls, standing in for a
+# full disk / permissions error / a process killed mid-switch -- and never
+# touches the filesystem at all when it does, so there is nothing for it to
+# leave half-done); the previously published generation must remain
+# published and restorable. ---
+F5_2_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-f5-publish-test.XXXXXX")"
+F5_2_PERSIST="$F5_2_ROOT/persist"
+F5_2_BACKUP_DIR="$F5_2_ROOT/backups"
+mkdir -p "$F5_2_PERSIST/home/dx"
+printf 'gamma-v1\n' > "$F5_2_PERSIST/home/dx/gamma.txt"
+
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$F5_2_PERSIST"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :;
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+DX_BACKUP_DIR="$F5_2_BACKUP_DIR" "$BASE_DIR/bin/dx-backup" >/dev/null
+F5_2_MIRROR="$F5_2_BACKUP_DIR/test-container"
+f5_2_gen1="$(readlink "$F5_2_MIRROR/current")"
+
+printf 'gamma-v2\n' > "$F5_2_PERSIST/home/dx/gamma.txt"
+
+fake_tool_write "$FAKE_DIR" ln '
+case " $* " in
+    *" -sfn "*) exit 1 ;;
+    *) exec "'"$REAL_LN"'" "$@" ;;
+esac
+'
+set +e
+f5_2_out="$(DX_BACKUP_DIR="$F5_2_BACKUP_DIR" "$BASE_DIR/bin/dx-backup" 2>&1)"
+f5_2_rc=$?
+set -e
+rm -f "$FAKE_DIR/ln"
+if [ "$f5_2_rc" -ne 0 ]; then
+    test_pass "Astra F5 RED 2: a failed pointer switch makes dx-backup exit non-zero"
+else
+    test_fail "Astra F5 RED 2: a failed pointer switch makes dx-backup exit non-zero (got: $f5_2_out)"
+fi
+if [ "$(readlink "$F5_2_MIRROR/current")" = "$f5_2_gen1" ]; then
+    test_pass "Astra F5 RED 2: current still points at the previously published generation after a failed publish"
+else
+    test_fail "Astra F5 RED 2: current still points at the previously published generation after a failed publish"
+fi
+if [ "$(cat "$F5_2_MIRROR/current/home/dx/gamma.txt")" = gamma-v1 ]; then
+    test_pass "Astra F5 RED 2: the previous generation's content is untouched after a failed publish"
+else
+    test_fail "Astra F5 RED 2: the previous generation's content is untouched after a failed publish"
+fi
+rm -f "$F5_2_PERSIST/home/dx/gamma.txt"
+DX_BACKUP_DIR="$F5_2_BACKUP_DIR" "$BASE_DIR/bin/dx-restore" >/dev/null
+if [ "$(cat "$F5_2_PERSIST/home/dx/gamma.txt")" = gamma-v1 ]; then
+    test_pass "Astra F5 RED 2: restore after a failed publish still restores the previous content"
+else
+    test_fail "Astra F5 RED 2: restore after a failed publish still restores the previous content"
+fi
+rm -rf "$F5_2_ROOT"
+
+# --- RED 3: two overlapping backups. The SECOND process, started while the
+# first holds the per-mirror lock, refuses rather than interleaving --
+# simulated by holding the lock in THIS test script's own (still-alive)
+# process, exactly like a genuinely concurrent dx-backup would hold it. A
+# REAL (non---dry-run) invocation: --dry-run/--summary never take this lock
+# at all (they read only the guest listing and the OLD manifest, never
+# `current`, and must create nothing on disk -- see bin/dx-backup's own
+# comment), so only a real run can ever observe contention on it.
+# DX_SLEEP=fake-sleep keeps dx_lock_acquire's own bounded wait fast and
+# deterministic (this codebase's established seam, see
+# tests/test_bootstrap_publication.sh). ---
+F5_3_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-f5-lock-test.XXXXXX")"
+F5_3_PERSIST="$F5_3_ROOT/persist"
+F5_3_BACKUP_DIR="$F5_3_ROOT/backups"
+mkdir -p "$F5_3_PERSIST/home/dx" "$F5_3_BACKUP_DIR/test-container"
+printf 'delta-v1\n' > "$F5_3_PERSIST/home/dx/delta.txt"
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$F5_3_PERSIST"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :;
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+fake_tool_write "$FAKE_DIR" fake-sleep 'exit 0'
+dx_lock_acquire "$F5_3_BACKUP_DIR/test-container/.lock" 1
+set +e
+f5_3_out="$(DX_BACKUP_DIR="$F5_3_BACKUP_DIR" DX_SLEEP=fake-sleep "$BASE_DIR/bin/dx-backup" 2>&1)"
+f5_3_rc=$?
+set -e
+dx_lock_release "$F5_3_BACKUP_DIR/test-container/.lock"
+if [ "$f5_3_rc" -ne 0 ]; then
+    test_pass "Astra F5 RED 3: a second dx-backup started while the first holds the lock refuses rather than interleaving"
+else
+    test_fail "Astra F5 RED 3: a second dx-backup started while the first holds the lock refuses rather than interleaving (got: $f5_3_out)"
+fi
+if printf '%s\n' "$f5_3_out" | stdin_matches -F 'lock'; then
+    test_pass "Astra F5 RED 3: the refusal names the lock, a clear message rather than a generic failure"
+else
+    test_fail "Astra F5 RED 3: the refusal names the lock, a clear message rather than a generic failure (got: $f5_3_out)"
+fi
+rm -rf "$F5_3_ROOT"
+
+# --- RED 4: a file changed on the guest between the LISTING pass and the
+# ARCHIVE transfer -- the classic TOCTOU this generation model exists to
+# close -- is reported and the snapshot is never committed as `current`.
+# Forged directly, rather than trying to win a real race: the fake
+# selector-intercepting exec reports a listing whose hash does NOT match
+# the file's real (transferred) bytes, decoupling "what the listing
+# claimed" from "what actually arrived" deterministically. The file being
+# the mirror's ONLY entry also means the previous generation's carry list is
+# empty (nothing survives to carry forward -- dx_backup_generation_carry_forward's
+# own "skip list covers the whole previous generation" case). ---
+F5_4_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-f5-hash-test.XXXXXX")"
+F5_4_PERSIST="$F5_4_ROOT/persist"
+F5_4_BACKUP_DIR="$F5_4_ROOT/backups"
+mkdir -p "$F5_4_PERSIST/home/dx"
+printf 'race-me-v1\n' > "$F5_4_PERSIST/home/dx/race-me.txt"
+
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$F5_4_PERSIST"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :;
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+DX_BACKUP_DIR="$F5_4_BACKUP_DIR" "$BASE_DIR/bin/dx-backup" >/dev/null
+F5_4_MIRROR="$F5_4_BACKUP_DIR/test-container"
+f5_4_gen1="$(readlink "$F5_4_MIRROR/current")"
+
+printf 'race-me-v2\n' > "$F5_4_PERSIST/home/dx/race-me.txt"
+f5_4_size="$(wc -c < "$F5_4_PERSIST/home/dx/race-me.txt" | tr -d '[:space:]')"
+
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$F5_4_PERSIST"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    case "$*" in
+        *dx-persist-backup-select.sh*)
+            printf "home/dx/race-me.txt\t'"$f5_4_size"'\t0\tSTALE0STALE0STALE0STALE0STALE0STALE0STALE0STALE0\n"
+            exit 0
+            ;;
+    esac
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :;
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+set +e
+f5_4_out="$(DX_BACKUP_DIR="$F5_4_BACKUP_DIR" "$BASE_DIR/bin/dx-backup" 2>&1)"
+f5_4_rc=$?
+set -e
+if [ "$f5_4_rc" -ne 0 ]; then
+    test_pass "Astra F5 RED 4: a file whose transferred bytes do not match the listing's own hash makes dx-backup exit non-zero"
+else
+    test_fail "Astra F5 RED 4: a file whose transferred bytes do not match the listing's own hash makes dx-backup exit non-zero (got: $f5_4_out)"
+fi
+if printf '%s\n' "$f5_4_out" | stdin_matches -F 'home/dx/race-me.txt'; then
+    test_pass "Astra F5 RED 4: the mismatch is reported by path"
+else
+    test_fail "Astra F5 RED 4: the mismatch is reported by path (got: $f5_4_out)"
+fi
+if [ "$(readlink "$F5_4_MIRROR/current")" = "$f5_4_gen1" ]; then
+    test_pass "Astra F5 RED 4: the previously published generation stays current -- the inconsistent snapshot is never committed"
+else
+    test_fail "Astra F5 RED 4: the previously published generation stays current -- the inconsistent snapshot is never committed"
+fi
+if [ "$(cat "$F5_4_MIRROR/current/home/dx/race-me.txt")" = race-me-v1 ]; then
+    test_pass "Astra F5 RED 4: the previous generation's content is untouched"
+else
+    test_fail "Astra F5 RED 4: the previous generation's content is untouched"
+fi
+f5_4_gen_count="$(find "$F5_4_MIRROR/generations" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d '[:space:]')"
+if [ "$f5_4_gen_count" -eq 1 ]; then
+    test_pass "Astra F5 RED 4: the unverified generation is not left behind either"
+else
+    test_fail "Astra F5 RED 4: the unverified generation is not left behind either (found $f5_4_gen_count generation(s))"
+fi
+rm -rf "$F5_4_ROOT"
+
+# Restore the well-behaved fake container, since RED 4's isolated block above
+# was the last thing in this file to install a non-default one.
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$FIXTURE"'/persist"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container container-a container-b; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :;
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+
+# --- Astra F5 / WP6.6: pruning actually deletes older generations, not just
+# retains the current pair. test-container's own shared mirror (built up
+# across this whole file) has had many successful real dx-backup runs by
+# this point, each publishing a new generation and pruning down to the
+# current one plus the one before it -- never accumulating without bound. ---
+f5_prune_gen_count="$(find "$BACKUP_ROOT/generations" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d '[:space:]')"
+if [ "${f5_prune_gen_count:-0}" -le 2 ]; then
+    test_pass "Astra F5 / WP6.6: generations/ never accumulates more than the current generation plus the one it replaced (found $f5_prune_gen_count)"
+else
+    test_fail "Astra F5 / WP6.6: generations/ never accumulates more than the current generation plus the one it replaced (found $f5_prune_gen_count)"
+fi
+
+# ---------------------------------------------------------------------------
+# Astra F5 / WP6.6: direct unit coverage for the generation-management
+# library functions' own edge cases -- branches a full dx-backup CLI run
+# does not naturally reach.
+# ---------------------------------------------------------------------------
+
+# dx_backup_generation_current: a `current` symlink whose target does NOT
+# start with "generations/" (corrupt or foreign state) is treated as "no
+# current generation", never silently trusted.
+BADTARGET_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-badtarget-test.XXXXXX")"
+ln -s /somewhere/else "$BADTARGET_FIXTURE/current"
+if dx_backup_generation_current "$BADTARGET_FIXTURE" >/dev/null 2>&1; then
+    test_fail "dx_backup_generation_current: a current symlink whose target is not under generations/ is refused"
+else
+    test_pass "dx_backup_generation_current: a current symlink whose target is not under generations/ is refused"
+fi
+rm -rf "$BADTARGET_FIXTURE"
+
+# dx_backup_generation_publish: refuses a generation id that does not exist
+# on disk, leaving no pointer behind at all.
+PUBLISH_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-publish-test.XXXXXX")"
+set +e
+dx_backup_generation_publish "$PUBLISH_FIXTURE" no-such-generation 2>/dev/null
+publish_missing_rc=$?
+set -e
+if [ "$publish_missing_rc" -ne 0 ] && [ ! -e "$PUBLISH_FIXTURE/current" ]; then
+    test_pass "dx_backup_generation_publish: refuses to publish a generation that does not exist, leaving no pointer behind"
+else
+    test_fail "dx_backup_generation_publish: refuses to publish a generation that does not exist, leaving no pointer behind (rc=$publish_missing_rc)"
+fi
+
+# dx_backup_generation_publish: a `current` that exists but is NOT a symlink
+# (the shape every mirror created before this generation model existed has)
+# must never be silently mishandled -- this host's own `ln -sfn` was
+# confirmed, while designing this function, to place the new symlink INSIDE
+# such a real directory instead of replacing it (successfully, with no
+# error); publish must refuse loudly instead, leaving that directory's
+# content completely untouched.
+mkdir -p "$PUBLISH_FIXTURE/current/home/dx" "$PUBLISH_FIXTURE/generations/realgen"
+printf 'legacy content\n' > "$PUBLISH_FIXTURE/current/home/dx/legacy.txt"
+printf 'new gen content\n' > "$PUBLISH_FIXTURE/generations/realgen/new.txt"
+set +e
+dx_backup_generation_publish "$PUBLISH_FIXTURE" realgen 2>/dev/null
+publish_legacy_rc=$?
+set -e
+if [ "$publish_legacy_rc" -ne 0 ]; then
+    test_pass "dx_backup_generation_publish: refuses to publish over a pre-existing non-symlink current/"
+else
+    test_fail "dx_backup_generation_publish: refuses to publish over a pre-existing non-symlink current/"
+fi
+if [ ! -L "$PUBLISH_FIXTURE/current" ] && [ "$(cat "$PUBLISH_FIXTURE/current/home/dx/legacy.txt")" = "legacy content" ] && [ ! -e "$PUBLISH_FIXTURE/current/realgen" ]; then
+    test_pass "dx_backup_generation_publish: a refused publish leaves the pre-existing current/ directory completely untouched"
+else
+    test_fail "dx_backup_generation_publish: a refused publish leaves the pre-existing current/ directory completely untouched"
+fi
+rm -rf "$PUBLISH_FIXTURE"
+
+# dx_backup_generation_prune: a backup dir with no generations/ at all, or
+# an empty existing generations/, is a harmless no-op; otherwise it deletes
+# every generation not named to keep.
+PRUNE_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-prune-test.XXXXXX")"
+if dx_backup_generation_prune "$PRUNE_FIXTURE" keep-me; then
+    test_pass "dx_backup_generation_prune: a backup dir with no generations/ at all is a harmless no-op"
+else
+    test_fail "dx_backup_generation_prune: a backup dir with no generations/ at all is a harmless no-op"
+fi
+mkdir -p "$PRUNE_FIXTURE/generations"
+if dx_backup_generation_prune "$PRUNE_FIXTURE" keep-me; then
+    test_pass "dx_backup_generation_prune: an empty existing generations/ is a harmless no-op"
+else
+    test_fail "dx_backup_generation_prune: an empty existing generations/ is a harmless no-op"
+fi
+mkdir -p "$PRUNE_FIXTURE/generations/keep-me" "$PRUNE_FIXTURE/generations/drop-me"
+dx_backup_generation_prune "$PRUNE_FIXTURE" keep-me
+if [ -d "$PRUNE_FIXTURE/generations/keep-me" ] && [ ! -e "$PRUNE_FIXTURE/generations/drop-me" ]; then
+    test_pass "dx_backup_generation_prune: deletes every generation not named to keep, retaining the rest"
+else
+    test_fail "dx_backup_generation_prune: deletes every generation not named to keep, retaining the rest"
+fi
+rm -rf "$PRUNE_FIXTURE"
+
+# dx_backup_generation_carry_forward: a previous generation directory that
+# does not exist at all (defensive: a `current` symlink whose STRING target
+# looks valid but whose generation directory is itself somehow missing) is a
+# harmless no-op.
+CARRY_FIXTURE1="$(mktemp -d "${TMPDIR:-/tmp}/dxe-carry1-test.XXXXXX")"
+: > "$CARRY_FIXTURE1/empty-skip.txt"
+if dx_backup_generation_carry_forward "$CARRY_FIXTURE1/no-such-prev" "$CARRY_FIXTURE1/new1" "$CARRY_FIXTURE1/empty-skip.txt" 2>/dev/null; then
+    test_pass "dx_backup_generation_carry_forward: a nonexistent previous generation directory is a harmless no-op"
+else
+    test_fail "dx_backup_generation_carry_forward: a nonexistent previous generation directory is a harmless no-op"
+fi
+rm -rf "$CARRY_FIXTURE1"
+
+# dx_backup_generation_carry_forward: a directory-precreation failure (the
+# destination's parent is read-only) is reported, not silently ignored.
+CARRY_FIXTURE2="$(mktemp -d "${TMPDIR:-/tmp}/dxe-carry2-test.XXXXXX")"
+mkdir -p "$CARRY_FIXTURE2/prev/sub"
+printf 'x\n' > "$CARRY_FIXTURE2/prev/sub/f.txt"
+mkdir -p "$CARRY_FIXTURE2/new2"
+: > "$CARRY_FIXTURE2/empty-skip.txt"
+chmod 0500 "$CARRY_FIXTURE2/new2"
+set +e
+dx_backup_generation_carry_forward "$CARRY_FIXTURE2/prev" "$CARRY_FIXTURE2/new2/nested" "$CARRY_FIXTURE2/empty-skip.txt" 2>/dev/null
+carry_mkdir_fail_rc=$?
+set -e
+chmod 0700 "$CARRY_FIXTURE2/new2"
+if [ "$carry_mkdir_fail_rc" -ne 0 ]; then
+    test_pass "dx_backup_generation_carry_forward: a directory precreation failure is reported, not silently ignored"
+else
+    test_fail "dx_backup_generation_carry_forward: a directory precreation failure is reported, not silently ignored"
+fi
+rm -rf "$CARRY_FIXTURE2"
+
+# dx_backup_generation_carry_forward: a hard-link failure (something already
+# occupies the destination path) is reported, not silently ignored.
+CARRY_FIXTURE3="$(mktemp -d "${TMPDIR:-/tmp}/dxe-carry3-test.XXXXXX")"
+mkdir -p "$CARRY_FIXTURE3/prev" "$CARRY_FIXTURE3/new3"
+printf 'x\n' > "$CARRY_FIXTURE3/prev/f.txt"
+printf 'already here\n' > "$CARRY_FIXTURE3/new3/f.txt"
+: > "$CARRY_FIXTURE3/empty-skip.txt"
+set +e
+dx_backup_generation_carry_forward "$CARRY_FIXTURE3/prev" "$CARRY_FIXTURE3/new3" "$CARRY_FIXTURE3/empty-skip.txt" 2>/dev/null
+carry_ln_fail_rc=$?
+set -e
+if [ "$carry_ln_fail_rc" -ne 0 ]; then
+    test_pass "dx_backup_generation_carry_forward: a hard-link failure (destination already occupied) is reported, not silently ignored"
+else
+    test_fail "dx_backup_generation_carry_forward: a hard-link failure (destination already occupied) is reported, not silently ignored"
+fi
+rm -rf "$CARRY_FIXTURE3"
+
+# dx_backup_generation_commit: refuses when the freshly minted generation id
+# already exists on disk (an id collision, stubbing dx_backup_generation_new_id
+# to force one deterministically -- this codebase's established pattern for
+# a direct unit test of an otherwise environment-driven id, see
+# test_dx_restore.sh's own dx_runtime_exec/dx_pbs_hash_entry stubs).
+COMMIT_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-commit-collide-test.XXXXXX")"
+mkdir -p "$COMMIT_FIXTURE/generations/collide-id"
+dx_backup_generation_new_id() { printf '%s\n' collide-id; }
+: > "$COMMIT_FIXTURE/empty-listing.tsv"
+: > "$COMMIT_FIXTURE/empty-fetch.tsv"
+: > "$COMMIT_FIXTURE/empty-remove.txt"
+set +e
+dx_backup_generation_commit test-container "$COMMIT_FIXTURE" "$COMMIT_FIXTURE/empty-listing.tsv" "$COMMIT_FIXTURE/empty-fetch.tsv" "$COMMIT_FIXTURE/empty-remove.txt" 2>/dev/null
+collide_rc=$?
+set -e
+unset -f dx_backup_generation_new_id
+if [ "$collide_rc" -ne 0 ]; then
+    test_pass "dx_backup_generation_commit: refuses when the freshly minted generation id already exists on disk"
+else
+    test_fail "dx_backup_generation_commit: refuses when the freshly minted generation id already exists on disk"
+fi
+rm -rf "$COMMIT_FIXTURE"
 
 print_summary
 exit_with_code
