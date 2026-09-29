@@ -234,7 +234,26 @@ run_section_under_skip() {
     rm -f "$marker"
 
     rc=0
-    DXE_STUB_MARKER="$marker" \
+    # DXE_TEST_RESULTS="" (not merely inherited) is deliberate, not
+    # incidental: tests/lib/harness.sh's own header explains that its
+    # lazy-create/export design is safe only because "the runner itself
+    # never records one" before forwarding to `bash "$test_file"` -- an
+    # invariant tests/run_all_tests.sh honours but THIS script does not,
+    # since the sanity/biglist/requires_container cases above already
+    # called test_pass/test_fail and so already exported DXE_TEST_RESULTS
+    # pointing at THIS suite's own results file before we ever get here.
+    # Without the override below, section_file inherits that same path,
+    # appends its cases onto our file, and its own exit_with_code/finish
+    # deletes it out from under us as its last step -- so an unrelated
+    # earlier fail (or even just our own prior pass lines) leaks into
+    # section_file's pass/fail tally, and our own later print_summary
+    # under-counts whatever it recreates after the deletion. Reproduced
+    # directly: with tests/test_section16_persist_storage.sh's now-fixed
+    # config-registry assertion still broken, this exact leak made
+    # test_section17_dx_ai_runtime.sh exit 1 with zero failing cases of its
+    # own, and made "a dispatchable --section still runs" below fail too.
+    DXE_TEST_RESULTS="" \
+        DXE_STUB_MARKER="$marker" \
         DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" \
         PATH="$STUB_DIR:$PATH" \
         SKIP_INTEGRATION=true \
@@ -264,7 +283,13 @@ run_section_under_skip "$SCRIPT_DIR/test_section17_dx_ai_runtime.sh" "section 17
 # silent no-op would let a tier shrink to nothing while CI still went green --
 # the same "reports success without doing the work" failure this section exists
 # to catch.
-unknown_output="$("$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=nonexistent 2>&1)"
+#
+# DXE_TEST_RESULTS="" below, same reasoning as run_section_under_skip above:
+# by this point our own preamble cases have already exported it pointing at
+# THIS suite's results file, and --section=1 really does dispatch a whole
+# suite (unlike --section=nonexistent, which errors out before sourcing
+# test_helpers.sh at all) that would otherwise inherit and delete it.
+unknown_output="$(DXE_TEST_RESULTS="" "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=nonexistent 2>&1)"
 unknown_status=$?
 if [ "$unknown_status" -ne 0 ] && ! printf '%s' "$unknown_output" | stdin_matches 'All tests PASSED'; then
     test_pass "unknown --section fails instead of reporting an empty success"
@@ -273,7 +298,7 @@ else
 fi
 
 # The guard must not reject sections the runner really does dispatch.
-if "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=1 >/dev/null 2>&1; then
+if DXE_TEST_RESULTS="" "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=1 >/dev/null 2>&1; then
     test_pass "a dispatchable --section still runs"
 else
     test_fail "a dispatchable --section still runs"
