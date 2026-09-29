@@ -2943,5 +2943,136 @@ exit 0'
 )
 [ "$?" -eq 0 ] && test_pass "dx-backup (docker-ssh): the tar-streaming phase renders 'docker exec -u dx NAME tar ...', no -i at all" || test_fail "dx-backup (docker-ssh): the tar-streaming phase renders 'docker exec -u dx NAME tar ...', no -i at all"
 
+# --- WP8.3 step 1: docker adapter transcript-equality guard ---------------
+# (findings.md WP8.3; docs/reviews/2026-09-29-muse.md A2,
+# docs/reviews/2026-09-29-fable.md #A7, docs/reviews/2026-09-29-astra.md R3).
+# Before splitting this file into a transport/identity/lifecycle/lock seam
+# behind one facade, this is the safety net: drive a representative set of
+# adapter operations -- bin/daemon discovery, container exists/is_running/
+# start/stop/kill, volume exists, exec, and the read-only lock status --
+# against tests/lib/harness.sh's shared with_fake_runtime ssh/fake_respond
+# fakes, capture the resulting ssh argv transcript, and assert it is
+# byte-for-byte identical to the fixture committed at
+# tests/fixtures/docker-adapter-transcript.txt. A structural split that
+# moves code between files without changing what any function actually
+# sends over ssh leaves this transcript unchanged; one that does changes
+# it, and this one case goes red immediately, without needing every one of
+# this file's other cases to independently notice the same regression.
+#
+# Response keys below are built from dx_runtime_docker_ssh_option_argv and
+# dx_runtime_docker_quote_argv themselves -- the same functions the adapter
+# calls -- rather than hand-quoted literals: with_fake_runtime's own fake
+# matches on the UNQUOTED "$*" of its own argv (ssh's option flags, the
+# remote host, then the one already-%q-quoted command-string argument), and
+# a hand-typed key would have to reproduce, byte for byte, whichever
+# backslash-escaping this host's bash (3.2) happens to choose for a given
+# token. Using the adapter's own quoting function to build the key keeps
+# this in sync automatically; a real quoting regression still shows up as a
+# transcript byte mismatch below (harness.sh's own %q call that WRITES the
+# transcript is independent of dx_runtime_docker_quote_argv), it just would
+# not also break response matching in a way that could mask the mismatch
+# behind a preflight failure instead.
+#
+# The one exception is the bin-discovery script (sent by
+# dx_runtime_docker_ssh_raw, not ssh_exec -- one RAW, never-%q-quoted,
+# multi-line string): a fake_respond match key cannot itself contain a
+# newline (tests/lib/harness.sh's .responses-ssh file is one
+# newline-delimited record per registered response), so that key is
+# deliberately truncated to the text before the script's first embedded
+# newline -- still a unique, valid prefix, since fake_respond's own match
+# is "the call's whole argv starts with KEY".
+(
+    dxe_s33t_bin="/usr/local/bin/docker"
+    dxe_s33t_container="dxe-transcript-demo"
+    dxe_s33t_volume="dxe-transcript-vol"
+    DX_RUNTIME=docker-ssh
+    DX_REMOTE_HOST=dxe-transcript-host
+    DX_CONTAINER_NAME=dxe-transcript-container
+    DX_GUEST_SYSTEM=x86_64-linux
+    DX_SSH_CONNECT_TIMEOUT=15
+    export DX_RUNTIME DX_REMOTE_HOST DX_CONTAINER_NAME DX_GUEST_SYSTEM DX_SSH_CONNECT_TIMEOUT
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID DXE_RUNTIME_GUEST_SSH_ADDRESS
+    rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/dxe/$DX_CONTAINER_NAME" 2>/dev/null || true
+
+    with_fake_runtime ssh
+
+    dxe_s33t_remote_key() {
+        printf '%s' "$(dx_runtime_docker_ssh_option_argv | tr '\n' ' ')$DX_REMOTE_HOST $(dx_runtime_docker_quote_argv "$@")"
+    }
+
+    fake_respond ssh "$(dxe_s33t_remote_key)DXE_DOCKER_BIN=\"\"" "$dxe_s33t_bin"
+    fake_respond ssh "$(dx_runtime_docker_ssh_option_argv | tr '\n' ' ')$DX_REMOTE_HOST true" ""
+    fake_respond ssh "$(dxe_s33t_remote_key uname -m)" "x86_64"
+    fake_respond ssh "$(dxe_s33t_remote_key "$dxe_s33t_bin" version --format '{{.Server.Version}}')" "27.3.1"
+    fake_respond ssh "$(dxe_s33t_remote_key "$dxe_s33t_bin" info --format '{{.ID}}|{{.Name}}|{{.Architecture}}|{{.OperatingSystem}}')" "dxe-transcript-daemon|dxe-transcript|x86_64|linux"
+    fake_respond ssh "$(dxe_s33t_remote_key "$dxe_s33t_bin" container inspect --format '{{.State.Running}}' "$dxe_s33t_container")" "true"
+    fake_respond ssh "$(dxe_s33t_remote_key "$dxe_s33t_bin" container inspect --format '{{index .Config.Labels "io.dxe.owner"}}|{{.Created}}' "$(dx_runtime_docker_lock_name)")" "owner-token|2026-09-30T00:00:00Z"
+
+    # Drive: discover the docker binary, run the full daemon-discovery
+    # preflight, then container exists/is_running/start/stop/kill, volume
+    # exists, exec, and the read-only lock status.
+    dx_runtime_docker_discover_bin >/dev/null 2>&1
+    dx_runtime_docker_available >/dev/null 2>&1
+    dx_runtime_docker_container_exists "$dxe_s33t_container" >/dev/null 2>&1
+    dx_runtime_docker_container_running "$dxe_s33t_container" >/dev/null 2>&1
+    dx_runtime_docker_container_start "$dxe_s33t_container" >/dev/null 2>&1
+    dx_runtime_docker_container_stop "$dxe_s33t_container" >/dev/null 2>&1
+    dx_runtime_docker_container_kill "$dxe_s33t_container" >/dev/null 2>&1
+    dx_runtime_docker_volume_exists "$dxe_s33t_volume" >/dev/null 2>&1
+    dx_runtime_docker_exec -i "$dxe_s33t_container" true >/dev/null 2>&1
+    dx_runtime_docker_lock_audit >/dev/null 2>&1
+
+    cp "$FAKE_TRANSCRIPT" "$fixture/docker-adapter-transcript.actual"
+)
+dxe_s33t_expected="$(cat "$BASE_DIR/tests/fixtures/docker-adapter-transcript.txt" 2>/dev/null)"
+dxe_s33t_actual="$(cat "$fixture/docker-adapter-transcript.actual" 2>/dev/null)"
+if [ "$dxe_s33t_actual" = "$dxe_s33t_expected" ]; then
+    test_pass "docker adapter transcript-equality guard: a representative operation set's ssh argv matches tests/fixtures/docker-adapter-transcript.txt byte-for-byte"
+else
+    test_fail "docker adapter transcript-equality guard: a representative operation set's ssh argv matches tests/fixtures/docker-adapter-transcript.txt byte-for-byte"
+    echo "  --- expected (tests/fixtures/docker-adapter-transcript.txt) ---"
+    printf '%s\n' "$dxe_s33t_expected" | sed 's/^/    /'
+    echo "  --- actual ---"
+    printf '%s\n' "$dxe_s33t_actual" | sed 's/^/    /'
+fi
+
+# --- WP3.4 (Fable A1) daemon-id cache-write failure branch (CI kcov gate
+# addendum, 2026-09-30): dx_runtime_docker_daemon_id_cache_write's own
+# tmp-write/rename failure arm ("if ! printf ... || ! chmod ... || ! mv -f
+# "$tmp" "$path"; then rm -f "$tmp"; return 1; fi") was uncovered -- every
+# existing fixture only ever exercised the success path. mkdir/chmod on the
+# cache DIRECTORY happen unconditionally a few lines above (so a read-only
+# or missing-parent directory trips an EARLIER return, never this one); the
+# one external command this function calls that this arm's own `!` guards
+# and that a fixture can safely fake without disturbing mkdir/chmod/mktemp/
+# rm is `mv` itself. A fake `mv` that always fails makes the real mktemp
+# above it still create the tmp file, so the failure genuinely lands on the
+# rename, exactly the condition being proven, and `rm -f "$tmp"` still runs
+# for real afterward -- asserted here by requiring the cache directory be
+# left with neither the tmp file nor a published host-identity file.
+(
+    dxe_s33cw_dir="$(new_tool_dir)"
+    fake_tool_write "$dxe_s33cw_dir" mv 'echo "fake mv: refusing to rename" >&2; exit 1'
+    PATH="$dxe_s33cw_dir:/usr/bin:/bin"
+    DX_CONTAINER_NAME=dxe-cachewrite-fail-container
+    unset XDG_STATE_HOME
+    dxe_s33cw_target_dir="$HOME/.local/state/dxe/$DX_CONTAINER_NAME"
+    rm -rf "$dxe_s33cw_target_dir" 2>/dev/null || true
+
+    dxe_s33cw_rc=0
+    dx_runtime_docker_daemon_id_cache_write "dxe-cachewrite-fail-daemon-id" >/dev/null 2>&1 || dxe_s33cw_rc=$?
+
+    dxe_s33cw_leftover_tmp=""
+    for dxe_s33cw_f in "$dxe_s33cw_target_dir"/.host-identity.*; do
+        [ -e "$dxe_s33cw_f" ] && dxe_s33cw_leftover_tmp="$dxe_s33cw_f"
+    done
+
+    [ "$dxe_s33cw_rc" -ne 0 ] \
+        && [ ! -e "$dxe_s33cw_target_dir/host-identity" ] \
+        && [ -z "$dxe_s33cw_leftover_tmp" ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_runtime_docker_daemon_id_cache_write: a failed rename returns non-zero, and leaves neither the published host-identity file nor its own tmp file behind" \
+    || test_fail "dx_runtime_docker_daemon_id_cache_write: a failed rename returns non-zero, and leaves neither the published host-identity file nor its own tmp file behind"
+
 print_summary
 exit_with_code
