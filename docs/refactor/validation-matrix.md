@@ -21,8 +21,16 @@ The `Runs on` column is the operative part of [D3](decisions/D3-ci.md). The firs
 three tiers plus Bash 3.2 compatibility and coverage are the contract CI enforces.
 Nix builds and the live/destructive/runtime-compatibility tiers are the
 developer's pre-promotion responsibility on a real macOS host, because Apple
-Container requires virtualization a hosted runner does not have and
-`flake.nix` pins `system = "aarch64-linux"`.
+Container requires virtualization a hosted runner does not have.
+
+Nix *evaluation* is not similarly constrained to one architecture: `flake.nix`
+evaluates both `aarch64-linux` (Apple's guest) and `x86_64-linux` (the QNAP's)
+via its `supportedSystems`, and CI's Unit/static tier proves both with
+`nix flake check --no-build --all-systems` against the flake's `checks`
+output (`home-activation`, `ai-tools`, `alias-is-identity`, per system) --
+not just the bare "checking flake output" that `nix flake check` does for
+`homeConfigurations` on its own, which walks the attribute without evaluating
+it.
 
 ## Useful final commands
 
@@ -36,7 +44,7 @@ shellcheck --severity=warning bin/dx* bin/lib/*.sh tests/*.sh \
   container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/*.sh \
   container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/*.sh \
   container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib/*.sh
-nix flake check --no-build --no-write-lock-file \
+nix flake check --no-build --no-write-lock-file --all-systems \
   container/aarch64-darwin-apple-container-dx-nixos-26.05
 
 # After committing a release candidate, before promotion
@@ -67,7 +75,7 @@ the flake the host cannot:
   \( -name \"*.sh\" -o -path \"bin/dx*\" \) -print0 \
   | xargs -0 shellcheck --severity=warning"'
 ./bin/dx-ssh 'cd /persist/inbox/<dir> && nix flake check --no-build \
-  --no-write-lock-file ./container/aarch64-darwin-apple-container-dx-nixos-26.05'
+  --no-write-lock-file --all-systems ./container/aarch64-darwin-apple-container-dx-nixos-26.05'
 ```
 
 Stage the source rather than copying the working tree: the repository root holds
