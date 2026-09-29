@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 
-bootstrap_main() {
-    export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}"
-    export NIX_SSL_CERT_FILE="${NIX_SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}"
-    DX_GUEST_ACTIVATION_TIMEOUT="${DX_GUEST_ACTIVATION_TIMEOUT:-1800}"
-    DX_GUEST_ACTIVATION_ATTEMPTS="${DX_GUEST_ACTIVATION_ATTEMPTS:-2}"
-    DX_GUEST_ACTIVATION_RETRY_DELAY="${DX_GUEST_ACTIVATION_RETRY_DELAY:-5}"
-
+# The documented guest bootstrap phase order (Fable review B8). Split out of
+# bootstrap_main so it can be sourced and driven directly -- calling
+# bootstrap_main itself would still run every real phase and end in `exec
+# sshd`, which a test cannot safely invoke. tests/test_section3_bootstrap.sh
+# shadows each phase function and calls this to prove the order
+# behaviourally, instead of comparing grep line numbers in this file's
+# source text.
+bootstrap_phases() {
     configure_single_user_nix
     install_essentials
     link_system_bash
@@ -28,6 +29,16 @@ bootstrap_main() {
     configure_guest true
     verify_guest_tools
     configure_timezone
+}
+
+bootstrap_main() {
+    export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}"
+    export NIX_SSL_CERT_FILE="${NIX_SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}"
+    DX_GUEST_ACTIVATION_TIMEOUT="${DX_GUEST_ACTIVATION_TIMEOUT:-1800}"
+    DX_GUEST_ACTIVATION_ATTEMPTS="${DX_GUEST_ACTIVATION_ATTEMPTS:-2}"
+    DX_GUEST_ACTIVATION_RETRY_DELAY="${DX_GUEST_ACTIVATION_RETRY_DELAY:-5}"
+
+    bootstrap_phases
 
     echo "Guest bootstrap complete. Starting sshd in foreground..."
     exec "$(command -v sshd)" -D -e -p 2222
