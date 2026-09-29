@@ -1267,5 +1267,254 @@ else
 fi
 rm -rf "$COMMIT_FIXTURE"
 
+# ---------------------------------------------------------------------------
+# Astra F5 / WP6.9 follow-up: the legacy-mirror refusal cannot ship as-is --
+# a mirror created before this generation model existed (current/ a real
+# directory, manifest.tsv sitting directly beside it, no generations/ at
+# all -- dx-host's own real mirror has exactly this shape) must be adopted
+# in place, not refused, and a hand migration is not acceptable.
+# ---------------------------------------------------------------------------
+
+# dx_backup_generation_migrate_legacy: direct unit coverage.
+LEGACY_UNIT_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-unit-test.XXXXXX")"
+mkdir -p "$LEGACY_UNIT_FIXTURE/current/home/dx"
+printf 'legacy-content\n' > "$LEGACY_UNIT_FIXTURE/current/home/dx/f.txt"
+printf 'home/dx/f.txt\t14\t0\tdeadbeef\n' > "$LEGACY_UNIT_FIXTURE/manifest.tsv"
+touch -t 202401021200 "$LEGACY_UNIT_FIXTURE/manifest.tsv"
+legacy_unit_expected_epoch="$(stat -f '%m' "$LEGACY_UNIT_FIXTURE/manifest.tsv" 2>/dev/null || stat -c '%Y' "$LEGACY_UNIT_FIXTURE/manifest.tsv")"
+cp -R "$LEGACY_UNIT_FIXTURE/current/" "$LEGACY_UNIT_FIXTURE/before-current/"
+
+if dx_backup_generation_migrate_legacy "$LEGACY_UNIT_FIXTURE"; then
+    test_pass "dx_backup_generation_migrate_legacy: succeeds against a legacy-shaped mirror"
+else
+    test_fail "dx_backup_generation_migrate_legacy: succeeds against a legacy-shaped mirror"
+fi
+if [ "$(readlink "$LEGACY_UNIT_FIXTURE/current" 2>/dev/null)" = "generations/legacy-$legacy_unit_expected_epoch" ]; then
+    test_pass "dx_backup_generation_migrate_legacy: current becomes a symlink to generations/legacy-<manifest mtime>"
+else
+    test_fail "dx_backup_generation_migrate_legacy: current becomes a symlink to generations/legacy-<manifest mtime> (got: $(readlink "$LEGACY_UNIT_FIXTURE/current" 2>/dev/null))"
+fi
+if diff -rq "$LEGACY_UNIT_FIXTURE/before-current" "$LEGACY_UNIT_FIXTURE/current" >/dev/null 2>&1; then
+    test_pass "dx_backup_generation_migrate_legacy: the old content is carried byte-identical into the new generation"
+else
+    test_fail "dx_backup_generation_migrate_legacy: the old content is carried byte-identical into the new generation"
+fi
+if [ -f "$LEGACY_UNIT_FIXTURE/current/manifest.tsv" ] && [ "$(cat "$LEGACY_UNIT_FIXTURE/current/manifest.tsv")" = "$(printf 'home/dx/f.txt\t14\t0\tdeadbeef')" ]; then
+    test_pass "dx_backup_generation_migrate_legacy: the old manifest moves inside the new generation"
+else
+    test_fail "dx_backup_generation_migrate_legacy: the old manifest moves inside the new generation"
+fi
+if [ ! -e "$LEGACY_UNIT_FIXTURE/manifest.tsv" ]; then
+    test_pass "dx_backup_generation_migrate_legacy: the old top-level manifest.tsv no longer exists (moved, not copied)"
+else
+    test_fail "dx_backup_generation_migrate_legacy: the old top-level manifest.tsv no longer exists (moved, not copied)"
+fi
+
+# Idempotent: a second call against the now-migrated mirror is a no-op.
+if dx_backup_generation_migrate_legacy "$LEGACY_UNIT_FIXTURE"; then
+    test_pass "dx_backup_generation_migrate_legacy: a second call against an already-migrated mirror is a no-op"
+else
+    test_fail "dx_backup_generation_migrate_legacy: a second call against an already-migrated mirror is a no-op"
+fi
+if [ "$(readlink "$LEGACY_UNIT_FIXTURE/current" 2>/dev/null)" = "generations/legacy-$legacy_unit_expected_epoch" ]; then
+    test_pass "dx_backup_generation_migrate_legacy: the second call does not re-migrate or change the pointer"
+else
+    test_fail "dx_backup_generation_migrate_legacy: the second call does not re-migrate or change the pointer"
+fi
+rm -rf "$LEGACY_UNIT_FIXTURE"
+
+# A mirror with no current/ at all (the very first backup ever) is a no-op.
+NOCURRENT_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-nocurrent-test.XXXXXX")"
+if dx_backup_generation_migrate_legacy "$NOCURRENT_FIXTURE"; then
+    test_pass "dx_backup_generation_migrate_legacy: a mirror with no current/ at all is a no-op"
+else
+    test_fail "dx_backup_generation_migrate_legacy: a mirror with no current/ at all is a no-op"
+fi
+rm -rf "$NOCURRENT_FIXTURE"
+
+# A `current` that is neither a symlink nor a directory (some other,
+# unrecognised shape) is refused loudly, exactly like
+# dx_backup_generation_publish's own guard -- never silently mishandled.
+WEIRDCURRENT_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-weird-test.XXXXXX")"
+printf 'not a directory\n' > "$WEIRDCURRENT_FIXTURE/current"
+set +e
+dx_backup_generation_migrate_legacy "$WEIRDCURRENT_FIXTURE" 2>/dev/null
+weird_rc=$?
+set -e
+if [ "$weird_rc" -ne 0 ] && [ -f "$WEIRDCURRENT_FIXTURE/current" ] && [ "$(cat "$WEIRDCURRENT_FIXTURE/current")" = "not a directory" ]; then
+    test_pass "dx_backup_generation_migrate_legacy: refuses a current that is neither a symlink nor a directory, leaving it untouched"
+else
+    test_fail "dx_backup_generation_migrate_legacy: refuses a current that is neither a symlink nor a directory, leaving it untouched"
+fi
+rm -rf "$WEIRDCURRENT_FIXTURE"
+
+# A legacy mirror with NO manifest.tsv at all (created but never completed a
+# successful run) still migrates, falling back to legacy-<current time>.
+NOMANIFEST_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-nomanifest-test.XXXXXX")"
+mkdir -p "$NOMANIFEST_FIXTURE/current/home/dx"
+printf 'x\n' > "$NOMANIFEST_FIXTURE/current/home/dx/f.txt"
+if dx_backup_generation_migrate_legacy "$NOMANIFEST_FIXTURE"; then
+    test_pass "dx_backup_generation_migrate_legacy: a legacy mirror with no manifest.tsv still migrates"
+else
+    test_fail "dx_backup_generation_migrate_legacy: a legacy mirror with no manifest.tsv still migrates"
+fi
+if readlink "$NOMANIFEST_FIXTURE/current" 2>/dev/null | grep -qE '^generations/legacy-[0-9]+$'; then
+    test_pass "dx_backup_generation_migrate_legacy: falls back to legacy-<current time> with no manifest to read a timestamp from"
+else
+    test_fail "dx_backup_generation_migrate_legacy: falls back to legacy-<current time> with no manifest to read a timestamp from (got: $(readlink "$NOMANIFEST_FIXTURE/current" 2>/dev/null))"
+fi
+rm -rf "$NOMANIFEST_FIXTURE"
+
+# Generation-id collision: a generation already exists at the exact id this
+# legacy manifest's own timestamp would produce.
+COLLIDE_LEGACY_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-collide-test.XXXXXX")"
+mkdir -p "$COLLIDE_LEGACY_FIXTURE/current"
+printf 'x\n' > "$COLLIDE_LEGACY_FIXTURE/current/f.txt"
+: > "$COLLIDE_LEGACY_FIXTURE/manifest.tsv"
+touch -t 202401031200 "$COLLIDE_LEGACY_FIXTURE/manifest.tsv"
+collide_epoch="$(stat -f '%m' "$COLLIDE_LEGACY_FIXTURE/manifest.tsv" 2>/dev/null || stat -c '%Y' "$COLLIDE_LEGACY_FIXTURE/manifest.tsv")"
+mkdir -p "$COLLIDE_LEGACY_FIXTURE/generations/legacy-$collide_epoch"
+set +e
+dx_backup_generation_migrate_legacy "$COLLIDE_LEGACY_FIXTURE" 2>/dev/null
+collide_rc=$?
+set -e
+if [ "$collide_rc" -ne 0 ] && [ ! -L "$COLLIDE_LEGACY_FIXTURE/current" ]; then
+    test_pass "dx_backup_generation_migrate_legacy: refuses when the derived legacy generation id already exists"
+else
+    test_fail "dx_backup_generation_migrate_legacy: refuses when the derived legacy generation id already exists"
+fi
+rm -rf "$COLLIDE_LEGACY_FIXTURE"
+
+# --- Migration runs under the backup lock: a legacy-shaped mirror
+# contended by another process (lock pre-held, exactly like the earlier
+# RED 3 lock-contention case) is left in its legacy shape entirely
+# untouched -- migration never gets a chance to run without the lock. ---
+LEGACY_LOCK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-lock-test.XXXXXX")"
+LEGACY_LOCK_BACKUP_DIR="$LEGACY_LOCK_ROOT/backups"
+LEGACY_LOCK_MIRROR="$LEGACY_LOCK_BACKUP_DIR/test-container"
+mkdir -p "$LEGACY_LOCK_MIRROR/current/home/dx"
+printf 'legacy-lock-content\n' > "$LEGACY_LOCK_MIRROR/current/home/dx/f.txt"
+printf 'home/dx/f.txt\t20\t0\tdeadbeef\n' > "$LEGACY_LOCK_MIRROR/manifest.tsv"
+fake_tool_write "$FAKE_DIR" fake-sleep 'exit 0'
+dx_lock_acquire "$LEGACY_LOCK_MIRROR/.lock" 1
+set +e
+legacy_lock_out="$(DX_BACKUP_DIR="$LEGACY_LOCK_BACKUP_DIR" DX_SLEEP=fake-sleep "$BASE_DIR/bin/dx-backup" 2>&1)"
+legacy_lock_rc=$?
+set -e
+dx_lock_release "$LEGACY_LOCK_MIRROR/.lock"
+if [ "$legacy_lock_rc" -ne 0 ]; then
+    test_pass "Astra F5 / WP6.9: dx-backup against a legacy mirror refuses when the lock is contended"
+else
+    test_fail "Astra F5 / WP6.9: dx-backup against a legacy mirror refuses when the lock is contended (got: $legacy_lock_out)"
+fi
+if [ -d "$LEGACY_LOCK_MIRROR/current" ] && [ ! -L "$LEGACY_LOCK_MIRROR/current" ] && [ ! -d "$LEGACY_LOCK_MIRROR/generations" ]; then
+    test_pass "Astra F5 / WP6.9: a contended legacy mirror is left in its legacy shape -- migration never ran without the lock"
+else
+    test_fail "Astra F5 / WP6.9: a contended legacy mirror is left in its legacy shape -- migration never ran without the lock"
+fi
+rm -rf "$LEGACY_LOCK_ROOT"
+
+# --- End-to-end: a legacy-shaped mirror, run through the real dx-backup
+# entrypoint once. The guest has ONE additional change beyond what the
+# legacy manifest recorded, so this single real run both migrates the
+# legacy content in place AND publishes a fresh generation on top of it,
+# retaining the legacy generation as the one before -- exactly the sequence
+# dx-host's own real mirror needs on its first post-upgrade backup. The old
+# manifest is captured by really running the selector against the
+# fixture (dx_backup_fetch_listing, already sourced/exported above) rather
+# than hand-computing a hash, so the unchanged file's recorded line is
+# guaranteed byte-identical to what a fresh listing produces for it --
+# otherwise it would misclassify as "changed" and never exercise carrying a
+# file forward from the newly-adopted legacy generation. ---
+E2E_LEGACY_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-f5-legacy-e2e-test.XXXXXX")"
+E2E_LEGACY_PERSIST="$E2E_LEGACY_ROOT/persist"
+E2E_LEGACY_BACKUP_DIR="$E2E_LEGACY_ROOT/backups"
+E2E_LEGACY_MIRROR="$E2E_LEGACY_BACKUP_DIR/test-container"
+mkdir -p "$E2E_LEGACY_PERSIST/home/dx" "$E2E_LEGACY_MIRROR/current/home/dx"
+printf 'legacy-unchanged\n' > "$E2E_LEGACY_PERSIST/home/dx/unchanged.txt"
+printf 'legacy-old-content\n' > "$E2E_LEGACY_PERSIST/home/dx/changed.txt"
+
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$E2E_LEGACY_PERSIST"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :;
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+export DX_CONTAINER_NAME=test-container
+dx_backup_fetch_listing "$DX_CONTAINER_NAME" > "$E2E_LEGACY_ROOT/real-listing.tsv"
+LC_ALL=C sort "$E2E_LEGACY_ROOT/real-listing.tsv" > "$E2E_LEGACY_MIRROR/manifest.tsv"
+cp "$E2E_LEGACY_PERSIST/home/dx/unchanged.txt" "$E2E_LEGACY_MIRROR/current/home/dx/unchanged.txt"
+cp "$E2E_LEGACY_PERSIST/home/dx/changed.txt" "$E2E_LEGACY_MIRROR/current/home/dx/changed.txt"
+cp -R "$E2E_LEGACY_MIRROR/current/" "$E2E_LEGACY_ROOT/before-legacy-current/"
+e2e_legacy_manifest_before="$(cat "$E2E_LEGACY_MIRROR/manifest.tsv")"
+
+printf 'legacy-new-content\n' > "$E2E_LEGACY_PERSIST/home/dx/changed.txt"
+
+set +e
+e2e_legacy_out="$(DX_BACKUP_DIR="$E2E_LEGACY_BACKUP_DIR" "$BASE_DIR/bin/dx-backup" 2>&1)"
+e2e_legacy_rc=$?
+set -e
+if [ "$e2e_legacy_rc" -eq 0 ]; then
+    test_pass "Astra F5 / WP6.9: dx-backup succeeds against a pre-existing legacy-shaped mirror"
+else
+    test_fail "Astra F5 / WP6.9: dx-backup succeeds against a pre-existing legacy-shaped mirror (got: $e2e_legacy_out)"
+fi
+
+e2e_current_target="$(readlink "$E2E_LEGACY_MIRROR/current" 2>/dev/null || true)"
+e2e_gen_names="$(find "$E2E_LEGACY_MIRROR/generations" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | xargs -n1 basename 2>/dev/null | LC_ALL=C sort)"
+e2e_gen_count="$(printf '%s\n' "$e2e_gen_names" | grep -c . || true)"
+if [ "$e2e_gen_count" -eq 2 ]; then
+    test_pass "Astra F5 / WP6.9: exactly two generations are retained (the legacy one plus the new one)"
+else
+    test_fail "Astra F5 / WP6.9: exactly two generations are retained (the legacy one plus the new one) (found: $e2e_gen_names)"
+fi
+e2e_legacy_gen_name="$(printf '%s\n' "$e2e_gen_names" | grep '^legacy-' || true)"
+if [ -n "$e2e_legacy_gen_name" ]; then
+    test_pass "Astra F5 / WP6.9: the legacy generation is retained under its legacy-<id> name"
+else
+    test_fail "Astra F5 / WP6.9: the legacy generation is retained under its legacy-<id> name (found: $e2e_gen_names)"
+fi
+if [ -n "$e2e_current_target" ] && [ "$e2e_current_target" != "generations/$e2e_legacy_gen_name" ]; then
+    test_pass "Astra F5 / WP6.9: current ends up on the NEW generation, not the legacy one, after a run with a real change"
+else
+    test_fail "Astra F5 / WP6.9: current ends up on the NEW generation, not the legacy one, after a run with a real change (current -> $e2e_current_target)"
+fi
+if [ -n "$e2e_legacy_gen_name" ] && diff -rq "$E2E_LEGACY_ROOT/before-legacy-current" "$E2E_LEGACY_MIRROR/generations/$e2e_legacy_gen_name" >/dev/null 2>&1; then
+    test_pass "Astra F5 / WP6.9: the legacy generation's own content is byte-identical to the pre-migration mirror"
+else
+    test_fail "Astra F5 / WP6.9: the legacy generation's own content is byte-identical to the pre-migration mirror"
+fi
+if [ -n "$e2e_legacy_gen_name" ] && [ "$(cat "$E2E_LEGACY_MIRROR/generations/$e2e_legacy_gen_name/manifest.tsv" 2>/dev/null)" = "$e2e_legacy_manifest_before" ]; then
+    test_pass "Astra F5 / WP6.9: the legacy generation holds the exact old manifest"
+else
+    test_fail "Astra F5 / WP6.9: the legacy generation holds the exact old manifest"
+fi
+if [ "$(cat "$E2E_LEGACY_MIRROR/current/home/dx/changed.txt" 2>/dev/null)" = legacy-new-content ]; then
+    test_pass "Astra F5 / WP6.9: the changed file is correctly fetched into the new generation"
+else
+    test_fail "Astra F5 / WP6.9: the changed file is correctly fetched into the new generation"
+fi
+if [ "$(cat "$E2E_LEGACY_MIRROR/current/home/dx/unchanged.txt" 2>/dev/null)" = legacy-unchanged ]; then
+    test_pass "Astra F5 / WP6.9: the unchanged file is correctly carried forward from the legacy generation into the new one"
+else
+    test_fail "Astra F5 / WP6.9: the unchanged file is correctly carried forward from the legacy generation into the new one"
+fi
+rm -rf "$E2E_LEGACY_ROOT"
+
 print_summary
 exit_with_code

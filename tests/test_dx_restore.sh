@@ -1045,6 +1045,65 @@ fi
 rm -rf "$DIRPUSH_FIXTURE"
 
 # ---------------------------------------------------------------------------
+# Astra F5 / WP6.9 follow-up: dx-restore against an UNMIGRATED legacy-shaped
+# mirror (current/ a real directory, manifest.tsv sitting directly beside
+# it, no generations/ at all -- exactly what a mirror created before the
+# generation model existed looks like, and what dx-host's own real mirror
+# has right now) still restores correctly -- read-only on the source
+# mirror, exactly as before: only bin/dx-backup ever calls
+# dx_backup_generation_migrate_legacy, never bin/dx-restore.
+# ---------------------------------------------------------------------------
+LEGACY_RESTORE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-restore-test.XXXXXX")"
+LEGACY_RESTORE_BACKUP_DIR="$LEGACY_RESTORE_ROOT/backups"
+LEGACY_RESTORE_MIRROR="$LEGACY_RESTORE_BACKUP_DIR/test-container"
+mkdir -p "$LEGACY_RESTORE_MIRROR/current/home/dx"
+printf 'legacy-restore-content\n' > "$LEGACY_RESTORE_MIRROR/current/home/dx/f.txt"
+printf 'home/dx/f.txt\t23\t0\tdeadbeef\n' > "$LEGACY_RESTORE_MIRROR/manifest.tsv"
+
+# Restore the well-behaved fake container (the last one installed, DIRPUSH's
+# own above, remaps /persist to a fixture that no longer exists) so this
+# block's pushes land back in this file's own shared $FIXTURE/persist.
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$FIXTURE"'/persist"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :;
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+rm -f "$FIXTURE/persist/home/dx/f.txt" 2>/dev/null
+DX_BACKUP_DIR="$LEGACY_RESTORE_BACKUP_DIR" "$BASE_DIR/bin/dx-restore" >/dev/null
+if [ "$(cat "$FIXTURE/persist/home/dx/f.txt" 2>/dev/null)" = legacy-restore-content ]; then
+    test_pass "Astra F5 / WP6.9: dx-restore restores correctly from an UNMIGRATED legacy-shaped mirror"
+else
+    test_fail "Astra F5 / WP6.9: dx-restore restores correctly from an UNMIGRATED legacy-shaped mirror"
+fi
+if [ -d "$LEGACY_RESTORE_MIRROR/current" ] && [ ! -L "$LEGACY_RESTORE_MIRROR/current" ]; then
+    test_pass "Astra F5 / WP6.9: dx-restore never migrates the source mirror (current/ is still a plain directory)"
+else
+    test_fail "Astra F5 / WP6.9: dx-restore never migrates the source mirror (current/ is still a plain directory)"
+fi
+if [ -f "$LEGACY_RESTORE_MIRROR/manifest.tsv" ] && [ ! -d "$LEGACY_RESTORE_MIRROR/generations" ]; then
+    test_pass "Astra F5 / WP6.9: dx-restore leaves the legacy manifest.tsv in place and creates no generations/"
+else
+    test_fail "Astra F5 / WP6.9: dx-restore leaves the legacy manifest.tsv in place and creates no generations/"
+fi
+rm -rf "$LEGACY_RESTORE_ROOT"
+
+# ---------------------------------------------------------------------------
 # Astra F5 RED 5 (WP6.6, docs/reviews/2026-09-29-astra.md, "F5"): restore
 # takes the SAME lock as backup, over the same mirror directory (bin/dx-restore
 # now acquires it before ever checking for a backup mirror, exactly like
