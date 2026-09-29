@@ -21,6 +21,17 @@ if [ "$before_flags" = "$-" ] \
 else
     test_fail "dx-ai is a sourceable main with focused generation functions"
 fi
+# Fable B3/B7: the publication-lock primitives now live in
+# scripts/lib/dx-ai-lock.sh, loaded on demand the same way
+# dx_ai_load_opencode_persistence/dx_ai_load_keyring load theirs. Load it
+# here (once, up front) so every direct dx_ai_lock_acquire/dx_ai_lock_release
+# call below -- not just the ones reached through dx_ai_main -- has them.
+if dx_ai_load_lock && declare -F dx_ai_lock_acquire >/dev/null && declare -F dx_ai_lock_release >/dev/null \
+    && declare -F dx_ai_process_start >/dev/null && declare -F dx_ai_boot_id >/dev/null; then
+    test_pass "dx_ai_load_lock resolves the shared publication-lock library"
+else
+    test_fail "dx_ai_load_lock resolves the shared publication-lock library"
+fi
 assert_file_not_contains "$AI_SCRIPT" 'cd /guest-bootstrap' "dx-ai never changes into the published payload"
 assert_file_not_contains "$AI_SCRIPT" 'sed -i' "dx-ai pin refresh is independent of Nix source formatting"
 assert_file_contains_literal "$AI_SCRIPT" '/persist/home/dx/.local/state/dx-ai' "dx-ai mutable generations live under persist"
