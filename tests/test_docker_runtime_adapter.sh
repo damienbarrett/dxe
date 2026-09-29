@@ -591,15 +591,23 @@ esac'
     dir="$(new_tool_dir)"
     call_log="$fixture/guest-ssh-address-calls.log"
     rm -f "$call_log"
+    # A private directory holding ONLY a `bash` symlink (never the real
+    # bash's own directory, e.g. /usr/bin on GitHub's ubuntu runners --
+    # that directory also ships a real /usr/bin/docker, which would leak
+    # back into a fixture's deliberately bare DXE_FAKE_SSH_REMOTE_PATH and
+    # defeat the very isolation this is meant to preserve; the same fix
+    # tests/lib/fake-tools.sh's fake_qnap_ssh_write carries -- this ssh
+    # fake is hand-rolled, not that shared one, so it needs its own copy).
+    dxe_s33_bash_dir="$(fake_tool_dir_create "$fixture")"
+    ln -s "$(command -v bash)" "$dxe_s33_bash_dir/bash"
     fake_tool_write "$dir" ssh "
 echo called >> '$call_log'
-# Append bash's own directory (Fable E3): fake_tool_write now emits
+# Append a bash-only directory (never the real bash's own directory --
+# see the comment above this fixture): fake_tool_write now emits
 # #!/usr/bin/env bash, so any nested fake this eval reaches on the
 # restricted DXE_FAKE_SSH_REMOTE_PATH -- tailscale, below -- still needs
-# bash resolvable via env, exactly the fix fake_qnap_ssh_write itself
-# carries (tests/lib/fake-tools.sh); this ssh fake is hand-rolled, not
-# that shared one, so it needs its own copy.
-if [ -n \"\${DXE_FAKE_SSH_REMOTE_PATH:-}\" ]; then PATH=\"\$DXE_FAKE_SSH_REMOTE_PATH:\$(dirname \"\$(command -v bash)\")\"; export PATH; fi
+# bash resolvable via env.
+if [ -n \"\${DXE_FAKE_SSH_REMOTE_PATH:-}\" ]; then PATH=\"\$DXE_FAKE_SSH_REMOTE_PATH:$dxe_s33_bash_dir\"; export PATH; fi
 last=\"\"; for a in \"\$@\"; do last=\"\$a\"; done
 eval \"\$last\"
 "
