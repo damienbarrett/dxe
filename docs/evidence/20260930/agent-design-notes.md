@@ -78,3 +78,39 @@ Cases (insert as a P13 block after P12, ~line 1953; subshell-isolated, no
 ## WP5.1 sync→start result file
 
 See the design note under WP5.1 in `findings.md`.
+
+## WP6.9 restore round trips (design only, Astra R4)
+
+Facts: `dx_backup_restore_push` (bin/lib/dx-backup.sh ~517-561) forks
+`dirname` per path component and de-dupes with an O(n·m) `case` scan, passes
+the whole directory list positionally with no threshold, and runs one
+`chown dx:dx` exec per restored file (the O(n) driver); `chown` without `-h`
+follows symlinks; `bin/dx-restore` (~69-92) pushes the full target list,
+including entries the status pass classified `identical`. The hash-status
+side already has `DX_BACKUP_HASH_PATHS_ARG_THRESHOLD=1000` and
+`dx_backup_ship_list_to_guest`/`dx_backup_remove_guest_list` (~219-233).
+Harness gotcha: the restore suite's fake `container exec` rewrites only an
+exact argv token equal to `/persist`, so for the REAL `mkdir` the guest root
+must stay a separate argv token joined inside the guest `sh -c`; `chown` is
+fully fake there, so full paths may be pre-joined host-side.
+
+Green: `dx_backup_ship_list <container> <host_list> <count>` (prints nothing
+under the threshold, ships and prints the guest path over it). Rewrite push:
+one awk pass over the targets file emitting every ancestor, `LC_ALL=C sort -u`;
+under threshold one exec `sh -c 'root="$1"; shift; for d; do mkdir -p
+"$root/$d" && chown dx:dx "$root/$d"; done' -- "$ROOT" dirs…`, over it
+ship + one `xargs -0` exec + cleanup; tar transfer unchanged; ownership as
+one `chown -h dx:dx` over pre-joined full paths (positional under threshold,
+shipped list + `tr '\n' '\0' | xargs -0 chown -h dx:dx` over it). Always
+`|| rc=$?` before cleanup. `bin/dx-restore`: filter `$2 != "identical"` from
+the status file into the push list. Refactor: route `dx_backup_restore_status`'s
+inline threshold logic through `dx_backup_ship_list`, preserving the
+ship-failure behaviour the existing test (~225-268) asserts.
+
+Red: 2,000-file fixture (`wp69/gN/dM/fK.txt`, 10×20×10), seed via
+`dx-backup`, delete g2..g10 on the guest (1,800 `create`), leave g1 identical;
+count `---EXEC---` lines logged only in the fake's `exec` branch; expected
+green total 8 calls (status 3 + dirs 1 + tar 1 + chown 3); assert ≤ 10 with
+the reasoning "3 per batched operation × 3 operations + 1 tar"; old code ≈
+2,005. Also assert g1 mtimes unchanged (no transfer) and the chown log names
+a g10 path but no g1 path. Run with `DXE_SKIP_SLOW_TESTS=1`.
