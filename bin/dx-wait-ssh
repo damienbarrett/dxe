@@ -113,7 +113,19 @@ while ! dx_ssh_probe_login_shell "$PROBE_STDERR"; do
     if [ "$((ELAPSED + SLEEP_INTERVAL))" -gt "$WAIT_TIMEOUT" ]; then
         SLEEP_INTERVAL=$((WAIT_TIMEOUT - ELAPSED))
     fi
-    sleep "$SLEEP_INTERVAL"
+    # WP4.2 / Fable A6: the same ${DX_SLEEP:-sleep} seam dx_wait_until uses,
+    # applied directly rather than by calling dx_wait_until itself -- this
+    # loop's ELAPSED is SECONDS (real wall-clock time, deliberately
+    # including however long dx_ssh_probe_login_shell's own connect/banner
+    # attempt just took, per the comment above SECONDS=0), not the sum of
+    # slept intervals dx_wait_until's contract assumes. Routing this through
+    # dx_wait_until would silently stop counting probe time at all, letting
+    # a host where every probe attempt itself runs long outlast WAIT_TIMEOUT
+    # by an unbounded margin -- exactly the failure mode this file's own
+    # SECONDS comment exists to avoid. Production behaviour is unchanged
+    # (DX_SLEEP is never set outside a test); this only gives a future test
+    # the same override seam the other six sites now share.
+    "${DX_SLEEP:-sleep}" "$SLEEP_INTERVAL"
 done
 printf "\nGuest is ready.\n"
 }
