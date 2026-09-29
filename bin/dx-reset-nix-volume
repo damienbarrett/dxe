@@ -13,6 +13,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+
+reset_nix_volume_main() {
 dx_require_container_cli
 
 if container_exists "$DX_CONTAINER_NAME"; then
@@ -38,3 +40,5 @@ dx_nix_volume_claim_release "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME"
 
 echo "Nix volume reset. /persist and the bootstrap volume are untouched."
 echo "Next step: ./bin/dx -- this rebuilds /nix from the image and re-seeds it."
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then reset_nix_volume_main "$@"; fi
