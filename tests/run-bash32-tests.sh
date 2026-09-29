@@ -7,6 +7,8 @@ case "$version" in *'version 3.2.'*) ;; *) echo "Error: /bin/bash is not Bash 3.
 
 /bin/bash -n "$SCRIPT_DIR"/../bin/dx* "$SCRIPT_DIR"/../bin/lib/*.sh "$SCRIPT_DIR"/qnap/phase0-*.sh "$SCRIPT_DIR"/qnap/lib/*.sh
 /bin/bash "$SCRIPT_DIR/test_refactor_contracts.sh"
+/bin/bash "$SCRIPT_DIR/test_harness.sh"
+/bin/bash "$SCRIPT_DIR/test_coverage_metric.sh"
 /bin/bash "$SCRIPT_DIR/test_section9_host_scripts.sh"
 /bin/bash "$SCRIPT_DIR/test_section18_mount_git.sh"
 /bin/bash "$SCRIPT_DIR/test_refactor_state_machines.sh"
