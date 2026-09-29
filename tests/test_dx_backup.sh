@@ -139,6 +139,87 @@ if [ "$(cat "$BACKUP_ROOT/manifest.tsv")" = "$manifest_before_interrupt" ]; then
 if [ ! -e "$BACKUP_ROOT/current/home/dx/interrupt-me.txt" ]; then test_pass "interruption does not leave a partial file behind"; else test_fail "interruption does not leave a partial file behind"; fi
 rm -f "$FIXTURE/persist/home/dx/interrupt-me.txt"
 
+# --- WP6.1 (Astra F1): the guest LISTING command itself failing outright
+# (not merely a failed archive transfer, already covered above) must also
+# abort BEFORE any mirror mutation: dx_backup_fetch_listing must propagate
+# the guest's exit status, and bin/dx-backup must never treat a partial/
+# failed listing as "the complete at-risk set". A dedicated, isolated
+# DX_BACKUP_DIR and persist tree (like missing_exclude_backup_dir above)
+# keep this block from disturbing test-container's own shared manifest/
+# mirror state. First, one normal successful run seeds the mirror with a
+# file (keepme.txt); the SECOND run's guest listing then exits non-zero
+# after printing SOME output (a different, unrelated path -- proving the
+# omission of keepme.txt from that partial listing is not itself read as
+# "no longer at risk"). ---
+listing_fail_backup_dir="$FIXTURE/listing-fail-backups"
+rm -rf "$listing_fail_backup_dir" "$FIXTURE/listing-fail-persist"
+mkdir -p "$FIXTURE/listing-fail-persist/home/dx"
+printf 'keep me\n' > "$FIXTURE/listing-fail-persist/home/dx/keepme.txt"
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$FIXTURE"'/listing-fail-persist"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container container-a container-b; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :;
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+DX_BACKUP_DIR="$listing_fail_backup_dir" "$BASE_DIR/bin/dx-backup" >/dev/null
+listing_fail_manifest_before="$(cat "$listing_fail_backup_dir/$DX_CONTAINER_NAME/manifest.tsv")"
+
+fake_tool_write "$FAKE_DIR" container '
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container container-a container-b; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    case "$*" in
+        *dx-persist-backup-select.sh*)
+            printf "home/dx/other-file.txt\t5\t0\tabc123\n"
+            exit 1
+            ;;
+    esac
+    exit 0
+fi
+exit 1
+'
+set +e
+listing_fail_out="$(DX_BACKUP_DIR="$listing_fail_backup_dir" "$BASE_DIR/bin/dx-backup" 2>&1)"
+listing_fail_rc=$?
+set -e
+if [ "$listing_fail_rc" -ne 0 ]; then
+    test_pass "WP6.1: a failed guest listing command makes dx-backup exit non-zero"
+else
+    test_fail "WP6.1: a failed guest listing command makes dx-backup exit non-zero (got: $listing_fail_out)"
+fi
+if [ -e "$listing_fail_backup_dir/$DX_CONTAINER_NAME/current/home/dx/keepme.txt" ]; then
+    test_pass "WP6.1: a mirror entry the partial listing omits survives a failed guest listing"
+else
+    test_fail "WP6.1: a mirror entry the partial listing omits survives a failed guest listing"
+fi
+if [ "$(cat "$listing_fail_backup_dir/$DX_CONTAINER_NAME/manifest.tsv")" = "$listing_fail_manifest_before" ]; then
+    test_pass "WP6.1: the manifest is not rewritten when the guest listing fails"
+else
+    test_fail "WP6.1: the manifest is not rewritten when the guest listing fails"
+fi
+rm -rf "$listing_fail_backup_dir" "$FIXTURE/listing-fail-persist"
+
 # Restore the well-behaved fake container for the remaining checks.
 fake_tool_write "$FAKE_DIR" container '
 FIX_PERSIST="'"$FIXTURE"'/persist"
