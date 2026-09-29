@@ -1,10 +1,10 @@
 #!/bin/bash
 # Docker-over-SSH transport primitives: quoting, the ssh option set, the two
 # raw/exec ssh entry points, cached binary-path lookup, and the one
-# production `dx_runtime_docker_cli` call site. Split from
-# bin/lib/dx-runtime-docker.sh (WP8.3 step 3; findings.md, docs/reviews/
-# 2026-09-29-muse.md A2, docs/reviews/2026-09-29-astra.md R3); that file
-# remains the facade every caller sources and dispatches through.
+# production `dx_runtime_docker_cli` call site. One of the four files
+# bin/lib/dx-runtime-docker.sh sources (see docs/refactor/decisions/
+# D8-docker-adapter-history.md for the split's history); that file remains
+# the facade every caller sources and dispatches through.
 #
 # Safe to source: defines functions and constants only, no I/O, no command
 # dispatch, no shell options, at import time (same contract as every other
@@ -82,8 +82,8 @@ dx_runtime_docker_require_bin() {
 }
 
 # The one production entry point for "run the discovered docker CLI, with
-# these verb/args, on DX_REMOTE_HOST" (Fable A7; findings.md WP8.3 step 2).
-# Every dx_runtime_docker_<op> below whose ENTIRE remote call is "resolve
+# these verb/args, on DX_REMOTE_HOST". Every dx_runtime_docker_<op> below
+# whose ENTIRE remote call is "resolve
 # the binary, then run one docker verb with it" calls this instead of
 # repeating `local bin; bin="$(dx_runtime_docker_require_bin)" || return 1;
 # dx_runtime_docker_ssh_exec "$bin" ...` at its own top -- a second
