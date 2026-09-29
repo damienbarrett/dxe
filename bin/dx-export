@@ -3,6 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+
+dx_export_cleanup_partial() { rm -f "$PARTIAL_FILE"; }
+
+export_main() {
 dx_require_container_cli
 
 EXPORT_FILE="${1:-dx-host-export-$(date +%Y%m%d-%H%M%S).tar}"
@@ -22,9 +26,10 @@ fi
 # rename; `trap -` after the rename means a later, unrelated exit from
 # this same shell never tries to remove a partial that no longer exists.
 PARTIAL_FILE="$EXPORT_FILE.partial"
-dx_export_cleanup_partial() { rm -f "$PARTIAL_FILE"; }
 trap dx_export_cleanup_partial EXIT HUP INT TERM
 dx_runtime_export "$DX_CONTAINER_NAME" > "$PARTIAL_FILE"
 [ -s "$PARTIAL_FILE" ] || { echo "Error: export produced an empty archive." >&2; exit 1; }
 mv "$PARTIAL_FILE" "$EXPORT_FILE"
 trap - EXIT HUP INT TERM
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then export_main "$@"; fi
