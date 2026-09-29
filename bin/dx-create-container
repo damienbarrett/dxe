@@ -3,6 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+
+release_pending_claim() { [ "${claim_pending:-false}" != true ] || dx_nix_volume_claim_release "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME" || true; }
+
+create_container_main() {
 dx_require_container_cli
 
 if container_exists "$DX_CONTAINER_NAME"; then
@@ -12,7 +16,6 @@ fi
 
 dx_nix_volume_claim_acquire "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME"
 claim_pending=true
-release_pending_claim() { [ "${claim_pending:-false}" != true ] || dx_nix_volume_claim_release "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME" || true; }
 trap release_pending_claim EXIT HUP INT TERM
 
 if ! container_image_exists "$DX_IMAGE"; then
@@ -135,3 +138,5 @@ CREATE_ARGS+=(--entrypoint-cmd "$BOOTSTRAP_LAUNCH_CMD" --entrypoint-arg "$DX_BOO
 dx_runtime_container_create "${CREATE_ARGS[@]}"
 claim_pending=false
 trap - EXIT HUP INT TERM
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then create_container_main "$@"; fi
