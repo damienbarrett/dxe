@@ -39,7 +39,7 @@ Branch: `refactor/findings-2026-09-29` (from `docs/model-reviews-20260929`).
 | --- | --- | --- |
 | Container-free suite (`tests/run_all_tests.sh --skip-integration`) | yes | yes |
 | Bash 3.2 host contracts | yes (the host shell *is* 3.2) | macos-15 |
-| ShellCheck | no binary locally | pinned 0.10.0 |
+| ShellCheck | yes, CI's pinned 0.10.0 via `nix shell nixpkgs/nixos-25.05#shellcheck` inside the `nixos/nix` container (scratch helper `shellcheck.sh`; reproduces CI's findings exactly) | pinned 0.10.0 |
 | kcov coverage + ratchet | probably, via the Apple runtime (`run-coverage-linux.sh` accepts it as provider); unverified until WP1.1 lands | ubuntu-24.04 |
 | Nix evaluation / `checks` | yes, via the Apple runtime: `container run --rm --memory 8g -v <guest>:/src:ro nixos/nix:2.34.8 sh -c 'nix --extra-experimental-features "nix-command flakes" flake check --no-build --no-write-lock-file --all-systems /src'` (1 GB default memory gets OOM-killed at NixVim) | ubuntu-24.04 |
 | Live guest (`dx-test`) | Apple runtime available | manual only |
@@ -407,3 +407,4 @@ Every review ID and where it lands.
 - **2026-09-30** WP6.9: design only (agent ran out of time); full plan with expected call counts in `docs/evidence/20260930/agent-design-notes.md`. Also found: `bin/dx-restore` currently pushes `identical` targets too.
 - **2026-09-30** First CI run on the branch (36613061827, at e59346e): macOS Bash 3.2 job green; Linux job failed at ShellCheck (later steps skipped): `tests/test_persist_backup_select.sh` SC2218 (function used before its definition, many hits: the WP6.1 shadow functions), `tests/test_section3_bootstrap.sh` SC2128 (array expanded without index, ~18 hits, WP3.2/WP4.4 cases) and one SC1090. Fix these first next session, then re-check the later CI steps (contracts, coverage, Nix).
 - **2026-09-30** WP6.7/WP6.8 landed (eff33a0): fixed probe program from `dx_bootstrap_health_command`, path via `--env` as data, full lease identity (generation, boot id, pid, start) plus a readiness marker `.locks/ready/<pid>.<start>` written by `bootstrap_main` after the phases. Section 22: 43. Follow-ups: section 9/33 cases for the two new helpers (bin/lib is in the kcov gate), register `dx_bootstrap_publish_ready_marker` in section 3's function list, a lifecycle.md paragraph on readiness semantics, and the `process_start` text is now in two heredocs (WP5.2 unifies).
+- **2026-09-30 (resumed)** Local ShellCheck through the container runtime reproduces CI's 98 findings exactly; fan-out: ShellCheck fixes + P13 bootstrap coverage cases, gemini-cli removal, WP6.9 and WP5.1 from their saved designs, WP8.3 steps 3/5/6.
