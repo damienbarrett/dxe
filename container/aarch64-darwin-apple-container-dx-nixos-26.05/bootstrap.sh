@@ -8,14 +8,20 @@
 # behaviourally, instead of comparing grep line numbers in this file's
 # source text.
 bootstrap_phases() {
-    local owner_uid owner_gid
+    local owner_uid owner_gid identity_record
     configure_single_user_nix
     install_essentials
     link_system_bash
     capture_nix_image_default_profile
     prepare_nix_volume
     materialize_auth_files
-    create_user
+    # Contract 5 (refactor-v2-final.md, Fable B6 item 5): the durable-
+    # identity candidate record_durable_nix_identity persisted (from inside
+    # prepare_nix_volume's own branches, a separate earlier phase) is read
+    # back here and threaded into create_user positionally, replacing
+    # DX_NIX_DURABLE_UID/DX_NIX_DURABLE_GID.
+    identity_record="$(dx_read_durable_identity_record)"
+    create_user "$identity_record"
     # Contract 1 (refactor-v2-final.md, Fable B6 item 6): the owner uid/gid
     # is resolved exactly once, here, after create_user has run -- never
     # re-derived inside populate_prepared_nix_volume or its in-place

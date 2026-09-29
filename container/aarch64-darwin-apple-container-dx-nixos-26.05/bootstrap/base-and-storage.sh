@@ -241,13 +241,23 @@ nix_seed_volume() {
     rm -rf "$stage_root"
 }
 
+# Contract 5 (refactor-v2-final.md, Fable B6 item 5): returns a bounded,
+# two-line, non-sourced record on stdout -- `identity=<uid:gid-or-empty>`
+# and `migrate=<true|false>` -- instead of exporting DX_NIX_DURABLE_UID/
+# DX_NIX_DURABLE_GID. create_user takes that record as its own positional
+# argument. DX_NIX_IDENTITY_MIGRATION_REQUIRED is unchanged: it remains the
+# signal migrate_durable_nix_identity_if_needed reads later, in a separate
+# bootstrap phase, and this function's own `migrate=` output line simply
+# reports that same decision rather than introducing a second one.
+# DX_PERSIST_IDENTITY_MIGRATION_REQUIRED is removed outright -- it was
+# write-only in production (Fable B11): nothing ever read it.
 record_durable_nix_identity() {
     local volume_root="$1"
     local persist_home="${DX_PERSIST_HOME:-/persist/home/dx}"
     local nix_identity="" persist_identity="" identity=""
     local nix_identity_safe=false persist_identity_safe=false
 
-    unset DX_NIX_DURABLE_UID DX_NIX_DURABLE_GID DX_NIX_IDENTITY_MIGRATION_REQUIRED
+    unset DX_NIX_IDENTITY_MIGRATION_REQUIRED
     [ -d "$volume_root/store" ] && nix_identity="$(stat -c '%u:%g' "$volume_root/store" 2>/dev/null || true)"
     [ -d "$persist_home" ] && persist_identity="$(stat -c '%u:%g' "$persist_home" 2>/dev/null || true)"
     [[ "$nix_identity" =~ ^[1-9][0-9]*:[1-9][0-9]*$ ]] && nix_identity_safe=true
@@ -271,16 +281,20 @@ record_durable_nix_identity() {
         # repair its tree once dx exists. Do not turn a recoverable historic
         # mismatch into an unbootable guest.
         echo "Warning: durable Nix identity $nix_identity differs from $persist_home identity $persist_identity; reusing Nix identity and scheduling persisted-home migration." >&2
-        DX_PERSIST_IDENTITY_MIGRATION_REQUIRED=true
-        export DX_PERSIST_IDENTITY_MIGRATION_REQUIRED
     fi
     identity="${nix_identity:-$persist_identity}"
     if [[ "$identity" =~ ^([1-9][0-9]*):([1-9][0-9]*)$ ]]; then
-        DX_NIX_DURABLE_UID="${identity%%:*}"
-        DX_NIX_DURABLE_GID="${identity##*:}"
-        export DX_NIX_DURABLE_UID DX_NIX_DURABLE_GID
-        echo "Reusing durable identity $identity for dx."
+        echo "Reusing durable identity $identity for dx." >&2
+    else
+        identity=""
     fi
+    local record
+    record="$(printf 'identity=%s\nmigrate=%s' "$identity" "${DX_NIX_IDENTITY_MIGRATION_REQUIRED:-false}")"
+    # Persist the record so create_user -- a separate, later bootstrap
+    # phase -- can read it back (dx_read_durable_identity_record); this
+    # function's own stdout remains the direct, testable return value.
+    dx_persist_durable_identity_record "$record"
+    printf '%s\n' "$record"
 }
 
 # This marker is independent of activation.sh's `.dx-owner-layout-v1`, not a
