@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
+nix_disk_main() {
 # Branch 11 / Phase 5 (qnap-dxe-plan.md DQ8; docs/refactor/remote-aware-ssh.md
 # section 7): Apple-only, fails before any mutation (including the
 # "already exists" no-op check below) rather than preparing a sparse image
@@ -20,6 +21,8 @@ mkdir -p "$(dirname "$DX_NIX_DISK")"
 truncate -s "$DX_NIX_DISK_SIZE" "$DX_NIX_DISK"
 
 # Format with ext4 as requested in §9
-# Note: We rely on the guest to handle btrfs if preferred, 
+# Note: We rely on the guest to handle btrfs if preferred,
 # but §9 specifically asked for ext4 here.
 # For now, we just prepare the sparse file.
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then nix_disk_main "$@"; fi
