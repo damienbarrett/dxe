@@ -8,7 +8,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
+recreate_main() {
 echo "Recreating DX environment (preserves /nix and /persist)..."
 
 "$SCRIPT_DIR/dx-destroy"
 exec "$SCRIPT_DIR/dx" "$@"
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then recreate_main "$@"; fi
