@@ -20,11 +20,7 @@ done
 # its branches inside the kcov 100% gate (bin/dx* entrypoints are exempt --
 # tests/coverage/exclusions.txt). It sets `generation` here via Bash dynamic
 # scoping rather than printing it, so its own progress/result prose prints in
-# real time as it runs, exactly as before this split. Its guest heredoc still
-# ends with a trailing `cat >/dev/null` after extracting: tar stops at the
-# end-of-archive marker without necessarily draining the creator's trailing
-# padding, so without that drain the creator can take EPIPE and pipefail
-# would fail a complete, correct publication.
+# real time as it runs, exactly as before this split.
 dx_bootstrap_sync "$DX_CONTAINER_NAME" "$DX_BOOTSTRAP_SOURCE" "$DX_BOOTSTRAP_PATH" || status=$?
 case "$status" in
     0) [ -z "$result_file" ] || dx_bootstrap_sync_result_write "$result_file" published "$generation" || exit 1 ;;

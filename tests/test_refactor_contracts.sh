@@ -196,9 +196,14 @@ check test "$herdr_message_tools" = "$declared_tools"
 # The same defect in a different shape: `tar -cf - | ... tar -xf -`. tar stops
 # at the end-of-archive marker without necessarily draining the creator's
 # trailing padding, so the creator takes EPIPE and pipefail fails a complete,
-# correct publication. bin/dx-sync-bootstrap's guest script must therefore
-# consume its input to the end after extracting.
-check grep -q 'cat >/dev/null' "$ROOT/bin/dx-sync-bootstrap"
+# correct publication. WP5.1 (Fable A2) moved this pipeline out of
+# bin/dx-sync-bootstrap and into bin/lib/dx-bootstrap-sync.sh's
+# dx_bootstrap_sync (the `tar -cf - . | dx_runtime_exec -i "$container" sh -c
+# '...'` call and its embedded guest script), so the drain must be asserted
+# there now -- pinning the entrypoint would pass even if the guest script
+# stopped draining its input, since the string no longer has to appear there
+# at all.
+check grep -q 'cat >/dev/null' "$ROOT/bin/lib/dx-bootstrap-sync.sh"
 
 # --- The bootstrap essentials closure is the guest's entire pre-sshd
 # dependency set, and since it moved out of the bootstrap scripts into
