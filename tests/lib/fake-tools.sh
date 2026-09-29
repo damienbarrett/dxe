@@ -79,23 +79,44 @@ esac' "$body")"
 # ship /usr/bin/docker -- leaks into the fake remote and the test proves
 # nothing (CI run 36296075448, 2026-09-27). Unset, the PATH is left alone.
 #
-# Whatever DXE_FAKE_SSH_REMOTE_PATH names, bash's own directory (resolved
-# from THIS process's still-unrestricted PATH, before the override below)
-# is always appended (Fable E3): every fake this eval might reach --
-# whether at that restricted path or further down it via a glob, like the
-# qpkg-fallback fixture's docker -- now has a `#!/usr/bin/env bash`
-# shebang, not a hardcoded `#!/bin/bash`, so env needs bash to still be
-# findable even on a deliberately bare remote PATH. This does not weaken
-# what a fixture is proving: the tool under test (docker, tailscale, ...)
-# is still absent from DXE_FAKE_SSH_REMOTE_PATH exactly as that fixture set
-# it, only bash itself is additionally reachable.
+# Whatever DXE_FAKE_SSH_REMOTE_PATH names, a directory holding ONLY a
+# `bash` symlink (resolved from THIS process's still-unrestricted PATH,
+# before the override below) is always appended (Fable E3): every fake
+# this eval might reach -- whether at that restricted path or further
+# down it via a glob, like the qpkg-fallback fixture's docker -- now has a
+# `#!/usr/bin/env bash` shebang, not a hardcoded `#!/bin/bash`, so env
+# needs bash to still be findable even on a deliberately bare remote PATH.
+# This does not weaken what a fixture is proving: the tool under test
+# (docker, tailscale, ...) is still absent from DXE_FAKE_SSH_REMOTE_PATH
+# exactly as that fixture set it, only bash itself is additionally
+# reachable.
+#
+# This directory must never be the real bash binary's own directory
+# (bash's `dirname "$(command -v bash)"`, what this used to append
+# directly): on GitHub's ubuntu runners that directory is /usr/bin, which
+# also holds a real `docker` -- appending it leaked a real `docker` onto
+# the "bare PATH" a discovery-refusal/qpkg-fallback fixture had gone to
+# the trouble of keeping empty, so those two cases passed on this Mac (no
+# /usr/bin/docker here) and failed on CI (CI run 36640705743, following
+# the SAME leak this comment already named once, from CI run 36296075448,
+# 2026-09-27 -- that fix narrowed WHERE the leak came from without
+# actually closing it). Fixed by creating a private directory under the
+# fixture's own tool directory, seeded with nothing but a `bash` symlink,
+# the first time it is needed, and appending THAT instead.
 fake_qnap_ssh_write() {
-    local directory="$1"
-    fake_tool_write "$directory" ssh '
-if [ -n "${DXE_FAKE_SSH_ARGV_LOG:-}" ]; then printf "%s\n" "$@" >> "$DXE_FAKE_SSH_ARGV_LOG"; fi
-if [ -n "${DXE_FAKE_SSH_REMOTE_PATH:-}" ]; then PATH="$DXE_FAKE_SSH_REMOTE_PATH:$(dirname "$(command -v bash)")"; export PATH; fi
+    local directory="$1" bash_only_dir="$1/.dxe-fake-bash-only"
+    fake_tool_write "$directory" ssh "$(printf '%s\n%s' \
+        "dxe_fake_bash_only_dir=\"$bash_only_dir\"" \
+        'if [ -n "${DXE_FAKE_SSH_ARGV_LOG:-}" ]; then printf "%s\n" "$@" >> "$DXE_FAKE_SSH_ARGV_LOG"; fi
+if [ -n "${DXE_FAKE_SSH_REMOTE_PATH:-}" ]; then
+    if [ ! -e "$dxe_fake_bash_only_dir/bash" ]; then
+        mkdir -p "$dxe_fake_bash_only_dir"
+        ln -sf "$(command -v bash)" "$dxe_fake_bash_only_dir/bash"
+    fi
+    PATH="$DXE_FAKE_SSH_REMOTE_PATH:$dxe_fake_bash_only_dir"
+    export PATH
+fi
 dx_fake_last=""
 for dx_fake_arg in "$@"; do dx_fake_last="$dx_fake_arg"; done
-eval "$dx_fake_last"
-'
+eval "$dx_fake_last"')"
 }
