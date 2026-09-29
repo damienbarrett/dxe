@@ -66,6 +66,68 @@ printf 'clean\n' > "$FIXTURE/persist/git/repo-c/clean.txt"
 git -C "$FIXTURE/persist/git/repo-c" add -A
 git -C "$FIXTURE/persist/git/repo-c" commit -q -m "only commit, no remote"
 
+# --- Fixture: repo-detached -- WP6.2 / Astra F2: a commit reachable ONLY
+# from a DETACHED HEAD, with an otherwise fully-pushed branch, must be
+# classified at-risk-whole. Before the fix, `git log --branches --not
+# --remotes` never looked at HEAD at all when it was detached, so this
+# reproduced live as "safe" -- zero backup entries for a real local-only
+# commit. ---
+git init -q --bare "$FIXTURE/remotes/repo-detached.git"
+git_repo "$FIXTURE/persist/git/repo-detached"
+printf 'pushed\n' > "$FIXTURE/persist/git/repo-detached/pushed.txt"
+git -C "$FIXTURE/persist/git/repo-detached" add -A
+git -C "$FIXTURE/persist/git/repo-detached" commit -q -m "pushed commit"
+git -C "$FIXTURE/persist/git/repo-detached" remote add origin "$FIXTURE/remotes/repo-detached.git"
+git -C "$FIXTURE/persist/git/repo-detached" push -q origin main
+git -C "$FIXTURE/persist/git/repo-detached" checkout -q --detach main
+printf 'pushed\nlocal-only change\n' > "$FIXTURE/persist/git/repo-detached/pushed.txt"
+git -C "$FIXTURE/persist/git/repo-detached" commit -q -am "local-only commit on detached HEAD"
+
+# --- Fixture: repo-stash -- WP6.2: stash-only work (everything else
+# pushed and clean) must be retained. A stash commit is reachable only
+# from refs/stash, never from a branch or tag, so it needs its own
+# explicit reachability check -- see the retention-policy comment above
+# dx_pbs_repo_at_risk_whole. ---
+git init -q --bare "$FIXTURE/remotes/repo-stash.git"
+git_repo "$FIXTURE/persist/git/repo-stash"
+printf 'pushed\n' > "$FIXTURE/persist/git/repo-stash/pushed.txt"
+git -C "$FIXTURE/persist/git/repo-stash" add -A
+git -C "$FIXTURE/persist/git/repo-stash" commit -q -m "pushed commit"
+git -C "$FIXTURE/persist/git/repo-stash" remote add origin "$FIXTURE/remotes/repo-stash.git"
+git -C "$FIXTURE/persist/git/repo-stash" push -q origin main
+printf 'pushed\nstashed change\n' > "$FIXTURE/persist/git/repo-stash/pushed.txt"
+git -C "$FIXTURE/persist/git/repo-stash" stash push -q -m "wip"
+
+# --- Fixture: repo-tag-local -- WP6.2: a local-only tag pointing at a
+# commit ALREADY reachable from a remote-tracking ref is NOT at-risk (the
+# retention policy documented above dx_pbs_repo_at_risk_whole): the
+# commit's content is already safely on the remote, and only the tag
+# POINTER itself is local. ---
+git init -q --bare "$FIXTURE/remotes/repo-tag-local.git"
+git_repo "$FIXTURE/persist/git/repo-tag-local"
+printf 'pushed\n' > "$FIXTURE/persist/git/repo-tag-local/pushed.txt"
+git -C "$FIXTURE/persist/git/repo-tag-local" add -A
+git -C "$FIXTURE/persist/git/repo-tag-local" commit -q -m "pushed commit"
+git -C "$FIXTURE/persist/git/repo-tag-local" remote add origin "$FIXTURE/remotes/repo-tag-local.git"
+git -C "$FIXTURE/persist/git/repo-tag-local" push -q origin main
+git -C "$FIXTURE/persist/git/repo-tag-local" tag local-only-tag main
+
+# --- Fixture: repo-tag-unpushed -- WP6.2: a local tag on a commit that is
+# NOT reachable from any remote -- even after no branch points there any
+# more -- still flags the repository at-risk: the tag alone keeps that
+# commit's content the operator's sole responsibility to protect. ---
+git init -q --bare "$FIXTURE/remotes/repo-tag-unpushed.git"
+git_repo "$FIXTURE/persist/git/repo-tag-unpushed"
+printf 'pushed\n' > "$FIXTURE/persist/git/repo-tag-unpushed/pushed.txt"
+git -C "$FIXTURE/persist/git/repo-tag-unpushed" add -A
+git -C "$FIXTURE/persist/git/repo-tag-unpushed" commit -q -m "pushed commit"
+git -C "$FIXTURE/persist/git/repo-tag-unpushed" remote add origin "$FIXTURE/remotes/repo-tag-unpushed.git"
+git -C "$FIXTURE/persist/git/repo-tag-unpushed" push -q origin main
+printf 'pushed\nunpushed via tag only\n' > "$FIXTURE/persist/git/repo-tag-unpushed/pushed.txt"
+git -C "$FIXTURE/persist/git/repo-tag-unpushed" commit -q -am "unpushed, kept alive only by a tag"
+git -C "$FIXTURE/persist/git/repo-tag-unpushed" tag keep-me-tag
+git -C "$FIXTURE/persist/git/repo-tag-unpushed" reset -q --hard origin/main
+
 # --- Mid-task addition: a NESTED git repository (a plain subdirectory
 # containing its own .git, not a submodule) inside an at-risk-whole outer
 # repo -- found live on the primary guest, 2026-09-27
@@ -191,6 +253,25 @@ assert_listed "git/repo-b/.git/refs/heads/main" "unpushed repo's refs are mirror
 # Repo-c: no remote at all -> at risk as a whole, even fully committed+clean.
 assert_listed "git/repo-c/clean.txt" "a repo with no remote at all is at-risk as a whole (committed file)"
 assert_listed "git/repo-c/.git/HEAD" "a repo with no remote at all mirrors .git too"
+
+# Repo-detached (WP6.2 / Astra F2): a local-only commit on DETACHED HEAD is
+# at-risk as a whole, same as any other local-only commit.
+assert_listed "git/repo-detached/pushed.txt" "a detached-HEAD local-only commit's file is at-risk as a whole"
+assert_listed "git/repo-detached/.git/HEAD" "a detached-HEAD local-only commit mirrors .git too (the commit itself survives)"
+
+# Repo-stash (WP6.2): stash-only work (everything else pushed and clean)
+# is retained -- at-risk as a whole, via refs/stash reachability.
+assert_listed "git/repo-stash/pushed.txt" "a repo whose only unpushed work is a stash is at-risk as a whole"
+
+# Repo-tag-local (WP6.2): a local-only tag on an ALREADY-PUSHED, clean
+# commit does not by itself make the repo at-risk.
+assert_not_listed "git/repo-tag-local/pushed.txt" "a local-only tag on an already-pushed, clean commit does not drag the whole repo into the listing"
+if dx_pbs_repo_at_risk_whole "$FIXTURE/persist/git/repo-tag-local"; then test_fail "a local-only tag on an already-pushed commit is NOT at-risk as a whole"; else test_pass "a local-only tag on an already-pushed commit is NOT at-risk as a whole"; fi
+
+# Repo-tag-unpushed (WP6.2): a local tag on an unpushed commit still
+# flags at-risk-whole, even once no branch points there any more.
+assert_listed "git/repo-tag-unpushed/.git/refs/tags/keep-me-tag" "the local tag ref itself (and the commit object it protects) is mirrored when at-risk-whole"
+if dx_pbs_repo_at_risk_whole "$FIXTURE/persist/git/repo-tag-unpushed"; then test_pass "a local tag on an unpushed commit (even after the branch itself no longer points there) is at-risk as a whole"; else test_fail "a local tag on an unpushed commit (even after the branch itself no longer points there) is at-risk as a whole"; fi
 
 # Outside any repository.
 assert_listed "home/dx/.bash_history" "a file outside any repository is always at-risk"
@@ -369,19 +450,39 @@ fallback_result="$(
 )"
 [ "$fallback_result" = fallbackhash ] && test_pass "dx_pbs_sha256_stdin falls back to shasum when sha256sum is absent" || test_fail "dx_pbs_sha256_stdin falls back to shasum when sha256sum is absent (got '$fallback_result')"
 
-# --- A permission-denied subtree (live-verified on dx-test: root-owned
-# directories under /persist such as /etc and /lost+found) is skipped
-# silently, not reported as noisy `find` stderr. Readable siblings are
-# still listed. ---
-denied_root="$FIXTURE/denied-root"
-mkdir -p "$denied_root/no-access" "$denied_root/readable"
-printf 'reachable\n' > "$denied_root/readable/file.txt"
-chmod 0000 "$denied_root/no-access"
-denied_stderr="$FIXTURE/denied-stderr.log"
-denied_listing="$(dx_pbs_list "$denied_root" 2> "$denied_stderr")"
-chmod 0755 "$denied_root/no-access"
-if grep -qi 'permission denied' "$denied_stderr"; then test_fail "a permission-denied subtree produces no noisy find stderr"; else test_pass "a permission-denied subtree produces no noisy find stderr"; fi
-if printf '%s\n' "$denied_listing" | stdin_matches -F "$(printf 'readable/file.txt\t')"; then test_pass "a permission-denied subtree does not stop readable siblings from being listed"; else test_fail "a permission-denied subtree does not stop readable siblings from being listed"; fi
+# --- WP6.1 (Astra F1): scan completeness is a contract. A permission-
+# denied subtree used to be silently skipped (2>/dev/null on every find,
+# no exit-status check anywhere) -- reproduced live: a transient chmod 000
+# on a subtree made the listing exit 0 with that subtree simply missing,
+# and the host's diff then scheduled the vanished paths for removal from
+# the mirror. Fail closed instead: a traversal error must abort the WHOLE
+# run (nonzero exit) and name the offending path on stderr, never silently
+# narrow the selection. A first, fully-readable listing succeeds; only the
+# SECOND listing (after chmod 000) is expected to fail -- run as the
+# unprivileged user this whole suite already runs as (no sudo): root
+# ignores the permission bit entirely and the repro would not reproduce. ---
+denied_root="$FIXTURE/wp61-denied-root"
+mkdir -p "$denied_root/private/work"
+printf 'do not lose me\n' > "$denied_root/private/work/secret.txt"
+first_denied_stderr="$FIXTURE/wp61-denied-stderr-1.log"
+if dx_pbs_list "$denied_root" > /dev/null 2> "$first_denied_stderr"; then
+    test_pass "WP6.1: a fully readable tree lists successfully before anything is made unreadable"
+else
+    test_fail "WP6.1: a fully readable tree lists successfully before anything is made unreadable (stderr: $(cat "$first_denied_stderr"))"
+fi
+chmod 0000 "$denied_root/private"
+second_denied_stderr="$FIXTURE/wp61-denied-stderr-2.log"
+if dx_pbs_list "$denied_root" > /dev/null 2> "$second_denied_stderr"; then
+    test_fail "WP6.1: a permission-denied subtree makes the second listing exit non-zero (it exited 0)"
+else
+    test_pass "WP6.1: a permission-denied subtree makes the second listing exit non-zero"
+fi
+chmod 0755 "$denied_root/private"
+if grep -Fq "$denied_root/private" "$second_denied_stderr" && grep -q '^Error:' "$second_denied_stderr"; then
+    test_pass "WP6.1: the permission-denied path is named in an Error: line on stderr"
+else
+    test_fail "WP6.1: the permission-denied path is named in an Error: line on stderr (stderr: $(cat "$second_denied_stderr"))"
+fi
 
 # --- Equivalence property (Fable B5 / Astra F6 / Muse B3, WP3.3 defect C):
 # the SAME component deny-list was hand-expanded as literal `find -name`
@@ -508,6 +609,157 @@ else
 fi
 standalone_hash_file="$(bash "$SELECTOR" --hash-paths-file "$FIXTURE/persist" "$hashpaths_list")"
 if printf '%s\n' "$standalone_hash_file" | stdin_matches -F 'home/dx/.bash_history	present	'; then test_pass "dx-persist-backup-select.sh --hash-paths-file runs standalone"; else test_fail "dx-persist-backup-select.sh --hash-paths-file runs standalone"; fi
+
+# --- WP6.1 (Astra F1): a `find` that fails outright (not just permission-
+# denied) must also abort the whole run, even when it printed SOME output
+# first -- the exact "partial output, then nonzero exit" shape Astra's own
+# fixture used (proves the EXIT STATUS is what is checked, not merely
+# "stderr looked quiet"). Scoped to a small, isolated fixture with no git
+# repos, so only dx_pbs_list_outside_repos's own find call matters here.
+# `find` is shadowed as a shell FUNCTION, undone with a plain `unset -f`. ---
+find_fail_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-findfail.XXXXXX")"
+mkdir -p "$find_fail_root/home/dx"
+printf 'irrelevant\n' > "$find_fail_root/home/dx/file.txt"
+find() { printf 'partial/output\0'; return 1; }
+find_fail_stderr="$FIXTURE/wp61-findfail-stderr.log"
+if dx_pbs_list "$find_fail_root" > /dev/null 2> "$find_fail_stderr"; then
+    test_fail "WP6.1: a failing find (after printing partial output) makes the listing exit non-zero"
+else
+    test_pass "WP6.1: a failing find (after printing partial output) makes the listing exit non-zero"
+fi
+unset -f find
+if grep -q '^Error:' "$find_fail_stderr"; then
+    test_pass "WP6.1: a failing find's Error is reported on stderr"
+else
+    test_fail "WP6.1: a failing find's Error is reported on stderr (stderr: $(cat "$find_fail_stderr"))"
+fi
+rm -rf "$find_fail_root"
+
+# --- WP6.1: a file that "disappears" between being listed by find and
+# being stat/hashed (a real race on a live guest; here, a shadowed `stat`
+# stands in for it) must also abort the run and name the affected path,
+# never silently `continue` past it. `stat` is shadowed to fail ONLY for
+# the one target path (both the -c and -f probes dx_pbs_stat_size/
+# dx_pbs_stat_mtime try), leaving every other path's real stat call
+# untouched -- proving the failure is scoped to that ONE entry. ---
+stat_fail_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-statfail.XXXXXX")"
+mkdir -p "$stat_fail_root/home/dx"
+printf 'vanishing\n' > "$stat_fail_root/home/dx/vanishes.txt"
+printf 'stays\n' > "$stat_fail_root/home/dx/stays.txt"
+stat() {
+    case "$*" in
+        *vanishes.txt*) return 1 ;;
+        *) command stat "$@" ;;
+    esac
+}
+stat_fail_stderr="$FIXTURE/wp61-statfail-stderr.log"
+if dx_pbs_list "$stat_fail_root" > /dev/null 2> "$stat_fail_stderr"; then
+    test_fail "WP6.1: a path whose stat/hash fails makes the listing exit non-zero"
+else
+    test_pass "WP6.1: a path whose stat/hash fails makes the listing exit non-zero"
+fi
+unset -f stat
+if grep -Fq "vanishes.txt" "$stat_fail_stderr" && grep -q '^Error:' "$stat_fail_stderr"; then
+    test_pass "WP6.1: the path whose stat/hash failed is named in an Error: line"
+else
+    test_fail "WP6.1: the path whose stat/hash failed is named in an Error: line (stderr: $(cat "$stat_fail_stderr"))"
+fi
+rm -rf "$stat_fail_root"
+
+# --- WP6.1: a failed Git inspection (e.g. a corrupted repo; here, a
+# shadowed `git` standing in for any git-level failure) for ONE repository
+# must also abort the run and name that repository, never be silently
+# reclassified "safe" -- the one misclassification that can lose data.
+# `git` is shadowed to fail only for the one target repo (matched by its
+# path appearing anywhere in the invocation's arguments -- every call in
+# this file passes `-C "$repo"`), leaving every other repository's real
+# git calls untouched. ---
+git_fail_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-gitfail.XXXXXX")"
+mkdir -p "$git_fail_root/git"
+git init -q -b main "$git_fail_root/git/broken-repo"
+git -C "$git_fail_root/git/broken-repo" config user.email test@example.com
+git -C "$git_fail_root/git/broken-repo" config user.name "DXE Test"
+printf 'content\n' > "$git_fail_root/git/broken-repo/file.txt"
+git -C "$git_fail_root/git/broken-repo" add -A
+git -C "$git_fail_root/git/broken-repo" commit -q -m initial
+git_fail_target="$git_fail_root/git/broken-repo"
+git() {
+    case "$*" in
+        *"$git_fail_target"*) return 128 ;;
+        *) command git "$@" ;;
+    esac
+}
+git_fail_stderr="$FIXTURE/wp61-gitfail-stderr.log"
+if dx_pbs_list "$git_fail_root" > /dev/null 2> "$git_fail_stderr"; then
+    test_fail "WP6.1: a repository whose git inspection fails makes the listing exit non-zero (not silently 'safe')"
+else
+    test_pass "WP6.1: a repository whose git inspection fails makes the listing exit non-zero (not silently 'safe')"
+fi
+unset -f git
+if grep -Fq "$git_fail_target" "$git_fail_stderr" && grep -q '^Error:' "$git_fail_stderr"; then
+    test_pass "WP6.1: the repository whose git inspection failed is named in an Error: line"
+else
+    test_fail "WP6.1: the repository whose git inspection failed is named in an Error: line (stderr: $(cat "$git_fail_stderr"))"
+fi
+rm -rf "$git_fail_root"
+
+# --- WP6.2: a repository whose reachability cannot be established (a
+# failed git query, not merely "no remote") is retained CONSERVATIVELY --
+# treated as at-risk-whole, exactly like a repo with real local-only
+# commits -- AND the run is reported as a failure (WP6.1's completeness
+# contract), never silently "safe". Verified at both levels: the
+# risk-check's own return code (2: distinct from both "0 = at risk" and
+# "1 = safe" -- see the retention-policy comment above
+# dx_pbs_repo_at_risk_whole), and dx_pbs_emit_repo's actual output (the
+# repo's tracked, already-pushed file is present in the listing precisely
+# BECAUSE whole-repo mode ran, not the safe/clean-set-diff path, which
+# would have excluded it). ---
+git_unreach_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-gitunreach.XXXXXX")"
+mkdir -p "$git_unreach_root/git"
+git init -q --bare "$git_unreach_root/remote.git"
+git init -q -b main "$git_unreach_root/git/repo"
+git -C "$git_unreach_root/git/repo" config user.email test@example.com
+git -C "$git_unreach_root/git/repo" config user.name "DXE Test"
+printf 'pushed and clean\n' > "$git_unreach_root/git/repo/pushed.txt"
+git -C "$git_unreach_root/git/repo" add -A
+git -C "$git_unreach_root/git/repo" commit -q -m initial
+git -C "$git_unreach_root/git/repo" remote add origin "$git_unreach_root/remote.git"
+git -C "$git_unreach_root/git/repo" push -q origin main
+git_unreach_target="$git_unreach_root/git/repo"
+git() {
+    case "$*" in
+        *"$git_unreach_target"*) return 128 ;;
+        *) command git "$@" ;;
+    esac
+}
+dx_pbs_repo_at_risk_whole "$git_unreach_target"
+git_unreach_rc=$?
+if [ "$git_unreach_rc" -eq 2 ]; then
+    test_pass "WP6.2: a repository whose git reachability query fails is signalled distinctly (conservative retention + reported failure), not 'safe'"
+else
+    test_fail "WP6.2: a repository whose git reachability query fails is signalled distinctly (conservative retention + reported failure), not 'safe' (rc=$git_unreach_rc)"
+fi
+
+git_unreach_repos_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-gitunreach-repos.XXXXXX")"
+printf '%s\n' "$git_unreach_target" > "$git_unreach_repos_file"
+git_unreach_out="$FIXTURE/wp62-gitunreach-out.tsv"
+set +e
+dx_pbs_emit_repo "$git_unreach_target" "repo" "" "$git_unreach_repos_file" > "$git_unreach_out" 2>/dev/null
+emit_repo_rc=$?
+set -e
+unset -f git
+if [ "$emit_repo_rc" -ne 0 ]; then
+    test_pass "WP6.2: dx_pbs_emit_repo reports failure for a repository whose reachability could not be established"
+else
+    test_fail "WP6.2: dx_pbs_emit_repo reports failure for a repository whose reachability could not be established"
+fi
+if grep -Fq "$(printf 'repo/pushed.txt\t')" "$git_unreach_out"; then
+    test_pass "WP6.2: despite the failure, the repository's content is retained conservatively (whole-repo emission still ran)"
+else
+    test_fail "WP6.2: despite the failure, the repository's content is retained conservatively (whole-repo emission still ran)"
+fi
+rm -f "$git_unreach_repos_file" "$git_unreach_out"
+rm -rf "$git_unreach_root"
 
 print_summary
 exit_with_code
