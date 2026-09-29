@@ -18,7 +18,13 @@
 # already use, applied to the interactive, user-facing subset of
 # dxPackages -- keep this list in sync with flake.nix's dxPackages and
 # NixVim's nvim by hand.
-DX_REQUIRED_INVENTORY="git gh nix ssh tmux rg fd curl jq direnv just task lazygit yazi btop fastfetch nvim tinty less file which"
+# flake.nix's checks.<system>.inventory-list is the contract that catches
+# drift between this literal and flake.nix's requiredInventory
+# (docs/reviews/2026-09-29-fable.md finding C3, WP7.3): man, starship,
+# node, fish, nu, tput and clear are installed (man-db via Home Manager's
+# own manual.manpages default, the rest via home.nix/home/shell.nix) but
+# were missing here until that contract caught it.
+DX_REQUIRED_INVENTORY="git gh nix ssh tmux rg fd curl jq direnv just task lazygit yazi btop fastfetch nvim tinty less file which man starship node fish nu tput clear"
 
 dx_verify_inventory_main() {
     if [ "${1:-}" = --print-inventory ]; then

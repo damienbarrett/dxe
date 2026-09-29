@@ -1,10 +1,44 @@
 { config, pkgs, ... }:
 
 {
+  # WP7.4 (docs/reviews/2026-09-29-fable.md finding C4): starship, direnv
+  # and the yazi `y` cd-on-exit wrapper used to be hand-rolled three times
+  # (once per shell) with three different guard idioms (bash: `command -v`,
+  # fish: `type -q`, nushell: neither -- it had no starship/direnv hook at
+  # all, undocumented). Typed options render all three consistently and
+  # keep drift like that impossible by construction.
+  programs.starship = {
+    enable = true;
+    # Settings deliberately empty: dx-theme (home/theme.nix, scripts/
+    # dx-theme*.sh) owns starship.toml at runtime via
+    # ~/.cache/dx/tinty/shell.sh / tinty's hooks, not Home Manager. Verified
+    # with `nix eval`: config.xdg.configFile has no "starship.toml" key
+    # when settings and presets are both empty, so nothing here can collide
+    # with dx-theme's file.
+    enableBashIntegration = true;
+    enableFishIntegration = true;
+    enableNushellIntegration = true;
+  };
+
+  programs.direnv = {
+    enable = true;
+    nix-direnv.enable = true;
+    enableBashIntegration = true;
+    enableFishIntegration = true;
+    enableNushellIntegration = true;
+  };
+
+  programs.yazi = {
+    enable = true;
+    shellWrapperName = "y";
+    enableBashIntegration = true;
+    enableFishIntegration = true;
+    enableNushellIntegration = true;
+  };
+
   programs.bash = {
     enable = true;
     profileExtra = ''
-      export PATH=/persist/home/dx/.local/state/dx-ai/current/profile/bin:$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH
       # Read the validated raw D-Bus address as data.
       keyring_address_file=/persist/home/dx/.local/state/dx/keyring-address
       keyring_library="$HOME/.local/lib/dx/dx-keyring.sh"
@@ -17,20 +51,6 @@
     initExtra = ''
       set -o vi
 
-      function y() {
-        local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
-        command yazi "$@" --cwd-file="$tmp"
-        IFS= read -r -d "" cwd < "$tmp"
-        [ "$cwd" != "$PWD" ] && [ -d "$cwd" ] && builtin cd -- "$cwd"
-        command rm -f -- "$tmp"
-      }
-
-      if command -v direnv >/dev/null 2>&1; then
-        eval "$(direnv hook bash)"
-      fi
-      if command -v starship >/dev/null 2>&1; then
-        eval "$(starship init bash)"
-      fi
       if [ -f "$HOME/.cache/dx/tinty/lazygit.yml" ]; then
         export LG_CONFIG_FILE="$HOME/.config/lazygit/config.yml,$HOME/.cache/dx/tinty/lazygit.yml"
       else
@@ -58,24 +78,8 @@
         end
       end
       set -g fish_greeting
-      fish_add_path --prepend /persist/home/dx/.local/state/dx-ai/current/profile/bin
       fish_vi_key_bindings
 
-      function y
-        set tmp (mktemp -t "yazi-cwd.XXXXXX")
-        command yazi $argv --cwd-file="$tmp"
-        if read -z cwd < "$tmp"; and [ "$cwd" != "$PWD" ]; and test -d "$cwd"
-          builtin cd -- "$cwd"
-        end
-        command rm -f -- "$tmp"
-      end
-
-      if type -q starship
-        starship init fish | source
-      end
-      if type -q direnv
-        direnv hook fish | source
-      end
       if test -f "$HOME/.cache/dx/tinty/lazygit.yml"
         set -gx LG_CONFIG_FILE "$HOME/.config/lazygit/config.yml,$HOME/.cache/dx/tinty/lazygit.yml"
       else
@@ -92,24 +96,13 @@
 
   programs.nushell = {
     enable = true;
+    # Nushell Tinted-shell startup support is intentionally not enabled.
+    # It has not been proven for the selected Tinty template version.
+    settings = {
+      show_banner = false;
+      edit_mode = "vi";
+    };
     configFile.text = ''
-      # Nushell Tinted-shell startup support is intentionally not enabled.
-      # It has not been proven for the selected Tinty template version.
-      $env.config = {
-        show_banner: false
-        edit_mode: "vi"
-      }
-
-      def --env y [...args] {
-        let tmp = (mktemp -t "yazi-cwd.XXXXXX")
-        ^yazi ...$args --cwd-file $tmp
-        let cwd = (open $tmp | str replace --all (char nul) "")
-        if $cwd != $env.PWD and ($cwd | path exists) {
-          cd $cwd
-        }
-        rm -fp $tmp
-      }
-
       try { ^/home/dx/.local/bin/dx-theme-restore }
     '';
     envFile.text = ''
@@ -121,7 +114,6 @@
           $env.DBUS_SESSION_BUS_ADDRESS = $address
         }
       }
-      $env.PATH = ($env.PATH | split row (char esep) | prepend "/persist/home/dx/.local/state/dx-ai/current/profile/bin" | append $"($nu.home-dir)/.local/bin" | append $"($nu.home-dir)/.nix-profile/bin")
       $env.EDITOR = "nvim"
       $env.VISUAL = "nvim"
       $env.SSL_CERT_FILE = $"($nu.home-dir)/.nix-profile/etc/ssl/certs/ca-bundle.crt"
@@ -139,8 +131,19 @@
     '';
   };
 
+  # WP7.4 (Fable C4): the three per-shell PATH prepends (bash's
+  # profileExtra export, fish's `fish_add_path --prepend`, nushell's
+  # `$env.PATH = ...`) and home.sessionVariables.PATH below all did the
+  # same thing by hand. home.sessionPath renders through Home Manager's
+  # own `prependToVar` for every shell (including nushell), so the dx-ai
+  # profile still wins over ~/.local/bin and the rest of PATH -- verified
+  # with `nix eval`.
+  home.sessionPath = [
+    "/persist/home/dx/.local/state/dx-ai/current/profile/bin"
+    "$HOME/.local/bin"
+  ];
+
   home.sessionVariables = {
-    PATH = "/persist/home/dx/.local/state/dx-ai/current/profile/bin:$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH";
     EDITOR = "nvim";
     VISUAL = "nvim";
     SSL_CERT_FILE = "$HOME/.nix-profile/etc/ssl/certs/ca-bundle.crt";

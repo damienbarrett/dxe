@@ -54,7 +54,16 @@ if command -v nix >/dev/null 2>&1; then
     # its own stderr in the message, instead of being swallowed and
     # misreported downstream as "not the same derivation".
     for system in aarch64-linux x86_64-linux; do
-        for check_name in home-activation ai-tools bootstrap-essentials; do
+        # WP7.3/WP7.4 (docs/reviews/2026-09-29-fable.md findings C3, C4):
+        # inventory / inventory-list are the reverse-direction package <->
+        # command contract (guest-tools.nix, scripts/dx-verify-inventory.sh);
+        # bash-integration / fish-integration / nushell-integration prove the
+        # typed programs.starship/direnv/yazi options actually wire up in
+        # each shell (home/shell.nix) -- the same eval-only, zero-warnings
+        # proof the three checks above already get.
+        for check_name in home-activation ai-tools bootstrap-essentials \
+            inventory inventory-list \
+            bash-integration fish-integration nushell-integration; do
             if check_output="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#checks.$system.$check_name.drvPath" 2>&1)"; then
                 test_pass "checks.$system.$check_name evaluates"
             else
@@ -97,6 +106,16 @@ else
         test_skip "nix not available, skipping checks.$system.ai-tools warnings check"
         test_skip "nix not available, skipping checks.$system.bootstrap-essentials evaluation"
         test_skip "nix not available, skipping checks.$system.bootstrap-essentials warnings check"
+        test_skip "nix not available, skipping checks.$system.inventory evaluation"
+        test_skip "nix not available, skipping checks.$system.inventory warnings check"
+        test_skip "nix not available, skipping checks.$system.inventory-list evaluation"
+        test_skip "nix not available, skipping checks.$system.inventory-list warnings check"
+        test_skip "nix not available, skipping checks.$system.bash-integration evaluation"
+        test_skip "nix not available, skipping checks.$system.bash-integration warnings check"
+        test_skip "nix not available, skipping checks.$system.fish-integration evaluation"
+        test_skip "nix not available, skipping checks.$system.fish-integration warnings check"
+        test_skip "nix not available, skipping checks.$system.nushell-integration evaluation"
+        test_skip "nix not available, skipping checks.$system.nushell-integration warnings check"
         test_skip "nix not available, skipping checks.$system.alias-is-identity evaluation"
     done
 fi

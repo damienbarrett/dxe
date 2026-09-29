@@ -75,42 +75,35 @@
             };
           };
 
-          # Shared package list for devShell and default tools profile
-          dxPackages = with pkgs; [
-            coreutils
-            gnused
-            gnugrep
-            findutils
-            procps
-            util-linux
-            btrfs-progs
-            e2fsprogs
-            less
-            man-db
-            file
-            git
-            gh
-            nix
-            openssh
-            tmux
-            tinty
-            ncurses
-            bash-completion
-            which
-            ripgrep
-            fd
-            curl
-            cacert
-            jq
-            direnv
-            nix-direnv
-            just
-            go-task
-            lazygit
-            yazi
-            btop
-            fastfetch
-            tzdata
+          # WP7.3 (docs/reviews/2026-09-29-fable.md finding C3, Muse B4):
+          # guest-tools.nix is the one mapping from nixpkgs attribute to the
+          # user-facing command(s) it must provide. dxPackages is generated
+          # from its keys, and requiredInventory below (consumed by
+          # checks.inventory and checks.inventory-list) from its values, so
+          # the two can no longer drift the way the hand-synced dxPackages
+          # list and scripts/dx-verify-inventory.sh's hand-synced literal
+          # had (reverse-direction gap: man, starship, node, fish, nu,
+          # tput/clear were installed but never verified).
+          guestTools = import ./guest-tools.nix;
+          dxPackages = map (n: pkgs.${n}) (pkgs.lib.attrNames guestTools);
+
+          # Packages already installed through a typed `programs.*` option
+          # (or a Home Manager default, for man-db) or another list, so they
+          # are not in guest-tools.nix -- see that file's header -- but
+          # their commands are still part of the inventory contract.
+          dxVerifyInventoryScript = ./scripts/dx-verify-inventory.sh;
+          requiredInventory = pkgs.lib.concatLists (pkgs.lib.attrValues guestTools) ++ [
+            "nvim" # nixvim.legacyPackages.${system}.makeNixvimWithModule, below
+            "man" # manual.manpages.enable (Home Manager default)
+            "git" # programs.git, home/tools.nix
+            "tmux" # programs.tmux, home/tools.nix
+            "fish" # programs.fish, home/shell.nix
+            "nu" # programs.nushell, home/shell.nix
+            "starship" # programs.starship, home/shell.nix (WP7.4)
+            "direnv" # programs.direnv, home/shell.nix (WP7.4)
+            "yazi" # programs.yazi, home/shell.nix (WP7.4)
+            "lazygit" # programs.lazygit, home/tools.nix (WP7.4)
+            "node" # home.nix's own home.packages (nodejs)
           ];
 
           # The tools required before Home Manager starts are one locked flake
@@ -286,6 +279,110 @@
               assert self.homeConfigurations.dx.activationPackage.drvPath
                   == self.homeConfigurations."dx-aarch64-linux".activationPackage.drvPath;
               pkgs.emptyFile;
+
+            # WP7.3 (docs/reviews/2026-09-29-fable.md finding C3, Muse B4):
+            # the reverse-direction inventory contract -- every user-facing
+            # command this flake installs (guest-tools.nix's values, plus
+            # the hand-listed extras that come from `programs.*` or another
+            # list) must actually be present in the activated Home Manager
+            # profile. `config.home.path` is the real aggregate environment
+            # Home Manager builds from home.packages *and* every enabled
+            # `programs.*` module, which is why this is checked against it
+            # rather than packages.default (a bare buildEnv of dxPackages
+            # alone, missing anything -- fish, nushell, starship, git, tmux,
+            # man -- that only a `programs.*` module or another home.nix
+            # list installs).
+            inventory = pkgs.runCommand "dx-inventory"
+              { homeEnv = homeConfiguration.config.home.path; } ''
+              for t in ${pkgs.lib.escapeShellArgs requiredInventory}; do
+                [ -x "$homeEnv/bin/$t" ] || { echo "missing: $t" >&2; exit 1; }
+              done
+              touch $out
+            '';
+
+            # scripts/dx-verify-inventory.sh must stay loadable raw (the
+            # coordinating session sources/execs it on the live guest, and
+            # tests source it directly), so it keeps its own literal
+            # DX_REQUIRED_INVENTORY rather than being templated from this
+            # flake. This check is the contract that stops the two literals
+            # (the script's, and this file's requiredInventory) from
+            # drifting apart again the way the script's list drifted from
+            # the packages actually installed.
+            inventory-list = pkgs.runCommand "dx-inventory-list-contract"
+              { } ''
+              script_list=$(bash ${dxVerifyInventoryScript} --print-inventory | tr ' ' '\n' | sort -u)
+              nix_list=$(printf '%s\n' ${pkgs.lib.escapeShellArgs requiredInventory} | sort -u)
+              if [ "$script_list" != "$nix_list" ]; then
+                echo "scripts/dx-verify-inventory.sh's DX_REQUIRED_INVENTORY has drifted from flake.nix's requiredInventory:" >&2
+                diff <(printf '%s\n' "$script_list") <(printf '%s\n' "$nix_list") >&2 || true
+                exit 1
+              fi
+              touch $out
+            '';
+
+            # WP7.4 (docs/reviews/2026-09-29-fable.md finding C4): the
+            # behavioural proof that programs.starship / programs.direnv /
+            # programs.yazi actually wire up per shell -- built, not just
+            # evaluated, over the SAME home-files this flake ships (not a
+            # hand-written fixture), copied into a throwaway $HOME. Function
+            # names below were confirmed against the actual generated
+            # ~/.bashrc, fish functions and nushell config.nu on this pin
+            # (`nix build .#checks.aarch64-linux.home-files` and grep), not
+            # guessed: bash's yazi wrapper is a top-level `function y()`,
+            # fish's direnv hook function is `__direnv_export_eval`, and
+            # nushell's yazi wrapper is `def --env y` in config.nu (not
+            # env.nu). $STARSHIP_SHELL is set at *runtime* by `starship
+            # init`, so it is not visible by grepping the static rc files --
+            # only running the shell proves it.
+            bash-integration = pkgs.runCommand "bash-integration"
+              {
+                nativeBuildInputs = [ pkgs.bashInteractive pkgs.direnv pkgs.starship pkgs.yazi ];
+                homeFiles = homeConfiguration.config.home-files;
+              } ''
+              set -euo pipefail
+              export HOME=$(mktemp -d)
+              cp -r "$homeFiles"/. "$HOME/"
+              chmod -R u+w "$HOME"
+              bash -ic 'declare -F y >/dev/null && [ "$STARSHIP_SHELL" = bash ]'
+              touch $out
+            '';
+
+            fish-integration = pkgs.runCommand "fish-integration"
+              {
+                nativeBuildInputs = [ pkgs.fish pkgs.direnv pkgs.starship pkgs.yazi ];
+                homeFiles = homeConfiguration.config.home-files;
+              } ''
+              set -euo pipefail
+              export HOME=$(mktemp -d)
+              cp -r "$homeFiles"/. "$HOME/"
+              chmod -R u+w "$HOME"
+              fish -i -c 'functions -q y; and functions -q __direnv_export_eval; and test "$STARSHIP_SHELL" = fish'
+              touch $out
+            '';
+
+            # nu -c (unlike `bash -i -c`/`fish -i -c` above) does not load
+            # env.nu/config.nu on its own -- confirmed by running it without
+            # the two flags below: y_defined/starship_ok/direnv_wired were
+            # all false. --env-config/--config make it read the same files
+            # an interactive session would.
+            nushell-integration = pkgs.runCommand "nushell-integration"
+              {
+                nativeBuildInputs = [ pkgs.nushell pkgs.direnv pkgs.starship pkgs.yazi ];
+                homeFiles = homeConfiguration.config.home-files;
+              } ''
+              set -euo pipefail
+              export HOME=$(mktemp -d)
+              cp -r "$homeFiles"/. "$HOME/"
+              chmod -R u+w "$HOME"
+              nu --env-config "$HOME/.config/nushell/env.nu" --config "$HOME/.config/nushell/config.nu" -c '
+                let y_defined = ((scope commands | where name == "y" | length) > 0)
+                let starship_ok = ($env.STARSHIP_SHELL? == "nu")
+                let direnv_wired = (($env.config.hooks.pre_prompt? | default []) | length) > 0
+                print $"y_defined=($y_defined) starship_ok=($starship_ok) direnv_wired=($direnv_wired)"
+                if $y_defined and $starship_ok and $direnv_wired { exit 0 } else { exit 1 }
+              '
+              touch $out
+            '';
           };
         };
 
