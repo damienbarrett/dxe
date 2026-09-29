@@ -1,6 +1,13 @@
-{ pkgs, nixvim, system }:
-
-nixvim.legacyPackages.${system}.makeNixvim {
+# WP2.2 (docs/reviews/2026-09-29-fable.md finding C2): a plain NixVim
+# module now, not a `{ pkgs, nixvim, system }:`-wrapped `makeNixvim` call --
+# it never used the `pkgs` argument it used to take. flake.nix now builds
+# this with `nixvim.legacyPackages.${system}.makeNixvimWithModule { inherit
+# pkgs; module = ./nixvim.nix; }`, passing the flake's own per-system
+# nixpkgs instance in directly (which sets NixVim's `nixpkgs.pkgs`,
+# wrappers/standalone.nix in the pinned NixVim source) instead of NixVim
+# constructing a third nixpkgs instance from its own flake input -- which is
+# what silenced the `nixpkgs.source`/`follows` evaluation warning.
+{
   viAlias = true;
   vimAlias = true;
   imports = [

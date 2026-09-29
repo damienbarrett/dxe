@@ -1,11 +1,18 @@
 { config, pkgs, ... }:
 
 {
+  # WP2.2 (docs/reviews/2026-09-29-fable.md finding C2): userName, userEmail
+  # and extraConfig are renamed options as of this Home Manager release --
+  # userName/userEmail fold into settings.user.name/settings.user.email, and
+  # extraConfig's whole shape moves under settings unchanged (per the
+  # rename warning) -- kept here for one release before they are removed.
   programs.git = {
     enable = true;
-    userName = "Damien Barrett";
-    userEmail = "damienbarrett@users.noreply.github.com";
-    extraConfig = {
+    settings = {
+      user = {
+        name = "Damien Barrett";
+        email = "damienbarrett@users.noreply.github.com";
+      };
       init.defaultBranch = "main";
       pull.rebase = true;
       push.autoSetupRemote = true;
