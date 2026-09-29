@@ -3,31 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
-dx_require_container_cli
-
-echo "Waiting for guest SSH to become responsive..."
-WAIT_TIMEOUT="${DX_SSH_WAIT_TIMEOUT:-$(dx_default_ssh_wait_timeout)}"
-POLL_INTERVAL="${DX_SSH_POLL_INTERVAL:-5}"
-PROGRESS_INTERVAL="${DX_SSH_PROGRESS_INTERVAL:-30}"
-
-dx_require_positive_integer DX_SSH_WAIT_TIMEOUT "$WAIT_TIMEOUT"
-dx_require_positive_integer DX_SSH_POLL_INTERVAL "$POLL_INTERVAL"
-dx_require_positive_integer DX_SSH_PROGRESS_INTERVAL "$PROGRESS_INTERVAL"
-
-WAIT_MINUTES=$(( (WAIT_TIMEOUT + 59) / 60 ))
-echo "Bootstrap wait limit: ${WAIT_TIMEOUT}s (approximately ${WAIT_MINUTES} minutes). A fresh factory-reset bootstrap can take several minutes."
-
-# The one-shot login-shell probe (options, BatchMode=yes, endpoint, the
-# "bash -lc 'true'" command) is bin/lib/dx-ssh-common.sh's
-# dx_ssh_probe_login_shell now (Branch 11 / Phase 6, qnap-dxe-plan.md
-# Phase 6 item 5) -- the same single source of truth bin/dx-status's SSH
-# section also calls, so the two never drift into two copies of the same
-# option-array assembly again.
-#
-# The last probe's stderr, so a timeout can say *why* the probe never
-# succeeded. Rewritten on every attempt, so it always holds the final failure.
-PROBE_STDERR="$(mktemp "${TMPDIR:-/tmp}/dx-wait-ssh-probe.XXXXXX")"
-trap 'rm -f "$PROBE_STDERR"' EXIT
 
 # A refused connection means sshd is not listening yet -- the ordinary
 # bootstrap case, and what the guest log tail below explains well. A connect or
@@ -59,6 +34,33 @@ print_container_logs() {
         echo "  (container logs unavailable)"
     fi
 }
+
+wait_ssh_main() {
+dx_require_container_cli
+
+echo "Waiting for guest SSH to become responsive..."
+WAIT_TIMEOUT="${DX_SSH_WAIT_TIMEOUT:-$(dx_default_ssh_wait_timeout)}"
+POLL_INTERVAL="${DX_SSH_POLL_INTERVAL:-5}"
+PROGRESS_INTERVAL="${DX_SSH_PROGRESS_INTERVAL:-30}"
+
+dx_require_positive_integer DX_SSH_WAIT_TIMEOUT "$WAIT_TIMEOUT"
+dx_require_positive_integer DX_SSH_POLL_INTERVAL "$POLL_INTERVAL"
+dx_require_positive_integer DX_SSH_PROGRESS_INTERVAL "$PROGRESS_INTERVAL"
+
+WAIT_MINUTES=$(( (WAIT_TIMEOUT + 59) / 60 ))
+echo "Bootstrap wait limit: ${WAIT_TIMEOUT}s (approximately ${WAIT_MINUTES} minutes). A fresh factory-reset bootstrap can take several minutes."
+
+# The one-shot login-shell probe (options, BatchMode=yes, endpoint, the
+# "bash -lc 'true'" command) is bin/lib/dx-ssh-common.sh's
+# dx_ssh_probe_login_shell now (Branch 11 / Phase 6, qnap-dxe-plan.md
+# Phase 6 item 5) -- the same single source of truth bin/dx-status's SSH
+# section also calls, so the two never drift into two copies of the same
+# option-array assembly again.
+#
+# The last probe's stderr, so a timeout can say *why* the probe never
+# succeeded. Rewritten on every attempt, so it always holds the final failure.
+PROBE_STDERR="$(mktemp "${TMPDIR:-/tmp}/dx-wait-ssh-probe.XXXXXX")"
+trap 'rm -f "$PROBE_STDERR"' EXIT
 
 # A monotonic wall-clock deadline: SECONDS is a bash builtin that reports
 # real elapsed seconds since it was last reset here, so ELAPSED below always
@@ -114,3 +116,5 @@ while ! dx_ssh_probe_login_shell "$PROBE_STDERR"; do
     sleep "$SLEEP_INTERVAL"
 done
 printf "\nGuest is ready.\n"
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then wait_ssh_main "$@"; fi
