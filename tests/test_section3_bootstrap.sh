@@ -1276,7 +1276,7 @@ p9_fresh_output="$({
     # exercised for real here, unstubbed) can still complete.
     chown() { printf 'chown %s\n' "$*" >> "$p9_fresh_calls"; }
     nix_image_store_import_required() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_fresh_calls"; return 1; }
-    nix_image_store_identity() { printf 'MUST-NOT-BE-CALLED %s\n' "$*" >> "$p9_fresh_calls"; return 1; }
+    nix_image_store_identity() { printf 'MUST-NOT-BE-CALLED\n' >> "$p9_fresh_calls"; return 1; }
     nix_install_image_essentials_root() { printf 'install_root %s pending=%s\n' "$*" "${DX_NIX_PENDING_IMAGE_STORE_IDENTITY:-<unset>}" >> "$p9_fresh_calls"; }
     DX_IMAGE_IDENTITY=sha256:1100000000000000000000000000000000000000000000000000000000000000
     populate_prepared_nix_volume_in_place "$p9_root_fresh"
@@ -1952,6 +1952,388 @@ else
 fi
 
 rm -rf "$p12_fixture"
+
+# P13 (docs/evidence/20260930/agent-design-notes.md, "Bootstrap storage
+# coverage cases"): six kcov gaps in base-and-storage.sh, closed the same
+# way P12 above closes its own: every case below runs its whole fixture as
+# the left side of `(...) || true` (or, for (e), an `if` condition around
+# id -u), so a stub returning non-zero -- or a REAL command failing for
+# real, as (e)'s permission-denied fstab append does on this unprivileged
+# Mac -- never aborts the case's own subshell early; execution always
+# reaches the case's trailing `echo "exit=$?"` (or, for (e), falls through
+# to the function's own final return). Verified empirically on this Mac's
+# Bash 3.2: when a compound command or subshell is the left side of
+# `|| true`, or the condition of `if`, errexit is suspended for its ENTIRE
+# nested execution, not merely the one command being tested.
+p13_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p13-storage.XXXXXX")"
+
+# (a) A fully successful sparse-image prepare, through the real
+# prepare_nix_volume phase wrapper: btrfs supported, /nix not already
+# mounted, no backing block device, no pre-existing sparse image file.
+# mkdir is a plain no-op (/mnt is read-only on this dev Mac; the real
+# mkdir -p /mnt/tmp-nix needs root); truncate/mkfs.btrfs/mount are
+# recording stubs, pinning their exact argv, not mere no-ops -- mkfs.ext4
+# is a MUST-NOT sentinel. Closes base-and-storage.sh:974-980.
+p13_raw_a="$p13_fixture/dx-nix-raw-a"
+mkdir -p "$p13_raw_a"
+p13_a_out="$p13_fixture/case-a.out"
+p13_a_truncate_log="$p13_fixture/case-a-truncate.log"
+p13_a_mkfs_btrfs_log="$p13_fixture/case-a-mkfs-btrfs.log"
+p13_a_mkfs_ext4_log="$p13_fixture/case-a-mkfs-ext4.log"
+p13_a_mount_log="$p13_fixture/case-a-mount.log"
+p13_a_identity_log="$p13_fixture/case-a-identity.log"
+(
+    export DX_NIX_RAW_PATH="$p13_raw_a"
+    export DX_NIX_DISK_SIZE=8G
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
+    findmnt() { return 1; }
+    blkid() { return 1; }
+    mkdir() { :; }
+    truncate() { printf '%s\n' "$*" >> "$p13_a_truncate_log"; : > "${3:?}"; }
+    mkfs.btrfs() { printf '%s\n' "$*" >> "$p13_a_mkfs_btrfs_log"; }
+    mkfs.ext4() { printf '%s\n' "$*" >> "$p13_a_mkfs_ext4_log"; }
+    mount() { printf '%s\n' "$*" >> "$p13_a_mount_log"; }
+    record_durable_nix_identity() { printf '%s\n' "$*" >> "$p13_a_identity_log"; }
+    prepare_nix_volume
+    echo "prepare_exit=$?"
+    printf 'ALREADY_MOUNTED=%s\n' "${DX_NIX_VOLUME_ALREADY_MOUNTED:-unset}"
+    printf 'ROOT=%s\n' "${DX_NIX_VOLUME_ROOT:-unset}"
+    printf 'DEVICE=%s\n' "${DX_NIX_VOLUME_DEVICE:-unset}"
+    printf 'FS_TYPE=%s\n' "${DX_NIX_VOLUME_FS_TYPE:-unset}"
+    printf 'MOUNT_OPTS=%s\n' "${DX_NIX_VOLUME_MOUNT_OPTS:-unset}"
+) >"$p13_a_out" 2>&1 || true
+p13_a_dev="$p13_raw_a/nix-store.btrfs"
+if grep -qF 'Bootstrap phase: Nix volume prepare/mount completed in' "$p13_a_out" \
+    && grep -qxF 'prepare_exit=0' "$p13_a_out" \
+    && grep -qxF 'ALREADY_MOUNTED=false' "$p13_a_out" \
+    && grep -qxF 'ROOT=/mnt/tmp-nix' "$p13_a_out" \
+    && grep -qxF "DEVICE=$p13_a_dev" "$p13_a_out" \
+    && grep -qxF 'FS_TYPE=btrfs' "$p13_a_out" \
+    && grep -qxF 'MOUNT_OPTS=compress=zstd:3,noatime,space_cache=v2,discard=async' "$p13_a_out"; then
+    test_pass "prepare_nix_volume: a successful sparse-image prepare reports completion and publishes all five DX_NIX_VOLUME_* variables"
+else
+    test_fail "prepare_nix_volume: a successful sparse-image prepare reports completion and publishes all five DX_NIX_VOLUME_* variables (output: $(cat "$p13_a_out"))"
+fi
+if [ "$(cat "$p13_a_truncate_log" 2>/dev/null)" = "-s 8G $p13_a_dev" ]; then
+    test_pass "prepare_nix_volume: the sparse image is truncated with the exact size and path argv"
+else
+    test_fail "prepare_nix_volume: the sparse image is truncated with the exact size and path argv (log: $(cat "$p13_a_truncate_log" 2>/dev/null))"
+fi
+if [ "$(cat "$p13_a_mkfs_btrfs_log" 2>/dev/null)" = "-f -L dx-nix -m single -d single $p13_a_dev" ] \
+    && [ ! -s "$p13_a_mkfs_ext4_log" ]; then
+    test_pass "prepare_nix_volume: the sparse image is formatted with the exact mkfs.btrfs argv, never mkfs.ext4"
+else
+    test_fail "prepare_nix_volume: the sparse image is formatted with the exact mkfs.btrfs argv, never mkfs.ext4 (btrfs log: $(cat "$p13_a_mkfs_btrfs_log" 2>/dev/null); ext4 log: $(cat "$p13_a_mkfs_ext4_log" 2>/dev/null))"
+fi
+if [ "$(cat "$p13_a_mount_log" 2>/dev/null)" = "-t btrfs -o compress=zstd:3,noatime,space_cache=v2,discard=async $p13_a_dev /mnt/tmp-nix" ]; then
+    test_pass "prepare_nix_volume: the sparse image is mounted with the exact device, filesystem, options, and mountpoint argv"
+else
+    test_fail "prepare_nix_volume: the sparse image is mounted with the exact device, filesystem, options, and mountpoint argv (log: $(cat "$p13_a_mount_log" 2>/dev/null))"
+fi
+if [ "$(cat "$p13_a_identity_log" 2>/dev/null)" = "/mnt/tmp-nix" ]; then
+    test_pass "prepare_nix_volume: the durable identity is recorded against the final mount point"
+else
+    test_fail "prepare_nix_volume: the durable identity is recorded against the final mount point (log: $(cat "$p13_a_identity_log" 2>/dev/null))"
+fi
+
+# (b) btrfs unsupported (the grep probe fails): falls back to ext4 with the
+# matching mount options, formats with mkfs.ext4 -- MUST-NOT mkfs.btrfs.
+# Calls prepare_nix_volume_impl directly (no phase-timing text is under
+# test here). Closes base-and-storage.sh:914-916.
+p13_raw_b="$p13_fixture/dx-nix-raw-b"
+mkdir -p "$p13_raw_b"
+p13_b_out="$p13_fixture/case-b.out"
+p13_b_mkfs_btrfs_log="$p13_fixture/case-b-mkfs-btrfs.log"
+p13_b_mkfs_ext4_log="$p13_fixture/case-b-mkfs-ext4.log"
+(
+    export DX_NIX_RAW_PATH="$p13_raw_b"
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 1; fi; command grep "$@"; }
+    findmnt() { return 1; }
+    blkid() { return 1; }
+    mkdir() { :; }
+    truncate() { : > "${3:?}"; }
+    mount() { :; }
+    mkfs.btrfs() { printf '%s\n' "$*" >> "$p13_b_mkfs_btrfs_log"; }
+    mkfs.ext4() { printf '%s\n' "$*" >> "$p13_b_mkfs_ext4_log"; }
+    prepare_nix_volume_impl
+    echo "impl_exit=$?"
+    printf 'FS_TYPE=%s\n' "${DX_NIX_VOLUME_FS_TYPE:-unset}"
+    printf 'MOUNT_OPTS=%s\n' "${DX_NIX_VOLUME_MOUNT_OPTS:-unset}"
+) >"$p13_b_out" 2>&1 || true
+p13_b_dev="$p13_raw_b/nix-store.ext4"
+if grep -qF 'Warning: Kernel does not support btrfs. Falling back to ext4.' "$p13_b_out" \
+    && grep -qxF 'impl_exit=0' "$p13_b_out" \
+    && grep -qxF 'FS_TYPE=ext4' "$p13_b_out" \
+    && grep -qxF 'MOUNT_OPTS=noatime,errors=remount-ro' "$p13_b_out"; then
+    test_pass "prepare_nix_volume_impl: an unsupported kernel (no btrfs) falls back to ext4 with the matching mount options"
+else
+    test_fail "prepare_nix_volume_impl: an unsupported kernel (no btrfs) falls back to ext4 with the matching mount options (output: $(cat "$p13_b_out"))"
+fi
+if [ "$(cat "$p13_b_mkfs_ext4_log" 2>/dev/null)" = "-F -L dx-nix $p13_b_dev" ] \
+    && [ ! -s "$p13_b_mkfs_btrfs_log" ]; then
+    test_pass "prepare_nix_volume_impl: the ext4 fallback formats with the exact mkfs.ext4 argv, never mkfs.btrfs"
+else
+    test_fail "prepare_nix_volume_impl: the ext4 fallback formats with the exact mkfs.ext4 argv, never mkfs.btrfs (ext4 log: $(cat "$p13_b_mkfs_ext4_log" 2>/dev/null); btrfs log: $(cat "$p13_b_mkfs_btrfs_log" 2>/dev/null))"
+fi
+
+# (c) The block-device branch (is_block_device true): findmnt is dispatched
+# on its own argv so the "already mounted" probe still misses while the
+# "backing device" probe reports the fake device. (c1) blkid misses -> the
+# device is formatted. (c2) umount fails -> refuses with the CAP_SYS_ADMIN
+# recovery text, before ever touching mkfs. Closes base-and-storage.sh:948-957.
+p13_raw_c="$p13_fixture/dx-nix-raw-c"
+mkdir -p "$p13_raw_c"
+
+p13_c1_out="$p13_fixture/case-c1.out"
+p13_c1_mkfs_btrfs_log="$p13_fixture/case-c1-mkfs-btrfs.log"
+p13_c1_mkfs_ext4_log="$p13_fixture/case-c1-mkfs-ext4.log"
+(
+    export DX_NIX_RAW_PATH="$p13_raw_c"
+    is_block_device() { [ "$1" = /dev/fake-block ]; }
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
+    findmnt() { case "$*" in "-n -o SOURCE $p13_raw_c") printf '%s\n' /dev/fake-block ;; *) return 1 ;; esac; }
+    blkid() { return 1; }
+    umount() { :; }
+    mkdir() { :; }
+    mount() { :; }
+    mkfs.btrfs() { printf '%s\n' "$*" >> "$p13_c1_mkfs_btrfs_log"; }
+    mkfs.ext4() { printf '%s\n' "$*" >> "$p13_c1_mkfs_ext4_log"; }
+    prepare_nix_volume_impl
+    echo "impl_exit=$?"
+) >"$p13_c1_out" 2>&1 || true
+if grep -qF "Detected block device backing $p13_raw_c: /dev/fake-block" "$p13_c1_out" \
+    && grep -qF 'Formatting /dev/fake-block with btrfs...' "$p13_c1_out" \
+    && grep -qxF 'impl_exit=0' "$p13_c1_out" \
+    && [ "$(cat "$p13_c1_mkfs_btrfs_log" 2>/dev/null)" = "-f -L dx-nix -m single -d single /dev/fake-block" ] \
+    && [ ! -s "$p13_c1_mkfs_ext4_log" ]; then
+    test_pass "prepare_nix_volume_impl: a block-device backing store with no existing dx-nix label is detected and formatted with the exact mkfs.btrfs argv"
+else
+    test_fail "prepare_nix_volume_impl: a block-device backing store with no existing dx-nix label is detected and formatted with the exact mkfs.btrfs argv (output: $(cat "$p13_c1_out"); mkfs.btrfs log: $(cat "$p13_c1_mkfs_btrfs_log" 2>/dev/null))"
+fi
+
+p13_c2_out="$p13_fixture/case-c2.out"
+p13_c2_mkfs_log="$p13_fixture/case-c2-mkfs.log"
+(
+    export DX_NIX_RAW_PATH="$p13_raw_c"
+    is_block_device() { [ "$1" = /dev/fake-block ]; }
+    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
+    findmnt() { case "$*" in "-n -o SOURCE $p13_raw_c") printf '%s\n' /dev/fake-block ;; *) return 1 ;; esac; }
+    blkid() { return 1; }
+    umount() { return 1; }
+    mkfs.btrfs() { echo MUST-NOT-MKFS-BTRFS >> "$p13_c2_mkfs_log"; }
+    mkfs.ext4() { echo MUST-NOT-MKFS-EXT4 >> "$p13_c2_mkfs_log"; }
+    prepare_nix_volume_impl
+    echo "impl_exit=$?"
+) >"$p13_c2_out" 2>&1 || true
+if grep -qF "Error: failed to umount $p13_raw_c. The container is missing CAP_SYS_ADMIN; re-create it with ./bin/dx-destroy && ./bin/dx (dx-create-container adds the capability)." "$p13_c2_out" \
+    && grep -qxF 'impl_exit=1' "$p13_c2_out" \
+    && [ ! -s "$p13_c2_mkfs_log" ]; then
+    test_pass "prepare_nix_volume_impl: a failing umount on a block-device backing store refuses before any mkfs, naming the CAP_SYS_ADMIN recovery path"
+else
+    test_fail "prepare_nix_volume_impl: a failing umount on a block-device backing store refuses before any mkfs, naming the CAP_SYS_ADMIN recovery path (output: $(cat "$p13_c2_out"); mkfs log: $(cat "$p13_c2_mkfs_log" 2>/dev/null))"
+fi
+
+# (d) populate_prepared_nix_volume's own fresh-vs-reuse dispatch (and the
+# fatal collision path), driven directly rather than through prepare_*
+# first. DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe (never present in a real
+# /etc/fstab) plus a grep shadow reporting the fstab line already present
+# keeps (d1)/(d2) -- which both fall through to the unconditional
+# umount/mount/fstab tail -- from ever touching a real mount or /etc/fstab;
+# (d3) returns before reaching that tail at all, so it needs neither.
+# Closes base-and-storage.sh:656-662.
+p13_d1_root="$p13_fixture/dx-nix-volume-d1"
+mkdir -p "$p13_d1_root"
+p13_d1_log="$p13_fixture/case-d1.log"
+(
+    DX_NIX_VOLUME_ROOT="$p13_d1_root"
+    DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
+    DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
+    DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
+    grep() { if [ "$*" = "-q /nix $DX_NIX_VOLUME_FS_TYPE /etc/fstab" ]; then return 0; fi; command grep "$@"; }
+    umount() { :; }
+    mount() { :; }
+    nix_image_store_identity() { printf '%s\n' IDENTITY >> "$p13_d1_log"; printf '%s\n' fakeidentity; }
+    nix_seed_volume() { printf 'SEED %s\n' "$*" >> "$p13_d1_log"; }
+    nix_install_image_essentials_root() { printf 'ROOTS %s\n' "$*" >> "$p13_d1_log"; }
+    nix_image_store_import_required() { printf 'MUST-NOT-IMPORT_REQUIRED %s\n' "$*" >> "$p13_d1_log"; return 0; }
+    nix_verify_no_bootstrap_path_collision() { printf 'MUST-NOT-COLLISION %s\n' "$*" >> "$p13_d1_log"; return 0; }
+    nix_store_import_registered() { printf 'MUST-NOT-REGISTERED %s\n' "$*" >> "$p13_d1_log"; }
+    populate_prepared_nix_volume
+    echo "exit=$?"
+) >"$p13_fixture/case-d1.out" 2>&1 || true
+p13_d1_expected="IDENTITY
+SEED /nix $p13_d1_root 0 0
+ROOTS $p13_d1_root 0 0"
+if [ "$(cat "$p13_d1_log" 2>/dev/null)" = "$p13_d1_expected" ] \
+    && grep -qxF 'exit=0' "$p13_fixture/case-d1.out"; then
+    test_pass "populate_prepared_nix_volume: a fresh root (no store/) seeds the volume and publishes essentials roots, in order, never the import trio"
+else
+    test_fail "populate_prepared_nix_volume: a fresh root (no store/) seeds the volume and publishes essentials roots, in order, never the import trio (log: $(cat "$p13_d1_log" 2>/dev/null); output: $(cat "$p13_fixture/case-d1.out"))"
+fi
+
+p13_d2_root="$p13_fixture/dx-nix-volume-d2"
+mkdir -p "$p13_d2_root/store"
+p13_d2_log="$p13_fixture/case-d2.log"
+(
+    DX_NIX_VOLUME_ROOT="$p13_d2_root"
+    DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
+    DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
+    DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
+    grep() { if [ "$*" = "-q /nix $DX_NIX_VOLUME_FS_TYPE /etc/fstab" ]; then return 0; fi; command grep "$@"; }
+    umount() { :; }
+    mount() { :; }
+    nix_image_store_identity() { printf 'MUST-NOT-IDENTITY\n' >> "$p13_d2_log"; printf '%s\n' fakeidentity; }
+    nix_seed_volume() { printf 'MUST-NOT-SEED %s\n' "$*" >> "$p13_d2_log"; }
+    nix_install_image_essentials_root() { printf 'MUST-NOT-ROOTS %s\n' "$*" >> "$p13_d2_log"; }
+    nix_image_store_import_required() { printf 'IMPORT_REQUIRED %s\n' "$*" >> "$p13_d2_log"; return 0; }
+    nix_verify_no_bootstrap_path_collision() { printf 'COLLISION %s\n' "$*" >> "$p13_d2_log"; return 0; }
+    nix_store_import_registered() { printf 'REGISTERED %s\n' "$*" >> "$p13_d2_log"; }
+    populate_prepared_nix_volume
+    echo "exit=$?"
+) >"$p13_fixture/case-d2.out" 2>&1 || true
+p13_d2_expected="IMPORT_REQUIRED /nix $p13_d2_root
+COLLISION /nix $p13_d2_root
+REGISTERED $p13_d2_root 0 0"
+if [ "$(cat "$p13_d2_log" 2>/dev/null)" = "$p13_d2_expected" ] \
+    && grep -qxF 'exit=0' "$p13_fixture/case-d2.out"; then
+    test_pass "populate_prepared_nix_volume: a reused root (store/ present, no collision) imports the registered closure, in order, never the seed trio"
+else
+    test_fail "populate_prepared_nix_volume: a reused root (store/ present, no collision) imports the registered closure, in order, never the seed trio (log: $(cat "$p13_d2_log" 2>/dev/null); output: $(cat "$p13_fixture/case-d2.out"))"
+fi
+
+p13_d3_root="$p13_fixture/dx-nix-volume-d3"
+mkdir -p "$p13_d3_root/store"
+p13_d3_log="$p13_fixture/case-d3.log"
+(
+    DX_NIX_VOLUME_ROOT="$p13_d3_root"
+    DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
+    DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
+    DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
+    nix_image_store_import_required() { printf 'IMPORT_REQUIRED %s\n' "$*" >> "$p13_d3_log"; return 0; }
+    nix_verify_no_bootstrap_path_collision() { printf 'COLLISION %s\n' "$*" >> "$p13_d3_log"; return 1; }
+    nix_store_import_registered() { printf 'MUST-NOT-REGISTERED %s\n' "$*" >> "$p13_d3_log"; }
+    umount() { printf 'MUST-NOT-UMOUNT\n' >> "$p13_d3_log"; }
+    mount() { printf 'MUST-NOT-MOUNT\n' >> "$p13_d3_log"; }
+    populate_prepared_nix_volume
+    echo "exit=$?"
+) >"$p13_fixture/case-d3.out" 2>&1 || true
+p13_d3_expected="IMPORT_REQUIRED /nix $p13_d3_root
+COLLISION /nix $p13_d3_root"
+if [ "$(cat "$p13_d3_log" 2>/dev/null)" = "$p13_d3_expected" ] \
+    && grep -qxF 'exit=1' "$p13_fixture/case-d3.out"; then
+    test_pass "populate_prepared_nix_volume: a bootstrap-path collision refuses immediately, never registering the import, never touching umount/mount"
+else
+    test_fail "populate_prepared_nix_volume: a bootstrap-path collision refuses immediately, never registering the import, never touching umount/mount (log: $(cat "$p13_d3_log" 2>/dev/null); output: $(cat "$p13_fixture/case-d3.out"))"
+fi
+
+# (e) the /etc/fstab tail, exercised WITHOUT the grep shadow above so the
+# REAL grep against the REAL /etc/fstab runs: DX_NIX_VOLUME_FS_TYPE=
+# dxe-cov-probe never appears in a real fstab, so the presence check always
+# misses and the append actually executes. Non-root (this dev Mac): the
+# append itself fails closed (permission denied) and /etc/fstab is
+# provably unchanged. Root (the kcov Linux image, which runs this whole
+# suite as root): the append succeeds for real; each sub-case restores a
+# snapshot afterward so the container's /etc/fstab is left exactly as this
+# test found it. Better long-term: give the fstab path a seam (Fable B11)
+# so no test touches the real file -- a separate follow-up, not done here.
+# Closes base-and-storage.sh:675-679.
+p13_e_root="$p13_fixture/dx-nix-volume-e"
+mkdir -p "$p13_e_root/store"
+p13_fstab_snapshot="$p13_fixture/fstab.snapshot"
+cp /etc/fstab "$p13_fstab_snapshot" 2>/dev/null || : > "$p13_fstab_snapshot"
+
+if [ "$(id -u)" -eq 0 ]; then
+    p13_e1_out="$p13_fixture/case-e1.out"
+    (
+        DX_NIX_VOLUME_ROOT="$p13_e_root"
+        DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
+        DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
+        DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
+        nix_image_store_import_required() { return 1; }
+        nix_install_image_essentials_root() { :; }
+        umount() { :; }
+        mount() { :; }
+        blkid() { [ "$*" = '-L dx-nix' ] && return 0 || command blkid "$@"; }
+        populate_prepared_nix_volume
+        echo "exit=$?"
+    ) >"$p13_e1_out" 2>&1 || true
+    if grep -qxF 'exit=0' "$p13_e1_out" \
+        && grep -qF 'Adding /nix to /etc/fstab...' "$p13_e1_out" \
+        && grep -qxF 'LABEL=dx-nix /nix dxe-cov-probe dxe-cov-opts 0 0' /etc/fstab; then
+        test_pass "populate_prepared_nix_volume (root): a matching blkid label appends the LABEL= fstab line"
+    else
+        test_fail "populate_prepared_nix_volume (root): a matching blkid label appends the LABEL= fstab line (output: $(cat "$p13_e1_out"); fstab tail: $(tail -n 3 /etc/fstab 2>/dev/null))"
+    fi
+    cp "$p13_fstab_snapshot" /etc/fstab
+
+    p13_e2_out="$p13_fixture/case-e2.out"
+    (
+        DX_NIX_VOLUME_ROOT="$p13_e_root"
+        DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
+        DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
+        DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
+        nix_image_store_import_required() { return 1; }
+        nix_install_image_essentials_root() { :; }
+        umount() { :; }
+        mount() { :; }
+        blkid() { return 1; }
+        populate_prepared_nix_volume
+        echo "exit=$?"
+    ) >"$p13_e2_out" 2>&1 || true
+    if grep -qxF 'exit=0' "$p13_e2_out" \
+        && grep -qF 'Adding /nix to /etc/fstab...' "$p13_e2_out" \
+        && grep -qxF '/dev/dxe-cov-fake /nix dxe-cov-probe dxe-cov-opts 0 0' /etc/fstab; then
+        test_pass "populate_prepared_nix_volume (root): a missing blkid label appends the raw device fstab line"
+    else
+        test_fail "populate_prepared_nix_volume (root): a missing blkid label appends the raw device fstab line (output: $(cat "$p13_e2_out"); fstab tail: $(tail -n 3 /etc/fstab 2>/dev/null))"
+    fi
+    cp "$p13_fstab_snapshot" /etc/fstab
+else
+    p13_e_out="$p13_fixture/case-e-nonroot.out"
+    (
+        DX_NIX_VOLUME_ROOT="$p13_e_root"
+        DX_NIX_VOLUME_FS_TYPE=dxe-cov-probe
+        DX_NIX_VOLUME_MOUNT_OPTS=dxe-cov-opts
+        DX_NIX_VOLUME_DEVICE=/dev/dxe-cov-fake
+        nix_image_store_import_required() { return 1; }
+        nix_install_image_essentials_root() { :; }
+        umount() { :; }
+        mount() { :; }
+        blkid() { return 1; }
+        populate_prepared_nix_volume
+        echo "exit=$?"
+    ) >"$p13_e_out" 2>&1 || true
+    p13_e_fstab_unchanged=false
+    if [ -e /etc/fstab ]; then
+        if cmp -s "$p13_fstab_snapshot" /etc/fstab; then p13_e_fstab_unchanged=true; fi
+    elif [ ! -s "$p13_fstab_snapshot" ]; then
+        p13_e_fstab_unchanged=true
+    fi
+    if grep -qF 'Adding /nix to /etc/fstab...' "$p13_e_out" \
+        && grep -qiF 'permission denied' "$p13_e_out" \
+        && [ "$p13_e_fstab_unchanged" = true ]; then
+        test_pass "populate_prepared_nix_volume (non-root): the fstab append fails closed (permission denied) and /etc/fstab is left unchanged"
+    else
+        test_fail "populate_prepared_nix_volume (non-root): the fstab append fails closed (permission denied) and /etc/fstab is left unchanged (output: $(cat "$p13_e_out"))"
+    fi
+fi
+
+# (f) nix_image_store_identity's own enumeration-failure branch: the
+# underlying registered-paths enumerator fails outright. Captured with the
+# same `! nix_function_call` idiom already used above (a `!`-negated call
+# inside a `{ ... }` group is exempt from errexit, unlike a bare failing
+# call). Closes base-and-storage.sh:347-349.
+p13_f_output="$({
+    nix_image_registered_paths() { return 1; }
+    ! nix_image_store_identity
+} 2>&1)"
+if printf '%s\n' "$p13_f_output" | grep -qF 'Error: could not enumerate registered image Nix paths.'; then
+    test_pass "nix_image_store_identity reports failure when it cannot enumerate registered image Nix paths"
+else
+    test_fail "nix_image_store_identity reports failure when it cannot enumerate registered image Nix paths (output: $p13_f_output)"
+fi
+
+rm -rf "$p13_fixture"
 
 print_summary
 exit_with_code
