@@ -773,5 +773,271 @@ fi
 
 rm -rf "$TARGETS_FIXTURE"
 
+# ---------------------------------------------------------------------------
+# Astra R4 / WP6.9: restore round trips are bounded, not O(n) (see
+# docs/evidence/20260930/agent-design-notes.md, "WP6.9 restore round trips").
+# The old dx_backup_restore_push forked one `chown` exec PER restored file,
+# and bin/dx-restore pushed every target the status pass classified,
+# including ones already `identical` in the guest. A 2,000-file fixture
+# makes the old O(n) cost (thousands of container-exec calls) and the new
+# bounded cost (a handful: at most 3 execs per batched operation, plus one
+# tar) impossible to confuse with each other.
+# ---------------------------------------------------------------------------
+WP69_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-wp69.XXXXXX")"
+WP69_PERSIST="$WP69_ROOT/persist"
+WP69_BACKUP_DIR="$WP69_ROOT/backups"
+WP69_EXEC_LOG="$WP69_ROOT/exec.log"
+WP69_CHOWN_LOG="$WP69_ROOT/chown.log"
+mkdir -p "$WP69_PERSIST"
+: > "$WP69_EXEC_LOG"
+: > "$WP69_CHOWN_LOG"
+
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$WP69_PERSIST"'"
+LOG="'"$WP69_EXEC_LOG"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    has_i=0
+    if [ "${1:-}" = -i ]; then has_i=1; shift; fi
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    {
+        echo "---EXEC---"
+        echo "has_i=$has_i"
+        for a in "$@"; do printf "ARG:%s\n" "$a"; done
+    } >> "$LOG"
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :; # this test host'"'"'s bsdtar (standing in for the guest'"'"'s tar) does not support this GNU-only flag; see this file'"'"'s header.
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+
+export DX_BACKUP_DIR="$WP69_BACKUP_DIR"
+export DX_FAKE_CHOWN_LOG="$WP69_CHOWN_LOG"
+
+# 2,000 files: wp69/gN/dM/fK.txt, N=1..10, M=1..20, K=1..10.
+g=1
+while [ "$g" -le 10 ]; do
+    d=1
+    while [ "$d" -le 20 ]; do
+        mkdir -p "$WP69_PERSIST/wp69/g$g/d$d"
+        f=1
+        while [ "$f" -le 10 ]; do
+            printf 'wp69-content-g%s-d%s-f%s\n' "$g" "$d" "$f" > "$WP69_PERSIST/wp69/g$g/d$d/f$f.txt"
+            f=$((f + 1))
+        done
+        d=$((d + 1))
+    done
+    g=$((g + 1))
+done
+
+"$BASE_DIR/bin/dx-backup" >/dev/null
+
+# Capture the GUEST's own (untouched) mtime for a g1 file, then give the
+# MIRROR's copy of that SAME file a deliberately different, fixed mtime
+# (content untouched, so its hash -- and therefore its `identical`
+# classification -- is unaffected). tar preserves a source file's recorded
+# mtime through both the fetch and the push archive/extract pair (neither
+# `dx_backup_fetch_paths` nor `dx_backup_restore_push` passes `-m`/`--touch`),
+# so a PLAIN before/after mtime compare on the guest would pass whether or
+# not the file was actually retransferred (an extraction that legitimately
+# re-lands the SAME original bytes also restores the SAME original mtime).
+# Giving the mirror copy its own distinct stamp first makes retransfer
+# detectable: if g1 is (wrongly) retransferred, the guest's mtime changes to
+# this fixed stamp; if it is correctly skipped as `identical`, the guest's
+# mtime never moves from its own original value.
+wp69_g1_mtime_before="$(stat -c '%Y' "$WP69_PERSIST/wp69/g1/d1/f1.txt" 2>/dev/null || stat -f '%m' "$WP69_PERSIST/wp69/g1/d1/f1.txt")"
+touch -t 202001010000 "$WP69_BACKUP_DIR/test-container/current/wp69/g1/d1/f1.txt"
+
+# Delete g2..g10 from the guest (1,800 files -> `create`); g1 (200 files) is
+# left untouched on the guest, so it stays `identical`.
+g=2
+while [ "$g" -le 10 ]; do
+    rm -rf "$WP69_PERSIST/wp69/g$g"
+    g=$((g + 1))
+done
+
+: > "$WP69_EXEC_LOG"
+: > "$WP69_CHOWN_LOG"
+set +e
+"$BASE_DIR/bin/dx-restore" >/dev/null
+wp69_restore_rc=$?
+set -e
+
+wp69_total_exec="$(grep -c '^---EXEC---$' "$WP69_EXEC_LOG" || true)"
+if [ "$wp69_restore_rc" -eq 0 ]; then
+    test_pass "a 2,000-file restore batch with 1,800 non-identical targets completes successfully"
+else
+    test_fail "a 2,000-file restore batch with 1,800 non-identical targets completes successfully (rc=$wp69_restore_rc)"
+fi
+
+if [ "$wp69_total_exec" -le 10 ]; then
+    test_pass "a large restore batch bounds container-exec calls at O(1) per batched operation, not O(n) (${wp69_total_exec} calls: at most 3 execs per batched operation x 3 operations + 1 tar)"
+else
+    test_fail "a large restore batch bounds container-exec calls at O(1) per batched operation, not O(n) (got ${wp69_total_exec} calls, expected <= 10: at most 3 execs per batched operation x 3 operations + 1 tar)"
+fi
+
+wp69_g1_mtime_after="$(stat -c '%Y' "$WP69_PERSIST/wp69/g1/d1/f1.txt" 2>/dev/null || stat -f '%m' "$WP69_PERSIST/wp69/g1/d1/f1.txt")"
+if [ "$wp69_g1_mtime_before" = "$wp69_g1_mtime_after" ]; then
+    test_pass "an already-identical target is never re-transferred (the guest's mtime never moves to the mirror's deliberately-altered stamp)"
+else
+    test_fail "an already-identical target is never re-transferred (the guest's mtime never moves to the mirror's deliberately-altered stamp) (before=$wp69_g1_mtime_before after=$wp69_g1_mtime_after)"
+fi
+
+if [ "$(cat "$WP69_PERSIST/wp69/g10/d5/f3.txt" 2>/dev/null)" = "wp69-content-g10-d5-f3" ]; then
+    test_pass "a pushed (non-identical) target's content is restored correctly"
+else
+    test_fail "a pushed (non-identical) target's content is restored correctly (got: $(cat "$WP69_PERSIST/wp69/g10/d5/f3.txt" 2>/dev/null))"
+fi
+
+if grep -q '/wp69/g10/' "$WP69_CHOWN_LOG"; then
+    test_pass "a pushed (non-identical) target is re-owned to dx:dx"
+else
+    test_fail "a pushed (non-identical) target is re-owned to dx:dx (log: $(head -c 2000 "$WP69_CHOWN_LOG" 2>/dev/null))"
+fi
+if grep -q '/wp69/g1/' "$WP69_CHOWN_LOG"; then
+    test_fail "an already-identical target is never re-owned"
+else
+    test_pass "an already-identical target is never re-owned"
+fi
+
+rm -rf "$WP69_ROOT"
+
+# --- dx_backup_ship_list (Astra R4 / WP6.9): the shared threshold decision
+# dx_backup_restore_push's directory and ownership passes above route
+# through (and, after the refactor, dx_backup_restore_status's own
+# hash-paths batching does too) -- driven directly against real production
+# code (already sourced above), no container fake needed for its own three
+# outcomes. Every call below is wrapped in set +e/set -e (this file's own
+# convention, e.g. its --force conflict-refusal block above): a stray
+# earlier `set -e` (this file's own known quirk -- several blocks above
+# turn errexit back ON after their own `set +e`, and it is never turned
+# back off again) is otherwise live here, and every one of these three
+# calls is expected to return non-zero at least once by design. ---
+SHIP_LIST_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-ship-list-test.XXXXXX")"
+SHIP_LIST_HOST="$SHIP_LIST_FIXTURE/list.txt"
+printf 'one\ntwo\nthree\n' > "$SHIP_LIST_HOST"
+SHIP_LIST_SAVED_THRESHOLD="$DX_BACKUP_HASH_PATHS_ARG_THRESHOLD"
+DX_BACKUP_HASH_PATHS_ARG_THRESHOLD=2
+
+dx_runtime_exec() { echo "UNEXPECTED EXEC CALLED: $*" >&2; return 1; }
+set +e
+ship_under_out="$(dx_backup_ship_list test-container "$SHIP_LIST_HOST" 2)"
+ship_under_rc=$?
+set -e
+if [ "$ship_under_rc" -eq 0 ] && [ -z "$ship_under_out" ]; then
+    test_pass "dx_backup_ship_list prints nothing and succeeds at/under the threshold, without shipping anything"
+else
+    test_fail "dx_backup_ship_list prints nothing and succeeds at/under the threshold, without shipping anything (rc=$ship_under_rc, out: $ship_under_out)"
+fi
+
+dx_runtime_exec() { return 0; }
+set +e
+ship_over_out="$(dx_backup_ship_list test-container "$SHIP_LIST_HOST" 3)"
+ship_over_rc=$?
+set -e
+if [ "$ship_over_rc" -eq 0 ] && [ -n "$ship_over_out" ]; then
+    test_pass "dx_backup_ship_list ships and prints the guest path over the threshold"
+else
+    test_fail "dx_backup_ship_list ships and prints the guest path over the threshold (rc=$ship_over_rc, out: $ship_over_out)"
+fi
+
+dx_runtime_exec() { return 1; }
+set +e
+ship_fail_out="$(dx_backup_ship_list test-container "$SHIP_LIST_HOST" 3 2>/dev/null)"
+ship_fail_rc=$?
+set -e
+if [ "$ship_fail_rc" -ne 0 ] && [ -z "$ship_fail_out" ]; then
+    test_pass "dx_backup_ship_list propagates a ship failure over the threshold, printing nothing"
+else
+    test_fail "dx_backup_ship_list propagates a ship failure over the threshold, printing nothing (rc=$ship_fail_rc, out: $ship_fail_out)"
+fi
+
+unset -f dx_runtime_exec
+DX_BACKUP_HASH_PATHS_ARG_THRESHOLD="$SHIP_LIST_SAVED_THRESHOLD"
+rm -rf "$SHIP_LIST_FIXTURE"
+
+# --- dx_backup_restore_push: the directory-precreation pass ALSO ships and
+# batches through one `xargs -0` exec above the threshold, exactly like the
+# ownership pass (both routed through the same dx_backup_ship_list helper).
+# A real fixture with >1,000 distinct ancestor directories would exercise
+# the identical code path; the threshold is temporarily lowered instead so
+# this stays a small, fast, direct test against real production code (the
+# real dx_runtime_exec, re-sourced above dx_runtime_exec's own override was
+# unset, dispatching through the fake `container` below). ---
+# shellcheck source=../bin/lib/dx-backup.sh
+source "$BASE_DIR/bin/lib/dx-backup.sh"
+# shellcheck source=../bin/lib/dx-runtime.sh
+source "$BASE_DIR/bin/lib/dx-runtime.sh"
+
+DIRPUSH_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-dirpush-test.XXXXXX")"
+DIRPUSH_PERSIST="$DIRPUSH_FIXTURE/persist"
+DIRPUSH_BACKUP="$DIRPUSH_FIXTURE/backups/dirpush-container"
+mkdir -p "$DIRPUSH_PERSIST" "$DIRPUSH_BACKUP/current/a/b" "$DIRPUSH_BACKUP/current/c/d"
+printf 'one\n' > "$DIRPUSH_BACKUP/current/a/b/one.txt"
+printf 'two\n' > "$DIRPUSH_BACKUP/current/c/d/two.txt"
+DIRPUSH_TARGETS="$DIRPUSH_FIXTURE/targets.txt"
+printf 'a/b/one.txt\nc/d/two.txt\n' > "$DIRPUSH_TARGETS"
+DIRPUSH_EXEC_LOG="$DIRPUSH_FIXTURE/exec.log"
+DIRPUSH_CHOWN_LOG="$DIRPUSH_FIXTURE/chown.log"
+: > "$DIRPUSH_EXEC_LOG"
+: > "$DIRPUSH_CHOWN_LOG"
+
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$DIRPUSH_PERSIST"'"
+LOG="'"$DIRPUSH_EXEC_LOG"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    has_i=0
+    if [ "${1:-}" = -i ]; then has_i=1; shift; fi
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    {
+        echo "---EXEC---"
+        echo "has_i=$has_i"
+        for a in "$@"; do printf "ARG:%s\n" "$a"; done
+    } >> "$LOG"
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+
+set +e
+DX_BACKUP_HASH_PATHS_ARG_THRESHOLD=1 DX_FAKE_CHOWN_LOG="$DIRPUSH_CHOWN_LOG" dx_backup_restore_push test-container "$DIRPUSH_BACKUP" "$DIRPUSH_TARGETS"
+dirpush_rc=$?
+set -e
+
+if [ "$dirpush_rc" -eq 0 ] && [ "$(cat "$DIRPUSH_PERSIST/a/b/one.txt" 2>/dev/null)" = one ] && [ "$(cat "$DIRPUSH_PERSIST/c/d/two.txt" 2>/dev/null)" = two ]; then
+    test_pass "dx_backup_restore_push still creates every target correctly when the directory batch is shipped (over a lowered threshold)"
+else
+    test_fail "dx_backup_restore_push still creates every target correctly when the directory batch is shipped (over a lowered threshold) (rc=$dirpush_rc)"
+fi
+
+if grep -q 'xargs -0' "$DIRPUSH_EXEC_LOG"; then
+    test_pass "the directory-precreation pass ships and batches through xargs -0 above the threshold"
+else
+    test_fail "the directory-precreation pass ships and batches through xargs -0 above the threshold (log: $(head -c 2000 "$DIRPUSH_EXEC_LOG" 2>/dev/null))"
+fi
+
+rm -rf "$DIRPUSH_FIXTURE"
+
 print_summary
 exit_with_code
