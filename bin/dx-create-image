@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+
+create_image_main() {
 dx_require_container_cli
 
 if container_image_exists "$DX_IMAGE"; then
@@ -12,3 +14,5 @@ fi
 
 echo "Building image $DX_IMAGE from $DX_CONTEXT_DIR..."
 dx_runtime_image_build -t "$DX_IMAGE" "$DX_CONTEXT_DIR"
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then create_image_main "$@"; fi
