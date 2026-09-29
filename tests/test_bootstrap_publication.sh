@@ -337,8 +337,18 @@ dx_bootstrap_launch_command > "$restart_root/launcher.sh"
 env PATH="$fake_dir:$PATH" sh "$restart_root/launcher.sh" "$restart_root" >"$restart_root/out" 2>&1 &
 restart_launcher_pid=$!
 # Let the launcher reach its wait before the host publishes, which is the
-# ordering a real start has.
-sleep 2
+# ordering a real start has -- proven by polling for the SAME readiness
+# marker the launcher itself writes (dx_bootstrap_launch_command,
+# bin/lib/dx-ssh-common.sh: `touch "$root/.dx-bootstrap-waiting"` runs
+# immediately before it enters its `while [ ! -f .../.dx-bootstrap-ready" ]`
+# loop) instead of guessing how long a backgrounded launcher takes to get
+# scheduled with a fixed `sleep 2` (Fable D10), which either wastes time on
+# a fast host or races a loaded one.
+if wait_until "[ -f '$restart_root/.dx-bootstrap-waiting' ]" 100; then
+    test_pass "the launcher reaches its wait loop (readiness marker present) before the host publishes"
+else
+    test_fail "the launcher reaches its wait loop (readiness marker present) before the host publishes"
+fi
 ln -sfn generations/gen-current "$restart_root/current"
 : > "$restart_root/.dx-bootstrap-ready"
 wait "$restart_launcher_pid" 2>/dev/null || true
@@ -411,15 +421,18 @@ run_start_container() {
 # the publish and leasing it, without a real guest.
 lease_the_published_generation() {
     local root="$1" delay="${2:-0}" gen=""
-    for _ in $(seq 1 100); do
-        # Exclude the transient .staging-<gen> directory a publish stages
-        # under before its atomic rename to the real generation id -- catching
-        # it here would lease a name the launcher (or, in this fixture, the
-        # confirm loop) can never actually see published.
+    # Exclude the transient .staging-<gen> directory a publish stages under
+    # before its atomic rename to the real generation id -- catching it here
+    # would lease a name the launcher (or, in this fixture, the confirm loop)
+    # can never actually see published. wait_until (tests/lib/harness.sh,
+    # Fable D10) polls this bounded by attempt count, not a bare `sleep 0.05`
+    # loop asserting nothing about how long it took.
+    _dxe_bootstrap_publication_gen_found() {
         gen="$(find "$root/generations" -mindepth 1 -maxdepth 1 -type d ! -name '.staging-*' 2>/dev/null | head -1)" || true
-        [ -n "$gen" ] && break
-        sleep 0.05
-    done
+        [ -n "$gen" ]
+    }
+    wait_until _dxe_bootstrap_publication_gen_found 100
+    unset -f _dxe_bootstrap_publication_gen_found
     [ -n "$gen" ] || return 1
     gen=${gen##*/}
     [ "$delay" = 0 ] || sleep "$delay"
