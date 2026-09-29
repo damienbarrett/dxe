@@ -35,6 +35,23 @@ test_section "Docker-ssh runtime adapter (Branch 11 / Phase 2)"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-docker-adapter.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 
+# WP3.4 (Fable A1): dx_runtime_docker_discover_daemon_id now persists a
+# per-profile daemon-identity cache under
+# "${XDG_STATE_HOME:-$HOME/.local/state}/dxe/$DX_CONTAINER_NAME/host-identity"
+# on every successful discovery, so dx_runtime_host_identity can resolve
+# the same identity (and therefore the same tunnel/backup/known-hosts
+# paths) without dialling again. Give this file's own docker-ssh scenarios
+# a private HOME (never the developer's real one -- the known-hosts
+# pinning tests below already isolate HOME for the identical reason, and
+# every scenario in this file that reaches a live discovery goes through
+# new_tool_dir, below, which also clears this cache before each scenario
+# so an earlier scenario's cached id can never mask a later scenario's own
+# fixture failing to be exercised).
+dxe_adapter_home="$fixture/home"
+mkdir -p "$dxe_adapter_home"
+unset XDG_STATE_HOME
+export HOME="$dxe_adapter_home"
+
 expect_ok() { local label="$1"; shift; if "$@"; then test_pass "$label"; else test_fail "$label"; fi; }
 expect_reject() { local label="$1"; shift; if "$@" >/dev/null 2>&1; then test_fail "$label"; else test_pass "$label"; fi; }
 
@@ -52,6 +69,14 @@ new_tool_dir() {
     local dir
     dir="$(fake_tool_dir_create "$fixture")"
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    # WP3.4 (Fable A1): clear any daemon-identity cache a PRIOR scenario in
+    # this file left on disk (under the private HOME set up above) before
+    # a new scenario starts, so this scenario's own fake ssh/docker is
+    # actually exercised rather than silently short-circuited by another
+    # scenario's already-cached id. A real filesystem side effect, not a
+    # shell-variable one, so it survives this function running inside the
+    # "$(...)" command substitution every call site uses.
+    rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/dxe" 2>/dev/null || true
     printf '%s' "$dir"
 }
 

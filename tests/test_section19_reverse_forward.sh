@@ -66,6 +66,107 @@ fi
 
 test_section "Section 19: Reverse Forward Runtime"
 
+# --- WP3.4 (Fable A1): tunnel identity fails closed and is cached ---------
+# Container-free: runs even under --skip-integration or with no Apple
+# Container runtime at all. DX_RUNTIME=docker-ssh against a fake `ssh` that
+# answers Docker daemon discovery (bin discovery + `docker info`/`version`)
+# while a flag file says "up", and exits 255 (an unreachable host) once the
+# flag is removed. The forward-8080 record is created the same way the real
+# dx-forward CLI creates it -- the real dx_tunnel_* library functions, not a
+# hand-rolled fixture file. Once "down" (and simulating a brand-new process:
+# only WP3.4's own on-disk daemon-identity cache survives, never an
+# in-memory DXE_RUNTIME_DOCKER_DAEMON_ID), dx_tunnel_list/--stop must still
+# name and remove the SAME record, at the SAME socket path, without ever
+# dialling ssh again (docs/reviews/2026-09-29-fable.md #A1).
+dxe_s19_tunnel_result="$(mktemp "$CALLER_TMPDIR/dxe-s19-tunnel-identity-result.XXXXXX")"
+(
+    dxe_s19_home="$(mktemp -d "$CALLER_TMPDIR/dxe-s19-tunnel-home.XXXXXX")"
+    dxe_s19_fake="$(mktemp -d "$CALLER_TMPDIR/dxe-s19-tunnel-fake.XXXXXX")"
+    dxe_s19_flag="$dxe_s19_fake/up"
+    dxe_s19_argv_log="$dxe_s19_fake/ssh-argv.log"
+    : > "$dxe_s19_flag"
+    : > "$dxe_s19_argv_log"
+
+    # Appends (never truncates -- tests/lib/fake-tools.sh's own
+    # fake_qnap_ssh_write uses `>`, which would only ever show the LAST
+    # call and cannot prove "zero calls" across several), and reproduces
+    # the docker-ssh management-plane transport's one-already-quoted-
+    # command-string shape (dx_runtime_docker_ssh_raw): the last argument
+    # is the whole remote command, evaluated in this fake's own process so
+    # its own fake `docker` on the same PATH runs it.
+    cat > "$dxe_s19_fake/ssh" <<EOF
+#!/bin/bash
+printf '%s\n' "\$@" >> "$dxe_s19_argv_log"
+[ -f "$dxe_s19_flag" ] || exit 255
+dxe_s19_last=""
+for dxe_s19_arg in "\$@"; do dxe_s19_last="\$dxe_s19_arg"; done
+eval "\$dxe_s19_last"
+EOF
+    chmod 0755 "$dxe_s19_fake/ssh"
+
+    cat > "$dxe_s19_fake/docker" <<'EOF'
+#!/bin/bash
+case "$1 $2" in
+    "version --format") echo "27.3.1" ;;
+    "info --format") echo "s19fakedaemon|s19fake|x86_64|linux" ;;
+    *) echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac
+EOF
+    chmod 0755 "$dxe_s19_fake/docker"
+
+    PATH="$dxe_s19_fake:/usr/bin:/bin"
+    unset XDG_STATE_HOME
+    HOME="$dxe_s19_home"
+    DX_RUNTIME=docker-ssh
+    DX_REMOTE_HOST=s19-fake-host
+    DX_CONTAINER_NAME=dx-s19-fake
+    export PATH HOME DX_RUNTIME DX_REMOTE_HOST DX_CONTAINER_NAME
+    unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
+
+    a_ok=1; b_ok=1; c_ok=1
+
+    if source "$BASE_DIR/bin/dx-lib.sh" \
+        && dx_tunnel_prepare_state \
+        && socket_before="$(dx_tunnel_socket_path forward 8080)" \
+        && metadata_before="$(dx_tunnel_metadata_path forward 8080)" \
+        && dx_tunnel_metadata_write forward 8080 18080 \
+        && [ -f "$metadata_before" ] \
+        && [ -s "$dxe_s19_argv_log" ]; then
+
+        # "down": a brand-new process would have neither
+        # DXE_RUNTIME_DOCKER_BIN nor DXE_RUNTIME_DOCKER_DAEMON_ID in
+        # memory -- only WP3.4's own on-disk cache -- so unset both here
+        # to simulate exactly that, then remove the flag and clear the
+        # argv log so assertion (c) below measures only the "down" phase.
+        rm -f "$dxe_s19_flag"
+        : > "$dxe_s19_argv_log"
+        unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
+
+        list_out="$(dx_tunnel_list forward 2>&1)"
+        if printf '%s\n' "$list_out" | grep -Fq -- "$socket_before"; then a_ok=0; fi
+
+        stop_out="$(dx_tunnel_stop forward 8080 2>&1)"; stop_rc=$?
+        if [ "$stop_rc" -eq 0 ] && [ ! -f "$metadata_before" ] \
+            && ! printf '%s\n' "$stop_out" | grep -Fq "No dx-forward forward found"; then
+            b_ok=0
+        fi
+
+        [ -s "$dxe_s19_argv_log" ] || c_ok=0
+    fi
+
+    printf 'a=%s\nb=%s\nc=%s\n' "$a_ok" "$b_ok" "$c_ok" > "$dxe_s19_tunnel_result"
+    rm -rf "$dxe_s19_home" "$dxe_s19_fake" 2>/dev/null || true
+)
+# shellcheck disable=SC1090
+source "$dxe_s19_tunnel_result"
+rm -f "$dxe_s19_tunnel_result"
+[ "${a:-1}" -eq 0 ] && test_pass "WP3.4: dx_tunnel_list names the same socket path once the host goes unreachable" \
+    || test_fail "WP3.4: dx_tunnel_list names the same socket path once the host goes unreachable"
+[ "${b:-1}" -eq 0 ] && test_pass "WP3.4: dx_tunnel_stop removes the record once the host goes unreachable" \
+    || test_fail "WP3.4: dx_tunnel_stop removes the record once the host goes unreachable"
+[ "${c:-1}" -eq 0 ] && test_pass "WP3.4: no ssh call is made while the host is unreachable" \
+    || test_fail "WP3.4: no ssh call is made while the host is unreachable"
+
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
     test_skip "dx-reverse live round trip skipped by --skip-integration"
     print_summary

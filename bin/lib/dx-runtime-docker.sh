@@ -312,11 +312,66 @@ dx_runtime_docker_engine_compatible() {
     fi
 }
 
+# --- Cross-process daemon-identity cache (WP3.4 / Fable A1) ---------------
+#
+# dx_tunnel_key/dx_backup_resolve_dir/dx_ssh_known_hosts_dir (via
+# dx_profile_state_segment -> dx_runtime_host_identity, bin/lib/dx-host-util.sh)
+# derive every local tunnel socket/metadata/lock path, backup mirror
+# directory, and known-hosts pin directory from this identity. Resolving it
+# always cost an ssh round trip unless it happened to already be cached IN
+# THIS PROCESS, so a later process on an unreachable host -- exactly the
+# moment an operator wants `dx-forward --list`/`--stop` to work -- had to
+# dial out just to recompute a path for state that already exists locally;
+# worse, a failing `$(...)` used only as a printf argument does not abort
+# under errexit, so the identity segment silently became empty instead of
+# refusing (docs/reviews/2026-09-29-fable.md #A1). Persisting the resolved
+# daemon id once it is known -- 0600, atomic tmp+mv, directory 0700 -- lets
+# a later call, in a DIFFERENT process, resolve the SAME identity, and
+# therefore the SAME local paths, without ever touching the network again.
+# Scoped by DX_CONTAINER_NAME only (like dx_backup_resolve_dir/
+# dx_ssh_known_hosts_dir's own existing per-profile segment): a container
+# name is expected to name one profile, so repointing the same container
+# name at a different DX_REMOTE_HOST is the one case this cache does not
+# freshen until something else clears it (an accepted limitation, the same
+# shape as dx_backup_resolve_dir's own documented override-argument one).
+dx_runtime_docker_daemon_id_cache_path() {
+    printf '%s/dxe/%s/host-identity\n' "${XDG_STATE_HOME:-$HOME/.local/state}" "${DX_CONTAINER_NAME:?}"
+}
+
+dx_runtime_docker_daemon_id_cache_write() {
+    local id="$1" path dir tmp
+    path="$(dx_runtime_docker_daemon_id_cache_path)" || return 1
+    dir="${path%/*}"
+    [ ! -L "$dir" ] || return 1
+    mkdir -p "$dir" 2>/dev/null || [ -d "$dir" ] || return 1
+    [ ! -L "$dir" ] && [ -d "$dir" ] || return 1
+    chmod 0700 "$dir" || return 1
+    tmp="$(mktemp "$dir/.host-identity.XXXXXX")" || return 1
+    if ! printf '%s\n' "$id" > "$tmp" || ! chmod 0600 "$tmp" || ! mv -f "$tmp" "$path"; then
+        rm -f "$tmp"
+        return 1
+    fi
+}
+
+dx_runtime_docker_daemon_id_cache_read() {
+    local path value
+    path="$(dx_runtime_docker_daemon_id_cache_path)" || return 1
+    [ -f "$path" ] && [ ! -L "$path" ] || return 1
+    value="$(sed -n '1p' "$path" 2>/dev/null)"
+    [ -n "$value" ] || return 1
+    printf '%s\n' "$value"
+}
+
 # Stable remote daemon identity (item 2's "stable Docker daemon ID"; feeds
 # item 7's identity scoping). One round trip for both the primary ID and
 # the fallback fields, pipe-delimited (never JSON -- no jq on the
 # controller). Cached like the binary path: a second call in the same
-# process reuses it.
+# process reuses it. Always a LIVE round trip when it actually dials (never
+# reads the on-disk cache above itself: dx_runtime_docker_available's own
+# full preflight chain calls this directly, precisely because it must prove
+# the daemon answers NOW, not "answered at some point in the past" -- see
+# that function's own module comment). Only dx_runtime_docker_host_identity,
+# below, reads the cache, and only to avoid dialling at all.
 dx_runtime_docker_discover_daemon_id() {
     [ -z "${DXE_RUNTIME_DOCKER_DAEMON_ID:-}" ] || return 0
     local bin fields id name arch os
@@ -333,6 +388,10 @@ dx_runtime_docker_discover_daemon_id() {
         DXE_RUNTIME_DOCKER_DAEMON_ID="$(dx_short_hash "$name|$arch|$os")"
     fi
     export DXE_RUNTIME_DOCKER_DAEMON_ID
+    # Best-effort: a cache-write failure (read-only state dir, disk full)
+    # must never fail a discovery that already succeeded -- the in-process
+    # value above is still correct for the rest of THIS run either way.
+    dx_runtime_docker_daemon_id_cache_write "$DXE_RUNTIME_DOCKER_DAEMON_ID" || true
 }
 
 # dx_runtime_available's docker-ssh implementation: the complete read-only
@@ -390,7 +449,21 @@ dx_runtime_docker_system_start() {
 # pointed at different NASs even before any daemon call succeeds; the daemon
 # ID additionally catches an alias that silently starts resolving to a
 # different daemon underneath an unchanged name.
+#
+# WP3.4 / Fable A1: reads the on-disk daemon-id cache BEFORE ever dialling,
+# seeding DXE_RUNTIME_DOCKER_DAEMON_ID from it when this process has not
+# resolved one yet -- dx_runtime_docker_discover_daemon_id's own top guard
+# then short-circuits without touching the network at all. A cache miss
+# (first call anywhere, or the cache file is absent/unreadable) falls
+# through to the same live discovery as before, unchanged.
 dx_runtime_docker_host_identity() {
+    if [ -z "${DXE_RUNTIME_DOCKER_DAEMON_ID:-}" ]; then
+        local cached
+        if cached="$(dx_runtime_docker_daemon_id_cache_read 2>/dev/null)" && [ -n "$cached" ]; then
+            DXE_RUNTIME_DOCKER_DAEMON_ID="$cached"
+            export DXE_RUNTIME_DOCKER_DAEMON_ID
+        fi
+    fi
     dx_runtime_docker_discover_daemon_id || return 1
     printf 'docker-ssh:%s:%s\n' "$DX_REMOTE_HOST" "$DXE_RUNTIME_DOCKER_DAEMON_ID"
 }
