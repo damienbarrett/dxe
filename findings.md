@@ -150,12 +150,12 @@ Every review ID and where it lands.
   become shims. *Red:* `tests/test_harness.sh` (`expect_exit 3 bash -c 'exit
   3'` passes; `( expect_exit 0 false )` still fails the run; a failing
   `expect_stdout` prints the capture). (Fable D1)
-- [ ] **WP1.2** Shared runtime fakes: `with_fake_runtime docker|container|ssh`
+- [x] ad7fea8 **WP1.2** Shared runtime fakes: `with_fake_runtime docker|container|ssh`
   appending one `%q` argv per line to `$FAKE_TRANSCRIPT`; `fake_fail_nth`;
   `expect_transcript`; fakes use `#!/usr/bin/env bash`; single PATH
   convention. Fix `fake-tools.sh:73` `>` → `>>`. *Red:* two recorded
   invocations, second exits 42. (Fable D5, E3)
-- [ ] **WP1.3** Fixture isolation and skip semantics: `with_fixture` puts
+- [x] ca1681f **WP1.3** Fixture isolation and skip semantics: `with_fixture` puts
   `HOME`, `XDG_STATE_HOME`, `TMPDIR` under the fixture, unsets
   `DXE_CONFIG_RESOLVED`, `finish` diffs the known-hosts snapshot; `skip
   --class live|linux-root|destructive` recorded; a suite that records only
@@ -180,7 +180,7 @@ Every review ID and where it lands.
   `test_helpers.sh`. (Fable D4)
 - [ ] **WP1.7** Replace unit-tier `sleep`s with readiness markers; harness
   `wait_until`; contract forbids bare `sleep N` in unit-tier files. (Fable D10)
-- [ ] **WP1.8** Contract: no column-0 coreutil override outside a subshell in
+- [x] a201a80 **WP1.8** Contract: no column-0 coreutil override outside a subshell in
   `tests/test_*.sh`; fix `test_section17:50`. (Fable D6)
 - [x] 862ede8 **WP1.9** `test_runtime_boundary_audit.sh` scans git-tracked shell only
   (baseline failure on an ignored `.claude/settings.local.json`).
@@ -370,3 +370,7 @@ Every review ID and where it lands.
 - **2026-09-30** Second local kcov run: section 17 green with `jq`; the run then failed in `test_sourceable_coverage.sh` (~line 1923) because its probe of the dead `setup_nix_volume_impl` now hits WP3.2's real mount check inside the container. Deletion of the dead functions and their nine probes (Fable B6.7 / D8, WP8.1) pulled forward as its own task; coverage floor still unmeasured.
 - **2026-09-30** WP6.1/WP6.2 landed (fc29467, d94da3d, 321c4db, 1faf347): the selector checks every find/git/stat/hash result, names each failing path, and exits non-zero; the standalone entrypoint has errexit; reachability is `git rev-list --all --not --remotes` (HEAD, stash and tags included; policy documented in the module: stash is at-risk, a local tag on a pushed commit is not, a query failure retains the whole repo and reports failure). Selector 77 → 94 cases, backup 50 → 53. Correction to Astra F1: `bin/dx-backup` already aborted on a failed listing (plain statement under errexit); the host test landed as a regression guard only.
 - **2026-09-30** Dead `setup_nix_volume{,_impl}` and their nine coverage-only probes deleted (11f5480, WP8.1 item pulled forward); stale comment in `system.sh` updated.
+- **2026-09-30** WP1.8 landed (a201a80): contract against column-0 coreutil overrides never unset, self-proven on fixtures. Correction to Fable D6: section 17's `mv()` was already unset (line 848 at the review commit); the one real offender was `test_refactor_contracts.sh`'s own `container()` fake. The `mv` shadow window was narrowed anyway.
+- **2026-09-30** Third local kcov run failed in `test_refactor_contracts.sh`: every WP4.1 entrypoint probe fails under kcov because kcov's PS4 trace expands `${BASH_SOURCE}`, which is unset inside a `bash -c` program, so `set -u` aborts the nested probe before it sources anything (`_: line 1: BASH_SOURCE: unbound variable`). Reproduced in the image with and without kcov. Fix in progress: run nested probes from a file. Also found: the F6 self-test in the same file passed vacuously under kcov for the same reason (any crash satisfies "non-zero exit").
+- **2026-09-30** WP1.2/WP1.3 landed (ad7fea8, ca1681f): `with_fake_runtime`, `fake_fail_nth`, `fake_respond`, `expect_transcript`; fakes use `#!/usr/bin/env bash`; the ssh argv log appends; `with_fixture` (exports `DXE_FIXTURE_DIR`, redirects HOME/XDG_STATE_HOME/TMPDIR, sweeps `DXE_CONFIG_*`); `finish` diffs real state, exits 3 on zero cases, refuses all-skip runs without `# skip-ok:`. `requires_container` keeps its AND semantics (OR would break section 20's own contract); the twelve hand-written SKIP_INTEGRATION checks stay for WP1.4.
+- **2026-09-30** Entrypoint and F6 probes now run from files (kcov PS4/BASH_SOURCE); F6 additionally asserts the `1 failed` summary so a crash cannot satisfy it. Verified green under kcov in the image.
