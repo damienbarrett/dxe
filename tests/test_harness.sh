@@ -536,6 +536,96 @@ fi
 check test "$x_status" -eq 0
 rm -rf "$x_home"
 
+# =========================================================================
+# WP1.7 -- wait_until / wait_for_pid_exit (Fable D10): bounded-attempt
+# polling that never asserts elapsed wall-clock time.
+# =========================================================================
+
+y_fake_dir="$(fake_tool_dir_create "$SCRIPT_DIR")"
+fake_tool_write "$y_fake_dir" fake-sleep '
+[ -z "${DXE_FAKE_SLEEP_LOG:-}" ] || printf "%s\n" "$1" >> "$DXE_FAKE_SLEEP_LOG"
+exit 0
+'
+
+# --- (y) An already-true condition returns 0 immediately, with zero sleeps
+# recorded -- wait_until must check before ever sleeping, exactly like
+# dx_wait_until (bin/lib/dx-host-util.sh).
+y_sleep_log="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-y-sleep.XXXXXX")"
+rm -f "$y_sleep_log"
+y_out="$(SCRIPT_DIR="$SCRIPT_DIR" Y_FAKE_DIR="$y_fake_dir" Y_LOG="$y_sleep_log" bash -c '
+    source "$SCRIPT_DIR/lib/harness.sh"
+    PATH="$Y_FAKE_DIR:$PATH"
+    DX_SLEEP=fake-sleep
+    export DXE_FAKE_SLEEP_LOG="$Y_LOG"
+    wait_until "true" 5
+    echo "status=$?"
+')"
+check contains "$y_out" "status=0"
+check test ! -s "$y_sleep_log"
+rm -f "$y_sleep_log"
+
+# --- (z) A condition that only becomes true after a few failed checks
+# succeeds once it does, having recorded exactly that many sleeps -- proves
+# wait_until actually retries rather than checking once and giving up.
+z_counter="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-z-counter.XXXXXX")"
+printf '0\n' > "$z_counter"
+z_sleep_log="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-z-sleep.XXXXXX")"
+rm -f "$z_sleep_log"
+z_out="$(SCRIPT_DIR="$SCRIPT_DIR" Y_FAKE_DIR="$y_fake_dir" Z_COUNTER="$z_counter" Z_LOG="$z_sleep_log" bash -c '
+    source "$SCRIPT_DIR/lib/harness.sh"
+    PATH="$Y_FAKE_DIR:$PATH"
+    DX_SLEEP=fake-sleep
+    export DXE_FAKE_SLEEP_LOG="$Z_LOG"
+    z_ready() {
+        local n
+        n="$(cat "$Z_COUNTER")"
+        n=$((n + 1))
+        printf "%s\n" "$n" > "$Z_COUNTER"
+        [ "$n" -ge 3 ]
+    }
+    wait_until z_ready 10
+    echo "status=$?"
+')"
+check contains "$z_out" "status=0"
+check test "$(wc -l < "$z_sleep_log" | tr -d ' ')" -eq 2
+rm -f "$z_counter" "$z_sleep_log"
+
+# --- (aa) A condition that never becomes true fails once the attempt limit
+# is reached -- bounded by attempt COUNT, never a wall-clock read. The last
+# of the 4 checks exhausts the limit without a trailing sleep, so 4 checks
+# leave exactly 3 recorded sleeps (checked-then-slept, checked-then-slept,
+# checked-then-slept, checked-then-gave-up).
+aa_sleep_log="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-aa-sleep.XXXXXX")"
+rm -f "$aa_sleep_log"
+aa_out="$(SCRIPT_DIR="$SCRIPT_DIR" Y_FAKE_DIR="$y_fake_dir" AA_LOG="$aa_sleep_log" bash -c '
+    source "$SCRIPT_DIR/lib/harness.sh"
+    PATH="$Y_FAKE_DIR:$PATH"
+    DX_SLEEP=fake-sleep
+    export DXE_FAKE_SLEEP_LOG="$AA_LOG"
+    wait_until "false" 4
+    echo "status=$?"
+')"
+check contains "$aa_out" "status=1"
+check test "$(wc -l < "$aa_sleep_log" | tr -d ' ')" -eq 3
+rm -f "$aa_sleep_log"
+rm -rf "$y_fake_dir"
+
+# --- (bb) wait_for_pid_exit returns 0 once a real background process has
+# actually exited -- a genuine liveness check, not a fixed wait. The child
+# is spawned via `bash -c` (never a bare `sleep <number>` line -- WP1.7's
+# own bare-sleep contract forbids that in a `# tier: unit` suite, and this
+# file carries that header).
+bash -c 'exit 0' & bb_pid=$!
+wait "$bb_pid" 2>/dev/null || true
+check wait_for_pid_exit "$bb_pid" 20
+
+# --- (cc) wait_for_pid_exit fails (bounded, not a hang) against a pid that
+# is still alive once the attempt limit is reached.
+bash -c 'exec sleep 5' & cc_pid=$!
+check reject wait_for_pid_exit "$cc_pid" 3
+kill "$cc_pid" 2>/dev/null || true
+wait "$cc_pid" 2>/dev/null || true
+
 rm -f "$RESULTS"
 
 [ "$failures" -eq 0 ]
