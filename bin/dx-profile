@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DX_PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/dx-config.sh
 source "$SCRIPT_DIR/lib/dx-config.sh"
-PROFILES_DIR="${DX_PROFILES_DIR:-$DX_PROJECT_ROOT/tests/profiles}"
 
 usage() {
     echo "Usage: $(basename "$0") <profile> <command...>" >&2
@@ -17,6 +16,8 @@ usage() {
     fi
 }
 
+profile_main() {
+PROFILES_DIR="${DX_PROFILES_DIR:-$DX_PROJECT_ROOT/tests/profiles}"
 [ "$#" -ge 2 ] || { usage; exit 2; }
 profile=$1
 shift
@@ -41,3 +42,5 @@ done
 unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
 dx_init_config "$DX_PROJECT_ROOT"
 exec "$@"
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then profile_main "$@"; fi
