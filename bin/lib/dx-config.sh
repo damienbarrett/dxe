@@ -143,6 +143,7 @@ dx_config_validate_value() {
         DX_GIT_MOUNT_SOURCE|DX_GUEST_WORKDIR)
             case "$value" in ''|/*) ;; *) return 1 ;; esac
             ;;
+        *) echo "Error: unknown configuration field '$name'." >&2; return 1 ;;
     esac
 }
 
