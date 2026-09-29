@@ -13,6 +13,11 @@ TOOLS_NIX="$CONTAINER_DIR/home/tools.nix"
 DX_AI_SCRIPT="$CONTAINER_DIR/scripts/dx-ai.sh"
 DX_HERDR_NAV_SCRIPT="$CONTAINER_DIR/scripts/dx-herdr-navigate.sh"
 DX_VERIFY_INVENTORY_SCRIPT="$CONTAINER_DIR/scripts/dx-verify-inventory.sh"
+# WP7.3 (docs/reviews/2026-09-29-fable.md finding C3, Muse B4): the one
+# nixpkgs-attribute -> command mapping flake.nix's dxPackages and
+# requiredInventory (checks.inventory, checks.inventory-list) are both
+# generated from.
+GUEST_TOOLS_NIX="$CONTAINER_DIR/guest-tools.nix"
 
 # Test: flake.nix exists
 assert_file_exists "$FLAKE_NIX" "flake.nix exists"
@@ -39,72 +44,82 @@ assert_file_not_contains "$FLAKE_NIX" "avatars.githubusercontent.com" "guest fla
 assert_file_contains_literal "$FLAKE_NIX" 'nixpkgs-unstable.url = "github:nixos/nixpkgs/nixpkgs-unstable"' "nixpkgs-unstable input tracks the cached channel branch, not master"
 assert_file_not_contains "$FLAKE_NIX" 'nixpkgs-unstable.url = "github:nixos/nixpkgs/master"' "nixpkgs-unstable input no longer tracks nixpkgs master"
 
-DX_PACKAGES_BLOCK="$(awk '
-    /dxPackages =/ { in_block = 1 }
-    in_block { print }
-    in_block && /^[[:space:]]*\];[[:space:]]*$/ { exit }
-' "$FLAKE_NIX")"
+# WP7.3: dxPackages is generated from guest-tools.nix
+# (`map (n: pkgs.${n}) (lib.attrNames guestTools)`), so it is no longer a
+# literal list in flake.nix for these per-package checks to scan -- the
+# mapping file is the new source of truth (Fable C3). Behaviourally, the
+# real proof that every one of these still resolves to an installed
+# command is checks.<system>.inventory / inventory-list below (nix eval,
+# skipped on a host with no nix, like the rest of this block).
+assert_file_exists "$GUEST_TOOLS_NIX" "guest-tools.nix mapping exists"
 
-# Test: coreutils in flake.nix
-assert_file_contains "$FLAKE_NIX" "coreutils" "coreutils in flake.nix"
+# Test: coreutils in guest-tools.nix
+assert_file_contains "$GUEST_TOOLS_NIX" "coreutils" "coreutils in guest-tools.nix"
 
-# Test: gnused in flake.nix
-assert_file_contains "$FLAKE_NIX" "gnused" "gnused in flake.nix"
+# Test: gnused in guest-tools.nix
+assert_file_contains "$GUEST_TOOLS_NIX" "gnused" "gnused in guest-tools.nix"
 
-# Test: gnugrep in flake.nix
-assert_file_contains "$FLAKE_NIX" "gnugrep" "gnugrep in flake.nix"
+# Test: gnugrep in guest-tools.nix
+assert_file_contains "$GUEST_TOOLS_NIX" "gnugrep" "gnugrep in guest-tools.nix"
 
-# Test: findutils in flake.nix
-assert_file_contains "$FLAKE_NIX" "findutils" "findutils in flake.nix"
+# Test: findutils in guest-tools.nix
+assert_file_contains "$GUEST_TOOLS_NIX" "findutils" "findutils in guest-tools.nix"
 
-# Test: procps in flake.nix
-assert_file_contains "$FLAKE_NIX" "procps" "procps in flake.nix"
+# Test: procps in guest-tools.nix
+assert_file_contains "$GUEST_TOOLS_NIX" "procps" "procps in guest-tools.nix"
 
-# Test: util-linux in flake.nix
-assert_file_contains "$FLAKE_NIX" "util-linux" "util-linux in flake.nix"
+# Test: util-linux in guest-tools.nix
+assert_file_contains "$GUEST_TOOLS_NIX" "util-linux" "util-linux in guest-tools.nix"
 
-# Test: less in flake.nix (optional)
-if grep -q "less" "$FLAKE_NIX"; then
-    test_pass "less in flake.nix"
+# Test: less in guest-tools.nix (optional)
+if grep -q "less" "$GUEST_TOOLS_NIX"; then
+    test_pass "less in guest-tools.nix"
 else
-    test_skip "less not in flake.nix (optional)"
+    test_skip "less not in guest-tools.nix (optional)"
 fi
 
-# Test: man-db in flake.nix (optional)
-if grep -q "man-db" "$FLAKE_NIX"; then
-    test_pass "man-db in flake.nix"
+# Test: man-db is no longer a dxPackages entry -- it duplicated Home
+# Manager's own manual.manpages.enable default (proven with `nix eval
+# .../config.home.packages` before this fix: man-db appeared twice). `man`
+# is still a required, verified command -- see requiredInventory's manual
+# "man" entry in flake.nix and checks.<system>.inventory below.
+assert_file_not_contains "$GUEST_TOOLS_NIX" "^[[:space:]]*man-db[[:space:]]*=" "man-db is not a guest-tools.nix entry (Home Manager's manual.manpages default already provides it)"
+
+# Test: file in guest-tools.nix (optional)
+if grep -q "file" "$GUEST_TOOLS_NIX"; then
+    test_pass "file in guest-tools.nix"
 else
-    test_skip "man-db not in flake.nix (optional)"
+    test_skip "file not in guest-tools.nix (optional)"
 fi
 
-# Test: file in flake.nix (optional)
-if grep -q "file" "$FLAKE_NIX"; then
-    test_pass "file in flake.nix"
-else
-    test_skip "file not in flake.nix (optional)"
-fi
-
-# Test: existing tools preserved - use regex to match with or without pkgs. prefix
-assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?git" "git preserved in flake.nix"
-assert_grep_in_file "$FLAKE_NIX" "^[[:space:]]*(pkgs\.)?nix[[:space:]]*$" "nix preserved in flake.nix"
-assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?openssh" "openssh preserved in flake.nix"
-assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?tmux" "tmux preserved in flake.nix"
+# Test: git and tmux are configured through their typed Home Manager
+# options, not a second, duplicate dxPackages entry (proven with `nix eval
+# .../config.home.packages` before this fix: both appeared twice).
+assert_file_contains "$TOOLS_NIX" "programs.git" "git preserved via programs.git (home/tools.nix), not a duplicate dxPackages entry"
+assert_file_contains "$TOOLS_NIX" "programs.tmux" "tmux preserved via programs.tmux (home/tools.nix), not a duplicate dxPackages entry"
+assert_grep_in_file "$GUEST_TOOLS_NIX" "^[[:space:]]*nix[[:space:]]*=" "nix preserved in guest-tools.nix"
+assert_grep_in_file "$GUEST_TOOLS_NIX" "openssh" "openssh preserved in guest-tools.nix"
 assert_grep_in_file "$FLAKE_NIX" "nixvim" "nixvim preserved in flake.nix"
-assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?ripgrep" "ripgrep preserved in flake.nix"
-assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?fd" "fd preserved in flake.nix"
-assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?curl" "curl preserved in flake.nix"
-assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?jq" "jq preserved in flake.nix"
-if printf '%s\n' "$DX_PACKAGES_BLOCK" | stdin_matches -E "^[[:space:]]*(pkgs\.)?gh[[:space:]]*$"; then
-    test_pass "GitHub CLI is in default dxPackages"
+assert_grep_in_file "$GUEST_TOOLS_NIX" "ripgrep" "ripgrep preserved in guest-tools.nix"
+assert_grep_in_file "$GUEST_TOOLS_NIX" "^[[:space:]]*fd[[:space:]]*=" "fd preserved in guest-tools.nix"
+assert_grep_in_file "$GUEST_TOOLS_NIX" "^[[:space:]]*curl[[:space:]]*=" "curl preserved in guest-tools.nix"
+assert_grep_in_file "$GUEST_TOOLS_NIX" "^[[:space:]]*jq[[:space:]]*=" "jq preserved in guest-tools.nix"
+if grep -Eq "^[[:space:]]*gh[[:space:]]*=" "$GUEST_TOOLS_NIX"; then
+    test_pass "GitHub CLI is in guest-tools.nix"
 else
-    test_fail "GitHub CLI is in default dxPackages"
+    test_fail "GitHub CLI is in guest-tools.nix"
 fi
-assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?direnv" "direnv preserved in flake.nix"
-assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?nix-direnv" "nix-direnv preserved in flake.nix"
-assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?just" "just preserved in flake.nix"
-assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?go-task" "go-task preserved in flake.nix"
-assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?lazygit" "lazygit preserved in flake.nix"
-assert_grep_in_file "$FLAKE_NIX" "(pkgs\.)?yazi" "yazi preserved in flake.nix"
+# WP7.4: direnv, yazi and lazygit moved from guest-tools.nix to typed
+# programs.* options (programs.direnv also supplies nix-direnv via its own
+# nix-direnv.enable, so neither key stays in the mapping -- adding them
+# back would reintroduce the exact config.home.packages duplication WP7.3
+# closed).
+assert_file_contains "$SHELL_NIX" "programs.direnv" "direnv preserved via programs.direnv (home/shell.nix), not a duplicate dxPackages entry"
+assert_file_contains "$SHELL_NIX" "programs.yazi" "yazi preserved via programs.yazi (home/shell.nix), not a duplicate dxPackages entry"
+assert_file_contains "$TOOLS_NIX" "programs.lazygit" "lazygit preserved via programs.lazygit (home/tools.nix), not a duplicate dxPackages entry"
+assert_file_not_contains "$GUEST_TOOLS_NIX" "^[[:space:]]*nix-direnv[[:space:]]*=" "nix-direnv is not a guest-tools.nix entry (programs.direnv.nix-direnv.enable already provides it)"
+assert_grep_in_file "$GUEST_TOOLS_NIX" "^[[:space:]]*just[[:space:]]*=" "just preserved in guest-tools.nix"
+assert_grep_in_file "$GUEST_TOOLS_NIX" "go-task" "go-task preserved in guest-tools.nix"
 assert_file_contains "$TOOLS_NIX" "set -g display-panes-time 3000" "tmux display panes timeout is 3s"
 # base-index migrated from a raw `set -g base-index 1` string to the typed
 # Home Manager option. Runtime behaviour is asserted in the live block below.
@@ -148,20 +163,23 @@ assert_file_contains_literal "$TOOLS_NIX" \
     'bind -N "Choose window with activity or bell" b choose-tree -Zw -f "#{||:#{window_activity_flag},#{window_bell_flag}}"' \
     "tmux activity picker remains bound on prefix-b"
 
-# Test: Yazi cwd helpers are configured for interactive container shells
-assert_file_contains "$SHELL_NIX" "function y()" "bash yazi cwd helper is configured"
-assert_file_contains "$SHELL_NIX" "command yazi \"\$@\" --cwd-file=\"\$tmp\"" "bash yazi cwd helper writes cwd file"
-assert_file_contains "$SHELL_NIX" "function y" "fish yazi cwd helper is configured"
-assert_file_contains "$SHELL_NIX" "command yazi \$argv --cwd-file=\"\$tmp\"" "fish yazi cwd helper writes cwd file"
-assert_file_contains "$SHELL_NIX" "def --env y" "nushell yazi cwd helper is configured"
-assert_file_contains "$SHELL_NIX" '\^yazi ...$args --cwd-file $tmp' "nushell yazi cwd helper writes cwd file"
-assert_file_contains "$SHELL_NIX" 'str replace --all (char nul) ""' "nushell yazi cwd helper strips cwd file NUL terminator"
+# WP7.4 (docs/reviews/2026-09-29-fable.md finding C4): the yazi `y`
+# cd-on-exit wrapper used to be a hand-rolled function in each of the three
+# shell blocks (bash/fish/nushell) in this file. programs.yazi's typed
+# shellWrapperName option now generates it for all three, so the real
+# behavioural proof is checks.<shell>-integration below (nix build), not a
+# text match against a function body this file no longer contains.
+assert_file_contains "$SHELL_NIX" 'shellWrapperName = "y"' "yazi cd-on-exit wrapper is named y via the typed shellWrapperName option"
+assert_file_contains "$SHELL_NIX" "programs.yazi" "yazi shell integration is configured via the typed programs.yazi option"
+assert_file_contains "$SHELL_NIX" "enableBashIntegration = true" "yazi/direnv/starship bash integration is explicitly enabled"
+assert_file_contains "$SHELL_NIX" "enableFishIntegration = true" "yazi/direnv/starship fish integration is explicitly enabled"
+assert_file_contains "$SHELL_NIX" "enableNushellIntegration = true" "yazi/direnv/starship nushell integration is explicitly enabled"
 
-# Test: AI CLI tools are excluded from the default dxPackages list
-if printf '%s\n' "$DX_PACKAGES_BLOCK" | stdin_matches -E "codex|gemini-cli|claude-code|antigravity-cli|opencode"; then
-    test_fail "AI CLI tools excluded from default dxPackages"
+# Test: AI CLI tools are excluded from the default dxPackages/guest-tools.nix list
+if stdin_matches -E "codex|gemini-cli|claude-code|antigravity-cli|opencode" < "$GUEST_TOOLS_NIX"; then
+    test_fail "AI CLI tools excluded from guest-tools.nix (dxPackages)"
 else
-    test_pass "AI CLI tools excluded from default dxPackages"
+    test_pass "AI CLI tools excluded from guest-tools.nix (dxPackages)"
 fi
 
 # Test: AI CLI tools are available through an opt-in package output
@@ -341,11 +359,19 @@ fi
 rm -rf "$inv_fixture"
 trap - EXIT
 
-# Test: shell startup guards optional prompt/environment hooks
-assert_file_contains "$SHELL_NIX" "command -v direnv" "bash direnv hook is guarded"
-assert_file_contains "$SHELL_NIX" "command -v starship" "bash starship hook is guarded"
-assert_file_contains "$SHELL_NIX" "type -q direnv" "fish direnv hook is guarded"
-assert_file_contains "$SHELL_NIX" "type -q starship" "fish starship hook is guarded"
+# WP7.4 (Fable C4): starship and direnv used to be guarded at runtime with
+# `command -v`/`type -q` in hand-rolled shell blocks -- three different
+# idioms, one of them (nushell) missing the hook entirely and undocumented.
+# programs.starship.enable / programs.direnv.enable now own this: Home
+# Manager only emits the init code when the option is enabled, so there is
+# nothing left to guard, and it is emitted identically for all three shells.
+assert_file_contains "$SHELL_NIX" "programs.starship = {" "starship is configured via the typed programs.starship option (bash/fish/nushell alike)"
+assert_file_contains "$SHELL_NIX" "programs.direnv = {" "direnv is configured via the typed programs.direnv option (bash/fish/nushell alike)"
+assert_file_contains "$SHELL_NIX" "nix-direnv.enable = true" "direnv uses the nix-direnv cache"
+assert_file_not_contains "$SHELL_NIX" "command -v direnv" "bash no longer hand-guards the direnv hook (programs.direnv owns it)"
+assert_file_not_contains "$SHELL_NIX" "command -v starship" "bash no longer hand-guards the starship hook (programs.starship owns it)"
+assert_file_not_contains "$SHELL_NIX" "type -q direnv" "fish no longer hand-guards the direnv hook (programs.direnv owns it)"
+assert_file_not_contains "$SHELL_NIX" "type -q starship" "fish no longer hand-guards the starship hook (programs.starship owns it)"
 
 assert_file_contains "$SHELL_NIX" "agy = \\\"agy --dangerously-skip-permissions\\\"" "shell.nix configures agy with --dangerously-skip-permissions"
 assert_file_contains "$SHELL_NIX" "claude = \\\"claude --dangerously-skip-permissions\\\"" "shell.nix configures claude with --dangerously-skip-permissions"

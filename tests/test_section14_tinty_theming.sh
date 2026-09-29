@@ -17,6 +17,7 @@ SCRIPT_DX_THEME_COPY_HOOK="$CONTAINER_DIR/scripts/dx-theme-copy-hook.sh"
 SCRIPT_DX_THEME_OSC_HOOK="$CONTAINER_DIR/scripts/dx-theme-osc-hook.sh"
 SCRIPT_DX_THEME_RESTORE="$CONTAINER_DIR/scripts/dx-theme-restore.sh"
 SCRIPT_DX_THEME_WRITE_TOOL_THEMES="$CONTAINER_DIR/scripts/dx-theme-write-tool-themes.sh"
+GUEST_TOOLS_NIX="$CONTAINER_DIR/guest-tools.nix"
 NIXVIM_PLUGIN="$CONTAINER_DIR/nvim/plugins/tinted-nvim.nix"
 LUALINE_NIX="$CONTAINER_DIR/nvim/plugins/lualine.nix"
 ROSE_PINE_NIX="$CONTAINER_DIR/nvim/plugins/rose-pine.nix"
@@ -58,9 +59,14 @@ assert_file_exists "$FLAKE_NIX" "flake.nix exists"
 assert_file_exists "$HOME_NIX" "home.nix exists"
 assert_file_exists "$NIXVIM_PLUGIN" "tinted-nvim plugin module exists"
 
-assert_file_contains "$FLAKE_NIX" "tinty" "flake.nix includes tinty"
-assert_file_contains "$FLAKE_NIX" "lazygit" "flake.nix includes lazygit for CLI theming"
-assert_file_contains "$FLAKE_NIX" "btop" "flake.nix includes btop"
+# WP7.3 (docs/reviews/2026-09-29-fable.md finding C3): dxPackages is
+# generated from guest-tools.nix (`map (n: pkgs.${n}) (lib.attrNames
+# guestTools)`), so it is no longer literal text in flake.nix -- tinty and
+# btop moved to guest-tools.nix, and lazygit to programs.lazygit
+# (home/tools.nix, WP7.4) since it is now typed rather than a bare package.
+assert_file_contains "$GUEST_TOOLS_NIX" "tinty" "guest-tools.nix includes tinty"
+assert_file_contains "$HOME_TOOLS_NIX" "programs.lazygit" "home/tools.nix includes lazygit for CLI theming (typed programs.lazygit)"
+assert_file_contains "$GUEST_TOOLS_NIX" "btop" "guest-tools.nix includes btop"
 
 assert_file_contains "$HOME_THEME_NIX" "tinted-theming/tinty/config.toml" "home.nix declares Tinty config"
 assert_file_contains "$HOME_THEME_NIX" "preferred-schemes" "Tinty config uses preferred-schemes schema"

@@ -119,10 +119,14 @@
     '';
   };
 
-  xdg.configFile."lazygit/config.yml".text = ''
-    gui:
-      nerdFontsVersion: "3"
-  '';
+  # WP7.4 (docs/reviews/2026-09-29-fable.md finding C4): replaces a raw
+  # xdg.configFile."lazygit/config.yml".text block with the typed option;
+  # programs.lazygit.enable also supplies the lazygit package itself, so it
+  # is no longer a guest-tools.nix/dxPackages entry (see that file).
+  programs.lazygit = {
+    enable = true;
+    settings.gui.nerdFontsVersion = "3";
+  };
 
   xdg.configFile."btop/btop.conf" = {
     force = true;

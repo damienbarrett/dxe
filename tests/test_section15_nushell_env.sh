@@ -36,10 +36,26 @@ else
     test_fail "shell.nix NIX_SSL_CERT_FILE uses \$\"(\$nu.home-dir)/...\" interpolation"
 fi
 
-if grep -E '\$env\.PATH.*\$"\(\$nu\.home-dir\)/\.local/bin"' "$SHELL_NIX" >/dev/null 2>&1; then
-    test_pass "shell.nix adds ~/.local/bin to nushell PATH"
+# WP7.4 (docs/reviews/2026-09-29-fable.md finding C4): nushell's env.nu
+# used to build $env.PATH by hand (one of three per-shell PATH prepends);
+# home.sessionPath now renders the same PATH into every shell, nushell
+# included, through Home Manager's own prependToVar. Static regression
+# guard: the hand-rolled line must not come back.
+assert_file_not_contains "$SHELL_NIX" '$env.PATH = ($env.PATH | split row' "nushell envFile no longer hand-builds \$env.PATH (home.sessionPath replaces it)"
+
+if command -v nix >/dev/null 2>&1; then
+    if sessionpath_json="$(nix eval --json --no-write-lock-file "$CONTAINER_DIR#homeConfigurations.dx.config.home.sessionPath" 2>&1)"; then
+        if printf '%s\n' "$sessionpath_json" | stdin_matches -F '.local/state/dx-ai/current/profile/bin' \
+            && printf '%s\n' "$sessionpath_json" | stdin_matches -F '.local/bin'; then
+            test_pass "home.sessionPath carries the dx-ai profile and ~/.local/bin (adds ~/.local/bin to every shell's PATH, nushell included)"
+        else
+            test_fail "home.sessionPath carries the dx-ai profile and ~/.local/bin (got: ${sessionpath_json})"
+        fi
+    else
+        test_fail "home.sessionPath evaluates (${sessionpath_json})"
+    fi
 else
-    test_fail "shell.nix adds ~/.local/bin to nushell PATH"
+    test_skip "nix not available, skipping home.sessionPath evaluation"
 fi
 
 if grep -Fq '$env.TZ = ":/etc/localtime"' "$SHELL_NIX"; then
