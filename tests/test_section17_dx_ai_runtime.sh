@@ -47,8 +47,25 @@ printf '%s\n' '' > "$state/generations/previous/.predecessor"
 seed_ai_profile "$state/generations/previous"
 ln -s generations/previous "$state/current"
 real_mv="$(command -v mv)"
+mv_calls_log="$ai_fixture/mv-calls.log"
+: > "$mv_calls_log"
 mv() {
-    if [ "${1:-}" = -Tf ]; then rm -f "$3"; "$real_mv" -f "$2" "$3"; else "$real_mv" "$@"; fi
+    printf '%s\n' "$*" >> "$mv_calls_log"
+    case "${1:-}" in
+        -Tf) rm -f "$3"; "$real_mv" -f "$2" "$3" ;;
+        -T)
+            # Emulate GNU mv's --no-target-directory for hosts whose mv
+            # lacks it (e.g. BSD mv on macOS, where this suite also runs):
+            # fail if the destination already exists at all, since plain mv
+            # would otherwise move the source INSIDE an existing destination
+            # directory instead of atomically renaming onto that exact path.
+            # dx_ai_lock_acquire's stale-owner reclaim relies on exactly this
+            # "fail if occupied" contract.
+            [ ! -e "$3" ] && [ ! -L "$3" ] || return 1
+            "$real_mv" "$2" "$3"
+            ;;
+        *) "$real_mv" "$@" ;;
+    esac
 }
 stage="$(dx_ai_stage_generation "$published" "$state" next)"
 if [ "$(cat "$stage/.predecessor")" = previous ] && [ "$(cat "$published/flake.nix")" = fixture ]; then
@@ -794,6 +811,139 @@ if dx_ai_lock_acquire "$btime_lock" "$proc_root" && [ "$(cut -f1 "$btime_lock/ow
 else
     dx_ai_lock_release "$btime_lock" 2>/dev/null || true
     test_fail "dx-ai acquires a lock with the btime fallback identity (R5)"
+fi
+
+# --- Fable B3/WP3.5: dx-ai's publication lock reclaims an ownerless
+# directory instead of waiting out the full timeout for an owner that will
+# never appear, writes its owner record via tmp+mv (never a partially
+# written file visible at the final path), and reclaims a stale owner by
+# renaming the lock directory aside -- atomically, so a rename that loses
+# (another attempt's leftover already occupies its own target) does not
+# take over. `sleep` is stubbed to a no-op throughout so a timeout path
+# still finishes fast. ---
+
+# (a) An ownerless lock directory -- `mkdir "$lock"` succeeded but nothing
+# ever wrote an owner file, e.g. a process killed between the two -- is
+# reclaimed immediately and acquired, not waited out.
+if (
+    proc_root="$ai_fixture/lock-ownerless-proc"
+    lock="$ai_fixture/ownerless.lock"
+    mkdir -p "$proc_root/sys/kernel/random" "$proc_root/$$" "$lock"
+    printf '%s\n' 'aaaaaaaa-0000-0000-0000-000000000000' > "$proc_root/sys/kernel/random/boot_id"
+    printf '%s\n' "$$ (dx-ai) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 555" > "$proc_root/$$/stat"
+    sleep() { :; }
+    dx_ai_lock_acquire "$lock" "$proc_root" \
+        && [ -f "$lock/owner" ] \
+        && [ "$(cut -f2 "$lock/owner")" = "$$" ] \
+        && [ "$(cut -f1 "$lock/owner")" = aaaaaaaa-0000-0000-0000-000000000000 ]
+); then
+    test_pass "dx-ai reclaims an ownerless lock directory and writes an owner file (WP3.5 a)"
+else
+    test_fail "dx-ai reclaims an ownerless lock directory and writes an owner file (WP3.5 a)"
+fi
+# The owner file above was written via a same-directory tmp file plus `mv`,
+# never a direct redirect into "owner" itself -- observed through the mv()
+# shim's own call log rather than by racing the write.
+if grep -qE '(^| )[^ ]*/ownerless\.lock/owner\.tmp\.[0-9]+ [^ ]*/ownerless\.lock/owner$' "$mv_calls_log"; then
+    test_pass "dx-ai writes the lock owner file via tmp + mv, never a direct write (WP3.5)"
+else
+    test_fail "dx-ai writes the lock owner file via tmp + mv, never a direct write (WP3.5)"
+fi
+
+# (b) A stale owner (its pid has no live process at all in this proc_root)
+# is reclaimed by renaming the lock directory aside; when that rename loses
+# -- its own reclaim target is already occupied, simulated here by
+# pre-creating it -- this attempt must NOT take over. It keeps retrying
+# (every retry loses the same way) until the timeout, leaving the original
+# stale owner record and the lock directory exactly as they were.
+if (
+    proc_root="$ai_fixture/lock-reclaim-loses-proc"
+    lock="$ai_fixture/reclaim-loses.lock"
+    mkdir -p "$proc_root/sys/kernel/random" "$proc_root/$$" "$lock"
+    printf '%s\n' 'bbbbbbbb-1111-1111-1111-111111111111' > "$proc_root/sys/kernel/random/boot_id"
+    printf '%s\n' "$$ (dx-ai) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 555" > "$proc_root/$$/stat"
+    printf 'bbbbbbbb-1111-1111-1111-111111111111\t99999\t1\n' > "$lock/owner"
+    # The reclaim target dx_ai_lock_acquire will compute is the acquirer's
+    # own pid -- in this sourced, non-subshelled call, $$ here is the same
+    # $$ the function itself will see -- so this file blocks every attempt.
+    : > "$lock.reclaim.$$"
+    sleep() { :; }
+    out="$(dx_ai_lock_acquire "$lock" "$proc_root" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] \
+        && [ -d "$lock" ] \
+        && [ "$(cat "$lock/owner")" = "$(printf 'bbbbbbbb-1111-1111-1111-111111111111\t99999\t1')" ] \
+        && printf '%s\n' "$out" | stdin_matches "timed out"
+); then
+    test_pass "dx-ai does not take over a lock when its reclaim rename loses (WP3.5 b)"
+else
+    test_fail "dx-ai does not take over a lock when its reclaim rename loses (WP3.5 b)"
+fi
+
+# A stale owner whose reclaim does NOT lose (no colliding target) is
+# acquired cleanly -- the success half of the same contract (b) exercises
+# the failure half of.
+if (
+    proc_root="$ai_fixture/lock-stale-owner-proc"
+    lock="$ai_fixture/stale-owner.lock"
+    mkdir -p "$proc_root/sys/kernel/random" "$proc_root/$$" "$lock"
+    printf '%s\n' 'cccccccc-2222-2222-2222-222222222222' > "$proc_root/sys/kernel/random/boot_id"
+    printf '%s\n' "$$ (dx-ai) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 555" > "$proc_root/$$/stat"
+    printf 'cccccccc-2222-2222-2222-222222222222\t99999\t1\n' > "$lock/owner"
+    sleep() { :; }
+    dx_ai_lock_acquire "$lock" "$proc_root" && [ "$(cut -f2 "$lock/owner")" = "$$" ]
+); then
+    test_pass "dx-ai reclaims a lock left by a dead process and acquires it (WP3.5)"
+else
+    test_fail "dx-ai reclaims a lock left by a dead process and acquires it (WP3.5)"
+fi
+
+# A genuinely live, same-boot owner is never reclaimed -- acquisition can
+# only wait it out and time out, leaving its record untouched.
+if (
+    proc_root="$ai_fixture/lock-live-owner-proc"
+    lock="$ai_fixture/live-owner.lock"
+    mkdir -p "$proc_root/sys/kernel/random" "$proc_root/$$" "$proc_root/424242" "$lock"
+    printf '%s\n' 'dddddddd-3333-3333-3333-333333333333' > "$proc_root/sys/kernel/random/boot_id"
+    printf '%s\n' "$$ (dx-ai) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 555" > "$proc_root/$$/stat"
+    printf '%s\n' '424242 (owner) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 999' > "$proc_root/424242/stat"
+    printf 'dddddddd-3333-3333-3333-333333333333\t424242\t999\n' > "$lock/owner"
+    sleep() { :; }
+    out="$(dx_ai_lock_acquire "$lock" "$proc_root" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] \
+        && [ "$(cat "$lock/owner")" = "$(printf 'dddddddd-3333-3333-3333-333333333333\t424242\t999')" ] \
+        && printf '%s\n' "$out" | stdin_matches "timed out"
+); then
+    test_pass "dx-ai waits out a live owner's lock rather than stealing it (WP3.5)"
+else
+    test_fail "dx-ai waits out a live owner's lock rather than stealing it (WP3.5)"
+fi
+
+# A symlinked lock parent is refused outright (never even attempts mkdir).
+if (
+    proc_root="$ai_fixture/lock-symlink-parent-proc"
+    mkdir -p "$proc_root/sys/kernel/random" "$proc_root/$$" "$ai_fixture/symlink-parent-target"
+    printf '%s\n' 'eeeeeeee-4444-4444-4444-444444444444' > "$proc_root/sys/kernel/random/boot_id"
+    printf '%s\n' "$$ (dx-ai) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 555" > "$proc_root/$$/stat"
+    ln -s "$ai_fixture/symlink-parent-target" "$ai_fixture/symlink-parent"
+    ! dx_ai_lock_acquire "$ai_fixture/symlink-parent/.lock" "$proc_root" 2>/dev/null
+); then
+    test_pass "dx-ai refuses a lock whose parent directory is a symlink (WP3.5)"
+else
+    test_fail "dx-ai refuses a lock whose parent directory is a symlink (WP3.5)"
+fi
+
+# A lock parent path already occupied by a plain file makes `mkdir -p` fail.
+if (
+    proc_root="$ai_fixture/lock-file-parent-proc"
+    mkdir -p "$proc_root/sys/kernel/random" "$proc_root/$$"
+    printf '%s\n' 'ffffffff-5555-5555-5555-555555555555' > "$proc_root/sys/kernel/random/boot_id"
+    printf '%s\n' "$$ (dx-ai) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 555" > "$proc_root/$$/stat"
+    : > "$ai_fixture/file-parent"
+    ! dx_ai_lock_acquire "$ai_fixture/file-parent/.lock" "$proc_root" 2>/dev/null
+); then
+    test_pass "dx-ai refuses a lock whose parent path is an existing plain file (WP3.5)"
+else
+    test_fail "dx-ai refuses a lock whose parent path is an existing plain file (WP3.5)"
 fi
 
 # --- F8: a successful sourced dx_ai_main must release its lock and clear its EXIT trap ---

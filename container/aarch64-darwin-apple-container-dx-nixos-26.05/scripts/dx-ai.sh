@@ -116,27 +116,56 @@ dx_ai_boot_id() {
     return 1
 }
 
+# Acquire dx-ai's publication lock at $1 (an optional $2 overrides /proc, for
+# tests). An owner record is `<boot id>\t<pid>\t<start time>`; a held lock is
+# reclaimed the moment it is provably not held any more:
+#   - ownerless: the directory exists but carries no owner file at all --
+#     either a fresh `mkdir` that crashed before it could write one, or a
+#     reclaim (below) that removed the owner but was itself killed before its
+#     own `rmdir`. Nothing actually holds it.
+#   - stale: an owner file names a boot id that is not this boot's, or a pid
+#     whose recorded start time no longer matches a live process at that pid
+#     (Fable R5's identity, reused here to detect death, not just identify).
+# Reclaiming is `mv "$lock" "$lock.reclaim.$$"` then `rm -rf` of the moved
+# copy: renaming off the shared path is what makes only one of several
+# contenders able to win (whichever process's rename lands first is the only
+# one that still sees the old directory to remove; every loser's own rename
+# fails because its source has already vanished). If the rename itself loses
+# -- its OWN target path already occupied, e.g. a leftover from a previous,
+# also-killed reclaim attempt reusing this pid -- this attempt does not take
+# over; it falls through to the same wait/timeout every other contender uses.
+# The owner file is written via a same-directory tmp file plus `mv`, so a
+# concurrent reader (via -f above) never observes a partially written record.
 dx_ai_lock_acquire() {
-    local lock="$1" proc_root="${2:-/proc}" elapsed=0 self_boot self_start owner_boot owner_pid owner_start live
+    local lock="$1" proc_root="${2:-/proc}" elapsed=0 self_boot self_start owner_boot owner_pid owner_start live stale reclaim
     self_boot="$(dx_ai_boot_id "$proc_root" || true)"
     self_start="$(dx_ai_process_start "$$" "$proc_root" || true)"
     if [ -z "$self_boot" ] || [ -z "$self_start" ]; then
         echo "Error: cannot identify lock owner process; refusing dx-ai publication lock acquisition." >&2
         return 1
     fi
-    [ ! -L "${lock%/*}" ] || return 1
-    mkdir -p "${lock%/*}" || return 1
-    [ -d "${lock%/*}" ] && [ ! -L "${lock%/*}" ] || return 1
+    [ ! -L "${lock%/*}" ] || { echo "Error: dx-ai publication lock parent is a symlink: ${lock%/*}" >&2; return 1; }
+    mkdir -p "${lock%/*}" || { echo "Error: could not create dx-ai publication lock parent: ${lock%/*}" >&2; return 1; }
+    [ -d "${lock%/*}" ] && [ ! -L "${lock%/*}" ] || { echo "Error: dx-ai publication lock parent is not a plain directory: ${lock%/*}" >&2; return 1; }
     while ! mkdir "$lock" 2>/dev/null; do
-        if [ -f "$lock/owner" ]; then
+        stale=false
+        if [ -e "$lock/owner" ]; then
             IFS="$(printf '\t')" read -r owner_boot owner_pid owner_start < "$lock/owner" || true
             live="$(dx_ai_process_start "${owner_pid:-0}" "$proc_root" || true)"
-            if [ "$owner_boot" != "$self_boot" ] || [ -z "$live" ] || [ "$owner_start" != "$live" ]; then rm -f "$lock/owner"; rmdir "$lock" 2>/dev/null || true; continue; fi
+            if [ "$owner_boot" != "$self_boot" ] || [ -z "$live" ] || [ "$owner_start" != "$live" ]; then stale=true; fi
+        else
+            stale=true
+        fi
+        if [ "$stale" = true ]; then
+            reclaim="$lock.reclaim.$$"
+            if mv -T "$lock" "$reclaim" 2>/dev/null; then rm -rf "$reclaim"; continue; fi
         fi
         [ "$elapsed" -lt 30 ] || { echo "Error: timed out waiting for dx-ai publication lock." >&2; return 1; }
         sleep 1; elapsed=$((elapsed + 1))
     done
-    printf '%s\t%s\t%s\n' "$self_boot" "$$" "$self_start" > "$lock/owner"
+    printf '%s\t%s\t%s\n' "$self_boot" "$$" "$self_start" > "$lock/owner.tmp.$$" \
+        && mv -f "$lock/owner.tmp.$$" "$lock/owner" \
+        || { rm -f "$lock/owner.tmp.$$"; echo "Error: could not record dx-ai publication lock owner: $lock/owner" >&2; return 1; }
 }
 
 dx_ai_lock_release() { rm -f "$1/owner"; rmdir "$1"; }
