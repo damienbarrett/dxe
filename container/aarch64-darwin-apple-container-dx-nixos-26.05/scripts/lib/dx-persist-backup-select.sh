@@ -156,6 +156,20 @@ dx_pbs_path_denied() {
 }
 
 # ---------------------------------------------------------------------------
+# Failure reporting (WP6.1, Astra F1)
+# ---------------------------------------------------------------------------
+
+# Print "Error: <what>: <path>" to stderr and return 1. Every traversal/
+# Git/stat/hash failure site below needs the exact same shape -- name the
+# path, describe what failed, always fail closed (never silently continue
+# or skip past it) -- so this is the one place that shape is spelled out.
+dx_pbs_fail() {
+    local path="$1" what="$2"
+    echo "Error: $what: $path" >&2
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 # Repository discovery and at-risk-whole determination
 # ---------------------------------------------------------------------------
 
@@ -180,7 +194,7 @@ dx_pbs_find_repos() {
     find "$root" -name .git -print0 > "$out" 2> "$err"
     rc=$?
     if [ "$rc" -ne 0 ]; then
-        echo "Error: repository discovery failed under $root: $(cat "$err")" >&2
+        dx_pbs_fail "$root" "repository discovery failed: $(cat "$err")"
         rm -f "$out" "$err"
         return 1
     fi
@@ -243,7 +257,7 @@ dx_pbs_repo_at_risk_whole() {
     unpushed="$(git -C "$repo" rev-list --all --not --remotes 2>"$err")"
     rc=$?
     if [ "$rc" -ne 0 ]; then
-        echo "Error: git reachability query failed for $repo: $(cat "$err")" >&2
+        dx_pbs_fail "$repo" "git reachability query failed: $(cat "$err")"
         rm -f "$err"
         return 2
     fi
@@ -265,14 +279,14 @@ dx_pbs_repo_clean_set() {
     git -C "$repo" ls-tree -r --name-only HEAD 2>"$err" | LC_ALL=C sort > "$all_file"
     rc=$?
     if [ "$rc" -ne 0 ]; then
-        echo "Error: git ls-tree failed for $repo: $(cat "$err")" >&2
+        dx_pbs_fail "$repo" "git ls-tree failed: $(cat "$err")"
         rm -f "$all_file" "$diff_file" "$err"
         return 1
     fi
     git -C "$repo" diff --name-only HEAD 2>"$err" | LC_ALL=C sort > "$diff_file"
     rc=$?
     if [ "$rc" -ne 0 ]; then
-        echo "Error: git diff failed for $repo: $(cat "$err")" >&2
+        dx_pbs_fail "$repo" "git diff failed: $(cat "$err")"
         rm -f "$all_file" "$diff_file" "$err"
         return 1
     fi
@@ -378,7 +392,7 @@ dx_pbs_walk_repo_files() {
                 "$dir"/*) nested_prune+=(-o -path "./${nrepo#"$dir"/}") ;;
             esac; :; done < "$nested_file"
     fi
-    ( cd "$dir" 2>/dev/null || { echo "Error: could not access repository directory: $dir" >&2; exit 1; }
+    ( cd "$dir" 2>/dev/null || { dx_pbs_fail "$dir" "could not access repository directory"; exit 1; }
       dxpbswalkout="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-walkout.XXXXXX")" || exit 1
       dxpbswalkerr="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-walkerr.XXXXXX")" || { rm -f "$dxpbswalkout"; exit 1; }
       if [ "$keep_git" = keep-git ]; then
@@ -394,7 +408,7 @@ dx_pbs_walk_repo_files() {
       fi
       dxpbswalkrc=$?
       if [ "$dxpbswalkrc" -ne 0 ]; then
-          echo "Error: directory traversal failed under $dir: $(cat "$dxpbswalkerr")" >&2
+          dx_pbs_fail "$dir" "directory traversal failed: $(cat "$dxpbswalkerr")"
           rm -f "$dxpbswalkout" "$dxpbswalkerr"
           exit 1
       fi
@@ -438,7 +452,7 @@ dx_pbs_emit_found_list() {
         # as if it were simply no longer at risk. It now aborts: an entry
         # whose metadata could not be obtained is a reported failure, never
         # a silent skip.
-        hashed="$(dx_pbs_hash_entry "$repo/$found")" || { echo "Error: could not read/hash: $relpath" >&2; return 1; }
+        hashed="$(dx_pbs_hash_entry "$repo/$found")" || { dx_pbs_fail "$relpath" "could not read/hash"; return 1; }
         # Single line (this file's own convention, see
         # dx_pbs_walk_repo_files's comment): a bare `fi`/`done` keyword
         # starts no traceable command of its own, so kcov never registers a
@@ -506,7 +520,7 @@ dx_pbs_emit_repo_safe() {
         git -C "$repo" ls-files --others --ignored --exclude-standard 2>"$err" | LC_ALL=C sort > "$ignored_set"
         rc=$?
         if [ "$rc" -ne 0 ]; then
-            echo "Error: git ls-files failed for $repo: $(cat "$err")" >&2
+            dx_pbs_fail "$repo" "git ls-files failed: $(cat "$err")"
             rm -f "$clean_set" "$found_file" "$delta_set" "$ignored_set" "$err"
             return 1
         fi
@@ -591,7 +605,7 @@ dx_pbs_list_driver() {
     # DX_PBS_BUILTIN_PATH_DENY above.
     DX_PBS_EXTRA_DENY=("$@")
     root="${root%/}"
-    [ -d "$root" ] || { echo "Error: backup root $root does not exist or is not a directory." >&2; return 1; }
+    [ -d "$root" ] || { dx_pbs_fail "$root" "backup root does not exist or is not a directory"; return 1; }
 
     repos_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-repos.XXXXXX")" || return 1
     dx_pbs_find_repos "$root" > "$repos_file" || had_error=1
@@ -674,7 +688,7 @@ dx_pbs_list_outside_repos() {
     fi
     rc=$?
     if [ "$rc" -ne 0 ]; then
-        echo "Error: directory traversal failed under $root: $(cat "$err")" >&2
+        dx_pbs_fail "$root" "directory traversal failed: $(cat "$err")"
         rm -f "$out" "$err"
         return 1
     fi
@@ -683,7 +697,7 @@ dx_pbs_list_outside_repos() {
     while IFS= read -r -d '' found; do
         relpath="${found#"$root"/}"
         dx_pbs_path_denied "$relpath" && continue
-        hashed="$(dx_pbs_hash_entry "$found")" || { echo "Error: could not read/hash: $relpath" >&2; rm -f "$out"; return 1; }
+        hashed="$(dx_pbs_hash_entry "$found")" || { dx_pbs_fail "$relpath" "could not read/hash"; rm -f "$out"; return 1; }
         if [ -n "$reason_mode" ]; then
             printf '%s\t%s\toutside-repo\n' "$relpath" "$hashed"
         else
