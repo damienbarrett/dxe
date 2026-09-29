@@ -356,10 +356,10 @@ Every review ID and where it lands.
 - [ ] **WP9.1** Retire `checkout-consolidation-plan.md` after Phase 7 live
   steps; resolve Q7 per D-1; every Open plan carries an owner for its
   revisit trigger. (Muse F1)
-- [ ] **WP9.2** `docs/README.md` map (entry points → operating docs →
+- [x] 267dcc0 **WP9.2** `docs/README.md` map (entry points → operating docs →
   decisions → evidence → reviews); stale cross-reference sweep; section 10
   flags `plans.md`-indexed but removed files. (Muse F2, F3)
-- [ ] **WP9.3** CI notes: ShellCheck crash list names both files; section 0
+- [x] d9a0b31 **WP9.3** CI notes: ShellCheck crash list names both files; section 0
   fails loudly with `--strict` when the binary is absent; hermetic-vs-live
   tiers stated once in `validation-matrix.md`. (Fable E1, Muse E2, E4)
 - [ ] **WP9.4** Rename `container/aarch64-darwin-apple-container-dx-nixos-26.05/`
@@ -367,7 +367,7 @@ Every review ID and where it lands.
   one-line test change. (Muse B5)
 - [ ] **WP9.5** Stale text: `dx-lib.sh:2`, `dx-nix-disk:21–24`. (Fable A7,
   Muse A6)
-- [ ] **WP9.6** Promote or defer the four backlog probes from
+- [x] 59dbb4a **WP9.6** Promote or defer the four backlog probes from
   `checkout-consolidation-plan.md` with owners. (Muse D5)
 
 ## Progress log
@@ -408,3 +408,4 @@ Every review ID and where it lands.
 - **2026-09-30** First CI run on the branch (36613061827, at e59346e): macOS Bash 3.2 job green; Linux job failed at ShellCheck (later steps skipped): `tests/test_persist_backup_select.sh` SC2218 (function used before its definition, many hits: the WP6.1 shadow functions), `tests/test_section3_bootstrap.sh` SC2128 (array expanded without index, ~18 hits, WP3.2/WP4.4 cases) and one SC1090. Fix these first next session, then re-check the later CI steps (contracts, coverage, Nix).
 - **2026-09-30** WP6.7/WP6.8 landed (eff33a0): fixed probe program from `dx_bootstrap_health_command`, path via `--env` as data, full lease identity (generation, boot id, pid, start) plus a readiness marker `.locks/ready/<pid>.<start>` written by `bootstrap_main` after the phases. Section 22: 43. Follow-ups: section 9/33 cases for the two new helpers (bin/lib is in the kcov gate), register `dx_bootstrap_publish_ready_marker` in section 3's function list, a lifecycle.md paragraph on readiness semantics, and the `process_start` text is now in two heredocs (WP5.2 unifies).
 - **2026-09-30 (resumed)** Local ShellCheck through the container runtime reproduces CI's 98 findings exactly; fan-out: ShellCheck fixes + P13 bootstrap coverage cases, gemini-cli removal, WP6.9 and WP5.1 from their saved designs, WP8.3 steps 3/5/6.
+- **2026-09-30** WP9.2/9.3/9.6 landed (267dcc0, d9a0b31, 59dbb4a): `docs/README.md` map (section 10 requires every operating doc linked), both ShellCheck 0.11 crash sites named with a revisit trigger, section 0 `--strict`/`DXE_LINT_STRICT=1`, tier split stated once in `validation-matrix.md`, four backlog probes promoted into `plans.md` with owner and trigger.
