@@ -288,18 +288,23 @@ EOF
 # calls this must fail (D7 option 3). Read-only: every read here already
 # tolerates failure (an absent lease, a guest that never leased at all), so
 # there are no partial side effects to clean up on either outcome.
+# dx_wait_until's predicate for dx_bootstrap_confirm_publication (WP4.2 /
+# Fable A6). Sets the CALLER's `running` local (Bash dynamic scoping, same
+# as dx_lock_acquire's own reclaim logic) rather than returning it, since
+# dx_wait_until only reports success/failure -- the timeout error message
+# below needs the last-observed value even when it never matched.
+dx_bootstrap_confirm_publication_check() {
+    local name="$1" bootstrap_path="$2" published="$3" lease_listing
+    lease_listing="$(dx_runtime_exec "$name" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$bootstrap_path" 2>/dev/null || true)"
+    running=""
+    [ -z "$lease_listing" ] || running="$(dx_bootstrap_lease_generation "$lease_listing" || true)"
+    [ "$running" = "$published" ]
+}
+
 dx_bootstrap_confirm_publication() {
     local name="$1" bootstrap_path="$2" published="$3" timeout="$4"
-    local waited=0 lease_listing running=""
-    while :; do
-        lease_listing="$(dx_runtime_exec "$name" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$bootstrap_path" 2>/dev/null || true)"
-        running=""
-        [ -z "$lease_listing" ] || running="$(dx_bootstrap_lease_generation "$lease_listing" || true)"
-        [ "$running" = "$published" ] && return 0
-        [ "$waited" -lt "$timeout" ] || break
-        sleep 1
-        waited=$((waited + 1))
-    done
+    local running=""
+    dx_wait_until "$timeout" 1 dx_bootstrap_confirm_publication_check "$name" "$bootstrap_path" "$published" && return 0
     echo "Error: $name published bootstrap generation $published, but after waiting ${timeout}s the guest is running ${running:-no leased generation (never synced, or still resolving)}." >&2
     echo "The running guest will not pick this publish up on its own. Restart it so its launcher waits for publication fresh: ./bin/dx-stop-container && ./bin/dx-start-container." >&2
     return 1
