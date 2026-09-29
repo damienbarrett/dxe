@@ -215,6 +215,161 @@ expect_file_eq() {
     return 0
 }
 
+# --- Shared runtime fakes (Fable D5, E3) --------------------------------
+#
+# tests/lib/fake-tools.sh already covers the DX guest ssh boundary and the
+# docker-ssh management-plane ssh boundary; what was missing was a shared
+# `docker`/`container`/`ssh` fake ANY fixture could ask for without
+# re-writing a pass-through body and a PATH ritual per suite (D5's evidence:
+# test_docker_runtime_adapter.sh alone carries 105 hand-written docker
+# bodies and pins its own PATH 126 times). `with_fake_runtime` is that
+# shared fake: one private directory, reused across every tool a fixture
+# asks for, on a SINGLE PATH convention every fixture can now share instead
+# of inventing its own.
+#
+# Lazy, process-private state (mirrors _dxe_harness_results_file/
+# DXE_TEST_RESULTS): nothing here runs at source time, only the first time
+# with_fake_runtime is actually called.
+_dxe_harness_fake_runtime_dir() {
+    if [ -z "${DXE_FAKE_RUNTIME_DIR:-}" ]; then
+        local dir
+        dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-fake-runtime.XXXXXX")"
+        DXE_FAKE_RUNTIME_DIR="$dir"
+        export DXE_FAKE_RUNTIME_DIR
+    fi
+}
+
+# $FAKE_TRANSCRIPT: one shared, append-only log for every tool this process
+# fakes (docker AND ssh AND container all land in the SAME file), so a
+# fixture can assert ordering across tools, not just per-tool.
+_dxe_harness_fake_transcript_file() {
+    if [ -z "${FAKE_TRANSCRIPT:-}" ]; then
+        local file
+        file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-fake-transcript.XXXXXX")"
+        FAKE_TRANSCRIPT="$file"
+        export FAKE_TRANSCRIPT
+    fi
+}
+
+# with_fake_runtime docker|container|ssh
+#
+# Writes a fake executable named $1 into the shared private directory
+# (creating it, and $FAKE_TRANSCRIPT, on first use), then pins
+# PATH="$DXE_FAKE_RUNTIME_DIR:$(dirname "$(command -v bash)"):/usr/bin:/bin"
+# in the CALLING shell -- the single convention this codebase's fixtures
+# should now share. Naming bash's own directory explicitly (rather than
+# relying on /bin or /usr/bin already containing it) is what lets a fake
+# written with `#!/usr/bin/env bash` (E3) still resolve bash on a host
+# without /bin/bash, e.g. NixOS (Fable E3's whole point -- see the (p) case
+# in tests/test_harness.sh, which proves this under a PATH containing
+# neither /bin nor /usr/bin at all).
+#
+# Calling this again for a second/third tool in the same process reuses the
+# SAME directory (so docker+ssh+container fakes coexist on one PATH) but
+# resets that ONE tool's own call count, fail plan and scripted responses --
+# re-registering a tool's fake starts that boundary over, without touching
+# any other tool's state or the shared transcript (which is cumulative for
+# the whole fixture by design).
+#
+# Each invocation of the fake appends one line to $FAKE_TRANSCRIPT: its
+# whole argv, each argument `%q`-quoted and space-joined (so
+# `expect_transcript` can match it as an ERE without caring how the
+# original call happened to quote anything). By default a call exits 0
+# with no output; fake_fail_nth and fake_respond script anything else.
+with_fake_runtime() {
+    local tool="$1"
+    _dxe_harness_fake_runtime_dir
+    _dxe_harness_fake_transcript_file
+    rm -f "$DXE_FAKE_RUNTIME_DIR/.count-$tool" "$DXE_FAKE_RUNTIME_DIR/.failplan-$tool" "$DXE_FAKE_RUNTIME_DIR/.responses-$tool"
+    : > "$DXE_FAKE_RUNTIME_DIR/.failplan-$tool"
+    : > "$DXE_FAKE_RUNTIME_DIR/.responses-$tool"
+    cat > "$DXE_FAKE_RUNTIME_DIR/$tool" <<FAKE_EOF
+#!/usr/bin/env bash
+dxe_fake_transcript="$FAKE_TRANSCRIPT"
+dxe_fake_count_file="$DXE_FAKE_RUNTIME_DIR/.count-$tool"
+dxe_fake_failplan="$DXE_FAKE_RUNTIME_DIR/.failplan-$tool"
+dxe_fake_responses="$DXE_FAKE_RUNTIME_DIR/.responses-$tool"
+
+dxe_fake_line=""
+for dxe_fake_arg in "\$@"; do
+    dxe_fake_line="\$dxe_fake_line\$(printf '%q ' "\$dxe_fake_arg")"
+done
+printf '%s\n' "\$dxe_fake_line" >> "\$dxe_fake_transcript"
+
+dxe_fake_n=0
+[ -s "\$dxe_fake_count_file" ] && dxe_fake_n="\$(cat "\$dxe_fake_count_file")"
+dxe_fake_n=\$((dxe_fake_n + 1))
+printf '%s\n' "\$dxe_fake_n" > "\$dxe_fake_count_file"
+
+if [ -s "\$dxe_fake_failplan" ]; then
+    dxe_fake_code="\$(awk -v n="\$dxe_fake_n" '\$1 == n { print \$2; exit }' "\$dxe_fake_failplan")"
+    if [ -n "\$dxe_fake_code" ]; then
+        exit "\$dxe_fake_code"
+    fi
+fi
+
+if [ -s "\$dxe_fake_responses" ]; then
+    dxe_fake_joined="\$*"
+    while IFS=\$'\t' read -r dxe_fake_key dxe_fake_out; do
+        case "\$dxe_fake_joined" in
+            "\$dxe_fake_key"*)
+                printf '%s\n' "\$dxe_fake_out"
+                exit 0
+                ;;
+        esac
+    done < "\$dxe_fake_responses"
+fi
+exit 0
+FAKE_EOF
+    chmod 0755 "$DXE_FAKE_RUNTIME_DIR/$tool"
+    PATH="$DXE_FAKE_RUNTIME_DIR:$(dirname "$(command -v bash)"):/usr/bin:/bin"
+}
+
+# fake_fail_nth TOOL N CODE -- makes the Nth call to TOOL's fake (TOOL must
+# already have one from with_fake_runtime) exit CODE; every other call
+# exits 0 (or whatever fake_respond separately scripted for it -- fail_nth
+# always wins over a scripted response on a matching call number, the same
+# way a real boundary failing pre-empts whatever it would otherwise have
+# returned).
+fake_fail_nth() {
+    local tool="$1" n="$2" code="$3"
+    _dxe_harness_fake_runtime_dir
+    printf '%s\t%s\n' "$n" "$code" >> "$DXE_FAKE_RUNTIME_DIR/.failplan-$tool"
+}
+
+# fake_respond TOOL 'match prefix' 'output' -- scripts stdout for any call
+# to TOOL's fake whose whole argv, space-joined, STARTS WITH 'match prefix'.
+# This is the shape the ~20 `"$1 $2") echo "27.3.1" ;;` arms in
+# test_docker_runtime_adapter.sh already hand-roll one case statement at a
+# time; fake_respond docker 'version --format' '27.3.1' is the same
+# contract as one line instead of a case arm, so those bodies can collapse
+# onto this later (not migrated by this change). First-registered matching
+# prefix wins. TOOL must already have a fake from with_fake_runtime.
+fake_respond() {
+    local tool="$1" match="$2" output="$3"
+    _dxe_harness_fake_runtime_dir
+    printf '%s\t%s\n' "$match" "$output" >> "$DXE_FAKE_RUNTIME_DIR/.responses-$tool"
+}
+
+# expect_transcript PATTERN -- asserts some line of $FAKE_TRANSCRIPT
+# matches PATTERN as an ERE (grep -E), expect_stdout's shape applied to the
+# fakes' shared transcript file instead of one command's captured stdout.
+expect_transcript() {
+    local pattern="$1"
+    local label="${DXE_HARNESS_LABEL:-expect_transcript $pattern}"
+    _dxe_harness_fake_transcript_file
+    if [ -s "$FAKE_TRANSCRIPT" ] && grep -Eq -- "$pattern" "$FAKE_TRANSCRIPT"; then
+        _dxe_harness_record pass "$label"
+    else
+        _dxe_harness_record fail "$label"
+        echo "FAIL: $label"
+        echo "  expected some transcript line to match (ERE): $pattern"
+        echo "  transcript:"
+        sed 's/^/    /' "$FAKE_TRANSCRIPT" 2>/dev/null
+    fi
+    return 0
+}
+
 # skip --class live|linux-root|destructive "reason"
 skip() {
     local class="" reason=""

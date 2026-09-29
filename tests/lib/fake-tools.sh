@@ -9,7 +9,14 @@ fake_tool_dir_create() {
 fake_tool_write() {
     local directory="$1" name="$2" body="$3"
     mkdir -p "$directory"
-    printf '#!/bin/bash\n%s\n' "$body" > "$directory/$name"
+    # #!/usr/bin/env bash, not #!/bin/bash (Fable E3): a hardcoded /bin/bash
+    # shebang only resolves where that literal path exists -- true on macOS
+    # and Ubuntu, false on a NixOS or nix-profile host, where the
+    # container-free tier could otherwise never run at all. env searches
+    # PATH instead, so this fake still resolves bash as long as PATH names
+    # wherever bash actually lives (see tests/lib/harness.sh's
+    # with_fake_runtime, which pins exactly that).
+    printf '#!/usr/bin/env bash\n%s\n' "$body" > "$directory/$name"
     chmod 0755 "$directory/$name"
 }
 
@@ -58,7 +65,11 @@ esac' "$body")"
 # it would on the real remote host. A test asserting the exact argv ssh
 # itself was invoked with (the management connection options, or the raw
 # quoted command string before it is parsed) should read $DXE_FAKE_SSH_ARGV_LOG
-# if it set DXE_FAKE_SSH_ARGV_LOG to a writable file path first.
+# if it set DXE_FAKE_SSH_ARGV_LOG to a writable file path first. The write
+# APPENDS (Fable D5 -- was `>`, which only ever left the LAST call visible
+# and made "assert there was no second call" impossible); a fixture that
+# wants only the latest call's argv truncates the log itself right before
+# making that one call.
 #
 # The eval below runs the "remote" command on the controller itself, so the
 # controller's PATH stands in for the NAS's non-interactive PATH. A fixture
@@ -67,11 +78,22 @@ esac' "$body")"
 # controls; otherwise a host that really has one -- GitHub's ubuntu runners
 # ship /usr/bin/docker -- leaks into the fake remote and the test proves
 # nothing (CI run 36296075448, 2026-09-27). Unset, the PATH is left alone.
+#
+# Whatever DXE_FAKE_SSH_REMOTE_PATH names, bash's own directory (resolved
+# from THIS process's still-unrestricted PATH, before the override below)
+# is always appended (Fable E3): every fake this eval might reach --
+# whether at that restricted path or further down it via a glob, like the
+# qpkg-fallback fixture's docker -- now has a `#!/usr/bin/env bash`
+# shebang, not a hardcoded `#!/bin/bash`, so env needs bash to still be
+# findable even on a deliberately bare remote PATH. This does not weaken
+# what a fixture is proving: the tool under test (docker, tailscale, ...)
+# is still absent from DXE_FAKE_SSH_REMOTE_PATH exactly as that fixture set
+# it, only bash itself is additionally reachable.
 fake_qnap_ssh_write() {
     local directory="$1"
     fake_tool_write "$directory" ssh '
-if [ -n "${DXE_FAKE_SSH_ARGV_LOG:-}" ]; then printf "%s\n" "$@" > "$DXE_FAKE_SSH_ARGV_LOG"; fi
-if [ -n "${DXE_FAKE_SSH_REMOTE_PATH:-}" ]; then PATH="$DXE_FAKE_SSH_REMOTE_PATH"; export PATH; fi
+if [ -n "${DXE_FAKE_SSH_ARGV_LOG:-}" ]; then printf "%s\n" "$@" >> "$DXE_FAKE_SSH_ARGV_LOG"; fi
+if [ -n "${DXE_FAKE_SSH_REMOTE_PATH:-}" ]; then PATH="$DXE_FAKE_SSH_REMOTE_PATH:$(dirname "$(command -v bash)")"; export PATH; fi
 dx_fake_last=""
 for dx_fake_arg in "$@"; do dx_fake_last="$dx_fake_arg"; done
 eval "$dx_fake_last"

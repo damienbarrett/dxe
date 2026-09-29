@@ -60,6 +60,8 @@ check purity_ok
 
 # shellcheck source=lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
+# shellcheck source=lib/fake-tools.sh
+source "$SCRIPT_DIR/lib/fake-tools.sh"
 
 # This shell's own results file, isolated from anything else on the
 # filesystem and from other suites -- set explicitly (rather than letting
@@ -198,6 +200,136 @@ it "custom label for this case"
 expect_exit 0 true >/dev/null
 check test "$(record_count)" -eq "$((n_before + 1))"
 check contains "$(last_record)" "custom label for this case"
+
+# =========================================================================
+# WP1.2 -- shared runtime fakes (Fable D5, E3)
+# =========================================================================
+
+# --- (l) with_fake_runtime docker records two invocations as two
+# %q-quoted argv lines, appended (not overwritten) to $FAKE_TRANSCRIPT.
+# Also registers a second tool (ssh) in the SAME process: with_fake_runtime
+# and its lazy dir/transcript init must be safe to call more than once,
+# reusing the SAME $DXE_FAKE_RUNTIME_DIR and $FAKE_TRANSCRIPT rather than
+# creating a fresh one per tool, so docker+ssh calls land in one ordered
+# transcript.
+l_out="$(SCRIPT_DIR="$SCRIPT_DIR" bash -c '
+    source "$SCRIPT_DIR/lib/harness.sh"
+    with_fake_runtime docker
+    dxe_l_dir1="$DXE_FAKE_RUNTIME_DIR"
+    dxe_l_transcript1="$FAKE_TRANSCRIPT"
+    docker exec -i -u dx foo >/dev/null 2>&1
+    echo "rc1=$?"
+    docker version --format >/dev/null 2>&1
+    echo "rc2=$?"
+    with_fake_runtime ssh
+    echo "same_dir=$([ "$DXE_FAKE_RUNTIME_DIR" = "$dxe_l_dir1" ] && echo yes || echo no)"
+    echo "same_transcript=$([ "$FAKE_TRANSCRIPT" = "$dxe_l_transcript1" ] && echo yes || echo no)"
+    ssh somehost true >/dev/null 2>&1
+    echo "rc3=$?"
+    echo "lines=$(wc -l < "$FAKE_TRANSCRIPT" | tr -d " ")"
+    cat "$FAKE_TRANSCRIPT"
+')"
+check contains "$l_out" "rc1=0"
+check contains "$l_out" "rc2=0"
+check contains "$l_out" "rc3=0"
+check contains "$l_out" "same_dir=yes"
+check contains "$l_out" "same_transcript=yes"
+check contains "$l_out" "lines=3"
+check contains "$l_out" "exec -i -u dx foo"
+check contains "$l_out" "version --format"
+check contains "$l_out" "somehost"
+
+# --- (m) fake_fail_nth docker 2 42 makes the second docker call exit 42;
+# the first and third still exit 0.
+m_out="$(SCRIPT_DIR="$SCRIPT_DIR" bash -c '
+    source "$SCRIPT_DIR/lib/harness.sh"
+    with_fake_runtime docker
+    fake_fail_nth docker 2 42
+    docker one >/dev/null 2>&1; echo "rc1=$?"
+    docker two >/dev/null 2>&1; echo "rc2=$?"
+    docker three >/dev/null 2>&1; echo "rc3=$?"
+')"
+check contains "$m_out" "rc1=0"
+check contains "$m_out" "rc2=42"
+check contains "$m_out" "rc3=0"
+
+# --- (n) expect_transcript PATTERN passes when some transcript line
+# matches the ERE, and records (not just prints) a failure when none does.
+n2_out="$(SCRIPT_DIR="$SCRIPT_DIR" bash -c '
+    source "$SCRIPT_DIR/lib/harness.sh"
+    DXE_TEST_RESULTS="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-n2-results.XXXXXX")"
+    export DXE_TEST_RESULTS
+    with_fake_runtime docker
+    docker exec -i -u dx bash -lc "echo hi" >/dev/null 2>&1
+    expect_transcript "exec -i -u dx" >/dev/null
+    echo "pass_line=$(tail -n1 "$DXE_TEST_RESULTS" | cut -f1)"
+    expect_transcript "this ERE never matches anything here" >/dev/null
+    echo "fail_line=$(tail -n1 "$DXE_TEST_RESULTS" | cut -f1)"
+')"
+check contains "$n2_out" "pass_line=pass"
+check contains "$n2_out" "fail_line=fail"
+
+# --- (o) fake_respond scripts stdout for a matching call (the shape the
+# ~20 duplicated `"version --format") echo "27.3.1"` arms in
+# test_docker_runtime_adapter.sh could collapse onto), and a call that
+# matches none of the registered prefixes still falls through to the
+# default: exit 0, no output.
+o_out="$(SCRIPT_DIR="$SCRIPT_DIR" bash -c '
+    source "$SCRIPT_DIR/lib/harness.sh"
+    with_fake_runtime docker
+    fake_respond docker "version --format" "27.3.1"
+    docker version --format
+    echo "---"
+    dxe_o_unmatched="$(docker info --format 2>&1)"
+    echo "rc_unmatched=$?"
+    echo "out_unmatched=[$dxe_o_unmatched]"
+')"
+check contains "$o_out" "27.3.1"
+check contains "$o_out" "rc_unmatched=0"
+check contains "$o_out" "out_unmatched=[]"
+
+# --- (p) Fable E3: a fake written by with_fake_runtime executes under a
+# PATH containing neither /bin nor /usr/bin -- simulating a NixOS host
+# without /bin/bash -- as long as PATH still names wherever bash itself
+# actually lives (found via `command -v bash` before restricting PATH,
+# exactly what with_fake_runtime's own PATH pin already does for the
+# CALLING shell). This only works because the fake's shebang is
+# `#!/usr/bin/env bash`, not a hardcoded `#!/bin/bash`.
+p_out="$(SCRIPT_DIR="$SCRIPT_DIR" bash -c '
+    source "$SCRIPT_DIR/lib/harness.sh"
+    with_fake_runtime docker
+    fake_respond docker "version --format" "27.3.1"
+    dxe_p_bash_dir="$(dirname "$(command -v bash)")"
+    env -i PATH="/var/empty:$dxe_p_bash_dir" "$DXE_FAKE_RUNTIME_DIR/docker" version --format
+    echo "exit=$?"
+')"
+check contains "$p_out" "27.3.1"
+check contains "$p_out" "exit=0"
+
+# --- (q) tests/lib/fake-tools.sh's fake_tool_write also writes
+# `#!/usr/bin/env bash`, not `#!/bin/bash` (Fable E3 applies to every fake
+# writer, not just this file's own).
+q_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-q-tools.XXXXXX")"
+fake_tool_write "$q_dir" probe 'echo ok'
+q_shebang="$(head -n1 "$q_dir/probe")"
+check test "$q_shebang" = "#!/usr/bin/env bash"
+rm -rf "$q_dir"
+
+# --- (r) Fable D5: fake_qnap_ssh_write's DXE_FAKE_SSH_ARGV_LOG APPENDS
+# across calls (fake-tools.sh:73 was `>`, which only ever left the last
+# call's argv visible, so "assert there was no second call" could never be
+# proven). Two single-argument calls must leave two lines, not one.
+r_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-r-tools.XXXXXX")"
+r_log="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-r-log.XXXXXX")"
+rm -f "$r_log"
+fake_qnap_ssh_write "$r_dir"
+DXE_FAKE_SSH_ARGV_LOG="$r_log" PATH="$r_dir:$PATH" ssh call-one >/dev/null 2>&1 || true
+DXE_FAKE_SSH_ARGV_LOG="$r_log" PATH="$r_dir:$PATH" ssh call-two >/dev/null 2>&1 || true
+check test "$(wc -l < "$r_log" | tr -d ' ')" -eq 2
+check contains "$(cat "$r_log")" "call-one"
+check contains "$(cat "$r_log")" "call-two"
+rm -rf "$r_dir"
+rm -f "$r_log"
 
 rm -f "$RESULTS"
 

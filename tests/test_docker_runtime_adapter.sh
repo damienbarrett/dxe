@@ -593,7 +593,13 @@ esac'
     rm -f "$call_log"
     fake_tool_write "$dir" ssh "
 echo called >> '$call_log'
-if [ -n \"\${DXE_FAKE_SSH_REMOTE_PATH:-}\" ]; then PATH=\"\$DXE_FAKE_SSH_REMOTE_PATH\"; export PATH; fi
+# Append bash's own directory (Fable E3): fake_tool_write now emits
+# #!/usr/bin/env bash, so any nested fake this eval reaches on the
+# restricted DXE_FAKE_SSH_REMOTE_PATH -- tailscale, below -- still needs
+# bash resolvable via env, exactly the fix fake_qnap_ssh_write itself
+# carries (tests/lib/fake-tools.sh); this ssh fake is hand-rolled, not
+# that shared one, so it needs its own copy.
+if [ -n \"\${DXE_FAKE_SSH_REMOTE_PATH:-}\" ]; then PATH=\"\$DXE_FAKE_SSH_REMOTE_PATH:\$(dirname \"\$(command -v bash)\")\"; export PATH; fi
 last=\"\"; for a in \"\$@\"; do last=\"\$a\"; done
 eval \"\$last\"
 "
