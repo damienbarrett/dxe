@@ -432,4 +432,75 @@ if [ -n "$real_leaks" ]; then
     failures=$((failures + 1))
 fi
 
+# --- WP1.7 (Fable D10): a bare `sleep <number>` command line inside a
+# unit-tier test file is exactly the timing-assumption smell D10 flags --
+# real wall-clock time standing in for a synchronisation signal, invisible
+# to a fixture faking DX_SLEEP, and liable to flake under host load or race
+# ahead of it. The line-anchored shape below is deliberately narrow: it
+# catches a standalone `sleep N` statement (optionally indented), the exact
+# shape every evidenced hit in this repository actually takes, and lets a
+# real wait spawned through another command on the same line (`bash -c
+# 'sleep 1' &`, the disguise wait_for_pid_exit's own tests/test_harness.sh
+# cases use so a real, killable background timer does not itself trip this
+# contract) through untouched -- that is not the smell being hunted here,
+# and D10's own evidence list contains no such shape.
+#
+# Most suites carry no `# tier:` header yet (WP1.4 adds them repo-wide), so
+# this gate is scoped for now to the files that already have one, plus an
+# explicit list of the container-free suites WP1.7 itself de-flaked down to
+# zero bare sleeps. Every other file's remaining bare sleeps are reported by
+# WP1.7's own accompanying notes for WP1.4 to fold in as it adds headers,
+# not enforced here.
+BARE_SLEEP_PATTERN='^[[:space:]]*sleep[[:space:]]+[0-9]'
+
+scan_bare_sleep() {
+    grep -nE "$BARE_SLEEP_PATTERN" "$1" 2>/dev/null || true
+}
+bare_sleep_detected() { [ -n "$(scan_bare_sleep "$1")" ]; }
+
+# Self-proof on two fixtures (the WP1.8 leak contract's own shape, above):
+# a real bare sleep must be caught, and the same wait disguised behind
+# another command on the line -- a real, backgroundable wait, not a no-op --
+# must not.
+sleep_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-sleep-contract.XXXXXX")"
+mkdir -p "$sleep_fixture/red" "$sleep_fixture/green"
+cat > "$sleep_fixture/red/test_sleep_example.sh" <<'EOF'
+#!/bin/bash
+echo before
+sleep 2
+echo after
+EOF
+cat > "$sleep_fixture/green/test_sleep_example.sh" <<'EOF'
+#!/bin/bash
+echo before
+bash -c 'sleep 2' &
+pid=$!
+wait "$pid"
+echo after
+EOF
+check bare_sleep_detected "$sleep_fixture/red/test_sleep_example.sh"
+check reject bare_sleep_detected "$sleep_fixture/green/test_sleep_example.sh"
+rm -rf "$sleep_fixture"
+
+# The files this gate actually enforces today: every tests/test_*.sh that
+# already carries `# tier: unit`, plus the container-free suites WP1.7
+# itself brought to zero bare sleeps.
+unit_tier_sleep_files="test_bootstrap_publication.sh"
+for candidate in "$ROOT"/tests/test_*.sh; do
+    if grep -q '^# tier: unit' "$candidate" 2>/dev/null; then
+        unit_tier_sleep_files="$unit_tier_sleep_files $(basename "$candidate")"
+    fi
+done
+
+for enforced_name in $unit_tier_sleep_files; do
+    enforced_file="$ROOT/tests/$enforced_name"
+    [ -f "$enforced_file" ] || continue
+    enforced_hits="$(scan_bare_sleep "$enforced_file")"
+    if [ -n "$enforced_hits" ]; then
+        echo "FAIL: bare \`sleep <number>\` in unit-tier file $enforced_name (Fable D10):" >&2
+        printf '%s\n' "$enforced_hits" >&2
+        failures=$((failures + 1))
+    fi
+done
+
 [ "$failures" -eq 0 ]
