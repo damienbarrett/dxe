@@ -329,29 +329,78 @@ dx_backup_restore_path_safe() {
     return 0
 }
 
+# List (one per line) every file/symlink under DIR, each joined to PREFIX AS
+# DATA -- never by building a dynamic sed/awk program out of PREFIX (Astra
+# F9: the old `sed "s#^\.#$path#"` spliced a user-supplied directory name
+# straight into a sed replacement program, and `&`, backslashes, and `#` are
+# all special to sed's own replacement syntax even though every one of them
+# is an ordinary, valid filename byte -- `a&b` corrupted a real selection
+# into `a.b`). A `while read` + `case`/`printf` join instead treats PREFIX
+# purely as a string, so it can never be reinterpreted as part of a program.
+# PREFIX "" lists DIR itself with bare relative names (the whole-mirror
+# case); a nonempty PREFIX is the directory-argument case, joined with `/`.
+# The single caller below routes ALL THREE restore shapes (explicit file,
+# explicit directory, whole-mirror) through this one enumeration.
+dx_backup_restore_list_prefixed() {
+    local dir="$1" prefix="$2" rel
+    ( cd "$dir" 2>/dev/null && find . -type f -o -type l ) | while IFS= read -r rel || [ -n "$rel" ]; do
+        rel="${rel#./}"
+        if [ -n "$prefix" ]; then
+            printf '%s/%s\n' "$prefix" "$rel"
+        else
+            printf '%s\n' "$rel"
+        fi
+    done
+}
+
 # Print (one per line, relative to current/) every file/symlink to restore:
 # everything under current/ when no PATH arguments are given, or the exact
 # named files/subtrees otherwise. The physical current/ mirror is the source
 # of truth (not manifest.tsv, which is only dx-backup's own bookkeeping).
+#
+# A path argument carrying a literal tab or newline is refused explicitly
+# (Astra F9's recommendation): this file's own convention is one path per
+# LINE with no other delimiter in use, so either character would either be
+# misread as a field/record separator downstream or silently merge with a
+# neighboring entry -- never silently misparsed.
+#
+# Overlapping arguments (e.g. a directory AND one of its own files named
+# separately) are de-duplicated once, after every argument has been
+# enumerated, rather than trusted not to collide -- a caller cannot know in
+# advance whether two PATH arguments happen to overlap on disk.
 dx_backup_restore_targets() {
     local backup_dir="$1"
     shift
     if [ "$#" -eq 0 ]; then
-        ( cd "$backup_dir/current" 2>/dev/null && find . -type f -o -type l ) | sed 's#^\./##'
+        dx_backup_restore_list_prefixed "$backup_dir/current" ""
         return
     fi
-    local path
+    local path scratch rc=0
+    scratch="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-targets.XXXXXX")" || return 1
     for path in "$@"; do
-        dx_backup_restore_path_safe "$path" || { echo "Error: refusing unsafe restore path '$path'." >&2; return 1; }
+        case "$path" in
+            *$'\t'*|*$'\n'*)
+                echo "Error: restore path '$path' contains a tab or newline character; refusing to guess its meaning." >&2
+                rc=1
+                break
+                ;;
+        esac
+        dx_backup_restore_path_safe "$path" || { echo "Error: refusing unsafe restore path '$path'." >&2; rc=1; break; }
         if [ -L "$backup_dir/current/$path" ] || [ -f "$backup_dir/current/$path" ]; then
-            printf '%s\n' "$path"
+            printf '%s\n' "$path" >> "$scratch"
         elif [ -d "$backup_dir/current/$path" ]; then
-            ( cd "$backup_dir/current/$path" 2>/dev/null && find . -type f -o -type l ) | sed "s#^\.#$path#"
+            dx_backup_restore_list_prefixed "$backup_dir/current/$path" "$path" >> "$scratch"
         else
             echo "Error: $path is not present in $backup_dir/current." >&2
-            return 1
+            rc=1
+            break
         fi
     done
+    if [ "$rc" -eq 0 ]; then
+        awk '!seen[$0]++' "$scratch"
+    fi
+    rm -f "$scratch"
+    return "$rc"
 }
 
 # Above this many targets in one dx-restore batch, `dx_backup_restore_status`

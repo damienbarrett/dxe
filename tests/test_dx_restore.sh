@@ -689,5 +689,89 @@ fi
 
 rm -rf "$SRC_BASE"
 
+# --- WP6.3 (Astra F9): dx_backup_restore_targets's directory-argument
+# selection must join the caller-supplied path as DATA, never splice it
+# into a dynamically constructed sed replacement program. The old
+# `sed "s#^\.#$path#"` spliced $path straight into sed's own replacement
+# text, where `&` (insert the match), `#` (this call's own delimiter), and
+# `\` (sed's escape introducer) are all special even though every one of
+# them is an ordinary, valid filename byte -- a real mirror directory named
+# `a&b`, selected by directory argument `a&b`, was corrupted into `a.b`.
+# Driven directly against dx_backup_restore_targets (sourced from real
+# production code above, not a copy) over a small fixture of its own --
+# irrelevant to the fake-container boundary at the top of this file, since
+# this function only ever reads the LOCAL mirror on disk. ---
+TARGETS_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-targets-test.XXXXXX")"
+mkdir -p "$TARGETS_FIXTURE/current/a&b" "$TARGETS_FIXTURE/current/c#d" "$TARGETS_FIXTURE/current/e\f" "$TARGETS_FIXTURE/current/g h" "$TARGETS_FIXTURE/current/-lead"
+printf 'x\n' > "$TARGETS_FIXTURE/current/a&b/item"
+printf 'x\n' > "$TARGETS_FIXTURE/current/c#d/item"
+printf 'x\n' > "$TARGETS_FIXTURE/current/e\f/item"
+printf 'x\n' > "$TARGETS_FIXTURE/current/g h/item"
+printf 'x\n' > "$TARGETS_FIXTURE/current/-lead/item"
+
+for spec in 'a&b:a&b/item' 'c#d:c#d/item' 'g h:g h/item' '-lead:-lead/item'; do
+    dirarg="${spec%%:*}"
+    expected="${spec#*:}"
+    out="$(dx_backup_restore_targets "$TARGETS_FIXTURE" "$dirarg" 2>&1)"
+    if [ "$out" = "$expected" ]; then
+        test_pass "dx_backup_restore_targets: directory argument '$dirarg' selects exactly its own entry with the name intact"
+    else
+        test_fail "dx_backup_restore_targets: directory argument '$dirarg' selects exactly its own entry with the name intact (got: $out)"
+    fi
+done
+
+# The backslash case is kept out of the loop above: embedding a literal
+# backslash in a `for spec in ...` word list makes the expected-value split
+# ($expected="${spec#*:}") harder to read at a glance; a dedicated,
+# single-purpose check is clearer here.
+backslash_out="$(dx_backup_restore_targets "$TARGETS_FIXTURE" 'e\f' 2>&1)"
+if [ "$backslash_out" = 'e\f/item' ]; then
+    test_pass "dx_backup_restore_targets: directory argument containing a backslash selects exactly its own entry with the name intact"
+else
+    test_fail "dx_backup_restore_targets: directory argument containing a backslash selects exactly its own entry with the name intact (got: $backslash_out)"
+fi
+
+# --- Overlapping selections (the directory AND one of its own files, both
+# named explicitly in the same call) must not produce a duplicate transfer
+# entry. ---
+overlap_out="$(dx_backup_restore_targets "$TARGETS_FIXTURE" 'a&b' 'a&b/item' 2>&1)"
+overlap_count="$(printf '%s\n' "$overlap_out" | grep -c .)"
+if [ "$overlap_count" -eq 1 ] && [ "$overlap_out" = 'a&b/item' ]; then
+    test_pass "dx_backup_restore_targets: overlapping directory and file selections produce no duplicate transfer entries"
+else
+    test_fail "dx_backup_restore_targets: overlapping directory and file selections produce no duplicate transfer entries (got: $overlap_out)"
+fi
+
+# --- A path argument containing a literal tab or newline is rejected
+# explicitly, not silently misparsed: this file's own convention (see its
+# header comment) is one path per LINE with no other in-band delimiter, so
+# either character could otherwise be misread as a field/record separator
+# downstream. The assertion below checks for the dedicated "tab or
+# newline" wording specifically (not just any "Error:"), since the pre-fix
+# code also happens to error on a not-present path for an unrelated
+# reason -- a generic "Error:" match alone would pass against that
+# coincidence without ever exercising the new, explicit check. ---
+set +e
+tab_out="$(dx_backup_restore_targets "$TARGETS_FIXTURE" "$(printf 'weird\ttab')" 2>&1)"
+tab_rc=$?
+set -e
+if [ "$tab_rc" -ne 0 ] && printf '%s\n' "$tab_out" | stdin_matches -F 'tab or newline'; then
+    test_pass "dx_backup_restore_targets: a path argument containing a tab is rejected explicitly with an Error naming the problem"
+else
+    test_fail "dx_backup_restore_targets: a path argument containing a tab is rejected explicitly with an Error naming the problem (rc=$tab_rc, out: $tab_out)"
+fi
+
+set +e
+newline_out="$(dx_backup_restore_targets "$TARGETS_FIXTURE" "$(printf 'weird\nline')" 2>&1)"
+newline_rc=$?
+set -e
+if [ "$newline_rc" -ne 0 ] && printf '%s\n' "$newline_out" | stdin_matches -F 'tab or newline'; then
+    test_pass "dx_backup_restore_targets: a path argument containing a newline is rejected explicitly with an Error naming the problem"
+else
+    test_fail "dx_backup_restore_targets: a path argument containing a newline is rejected explicitly with an Error naming the problem (rc=$newline_rc, out: $newline_out)"
+fi
+
+rm -rf "$TARGETS_FIXTURE"
+
 print_summary
 exit_with_code
