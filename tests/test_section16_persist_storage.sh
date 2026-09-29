@@ -32,9 +32,18 @@ assert_file_exists "$DX_CREATE_VOLUMES" "bin/dx-create-volumes exists"
 assert_file_exists "$DX_MIGRATE" "bin/dx-migrate-persist exists"
 assert_file_exists "$SHELL_NIX" "home/shell.nix exists"
 
-assert_grep_in_file "$CONFIG_LIB" \
-    "DX_PERSIST_VOLUME.*printf.*dx-persist" \
-    "config registry declares DX_PERSIST_VOLUME (default dx-persist)"
+# shellcheck source=../bin/lib/dx-config.sh
+source "$CONFIG_LIB"
+# WP4.3 folded the per-field `printf` arms into one DXE_CONFIG_REGISTRY
+# heredoc table (bin/lib/dx-config.sh), so grepping the file's text for a
+# per-field printf line no longer applies. Assert the behaviour instead:
+# dx_config_default resolves DX_PERSIST_VOLUME's registry row to the
+# literal default "dx-persist".
+if [ "$(dx_config_default DX_PERSIST_VOLUME)" = dx-persist ]; then
+    test_pass "config registry declares DX_PERSIST_VOLUME (default dx-persist)"
+else
+    test_fail "config registry declares DX_PERSIST_VOLUME (default dx-persist)"
+fi
 assert_file_not_contains "$LIB_SH" \
     "DX_PERSIST_PATH" \
     "dx-lib.sh does not declare DX_PERSIST_PATH"
@@ -99,7 +108,7 @@ assert_grep_in_file "$DX_MIGRATE" \
 STALE_MATCHES=$(rg -n '/workspace|DX_WORKSPACE|WORKSPACE|~/workspace|DX_PERSIST_PATH' \
     --hidden -g '!.git' -g '!workspace-persist.md' "$BASE_DIR" 2>/dev/null || true)
 UNEXPECTED_STALE=$(printf '%s\n' "$STALE_MATCHES" | grep -vE \
-    'bin/dx-lib.sh|bin/lib/dx-config.sh|bin/dx-create-volumes|bin/dx-migrate-persist|bin/dx-mount|README.md|refactor-plan.md|docs/|tests/test_section9_host_scripts.sh|tests/test_section10_docs.sh|tests/test_section16_persist_storage.sh|tests/test_section18_mount_git.sh|tests/test_runtime_boundary_characterisation.sh|tests/test_docker_runtime_adapter.sh' || true)
+    'bin/dx-lib.sh|bin/lib/dx-config.sh|bin/dx-create-volumes|bin/dx-migrate-persist|bin/dx-mount|README.md|refactor-plan.md|docs/|tests/test_section9_host_scripts.sh|tests/test_section10_docs.sh|tests/test_section16_persist_storage.sh|tests/test_section18_mount_git.sh|tests/test_runtime_boundary_characterisation.sh|tests/test_docker_runtime_adapter.sh|tests/fixtures/config-registry-defaults.txt' || true)
 if [ -z "$UNEXPECTED_STALE" ]; then
     test_pass "no stale workspace runtime references outside explicit legacy docs/tests"
 else
