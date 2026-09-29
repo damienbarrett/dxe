@@ -365,7 +365,7 @@ Every review ID and where it lands.
 - [ ] **WP9.4** Rename `container/aarch64-darwin-apple-container-dx-nixos-26.05/`
   to `container/dx-nixos-26.05/` once WP1.6's `dx_test_guest_dir` makes it a
   one-line test change. (Muse B5)
-- [ ] **WP9.5** Stale text: `dx-lib.sh:2`, `dx-nix-disk:21–24`. (Fable A7,
+- [x] eab62eb **WP9.5** Stale text: `dx-lib.sh:2`, `dx-nix-disk:21–24`. (Fable A7,
   Muse A6)
 - [x] 59dbb4a **WP9.6** Promote or defer the four backlog probes from
   `checkout-consolidation-plan.md` with owners. (Muse D5)
@@ -419,3 +419,4 @@ Every review ID and where it lands.
 - **2026-09-30** CI Linux fixes landed (ba16605, d6aa174, cf426f1, d5ecd15) and confirmed in the image: sections 16, 20, 31, 33, 17 green on Linux; only section 14's stale help literal remains (WP7 agent has it). Root cause behind the section 17/20 mystery: `harness.sh` exports `DXE_TEST_RESULTS`, so a suite that runs other suites as child processes (section 20) shared one results file that each child then deleted; section 20 now blanks it per child, and the harness itself should mint a fresh file when a new top-level process inherits one (routed to WP1.7).
 - **2026-09-30** WP1.7 landed (6d05c4e, 1eb7f3b, d4b7375, 2358cad, d47aae8): harness `wait_until`/`wait_for_pid_exit`; `DXE_TEST_RESULTS_OWNER` makes nested suite processes mint their own results file (section 20's workaround now redundant); section 22 has zero bare sleeps and its two elapsed-seconds cases assert through the `DX_SLEEP` transcript; a contract forbids bare `sleep N` in `# tier: unit` files plus the de-flaked list. Remaining bare-sleep inventory for WP1.4: sections 11, 14, 16, 17, 23 (13 hits), 27, sourceable coverage.
 - **2026-09-30** WP8.1 Phases 0-2 and Contract 5 landed (a1f9b2b, 96ce338, c4a2d87, deabddd, 327f6bb): identity, publication decision, default-profile target and the Nix-volume state are threaded positionally or through four bounded scratch records under `DX_BOOTSTRAP_SCRATCH_DIR` (default `/run/dx-bootstrap`); eleven exported globals removed; the clean-skip-writes-no-marker gate is mode-aware. Section 3: 219 → 241. Deviation recorded in `refactor-v2-final.md`: sibling phases bridge through the scratch dir because `bootstrap_phases` must call phases uncaptured (WP4.4 test). Phase 3 is host-side (claims) and Phase 4 (file split) remain. Live-tier validation on `dx-test` is required before promotion: this changes bootstrap's runtime data flow.
+- **2026-09-30** WP9.5 landed (eab62eb) and the EPIPE-drain contract now points at `dx-bootstrap-sync.sh` (0d94864).
