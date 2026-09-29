@@ -14,30 +14,6 @@ Starts the background Herdr server lazily if not already running.
 EOF
 }
 
-if [ "$#" -eq 0 ]; then
-    :
-elif [ "$#" -eq 1 ] && { [ "$1" = -h ] || [ "$1" = --help ]; }; then
-    dx_herdr_usage
-    exit 0
-else
-    echo "Error: dx-herdr does not accept arguments in v1 (got '$1')." >&2
-    dx_herdr_usage >&2
-    exit 64
-fi
-
-if ! container_is_running "$DX_CONTAINER_NAME"; then
-    echo "Error: Container $DX_CONTAINER_NAME is not running." >&2
-    echo "Start it with: dx-start-container" >&2
-    exit 1
-fi
-
-# Check the key before any guest command is attempted (F2): a missing key is
-# a local, immediately-diagnosable problem, not evidence about Herdr.
-if [ ! -f "$DX_SSH_KEY" ]; then
-    echo "Error: SSH key file not found at $DX_SSH_KEY." >&2
-    exit 1
-fi
-
 # Probe a guest capability over the shared bash -lc boundary (F1): the dx
 # user's login shell may be Nushell, which parses a raw command string itself
 # and rejects POSIX-only syntax (e.g. `2>&1`) or the `command` builtin at
@@ -88,6 +64,31 @@ dx_herdr_require_persistence_ready() {
     fi
 }
 
+herdr_main() {
+if [ "$#" -eq 0 ]; then
+    :
+elif [ "$#" -eq 1 ] && { [ "$1" = -h ] || [ "$1" = --help ]; }; then
+    dx_herdr_usage
+    exit 0
+else
+    echo "Error: dx-herdr does not accept arguments in v1 (got '$1')." >&2
+    dx_herdr_usage >&2
+    exit 64
+fi
+
+if ! container_is_running "$DX_CONTAINER_NAME"; then
+    echo "Error: Container $DX_CONTAINER_NAME is not running." >&2
+    echo "Start it with: dx-start-container" >&2
+    exit 1
+fi
+
+# Check the key before any guest command is attempted (F2): a missing key is
+# a local, immediately-diagnosable problem, not evidence about Herdr.
+if [ ! -f "$DX_SSH_KEY" ]; then
+    echo "Error: SSH key file not found at $DX_SSH_KEY." >&2
+    exit 1
+fi
+
 dx_herdr_require_persistence_ready
 
 herdr_present=0
@@ -130,3 +131,5 @@ fi
 # restore must precede herdr, while the terminal is still directly attached to
 # the SSH pty -- see dx_guest_theme_restore_prefix.
 dx_run_interactive_ssh "$(dx_guest_theme_restore_prefix)herdr"
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then herdr_main "$@"; fi
