@@ -47,9 +47,20 @@ RUNTIME_PREFIX_PATTERN='\bdx_runtime_(apple|docker)_[A-Za-z_][A-Za-z0-9_]*\b'
 # proven red/green against disposable fixtures below before trusting it
 # against the real tree.
 audit_bin_tree() {
-    local root="$1" file matches content trimmed
+    local root="$1" file relfile matches content trimmed
     matches=""
-    while IFS= read -r file; do
+    # WP1.9 (findings.md, 2026-09-29): scan git-tracked files only. `find`
+    # used to walk the raw filesystem, so an untracked, git-ignored file
+    # under bin/ -- e.g. a local editor/tool config such as
+    # bin/.claude/settings.local.json -- could trip the audit despite not
+    # being part of the repository's production shell at all; it is not
+    # even a subject this audit has any business having an opinion about.
+    # `git ls-files` restricts the walk to what the repository actually
+    # tracks, which is exactly this audit's subject matter -- an
+    # untracked/ignored file is as invisible to it as it would be to
+    # anyone cloning the repo fresh.
+    while IFS= read -r -d '' relfile; do
+        file="$root/$relfile"
         [ -f "$file" ] || continue
         case "$file" in */lib/dx-runtime-apple.sh|*/lib/dx-runtime-docker.sh) continue ;; esac
         while IFS= read -r line; do
@@ -128,8 +139,33 @@ audit_bin_tree() {
             esac
             matches="$matches$file:$line"$'\n'
         done < <(grep -nE "$VERB_PATTERN|$RUNTIME_PREFIX_PATTERN" "$file" 2>/dev/null)
-    done < <(find "$root/bin" -type f)
+    done < <(git -C "$root" ls-files -z -- bin 2>/dev/null)
     printf '%s' "$matches"
+}
+
+# Fixture plumbing for the git-tracked-only scan above: `git ls-files`
+# only ever sees paths that are staged or committed, so a disposable
+# fixture must be a real git repository with its files added, or the scan
+# would see nothing at all and every fixture assertion below would go
+# trivially green for the wrong reason. Local, throwaway identity only --
+# never touches the developer's real git config, and commit.gpgsign is
+# forced off so a host with global commit signing enabled can't hang this
+# on a passphrase prompt.
+fixture_git_init() {
+    local dir="$1"
+    git -C "$dir" init -q
+    git -C "$dir" config user.email "fixture@example.invalid"
+    git -C "$dir" config user.name "Fixture"
+    git -C "$dir" config commit.gpgsign false
+}
+
+# Stage (and commit, so history reads like a real repo) everything
+# currently on disk in the fixture tree, so `git ls-files` reports it as
+# tracked. Called after every fixture mutation the scan is meant to see.
+fixture_commit() {
+    local dir="$1" msg="${2:-fixture}"
+    git -C "$dir" add -A
+    git -C "$dir" commit -q --allow-empty -m "$msg" >/dev/null
 }
 
 # --- Prove the detector bites: a disposable fixture with a real violation
@@ -139,11 +175,13 @@ audit_bin_tree() {
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/bin/lib"
+fixture_git_init "$fixture"
 cat > "$fixture/bin/dx-example" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 container exec "$DX_CONTAINER_NAME" true
 EOF
+fixture_commit "$fixture" "add dx-example with a raw container call"
 if [ -n "$(audit_bin_tree "$fixture")" ]; then
     test_pass "audit detects a raw container call planted in a fixture entrypoint (red)"
 else
@@ -155,6 +193,7 @@ cat > "$fixture/bin/dx-example" <<'EOF'
 set -euo pipefail
 dx_runtime_exec "$DX_CONTAINER_NAME" true
 EOF
+fixture_commit "$fixture" "fix dx-example to call the runtime contract"
 if [ -z "$(audit_bin_tree "$fixture")" ]; then
     test_pass "audit is clean once the fixture entrypoint calls the runtime contract instead (green)"
 else
@@ -167,27 +206,32 @@ fi
 cat > "$fixture/bin/lib/dx-other.sh" <<'EOF'
 other_helper() { container volume rm "$1"; }
 EOF
+fixture_commit "$fixture" "add dx-other.sh with a raw container call"
 if [ -n "$(audit_bin_tree "$fixture")" ]; then
     test_pass "audit still catches a raw call in a bin/lib file other than dx-runtime-apple.sh"
 else
     test_fail "audit still catches a raw call in a bin/lib file other than dx-runtime-apple.sh"
 fi
 rm -f "$fixture/bin/lib/dx-other.sh"
+fixture_commit "$fixture" "remove dx-other.sh"
 
 mkdir -p "$fixture/bin/lib"
 cat > "$fixture/bin/lib/dx-runtime-apple.sh" <<'EOF'
 dx_runtime_apple_volume_delete() { container volume rm "$@"; }
 EOF
+fixture_commit "$fixture" "add dx-runtime-apple.sh"
 if [ -z "$(audit_bin_tree "$fixture")" ]; then
     test_pass "audit exempts bin/lib/dx-runtime-apple.sh itself"
 else
     test_fail "audit exempts bin/lib/dx-runtime-apple.sh itself"
 fi
 rm -f "$fixture/bin/lib/dx-runtime-apple.sh"
+fixture_commit "$fixture" "remove dx-runtime-apple.sh"
 
 cat > "$fixture/bin/lib/dx-runtime-docker.sh" <<'EOF'
 dx_runtime_docker_container_running() { dx_runtime_docker_ssh_exec "$1" container inspect --format '{{.State.Running}}' "$2"; }
 EOF
+fixture_commit "$fixture" "add dx-runtime-docker.sh"
 if [ -z "$(audit_bin_tree "$fixture")" ]; then
     test_pass "audit exempts bin/lib/dx-runtime-docker.sh itself (Phase 2's own adapter)"
 else
@@ -202,11 +246,13 @@ rm -rf "$fixture"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/bin/lib"
+fixture_git_init "$fixture"
 cat > "$fixture/bin/dx-example" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 dx_example_list_names() { dx_runtime_apple_container_list_names "$@"; }
 EOF
+fixture_commit "$fixture" "add dx-example with a raw dx_runtime_apple_* call"
 if [ -n "$(audit_bin_tree "$fixture")" ]; then
     test_pass "audit detects a raw dx_runtime_apple_* call planted in a fixture entrypoint (red)"
 else
@@ -218,6 +264,7 @@ cat > "$fixture/bin/dx-example" <<'EOF'
 set -euo pipefail
 dx_example_list_names() { dx_runtime_container_list "$@"; }
 EOF
+fixture_commit "$fixture" "fix dx-example to call the dispatch-level contract"
 if [ -z "$(audit_bin_tree "$fixture")" ]; then
     test_pass "audit is clean once the fixture entrypoint calls the dispatch-level contract instead (green)"
 else
@@ -233,6 +280,7 @@ cat > "$fixture/bin/dx-example" <<'EOF'
 op=container_list
 "dx_runtime_docker_$op" "$@"
 EOF
+fixture_commit "$fixture" "add a dynamic dx_runtime_docker_\$op dispatch"
 if [ -z "$(audit_bin_tree "$fixture")" ]; then
     test_pass "audit does not false-positive on a dynamic dx_runtime_<runtime>_\$op dispatch construction"
 else
@@ -246,12 +294,14 @@ cat > "$fixture/bin/dx-example" <<'EOF'
 #!/bin/bash
 dx_runtime_docker_lock_audit
 EOF
+fixture_commit "$fixture" "add dx-example calling the lock allow-list name"
 if [ -n "$(audit_bin_tree "$fixture")" ]; then
     test_pass "the dx-lock/dx-status allow-list does not extend to any other file"
 else
     test_fail "the dx-lock/dx-status allow-list does not extend to any other file"
 fi
 rm -f "$fixture/bin/dx-example"
+fixture_commit "$fixture" "remove dx-example"
 
 cat > "$fixture/bin/dx-lock" <<'EOF'
 #!/bin/bash
@@ -262,6 +312,7 @@ cat > "$fixture/bin/dx-status" <<'EOF'
 #!/bin/bash
 dx_runtime_docker_lock_audit
 EOF
+fixture_commit "$fixture" "add dx-lock and dx-status with their allow-listed calls"
 if [ -z "$(audit_bin_tree "$fixture")" ]; then
     test_pass "the dx-lock/dx-status allow-list exempts exactly their own authorised lock calls"
 else
@@ -278,11 +329,13 @@ rm -rf "$fixture"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/bin"
+fixture_git_init "$fixture"
 {
     echo '#!/bin/bash'
     for _ in 1 2 3 4 5 6 7 8 9; do echo '# padding'; done
     echo "# a docker-ssh comment mentioning Apple's own 'container system status' for comparison"
 } > "$fixture/bin/dx-example"
+fixture_commit "$fixture" "add dx-example with padding and a comment"
 if [ -z "$(audit_bin_tree "$fixture")" ]; then
     test_pass "a pure comment naming a container verb is exempt at a two-digit line number too"
 else
@@ -293,10 +346,63 @@ fi
     for _ in 1 2 3 4 5 6 7 8 9; do echo '# padding'; done
     echo 'container system status'
 } > "$fixture/bin/dx-example"
+fixture_commit "$fixture" "replace the comment with a real call"
 if [ -n "$(audit_bin_tree "$fixture")" ]; then
     test_pass "a real call at a two-digit line number is still caught (the comment fix did not overreach)"
 else
     test_fail "a real call at a two-digit line number is still caught (the comment fix did not overreach)"
+fi
+rm -rf "$fixture"
+
+# --- WP1.9 (findings.md, 2026-09-29): the scan must only ever look at
+# git-tracked files. An untracked, git-ignored file living under bin/ --
+# e.g. a local editor/tool config such as bin/.claude/settings.local.json
+# -- is not part of the repository's production shell and must never trip
+# the audit, no matter what it contains. This reproduces a real baseline
+# failure: on a developer host, an ignored bin/.claude/settings.local.json
+# containing a `Bash(container run --rm ...)` permission string tripped
+# audit_bin_tree, because it enumerated the filesystem (`find`) rather
+# than git's tracked-file list.
+fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX")"
+trap 'rm -rf "$fixture"' EXIT
+mkdir -p "$fixture/bin/.claude" "$fixture/bin/lib"
+fixture_git_init "$fixture"
+cat > "$fixture/bin/dx-example" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+dx_runtime_exec "$DX_CONTAINER_NAME" true
+EOF
+cat > "$fixture/.gitignore" <<'EOF'
+bin/.claude/settings.local.json
+EOF
+fixture_commit "$fixture" "clean tracked entrypoint plus a gitignore rule"
+cat > "$fixture/bin/.claude/settings.local.json" <<'EOF'
+{
+  "permissions": {
+    "allow": [
+      "Bash(container run --rm ...)"
+    ]
+  }
+}
+EOF
+if [ -z "$(audit_bin_tree "$fixture")" ]; then
+    test_pass "an untracked, git-ignored file under bin/ (e.g. a local .claude/settings.local.json) is never reported, however it names a runtime verb"
+else
+    test_fail "an untracked, git-ignored file under bin/ (e.g. a local .claude/settings.local.json) is never reported, however it names a runtime verb"
+fi
+
+# Complementary to the case above (and to the very first red case in this
+# file, which this narrows down on): the same raw-call string, committed
+# in a git-TRACKED .sh file, must still be caught -- restricting the scan
+# to tracked files must not blind it to a real tracked violation.
+cat > "$fixture/bin/lib/dx-tracked-leak.sh" <<'EOF'
+leak() { container run --rm "$1"; }
+EOF
+fixture_commit "$fixture" "add a tracked file with the same raw call"
+if [ -n "$(audit_bin_tree "$fixture")" ]; then
+    test_pass "the same raw-call string in a git-tracked .sh file is still caught"
+else
+    test_fail "the same raw-call string in a git-tracked .sh file is still caught"
 fi
 rm -rf "$fixture"
 
