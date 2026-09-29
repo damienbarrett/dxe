@@ -39,56 +39,47 @@ assert_file_contains "$FLAKE_NIX" "$DX_EXPECTED_NIXOS_BRANCH" "flake.nix uses $D
 
 # Test: bash syntax check for flake.nix (if nix is available)
 if command -v nix >/dev/null 2>&1; then
-    if nix flake check --no-build --no-write-lock-file "$CONTAINER_DIR" 2>/dev/null; then
+    if nix flake check --no-build --no-write-lock-file --all-systems "$CONTAINER_DIR" 2>/dev/null; then
         test_pass "nix flake evaluation passes"
     else
         test_fail "nix flake evaluation passes"
     fi
 
-    # Branch 11 / Phase 4 (docs/refactor/arch-neutral-guest.md section 2):
-    # the flake now evaluates packages for x86_64-linux too, and
-    # homeConfigurations.dx is kept as a real alias -- the SAME derivation,
-    # not a second definition that could drift -- of
-    # homeConfigurations."dx-aarch64-linux". Proven against real Nix
-    # evaluation (no build), not by matching the flake's source text.
-    if x86_64_default_name="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#packages.x86_64-linux.default.name" 2>/dev/null)" && [ -n "$x86_64_default_name" ]; then
-        test_pass "packages.x86_64-linux.default evaluates"
-    else
-        test_fail "packages.x86_64-linux.default evaluates"
-    fi
+    # WP2.1 (docs/reviews/2026-09-29-fable.md finding C1, Astra F11): Home
+    # Manager activation and the AI-tools closure are exposed as flake
+    # `checks` per system, which is exactly what CI's own
+    # `nix flake check --all-systems` gate exercises -- so this loop proves
+    # the same thing CI enforces, not a one-off attribute path. No `|| true`
+    # anywhere below: a genuine evaluation error fails the case loudly, with
+    # its own stderr in the message, instead of being swallowed and
+    # misreported downstream as "not the same derivation".
+    for system in aarch64-linux x86_64-linux; do
+        for check_name in home-activation ai-tools; do
+            if check_output="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#checks.$system.$check_name.drvPath" 2>&1)"; then
+                test_pass "checks.$system.$check_name evaluates"
+            else
+                test_fail "checks.$system.$check_name evaluates (${check_output})"
+            fi
+        done
 
-    # Branch 11 / Phase 4, Increment 4 (qnap-dxe-plan.md Phase 4 item 4,
-    # docs/refactor/arch-neutral-guest.md section 5): every package in
-    # dxPackages, bootstrapEssentials, and aiPackages must exist for BOTH
-    # supported systems. packages.x86_64-linux.default (above) already
-    # proves dxPackages; these two prove bootstrapEssentials and aiPackages
-    # the same way -- if either buildEnv referenced an attribute missing
-    # for x86_64-linux, evaluation itself would fail here, without needing
-    # to enumerate every package name individually.
-    if x86_64_essentials_name="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#packages.x86_64-linux.bootstrap-essentials.name" 2>/dev/null)" && [ -n "$x86_64_essentials_name" ]; then
-        test_pass "packages.x86_64-linux.bootstrap-essentials evaluates"
-    else
-        test_fail "packages.x86_64-linux.bootstrap-essentials evaluates"
-    fi
-    if x86_64_ai_tools_name="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#packages.x86_64-linux.ai-tools.name" 2>/dev/null)" && [ -n "$x86_64_ai_tools_name" ]; then
-        test_pass "packages.x86_64-linux.ai-tools evaluates"
-    else
-        test_fail "packages.x86_64-linux.ai-tools evaluates"
-    fi
-
-    dx_alias_path="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#homeConfigurations.dx.activationPackage.outPath" 2>/dev/null || true)"
-    dx_system_path="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#homeConfigurations.dx-aarch64-linux.activationPackage.outPath" 2>/dev/null || true)"
-    if [ -n "$dx_alias_path" ] && [ "$dx_alias_path" = "$dx_system_path" ]; then
-        test_pass "homeConfigurations.dx is the same derivation as homeConfigurations.dx-aarch64-linux (a real alias)"
-    else
-        test_fail "homeConfigurations.dx is the same derivation as homeConfigurations.dx-aarch64-linux (a real alias)"
-    fi
+        # alias-is-identity's entire body is an `assert`; forcing its
+        # drvPath is what actually proves homeConfigurations.dx is the SAME
+        # derivation as homeConfigurations.dx-aarch64-linux -- a failing
+        # assert is an evaluation error, not a silently-false value the way
+        # comparing two possibly-empty strings (the old outPath diff) was.
+        if alias_output="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#checks.$system.alias-is-identity.drvPath" 2>&1)"; then
+            test_pass "checks.$system.alias-is-identity evaluates (homeConfigurations.dx is a real alias)"
+        else
+            test_fail "checks.$system.alias-is-identity evaluates (homeConfigurations.dx is a real alias) (${alias_output})"
+        fi
+    done
 else
     test_skip "nix not available, skipping flake check"
-    test_skip "nix not available, skipping x86_64-linux packages evaluation"
-    test_skip "nix not available, skipping x86_64-linux bootstrap-essentials evaluation"
-    test_skip "nix not available, skipping x86_64-linux ai-tools evaluation"
-    test_skip "nix not available, skipping homeConfigurations.dx alias check"
+    for system in aarch64-linux x86_64-linux; do
+        test_skip "nix not available, skipping checks.$system.home-activation evaluation"
+        test_skip "nix not available, skipping checks.$system.ai-tools evaluation"
+        test_skip "nix not available, skipping checks.$system.alias-is-identity evaluation"
+    done
 fi
 
 # Static/cheap companion to the nix-eval checks above -- exercised even on a

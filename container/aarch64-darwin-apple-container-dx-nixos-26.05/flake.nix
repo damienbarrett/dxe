@@ -195,7 +195,7 @@
           # Imported NixVim configuration
           nvim = import ./nixvim.nix { inherit pkgs nixvim system; };
         in
-        {
+        rec {
           devShells = {
             default = pkgs.mkShell {
               buildInputs = dxPackages ++ [ nvim ];
@@ -228,6 +228,35 @@
               }
             ];
           };
+
+          # WP2.1 (docs/reviews/2026-09-29-fable.md finding C1, Astra F11):
+          # `nix flake check` never walked `homeConfigurations` (a custom,
+          # non-standard flake output), so a broken Home Manager module or a
+          # missing x86_64-linux package was only ever discovered on a live
+          # guest boot. Exposing the same evaluations as flake `checks`
+          # per system makes `nix flake check --all-systems` the CI gate that
+          # actually forces them.
+          checks = {
+            # Forces the full Home Manager module evaluation for this
+            # system, including every package in `dxPackages` (home.packages
+            # above), which is why the separate `packages.<system>.default`
+            # evaluation this replaced was redundant.
+            home-activation = homeConfiguration.activationPackage;
+
+            inherit (packages) ai-tools;
+
+            # homeConfigurations.dx is meant to be the SAME derivation as
+            # homeConfigurations."dx-aarch64-linux" (a real alias, not a
+            # second definition that could drift) -- see the top-level
+            # `homeConfigurations` binding below. A failing `assert` is an
+            # evaluation error, which is what actually proves it; comparing
+            # two possibly-empty strings does not. Meaningful only once per
+            # flake, but harmless (cheap: no build) to evaluate per system.
+            alias-is-identity =
+              assert self.homeConfigurations.dx.activationPackage.drvPath
+                  == self.homeConfigurations."dx-aarch64-linux".activationPackage.drvPath;
+              pkgs.emptyFile;
+          };
         };
 
       perSystemOutputs = forEachSystem perSystem;
@@ -245,6 +274,8 @@
       devShells = nixpkgs.lib.mapAttrs (_: out: out.devShells) perSystemOutputs;
 
       packages = nixpkgs.lib.mapAttrs (_: out: out.packages) perSystemOutputs;
+
+      checks = nixpkgs.lib.mapAttrs (_: out: out.checks) perSystemOutputs;
 
       # homeConfigurations.dx stays a real alias -- the SAME derivation, not
       # a second definition that could drift -- of "dx-aarch64-linux", so

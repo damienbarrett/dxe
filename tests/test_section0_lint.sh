@@ -26,7 +26,7 @@ for required in \
     'bash -n' \
     'tests/run_all_tests.sh --skip-integration' \
     'tests/run-coverage-linux.sh' \
-    'nix flake check --no-build' \
+    'nix flake check --no-build --no-write-lock-file --all-systems' \
     'tests/run-bash32-tests.sh'
 do
     assert_file_contains_literal "$WORKFLOW" "$required" "CI enforces: $required"

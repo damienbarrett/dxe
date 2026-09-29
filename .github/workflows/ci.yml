@@ -31,7 +31,7 @@ jobs:
       - name: Sourceable shell coverage
         run: tests/run-coverage-linux.sh
       - name: Nix evaluation
-        run: nix flake check --no-build --no-write-lock-file ./container/aarch64-darwin-apple-container-dx-nixos-26.05
+        run: nix flake check --no-build --no-write-lock-file --all-systems ./container/aarch64-darwin-apple-container-dx-nixos-26.05
       # Always upload: the report is most useful precisely when the gate failed.
       - uses: actions/upload-artifact@v4
         if: always()
