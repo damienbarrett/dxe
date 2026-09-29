@@ -184,7 +184,7 @@ else
     test_fail "incomplete AI candidate leaves current generation unchanged"
 fi
 printf '#!/bin/sh\n' > "$manifest_missing_stage/profile/bin/opencode"; chmod 0755 "$manifest_missing_stage/profile/bin/opencode"
-if [ "$(tr '\n' ' ' < "$manifest_missing_stage/.tools-manifest" | sed 's/ $//')" = "codex gemini claude agy herdr opencode" ]; then
+if [ "$(tr '\n' ' ' < "$manifest_missing_stage/.tools-manifest" | sed 's/ $//')" = "codex claude agy herdr opencode" ]; then
     test_pass "AI staging records the complete generation-local tool manifest"
 else
     test_fail "AI staging records the complete generation-local tool manifest"
@@ -1712,13 +1712,23 @@ else
     test_fail "dx-ai ensures D-Bus keyring service"
 fi
 
-for tool in codex gemini claude agy herdr opencode; do
+for tool in codex claude agy herdr opencode; do
     if run_guest "command -v $tool" >/dev/null 2>&1; then
         test_pass "$tool is available after dx-ai"
     else
         test_fail "$tool is available after dx-ai"
     fi
 done
+
+# gemini-cli was removed from DX_AI_TOOLS/aiPackages (findings.md's
+# 2026-09-30 user decision); a freshly published generation must not install
+# it, even though it is still tolerated as legacy in a retained
+# pre-OpenCode generation (see the DX_AI_LEGACY_TOOLS cases above).
+if run_guest "command -v gemini" >/dev/null 2>&1; then
+    test_fail "gemini is not available after dx-ai"
+else
+    test_pass "gemini is not available after dx-ai"
+fi
 
 if run_guest 'case "$(agy --version)" in 0.*|1.0.0) exit 1 ;; *) exit 0 ;; esac' >/dev/null 2>&1; then
     test_pass "agy version includes OAuth persistence fixes"

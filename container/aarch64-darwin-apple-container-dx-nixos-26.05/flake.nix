@@ -55,23 +55,6 @@
             inherit system;
             config = {
               allowUnfree = true;
-
-              # WP2.2 (docs/reviews/2026-09-29-fable.md finding C2): gemini-cli
-              # carries nixpkgs' meta.problems.removal notice (Google retired
-              # the free/Pro-Ultra tier CLI in favour of Antigravity CLI:
-              # https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/).
-              # DX_AI_TOOLS (scripts/dx-ai.sh) still lists gemini -- keeping it
-              # in aiPackages below is a product decision recorded in
-              # findings.md, not an oversight -- so this acknowledges only
-              # that one package's one problem
-              # (config.problems.handlers, see
-              # https://nixos.org/manual/nixpkgs/unstable#sec-problems)
-              # rather than silencing removal notices flake-wide.
-              # Revisit trigger: when DX_AI_TOOLS drops gemini, or nixpkgs
-              # removes gemini-cli outright (which turns this from a warning
-              # into a missing attribute that checks.<system>.ai-tools would
-              # still catch).
-              problems.handlers."gemini-cli".removal = "ignore";
             };
           };
 
@@ -189,7 +172,6 @@
           # never substituted); let-bound names take precedence over
           # `with unstable;`, so it resolves correctly.
           aiPackages = with unstable; [
-            gemini-cli
             claude-code
             codex
           ] ++ nixpkgs.lib.optionals (agy != null) [
