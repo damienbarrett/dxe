@@ -1,7 +1,13 @@
 #!/bin/bash
-# Compatibility facade for host commands that have not yet migrated to
-# individual libraries. It initializes configuration but intentionally does not
-# require or start Apple Container merely because it was sourced.
+# The fixed-order library facade every bin/dx* entrypoint sources. Each
+# bin/lib/*.sh below is import-pure -- defines functions/constants only, no
+# output, no command dispatch, no caller-state change when sourced (proven
+# for every one of them by tests/test_refactor_contracts.sh) -- but the
+# order they are sourced in below is not arbitrary: later files assume
+# earlier ones are already loaded, and tests/test_refactor_state_machines.sh
+# replays this exact order in its own fixture. This file also initializes
+# configuration but intentionally does not require or start Apple Container
+# merely because it was sourced.
 
 DX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DX_PROJECT_ROOT="$(cd "$DX_LIB_DIR/.." && pwd)"

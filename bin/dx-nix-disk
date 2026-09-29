@@ -20,9 +20,15 @@ echo "Creating Nix disk image: $DX_NIX_DISK ($DX_NIX_DISK_SIZE)"
 mkdir -p "$(dirname "$DX_NIX_DISK")"
 truncate -s "$DX_NIX_DISK_SIZE" "$DX_NIX_DISK"
 
-# Format with ext4 as requested in §9
-# Note: We rely on the guest to handle btrfs if preferred,
-# but §9 specifically asked for ext4 here.
-# For now, we just prepare the sparse file.
+# No formatting happens here, on purpose, not as a placeholder: this is the
+# host side of Apple's apple-image storage mode
+# (docs/lifecycle.md's "Storage mode is explicit, not inferred" section),
+# where the sparse file above is staged for Apple's own runtime at
+# /var/lib/dx-nix-raw (bin/lib/dx-runtime-apple.sh) and the GUEST bootstrap's
+# prepare_nix_volume formats it (mkfs.btrfs or mkfs.ext4, its choice) and
+# mounts it onto /nix (docs/refactor/direct-volume-storage.md section 2).
+# docker-ssh has no equivalent call into this file at all (DQ8): its
+# direct-volume mode mounts a Docker named volume straight at /nix with no
+# sparse image, no formatting, and no /etc/fstab edit.
 }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then nix_disk_main "$@"; fi
