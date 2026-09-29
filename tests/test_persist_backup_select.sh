@@ -458,9 +458,22 @@ fallback_result="$(
 # the mirror. Fail closed instead: a traversal error must abort the WHOLE
 # run (nonzero exit) and name the offending path on stderr, never silently
 # narrow the selection. A first, fully-readable listing succeeds; only the
-# SECOND listing (after chmod 000) is expected to fail -- run as the
-# unprivileged user this whole suite already runs as (no sudo): root
-# ignores the permission bit entirely and the repro would not reproduce. ---
+# SECOND listing (after chmod 000) is expected to fail -- run as an
+# unprivileged user: root ignores the permission bit entirely and the
+# repro would not reproduce. This whole suite normally already runs
+# unprivileged (no sudo), which is why the plain `dx_pbs_list` call below
+# is enough on a workstation -- but tests/run-coverage-linux.sh's isolated
+# kcov image runs the WHOLE suite as root (Astra F1's regression-test
+# note: "Run permission tests as an unprivileged user so root does not
+# mask the failure"). There, drop to uid/gid 65534 (nobody) with setpriv
+# (util-linux; present in the Ubuntu coverage image) for just this second
+# listing, via the selector's own standalone entrypoint (its
+# `[ "${BASH_SOURCE[0]}" = "$0" ]` trailer calls dx_pbs_main "$@", which
+# for a bare ROOT argument is exactly dx_pbs_list "$@" -- see this file's
+# own end) rather than the sourced function directly, since a plain
+# function call cannot itself change uid. Root without setpriv cannot
+# reproduce this at all (mode bits never deny root), so both assertions
+# are skipped there rather than silently passing on a non-repro. ---
 denied_root="$FIXTURE/wp61-denied-root"
 mkdir -p "$denied_root/private/work"
 printf 'do not lose me\n' > "$denied_root/private/work/secret.txt"
@@ -470,18 +483,44 @@ if dx_pbs_list "$denied_root" > /dev/null 2> "$first_denied_stderr"; then
 else
     test_fail "WP6.1: a fully readable tree lists successfully before anything is made unreadable (stderr: $(cat "$first_denied_stderr"))"
 fi
-chmod 0000 "$denied_root/private"
 second_denied_stderr="$FIXTURE/wp61-denied-stderr-2.log"
-if dx_pbs_list "$denied_root" > /dev/null 2> "$second_denied_stderr"; then
-    test_fail "WP6.1: a permission-denied subtree makes the second listing exit non-zero (it exited 0)"
+if [ "$(id -u)" -eq 0 ]; then
+    if command -v setpriv > /dev/null 2>&1; then
+        # Everything ABOVE the denied subtree must stay traversable for
+        # uid 65534 to even reach it: mktemp -d made $FIXTURE 0700, and a
+        # root-owned mkdir -p may not have left $denied_root world-
+        # traversable either. The denied subtree itself is the thing
+        # under test and stays 0000.
+        chmod 0755 "$FIXTURE" "$denied_root"
+        chmod 0000 "$denied_root/private"
+        if setpriv --reuid=65534 --regid=65534 --clear-groups env HOME=/tmp bash "$SELECTOR" "$denied_root" > /dev/null 2> "$second_denied_stderr"; then
+            test_fail "WP6.1: a permission-denied subtree makes the second listing exit non-zero (it exited 0)"
+        else
+            test_pass "WP6.1: a permission-denied subtree makes the second listing exit non-zero"
+        fi
+        chmod 0755 "$denied_root/private"
+        if grep -Fq "$denied_root/private" "$second_denied_stderr" && grep -q '^Error:' "$second_denied_stderr"; then
+            test_pass "WP6.1: the permission-denied path is named in an Error: line on stderr"
+        else
+            test_fail "WP6.1: the permission-denied path is named in an Error: line on stderr (stderr: $(cat "$second_denied_stderr"))"
+        fi
+    else
+        test_skip "WP6.1: a permission-denied subtree makes the second listing exit non-zero (running as root without setpriv: mode bits do not deny root; Astra F1)"
+        test_skip "WP6.1: the permission-denied path is named in an Error: line on stderr (running as root without setpriv: mode bits do not deny root; Astra F1)"
+    fi
 else
-    test_pass "WP6.1: a permission-denied subtree makes the second listing exit non-zero"
-fi
-chmod 0755 "$denied_root/private"
-if grep -Fq "$denied_root/private" "$second_denied_stderr" && grep -q '^Error:' "$second_denied_stderr"; then
-    test_pass "WP6.1: the permission-denied path is named in an Error: line on stderr"
-else
-    test_fail "WP6.1: the permission-denied path is named in an Error: line on stderr (stderr: $(cat "$second_denied_stderr"))"
+    chmod 0000 "$denied_root/private"
+    if dx_pbs_list "$denied_root" > /dev/null 2> "$second_denied_stderr"; then
+        test_fail "WP6.1: a permission-denied subtree makes the second listing exit non-zero (it exited 0)"
+    else
+        test_pass "WP6.1: a permission-denied subtree makes the second listing exit non-zero"
+    fi
+    chmod 0755 "$denied_root/private"
+    if grep -Fq "$denied_root/private" "$second_denied_stderr" && grep -q '^Error:' "$second_denied_stderr"; then
+        test_pass "WP6.1: the permission-denied path is named in an Error: line on stderr"
+    else
+        test_fail "WP6.1: the permission-denied path is named in an Error: line on stderr (stderr: $(cat "$second_denied_stderr"))"
+    fi
 fi
 
 # --- Equivalence property (Fable B5 / Astra F6 / Muse B3, WP3.3 defect C):
