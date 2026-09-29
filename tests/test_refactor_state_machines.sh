@@ -145,6 +145,13 @@ expect_ok "DX_CONTAINER_RESTART_POLICY accepts no" dx_config_validate_value DX_C
 expect_ok "DX_CONTAINER_RESTART_POLICY accepts unless-stopped" dx_config_validate_value DX_CONTAINER_RESTART_POLICY unless-stopped
 expect_reject "DX_CONTAINER_RESTART_POLICY rejects an unknown value" dx_config_validate_value DX_CONTAINER_RESTART_POLICY always
 
+# Fable A5: dx_config_validate_value has no default arm, so a typo'd or
+# unknown field name is silently ACCEPTED today. dx_config_set_resolved is
+# the only production caller that checks dx_config_is_field first --
+# bin/dx-restore:38 calls dx_config_validate_value directly, and a future
+# caller with a typo would pass silently.
+expect_reject "dx_config_validate_value rejects an unknown field name" dx_config_validate_value DX_NOT_A_FIELD x
+
 # Cross-field agreement (qnap-dxe-plan.md DQ3: "Invalid cross-field
 # combinations fail before contacting either runtime"): DX_REMOTE_HOST is
 # required for docker-ssh and forbidden for apple. Exercised through a full
