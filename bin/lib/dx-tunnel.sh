@@ -25,12 +25,12 @@ dx_tunnel_state_dir() { printf '%s\n' "${DX_TUNNEL_STATE_DIR:-${XDG_STATE_HOME:-
 # (direction:container:port) -- there is only ever one local Apple
 # runtime, so it never needed disambiguating, and no existing socket/
 # metadata/lock path may shift for it. docker-ssh gains a fourth segment,
-# dx_runtime_host_identity's own "docker-ssh:<alias>:<daemon-id>" (cached
+# dx_profile_state_segment's own "docker-ssh:<alias>:<daemon-id>" (cached
 # in-process after the first call, and -- WP3.4 / Fable A1 -- cached on
 # disk across processes too, so this costs no repeated round trip);
-# dx_runtime_host_identity is available here the same way dx_short_hash
-# (bin/lib/dx-host-util.sh) already is -- assumed sourced by the caller
-# first (bin/dx-lib.sh's own order), not re-sourced here.
+# dx_profile_state_segment (bin/lib/dx-host-util.sh) is available here the
+# same way dx_short_hash already is -- assumed sourced by the caller first
+# (bin/dx-lib.sh's own order), not re-sourced here.
 #
 # WP3.4 / Fable A1: a FAILING identity resolution used to be silently
 # swallowed here -- "$(dx_runtime_host_identity)" as a bare printf argument
@@ -43,10 +43,16 @@ dx_tunnel_state_dir() { printf '%s\n' "${DX_TUNNEL_STATE_DIR:-${XDG_STATE_HOME:-
 # functions below now runs under a `set -e` entrypoint (bin/dx-forward,
 # bin/dx-reverse) and so already propagates this failure correctly once it
 # is no longer masked here.
+#
+# Refactor (WP3.4): resolved through dx_profile_state_segment rather than
+# calling dx_runtime_host_identity directly, the same shared helper
+# dx_backup_resolve_dir and dx_ssh_known_hosts_dir now also go through, so
+# the three call sites cannot diverge again on how they resolve or fail
+# closed on it.
 dx_tunnel_key() {
     if [ "${DX_RUNTIME:-apple}" = docker-ssh ]; then
         local identity
-        identity="$(dx_runtime_host_identity)" || return 1
+        identity="$(dx_profile_state_segment)" || return 1
         printf '%s:%s:%s:%s' "$1" "$DX_CONTAINER_NAME" "$2" "$identity"
     else
         printf '%s:%s:%s' "$1" "$DX_CONTAINER_NAME" "$2"

@@ -16,19 +16,20 @@ dx_ssh_endpoint() { printf '%s\n' "dx@$(dx_runtime_guest_ssh_address)"; }
 # guest's own SSH host identity is verified normally after first contact,
 # unlike Apple's disposable, constantly-recreated local guest (pinning
 # that would be pure churn, not a real guarantee). Scoped by
-# $DX_CONTAINER_NAME plus dx_runtime_host_identity's own value (colons
+# $DX_CONTAINER_NAME plus dx_profile_state_segment's own value (colons
 # replaced, since a raw identity string is not a safe path segment) --
-# the SAME dispatch-level op and sanitisation bin/lib/dx-backup.sh's
-# dx_backup_resolve_dir already uses to scope its own per-profile
-# directory, not the docker-adapter's own dx_runtime_docker_profile_id:
-# this file is not one of the two adapters (Section 32's audit), so it
-# must never name an adapter-specific function directly. The file itself
-# is never created here: ssh's own accept-new behaviour creates (and
-# appends to) it on first contact; only the parent directory is prepared,
-# and only for docker-ssh (Apple never calls this).
+# WP3.4 / Fable A1: the SAME shared helper (bin/lib/dx-host-util.sh) that
+# bin/lib/dx-backup.sh's dx_backup_resolve_dir and bin/lib/dx-tunnel.sh's
+# dx_tunnel_key now also use, so the three can no longer diverge on how
+# they resolve or fail-close on it -- not the docker-adapter's own
+# dx_runtime_docker_profile_id: this file is not one of the two adapters
+# (Section 32's audit), so it must never name an adapter-specific function
+# directly. The file itself is never created here: ssh's own accept-new
+# behaviour creates (and appends to) it on first contact; only the parent
+# directory is prepared, and only for docker-ssh (Apple never calls this).
 dx_ssh_known_hosts_dir() {
     local identity
-    identity="$(dx_runtime_host_identity)"
+    identity="$(dx_profile_state_segment)" || return 1
     printf '%s/dxe/%s/%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}" "${DX_CONTAINER_NAME:?}" "${identity//:/_}"
 }
 dx_ssh_known_hosts_path() { printf '%s/known_hosts\n' "$(dx_ssh_known_hosts_dir)"; }
