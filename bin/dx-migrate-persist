@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+
+migrate_persist_main() {
 dx_require_container_cli
 
 # Apple Container's `container run --rm` intermittently reports
@@ -83,3 +85,5 @@ dx_runtime_run_ephemeral --rm \
 echo "Migration complete."
 echo "Verify your data through /persist before deleting the legacy volume."
 echo "Legacy cleanup command: container volume rm $legacy_volume"
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then migrate_persist_main "$@"; fi
