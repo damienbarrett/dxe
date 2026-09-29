@@ -370,6 +370,97 @@ expect_transcript() {
     return 0
 }
 
+# --- Fixture isolation and skip semantics (Fable D9, D11) ---------------
+#
+# with_fixture -- creates a private fixture directory and, in the CALLING
+# shell, points HOME, XDG_STATE_HOME and TMPDIR under it, and unsets every
+# already-set DXE_CONFIG_* variable (DXE_CONFIG_RESOLVED,
+# DXE_CONFIG_SNAPSHOT_VERSION, and each DXE_CONFIG_ORIGIN_<field>
+# bin/lib/dx-config.sh exports -- swept by prefix with `${!DXE_CONFIG_@}`,
+# Bash 3.2-clean, rather than hand-copying dx-config.sh's own
+# DXE_CONFIG_FIELDS list here and risking drift) so a suite that sources
+# dx-config.sh next resolves fresh, from the fixture, instead of reusing
+# whatever the developer's own real environment already resolved (Fable D9's
+# evidence: this exact five-variable `unset` loop, hand-written, appears
+# five times in test_refactor_state_machines.sh and six in
+# test_sourceable_coverage.sh).
+#
+# NEVER call this inside a `( ... )` subshell, and NEVER capture it via
+# `$(with_fixture)` -- command substitution forks a subshell exactly like
+# `( ... )` does, so EVERY environment mutation below (HOME, XDG_STATE_HOME,
+# TMPDIR, the DXE_CONFIG_* unsets) would die with that subshell the instant
+# it exited, the same "state dies with the subshell" trap this file's own
+# header describes for test_pass/test_fail before WP1.1 -- every command
+# that follows in the REAL calling shell would still see the developer's
+# real environment, silently. This is why the fixture directory is NOT
+# returned via stdout: call this plainly (`with_fixture`, no `$(...)`) and
+# read $DXE_FIXTURE_DIR afterward if you need the raw directory (to place
+# something outside HOME/XDG_STATE_HOME/TMPDIR, say); HOME/XDG_STATE_HOME/
+# TMPDIR themselves are usually all a caller needs.
+#
+# The FIRST with_fixture call in a process also snapshots the real,
+# not-yet-redirected known-hosts pin tree (dx_real_ssh_known_hosts_snapshot's
+# idea, tests/test_helpers.sh -- reimplemented here, not called there,
+# because this file must stay sourceable standalone, the direction WP1.1
+# fixed) so finish can prove later that it never changed. The real HOME/
+# XDG_STATE_HOME are captured from THIS call's ambient values, before either
+# is reassigned below -- capturing them any later would already be reading
+# the fixture's own.
+with_fixture() {
+    if [ -z "${DXE_HARNESS_FIXTURE_REAL_HOME:-}" ]; then
+        DXE_HARNESS_FIXTURE_REAL_HOME="$HOME"
+        DXE_HARNESS_FIXTURE_REAL_XDG_STATE_HOME="${XDG_STATE_HOME:-}"
+        DXE_HARNESS_FIXTURE_KNOWN_HOSTS_BEFORE="$(_dxe_harness_known_hosts_snapshot)"
+    fi
+    local dir
+    dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-fixture.XXXXXX")"
+    DXE_FIXTURE_DIR="$dir"
+    HOME="$dir/home"
+    XDG_STATE_HOME="$dir/xdg-state"
+    TMPDIR="$dir/tmp"
+    mkdir -p "$HOME" "$XDG_STATE_HOME" "$TMPDIR"
+    export DXE_FIXTURE_DIR HOME XDG_STATE_HOME TMPDIR
+    local dxe_fixture_config_var
+    for dxe_fixture_config_var in ${!DXE_CONFIG_@}; do
+        unset "$dxe_fixture_config_var"
+    done
+    return 0
+}
+
+# The real (pre-fixture) known-hosts pin tree, read from whichever of
+# HOME/XDG_STATE_HOME with_fixture's FIRST call captured before redirecting
+# either. Same formula as dx_real_ssh_known_hosts_snapshot
+# (tests/test_helpers.sh): ${XDG_STATE_HOME:-$HOME/.local/state}/dxe, and
+# an absent directory is a legitimate, empty snapshot, not an error.
+_dxe_harness_known_hosts_snapshot() {
+    local dir
+    dir="${DXE_HARNESS_FIXTURE_REAL_XDG_STATE_HOME:-$DXE_HARNESS_FIXTURE_REAL_HOME/.local/state}/dxe"
+    [ -d "$dir" ] || return 0
+    find "$dir" -mindepth 1 2>/dev/null | sort
+}
+
+# True if $1 (a suite file path, `finish` passes its own $0) carries a
+# `# skip-ok:` header line anywhere in its source -- the escape hatch for a
+# suite that legitimately records only skips (e.g. every case needs a
+# container that genuinely is not present here). A suite invoked as
+# `bash -c '...'` (no real file backing $0) reads as absent, which is the
+# conservative/correct answer: there is no header to find.
+_dxe_harness_skip_ok_header() {
+    local file="$1"
+    [ -n "$file" ] && [ -r "$file" ] && grep -q '^# skip-ok:' "$file" 2>/dev/null
+}
+
+# One line summarising how many skips were recorded per --class, sorted by
+# class name (`skip "reason"` with no --class records an empty class and is
+# left out of this summary -- finish's caller already sees its count in the
+# main "N skipped" line).
+_dxe_harness_skip_class_summary() {
+    awk -F'\t' '
+        $1 == "skip" && $2 != "" { c[$2]++ }
+        END { for (k in c) print k"="c[k] }
+    ' "$DXE_TEST_RESULTS" 2>/dev/null | sort | tr '\n' ' ' | sed 's/ *$//'
+}
+
 # skip --class live|linux-root|destructive "reason"
 skip() {
     local class="" reason=""
@@ -384,27 +475,71 @@ skip() {
 }
 
 # finish -- prints the same summary line print_summary does (byte-identical
-# format, different data source), then exits non-zero if any case failed,
-# OR if zero cases were recorded at all: a suite that records nothing is
-# not a suite that passed. This last rule is deliberately NOT shared with
-# test_helpers.sh's exit_with_code shim -- several existing suites
-# legitimately record 0 passed / 1 skipped when no container is present
-# (e.g. test_section19_reverse_forward.sh) and must keep exiting 0; only
-# callers of this native `finish` opt into the stricter rule.
+# format, different data source, plus a second "Skipped classes:" line when
+# any skip was recorded, Fable D11), then exits:
+#   1  if any case failed, OR every recorded case was a skip and this
+#      suite's own source (its $0) carries no `# skip-ok:` header line
+#      (Fable D11 -- a suite whose every case skipped is not, on its own, a
+#      suite that passed, unless it says so up front), OR the with_fixture
+#      known-hosts guard below (Fable D9) caught the real
+#      ~/.local/state/dxe tree changing during this run;
+#   3  if zero cases were recorded at all -- kept distinct from 1 so a
+#      dispatch bug (the suite never ran a single case) reads differently
+#      from a suite that ran cases and every one of them skipped.
+# This is deliberately NOT shared with test_helpers.sh's exit_with_code shim
+# -- several existing suites legitimately record 0 passed / 1 skipped when
+# no container is present (e.g. test_section19_reverse_forward.sh) and must
+# keep exiting 0; only callers of this native `finish` opt into these
+# stricter rules.
 finish() {
     _dxe_harness_results_file
+
+    # Fable D9: if with_fixture ever ran in this process, prove the real,
+    # pre-fixture known-hosts pin tree it snapshotted before the first
+    # redirection is byte-identical to what it is now. A suite that leaks
+    # past its own fixture (or a bug in with_fixture itself) writes
+    # somewhere under the developer's real ~/.local/state/dxe; this is the
+    # only place that would ever be caught, since nothing else here re-reads
+    # it after setup.
+    if [ -n "${DXE_HARNESS_FIXTURE_REAL_HOME:-}" ]; then
+        local known_hosts_after
+        known_hosts_after="$(_dxe_harness_known_hosts_snapshot)"
+        if [ "$known_hosts_after" != "$DXE_HARNESS_FIXTURE_KNOWN_HOSTS_BEFORE" ]; then
+            _dxe_harness_record fail "with_fixture isolation: the real ~/.local/state/dxe known-hosts tree changed during this suite"
+            echo "FAIL: with_fixture isolation breach"
+            echo "  the real ~/.local/state/dxe known-hosts tree changed during this suite run"
+        fi
+    fi
+
     local passed failed skipped total
     passed="$(_dxe_harness_count pass)"
     failed="$(_dxe_harness_count fail)"
     skipped="$(_dxe_harness_count skip)"
     total=$((passed + failed + skipped))
+
+    # Fable D11: every recorded case was a skip (total > 0, since a truly
+    # empty run is handled below by the "zero cases" rule, exit 3, not
+    # this one) -- fail unless this suite's own source says that is fine.
+    if [ "$total" -gt 0 ] && [ "$passed" -eq 0 ] && [ "$failed" -eq 0 ]; then
+        if ! _dxe_harness_skip_ok_header "$0"; then
+            _dxe_harness_record fail "finish: every recorded case was a skip and $0 carries no '# skip-ok:' header"
+            failed="$(_dxe_harness_count fail)"
+            total=$((passed + failed + skipped))
+        fi
+    fi
+
     echo ""
     echo "=============================="
     echo -e "Results: ${GREEN}${passed} passed${NC}, ${RED}${failed} failed${NC}, ${YELLOW}${skipped} skipped${NC}"
+    if [ "$skipped" -gt 0 ]; then
+        echo "Skipped classes: $(_dxe_harness_skip_class_summary)"
+    fi
     echo "=============================="
     local status=0
-    if [ "$failed" -gt 0 ] || [ "$total" -eq 0 ]; then
+    if [ "$failed" -gt 0 ]; then
         status=1
+    elif [ "$total" -eq 0 ]; then
+        status=3
     fi
     rm -f "$DXE_TEST_RESULTS"
     exit "$status"
