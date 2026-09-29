@@ -688,97 +688,8 @@ dx_tunnel_stop forward 6500 >/dev/null
 )
 install_essentials
 DX_LINK_ROOT="$fixture/link-root" link_system_bash
-setup_nix_volume
-(
-    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
-    findmnt() { printf '%s\n' '/nix btrfs'; }
-    setup_nix_volume
-)
-mkdir -p /var/lib/dx-nix-raw /nix
-# setup_nix_volume's mount probes intentionally replace mount with a no-op;
-# keep their focus on device selection rather than attempting a real import
-# from the runner's synthetic /nix tree.  Import semantics have a dedicated
-# real-UID behaviour test in test_nix_store_import.sh.
-nix_seed_volume() { :; }
-nix_store_import_registered() { :; }
-# P10: DX_NIX_DISK_SIZE must reach the truncate call that creates the sparse
-# Nix store image, defaulting to 64G. These truncate stubs are recording
-# stubs, not no-ops: they capture the SIZE argument actually used so the
-# assertion proves the value in effect, not merely that truncate ran.
-p10_truncate_default_log="$fixture/p10-truncate-default.log"
-(
-    grep() {
-        if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 1; fi
-        if [ "$*" = '-q /nix ext4 /etc/fstab' ]; then return 1; fi
-        command grep "$@"
-    }
-    findmnt() { return 1; }
-    truncate() { printf '%s\n' "$2" >> "$p10_truncate_default_log"; : > "${3:?}"; }
-    mkfs.ext4() { :; }
-    mount() { :; }
-    umount() { :; }
-    cp() { :; }
-    blkid() { return 1; }
-    setup_nix_volume
-    mkdir -p /mnt/tmp-nix/store
-    setup_nix_volume
-)
-[ "$(cat "$p10_truncate_default_log" 2>/dev/null)" = 64G ] || { echo "Error: prepare_nix_volume_impl's default sparse-image size was '$(cat "$p10_truncate_default_log" 2>/dev/null)', expected 64G." >&2; exit 1; }
-rm -f /var/lib/dx-nix-raw/nix-store.btrfs
-p10_truncate_explicit_log="$fixture/p10-truncate-explicit.log"
-(
-    grep() {
-        if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi
-        if [ "$*" = '-q /nix btrfs /etc/fstab' ]; then return 1; fi
-        command grep "$@"
-    }
-    findmnt() { return 1; }
-    truncate() { printf '%s\n' "$2" >> "$p10_truncate_explicit_log"; : > "${3:?}"; }
-    mkfs.btrfs() { :; }
-    mount() { :; }
-    umount() { :; }
-    cp() { :; }
-    blkid() { return 0; }
-    DX_NIX_DISK_SIZE=200G setup_nix_volume
-)
-[ "$(cat "$p10_truncate_explicit_log" 2>/dev/null)" = 200G ] || { echo "Error: prepare_nix_volume_impl ignored an explicit DX_NIX_DISK_SIZE=200G; truncated at '$(cat "$p10_truncate_explicit_log" 2>/dev/null)'." >&2; exit 1; }
-# The block-device path is driven by shadowing is_block_device rather than by
-# creating a real device node. mknod for a block device needs CAP_MKNOD, which a
-# rootless container runner does not have, so the previous `if mknod ...` form
-# silently skipped these three probes and dropped this file to 85% -- the gate's
-# result depended on whether docker or podman happened to run it.
 fake_block="$fixture/fake-block"
 : > "$fake_block"
-(
-    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
-    findmnt() { case "$*" in *SOURCE*) printf '%s\n' "$fake_block" ;; *) return 1 ;; esac; }
-    is_block_device() { return 0; }
-    blkid() { return 1; }
-    umount() { return 0; }
-    mkfs.btrfs() { :; }
-    mount() { :; }
-    cp() { :; }
-    setup_nix_volume
-)
-(
-    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 1; fi; command grep "$@"; }
-    findmnt() { case "$*" in *SOURCE*) printf '%s\n' "$fake_block" ;; *) return 1 ;; esac; }
-    is_block_device() { return 0; }
-    blkid() { return 1; }
-    umount() { return 0; }
-    mkfs.ext4() { :; }
-    mount() { :; }
-    cp() { :; }
-    setup_nix_volume
-)
-(
-    grep() { if [ "$*" = '-q btrfs /proc/filesystems' ]; then return 0; fi; command grep "$@"; }
-    findmnt() { case "$*" in *SOURCE*) printf '%s\n' "$fake_block" ;; *) return 1 ;; esac; }
-    is_block_device() { return 0; }
-    blkid() { return 1; }
-    umount() { return 1; }
-    setup_nix_volume
-) >/dev/null 2>&1 || true
 
 # is_block_device itself must still be exercised for real, both ways.
 is_block_device /dev/null && exit 1
@@ -1919,8 +1830,6 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     [ -f "$fallback_marker" ] && [ "$(cat "$fallback_marker")" = fallback ] && [ ! -e "$fallback_temporary" ]
 
     DX_NIX_VOLUME_ALREADY_MOUNTED=true DX_NIX_VOLUME_ROOT="$root" populate_prepared_nix_volume
-    populate_prepared_nix_volume() { :; }
-    setup_nix_volume_impl
 
     # Branch 11 / Phase 3: publish_nix_volume_image_identity's chown/
     # publish failure branch (never reached by the Section 3 happy-path

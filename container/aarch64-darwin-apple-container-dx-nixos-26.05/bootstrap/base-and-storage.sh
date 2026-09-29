@@ -21,7 +21,7 @@ install_essentials() {
         echo "Installing essential tools..."
         # Install tools needed for the bootstrap itself into the root profile.
         # util-linux/btrfs-progs/e2fsprogs provide mount/umount/mkfs for the
-        # dedicated /nix volume managed in setup_nix_volume (§2). The download
+        # dedicated /nix volume managed in prepare_nix_volume (§2). The download
         # options mirror run_home_manager_activation so a stalled substituter
         # fetch aborts and retries instead of hanging the whole bootstrap.
         if install_essential_packages; then
@@ -984,25 +984,6 @@ prepare_nix_volume() {
     local phase_started=$SECONDS
     local status
     if prepare_nix_volume_impl "$@"; then
-        echo "Bootstrap phase: Nix volume prepare/mount completed in $((SECONDS - phase_started))s."
-        return 0
-    else
-        status=$?
-    fi
-    echo "Bootstrap phase: Nix volume prepare/mount failed after $((SECONDS - phase_started))s (exit $status)." >&2
-    return "$status"
-}
-
-# Compatibility seam for direct callers: normal bootstrap uses the explicit
-# prepare/create-user/populate sequence above, while this retains the former
-# one-call contract for sourceable probes and maintenance callers.
-setup_nix_volume_impl() {
-    prepare_nix_volume_impl "$@" && populate_prepared_nix_volume
-}
-
-setup_nix_volume() {
-    local phase_started=$SECONDS status
-    if setup_nix_volume_impl "$@"; then
         echo "Bootstrap phase: Nix volume prepare/mount completed in $((SECONDS - phase_started))s."
         return 0
     else
