@@ -9,7 +9,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
+destroy_main() {
 echo "Destroying DX container and image (volumes and keys preserved)..."
 
 "$SCRIPT_DIR/dx-destroy-container"
 "$SCRIPT_DIR/dx-destroy-image"
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then destroy_main "$@"; fi
