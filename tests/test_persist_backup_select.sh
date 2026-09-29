@@ -800,5 +800,184 @@ fi
 rm -f "$git_unreach_repos_file" "$git_unreach_out"
 rm -rf "$git_unreach_root"
 
+# --- WP6.1 coverage: dx_pbs_repo_clean_set's own two `git` failure branches
+# (ls-tree, then diff), exercised directly rather than only through the
+# whole-listing driver above (which never distinguishes WHICH git subcommand
+# failed). Reuses the shadow-`git` idiom above (a function matching by
+# substring against "$*", forwarding everything else to `command git "$@"`),
+# narrowed to the exact subcommand so the sibling call still runs for real --
+# proving each branch is reached on its own. Also checks that the failure
+# path leaves no temp file behind (the mktemp names the cleanup line frees:
+# dxe-pbs-all./dxe-pbs-diff./dxe-pbs-cleanerr., all under $TMPDIR), a
+# before/after count rather than racing the cleanup itself. ---
+dxe_pbs_clean_tmp_count() {
+    find "${TMPDIR:-/tmp}" -maxdepth 1 \( -name 'dxe-pbs-all.*' -o -name 'dxe-pbs-diff.*' -o -name 'dxe-pbs-cleanerr.*' \) 2>/dev/null | wc -l | tr -d '[:space:]'
+}
+
+clean_lstree_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-cleanlstree.XXXXXX")"
+mkdir -p "$clean_lstree_root/git"
+git init -q -b main "$clean_lstree_root/git/repo"
+git -C "$clean_lstree_root/git/repo" config user.email test@example.com
+git -C "$clean_lstree_root/git/repo" config user.name "DXE Test"
+printf 'content\n' > "$clean_lstree_root/git/repo/file.txt"
+git -C "$clean_lstree_root/git/repo" add -A
+git -C "$clean_lstree_root/git/repo" commit -q -m initial
+clean_lstree_target="$clean_lstree_root/git/repo"
+git() {
+    case "$*" in
+        *"$clean_lstree_target ls-tree"*) return 1 ;;
+        *) command git "$@" ;;
+    esac
+}
+clean_lstree_out="$FIXTURE/clean-lstree-out.tsv"
+clean_lstree_stderr="$FIXTURE/clean-lstree-stderr.log"
+clean_lstree_tmp_before="$(dxe_pbs_clean_tmp_count)"
+set +e
+dx_pbs_repo_clean_set "$clean_lstree_target" "$clean_lstree_out" 2> "$clean_lstree_stderr"
+clean_lstree_rc=$?
+set -e
+clean_lstree_tmp_after="$(dxe_pbs_clean_tmp_count)"
+unset -f git
+if [ "$clean_lstree_rc" -ne 0 ]; then
+    test_pass "dx_pbs_repo_clean_set reports failure when git ls-tree fails (dx-persist-backup-select.sh:282-284)"
+else
+    test_fail "dx_pbs_repo_clean_set reports failure when git ls-tree fails (dx-persist-backup-select.sh:282-284)"
+fi
+if grep -Fq "Error: git ls-tree failed:" "$clean_lstree_stderr" && grep -Fq "$clean_lstree_target" "$clean_lstree_stderr"; then
+    test_pass "the git-ls-tree failure names the repository in an Error: line"
+else
+    test_fail "the git-ls-tree failure names the repository in an Error: line (stderr: $(cat "$clean_lstree_stderr"))"
+fi
+if [ "$clean_lstree_tmp_before" = "$clean_lstree_tmp_after" ]; then
+    test_pass "dx_pbs_repo_clean_set's git-ls-tree failure leaves no temp file behind"
+else
+    test_fail "dx_pbs_repo_clean_set's git-ls-tree failure leaves no temp file behind (before=$clean_lstree_tmp_before after=$clean_lstree_tmp_after)"
+fi
+rm -rf "$clean_lstree_root"
+
+clean_diff_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-cleandiff.XXXXXX")"
+mkdir -p "$clean_diff_root/git"
+git init -q -b main "$clean_diff_root/git/repo"
+git -C "$clean_diff_root/git/repo" config user.email test@example.com
+git -C "$clean_diff_root/git/repo" config user.name "DXE Test"
+printf 'content\n' > "$clean_diff_root/git/repo/file.txt"
+git -C "$clean_diff_root/git/repo" add -A
+git -C "$clean_diff_root/git/repo" commit -q -m initial
+clean_diff_target="$clean_diff_root/git/repo"
+git() {
+    case "$*" in
+        *"$clean_diff_target diff"*) return 1 ;;
+        *) command git "$@" ;;
+    esac
+}
+clean_diff_out="$FIXTURE/clean-diff-out.tsv"
+clean_diff_stderr="$FIXTURE/clean-diff-stderr.log"
+clean_diff_tmp_before="$(dxe_pbs_clean_tmp_count)"
+set +e
+dx_pbs_repo_clean_set "$clean_diff_target" "$clean_diff_out" 2> "$clean_diff_stderr"
+clean_diff_rc=$?
+set -e
+clean_diff_tmp_after="$(dxe_pbs_clean_tmp_count)"
+unset -f git
+if [ "$clean_diff_rc" -ne 0 ]; then
+    test_pass "dx_pbs_repo_clean_set reports failure when git diff fails (dx-persist-backup-select.sh:289-291)"
+else
+    test_fail "dx_pbs_repo_clean_set reports failure when git diff fails (dx-persist-backup-select.sh:289-291)"
+fi
+if grep -Fq "Error: git diff failed:" "$clean_diff_stderr" && grep -Fq "$clean_diff_target" "$clean_diff_stderr"; then
+    test_pass "the git-diff failure names the repository in an Error: line"
+else
+    test_fail "the git-diff failure names the repository in an Error: line (stderr: $(cat "$clean_diff_stderr"))"
+fi
+if [ "$clean_diff_tmp_before" = "$clean_diff_tmp_after" ]; then
+    test_pass "dx_pbs_repo_clean_set's git-diff failure leaves no temp file behind"
+else
+    test_fail "dx_pbs_repo_clean_set's git-diff failure leaves no temp file behind (before=$clean_diff_tmp_before after=$clean_diff_tmp_after)"
+fi
+rm -rf "$clean_diff_root"
+
+# --- WP6.1 coverage: dx_pbs_walk_repo_files's OWN "directory traversal
+# failed" branch (find fails inside the walker's own per-repo subshell) --
+# distinct from dx_pbs_list_outside_repos's separate find-failure branch
+# already covered above ("a failing find (after printing partial output)
+# makes the listing exit non-zero"), which is a different call site. Reached
+# by calling the walker directly on a small, standalone repo directory (not
+# via the full listing driver), so only THIS call site's `find` is under
+# test. Reuses the same unconditional-failure `find` shadow used above. ---
+walk_fail_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-walkfail.XXXXXX")"
+mkdir -p "$walk_fail_root/repo"
+printf 'content\n' > "$walk_fail_root/repo/file.txt"
+walk_fail_target="$walk_fail_root/repo"
+find() { printf 'partial/output\0'; return 1; }
+walk_fail_stderr="$FIXTURE/wp61-walkfail-stderr.log"
+set +e
+dx_pbs_walk_repo_files "$walk_fail_target" > /dev/null 2> "$walk_fail_stderr"
+walk_fail_rc=$?
+set -e
+unset -f find
+if [ "$walk_fail_rc" -ne 0 ]; then
+    test_pass "dx_pbs_walk_repo_files reports failure when its own directory traversal fails (dx-persist-backup-select.sh:411-413)"
+else
+    test_fail "dx_pbs_walk_repo_files reports failure when its own directory traversal fails (dx-persist-backup-select.sh:411-413)"
+fi
+if grep -Fq "directory traversal failed" "$walk_fail_stderr" && grep -Fq "$walk_fail_target" "$walk_fail_stderr" && grep -q '^Error:' "$walk_fail_stderr"; then
+    test_pass "the walker's directory-traversal failure names the repository directory in an Error: line"
+else
+    test_fail "the walker's directory-traversal failure names the repository directory in an Error: line (stderr: $(cat "$walk_fail_stderr"))"
+fi
+rm -rf "$walk_fail_root"
+
+# --- WP6.1 coverage: dx_pbs_emit_repo_safe's own "git ls-files failed"
+# branch, reached only in --with-reason mode (the plain listing never calls
+# git ls-files at all -- see the function's own comment). Exercised by
+# calling dx_pbs_emit_repo_safe directly with reason_mode set, on a small,
+# standalone, pushed-and-clean repo (its at-risk-whole status is irrelevant
+# here: dx_pbs_emit_repo_safe itself never consults it, only its own caller
+# dx_pbs_emit_repo does). Also checks the failure path leaves no temp file
+# behind, same before/after idiom as the clean_set cases above. ---
+dxe_pbs_emitsafe_tmp_count() {
+    find "${TMPDIR:-/tmp}" -maxdepth 1 \( -name 'dxe-pbs-clean.*' -o -name 'dxe-pbs-found.*' -o -name 'dxe-pbs-delta.*' -o -name 'dxe-pbs-ignored.*' -o -name 'dxe-pbs-ignoredrr.*' \) 2>/dev/null | wc -l | tr -d '[:space:]'
+}
+emitsafe_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-emitsafe.XXXXXX")"
+mkdir -p "$emitsafe_root/git"
+git init -q -b main "$emitsafe_root/git/repo"
+git -C "$emitsafe_root/git/repo" config user.email test@example.com
+git -C "$emitsafe_root/git/repo" config user.name "DXE Test"
+printf 'content\n' > "$emitsafe_root/git/repo/file.txt"
+git -C "$emitsafe_root/git/repo" add -A
+git -C "$emitsafe_root/git/repo" commit -q -m initial
+emitsafe_target="$emitsafe_root/git/repo"
+git() {
+    case "$*" in
+        *"$emitsafe_target ls-files"*) return 1 ;;
+        *) command git "$@" ;;
+    esac
+}
+emitsafe_out="$FIXTURE/emitsafe-out.tsv"
+emitsafe_stderr="$FIXTURE/emitsafe-stderr.log"
+emitsafe_tmp_before="$(dxe_pbs_emitsafe_tmp_count)"
+set +e
+dx_pbs_emit_repo_safe "$emitsafe_target" repo reason > "$emitsafe_out" 2> "$emitsafe_stderr"
+emitsafe_rc=$?
+set -e
+emitsafe_tmp_after="$(dxe_pbs_emitsafe_tmp_count)"
+unset -f git
+if [ "$emitsafe_rc" -ne 0 ]; then
+    test_pass "dx_pbs_emit_repo_safe reports failure when git ls-files fails in --with-reason mode (dx-persist-backup-select.sh:523-525)"
+else
+    test_fail "dx_pbs_emit_repo_safe reports failure when git ls-files fails in --with-reason mode (dx-persist-backup-select.sh:523-525)"
+fi
+if grep -Fq "Error: git ls-files failed:" "$emitsafe_stderr" && grep -Fq "$emitsafe_target" "$emitsafe_stderr"; then
+    test_pass "the git-ls-files failure names the repository in an Error: line"
+else
+    test_fail "the git-ls-files failure names the repository in an Error: line (stderr: $(cat "$emitsafe_stderr"))"
+fi
+if [ "$emitsafe_tmp_before" = "$emitsafe_tmp_after" ]; then
+    test_pass "dx_pbs_emit_repo_safe's git-ls-files failure leaves no temp file behind"
+else
+    test_fail "dx_pbs_emit_repo_safe's git-ls-files failure leaves no temp file behind (before=$emitsafe_tmp_before after=$emitsafe_tmp_after)"
+fi
+rm -rf "$emitsafe_root"
+
 print_summary
 exit_with_code
