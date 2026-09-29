@@ -257,6 +257,30 @@ if dx_pbs_path_denied "scratch/throwaway.tmp"; then test_pass "dx_pbs_path_denie
 # shellcheck disable=SC2034
 DX_PBS_EXTRA_DENY=""
 
+# --- Regression (Fable B5 / WP3.3 defect A): a `for pattern in $VAR` word
+# list undergoes BOTH word-splitting AND pathname (glob) expansion against
+# the CURRENT DIRECTORY. A CWD entry that happens to match a deny pattern's
+# glob (e.g. "result-*") silently REPLACES the pattern word itself with the
+# matched filename before it is ever compared, breaking the deny check for
+# every other path that pattern was meant to match -- reproduced by
+# Fable from a directory containing a file literally named "result-bin".
+# The selector itself never `cd`s (its CWD is whatever `container
+# exec`/`docker exec` supplies), so this is a real, live-reachable
+# condition, not a test artefact. ---
+cwd_glob_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-cwdglob.XXXXXX")"
+: > "$cwd_glob_dir/result-bin"
+(
+    cd "$cwd_glob_dir" || exit 1
+    dx_pbs_path_denied "p/result-abc"
+)
+cwd_glob_rc=$?
+rm -rf "$cwd_glob_dir"
+if [ "$cwd_glob_rc" -eq 0 ]; then
+    test_pass "dx_pbs_path_denied: a CWD entry matching a deny glob (result-bin) does not stop that same glob from denying an unrelated path (result-abc)"
+else
+    test_fail "dx_pbs_path_denied: a CWD entry matching a deny glob (result-bin) does not stop that same glob from denying an unrelated path (result-abc)"
+fi
+
 # --- dx_pbs_repo_at_risk_whole: direct unit-level checks. ---
 if dx_pbs_repo_at_risk_whole "$FIXTURE/persist/git/repo-a"; then test_fail "repo-a (pushed, clean HEAD) is not at-risk as a whole"; else test_pass "repo-a (pushed, clean HEAD) is not at-risk as a whole"; fi
 if dx_pbs_repo_at_risk_whole "$FIXTURE/persist/git/repo-b"; then test_pass "repo-b (unpushed commit) is at-risk as a whole"; else test_fail "repo-b (unpushed commit) is at-risk as a whole"; fi
@@ -337,8 +361,8 @@ if printf '%s\n' "$denied_listing" | stdin_matches -F "$(printf 'readable/file.t
 # four inline copies) drifts from the others. `.git` is excluded: it is a
 # separate, deliberate special case (pruned in some of the same `find`
 # expressions), never part of the deny-list. ---
-deny_words_sorted="$(printf '%s\n' $DX_PBS_BUILTIN_COMPONENT_DENY | LC_ALL=C sort)"
-deny_word_count="$(printf '%s\n' $DX_PBS_BUILTIN_COMPONENT_DENY | wc -l | tr -d '[:space:]')"
+deny_words_sorted="$(printf '%s\n' "${DX_PBS_BUILTIN_COMPONENT_DENY[@]}" | LC_ALL=C sort)"
+deny_word_count="$(printf '%s\n' "${DX_PBS_BUILTIN_COMPONENT_DENY[@]}" | wc -l | tr -d '[:space:]')"
 extracted="$(grep -oE -- "-name '[^']*'|-name [^ ]+" "$SELECTOR" | sed -E "s/^-name '?//; s/'\$//" | grep -vFx '.git')"
 extracted_count="$(printf '%s\n' "$extracted" | grep -c .)"
 extracted_sorted_unique="$(printf '%s\n' "$extracted" | LC_ALL=C sort -u)"
