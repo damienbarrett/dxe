@@ -151,23 +151,32 @@ dx_wait_until() {
     done
 }
 
-dx_lock_acquire() {
-    local lock_dir="$1" timeout="${2:-5}" elapsed=0 owner pid start current
-    owner="$lock_dir/owner"
-    if [ -z "${DXE_SELF_PROCESS_IDENTITY:-}" ]; then
-        DXE_SELF_PROCESS_IDENTITY="$(dx_process_start_identity "$$" || true)"
-    fi
+# dx_wait_until's predicate for dx_lock_acquire (WP4.2 / Fable A6). Owns its
+# own tight inner loop for the two stale-owner reclaim cases: those retry
+# mkdir immediately (no wait -- the lock just became free), exactly as the
+# original `continue` did, so only genuine contention (mkdir lost, and the
+# current owner is still live) falls through to `return 1` and lets
+# dx_wait_until back off for an interval before trying again. A concurrent
+# symlink swap is refused on every attempt, same as before; it sets the
+# caller's `dx_lock_acquire_refused` flag (Bash dynamic scoping, same
+# mechanism dx_bootstrap_confirm_publication_check uses) so dx_lock_acquire
+# does not also print the generic timeout message once dx_wait_until gives
+# up.
+dx_lock_acquire_check() {
+    local lock_dir="$1" owner="$1/owner" pid start current
     while :; do
         if mkdir "$lock_dir" 2>/dev/null; then
             chmod 0700 "$lock_dir"
-            start="$DXE_SELF_PROCESS_IDENTITY"
-            [ -n "$start" ] || { rmdir "$lock_dir" 2>/dev/null || true; echo "Error: cannot identify lock owner process." >&2; return 1; }
-            printf '%s\t%s\n' "$$" "$start" > "$owner"
+            printf '%s\t%s\n' "$$" "$DXE_SELF_PROCESS_IDENTITY" > "$owner"
             chmod 0600 "$owner"
             DXE_HELD_LOCK="$lock_dir"
             return 0
         fi
-        [ ! -L "$lock_dir" ] || { echo "Error: refusing symlinked lock path $lock_dir." >&2; return 1; }
+        if [ -L "$lock_dir" ]; then
+            echo "Error: refusing symlinked lock path $lock_dir." >&2
+            dx_lock_acquire_refused=1
+            return 1
+        fi
         if [ -f "$owner" ]; then
             IFS="$(printf '\t')" read -r pid start < "$owner" || true
             current="$(dx_process_start_identity "${pid:-0}" || true)"
@@ -182,10 +191,20 @@ dx_lock_acquire() {
                 continue
             fi
         fi
-        [ "$elapsed" -lt "$timeout" ] || { echo "Error: timed out waiting for lock $lock_dir." >&2; return 1; }
-        sleep 1
-        elapsed=$((elapsed + 1))
+        return 1
     done
+}
+
+dx_lock_acquire() {
+    local lock_dir="$1" timeout="${2:-5}"
+    local dx_lock_acquire_refused=""
+    if [ -z "${DXE_SELF_PROCESS_IDENTITY:-}" ]; then
+        DXE_SELF_PROCESS_IDENTITY="$(dx_process_start_identity "$$" || true)"
+    fi
+    [ -n "$DXE_SELF_PROCESS_IDENTITY" ] || { echo "Error: cannot identify lock owner process." >&2; return 1; }
+    dx_wait_until "$timeout" 1 dx_lock_acquire_check "$lock_dir" && return 0
+    [ -n "$dx_lock_acquire_refused" ] || echo "Error: timed out waiting for lock $lock_dir." >&2
+    return 1
 }
 
 dx_lock_release() {
