@@ -29,19 +29,37 @@ if [ "$SUMMARY" = true ] && [ "$DRY_RUN" != true ]; then
     exit 64
 fi
 
+# Resolved and validated BEFORE any container/guest call (Astra F6 / Muse
+# B3 / WP3.3 defect C): dx_backup_read_exclude_patterns correctly returns
+# failure and prints an Error naming an unreadable explicit
+# DX_BACKUP_EXCLUDE_FILE, but running it inside `done < <(...)` -- a
+# process substitution -- let the surrounding `while` loop's own exit
+# status (reading zero lines from a closed, empty pipe) mask that failure:
+# backup continued with an empty extra deny-list instead of aborting,
+# potentially copying data the operator explicitly meant to exclude. Its
+# output is read into a real temp file first so the function's own exit
+# status can be checked directly, and the check happens before
+# container_exists/container_is_running below so a bad exclude file is
+# never worth even a single guest round trip.
+DENY_PATTERNS=()
+EXCLUDE_FILE="$(dx_backup_resolve_exclude_file)"
+if [ -n "$EXCLUDE_FILE" ]; then
+    EXCLUDE_PATTERNS_TMP="$(mktemp "${TMPDIR:-/tmp}/dxe-dx-backup-exclude.XXXXXX")"
+    if ! dx_backup_read_exclude_patterns "$EXCLUDE_FILE" > "$EXCLUDE_PATTERNS_TMP"; then
+        rm -f "$EXCLUDE_PATTERNS_TMP"
+        exit 1
+    fi
+    while IFS= read -r pattern; do
+        DENY_PATTERNS+=("$pattern")
+    done < "$EXCLUDE_PATTERNS_TMP"
+    rm -f "$EXCLUDE_PATTERNS_TMP"
+fi
+
 container_exists "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME does not exist. Run ./bin/dx-create-container first." >&2; exit 1; }
 container_is_running "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start-container first." >&2; exit 1; }
 
 BACKUP_DIR="$(dx_backup_resolve_dir)"
 MANIFEST="$BACKUP_DIR/manifest.tsv"
-
-DENY_PATTERNS=()
-EXCLUDE_FILE="$(dx_backup_resolve_exclude_file)"
-if [ -n "$EXCLUDE_FILE" ]; then
-    while IFS= read -r pattern; do
-        DENY_PATTERNS+=("$pattern")
-    done < <(dx_backup_read_exclude_patterns "$EXCLUDE_FILE")
-fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dx-backup.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT

@@ -383,29 +383,73 @@ chmod 0755 "$denied_root/no-access"
 if grep -qi 'permission denied' "$denied_stderr"; then test_fail "a permission-denied subtree produces no noisy find stderr"; else test_pass "a permission-denied subtree produces no noisy find stderr"; fi
 if printf '%s\n' "$denied_listing" | stdin_matches -F "$(printf 'readable/file.txt\t')"; then test_pass "a permission-denied subtree does not stop readable siblings from being listed"; else test_fail "a permission-denied subtree does not stop readable siblings from being listed"; fi
 
-# --- Regression guard: the deny-list is inline-duplicated across four
-# `find` prune expressions (dx_pbs_walk_repo_files's two branches,
+# --- Equivalence property (Fable B5 / Astra F6 / Muse B3, WP3.3 defect C):
+# the SAME component deny-list was hand-expanded as literal `find -name`
+# clauses at four sites (dx_pbs_walk_repo_files's two branches,
 # dx_pbs_list_outside_repos's two branches) as well as declared once in
-# DX_PBS_BUILTIN_COMPONENT_DENY. Chose a test over deriving the `find
-# -name` clauses from the variable at runtime (the coordinating session
-# offered either; this is the smaller, clearer change -- it leaves four
-# already-live-verified find pipelines exactly as they are, with their
-# deny names still literal and readable in place, rather than adding a
-# layer of array-building indirection to all four). This test fails
-# loudly the moment any of the five places (the variable, or any of the
-# four inline copies) drifts from the others. `.git` is excluded: it is a
-# separate, deliberate special case (pruned in some of the same `find`
-# expressions), never part of the deny-list. ---
-deny_words_sorted="$(printf '%s\n' "${DX_PBS_BUILTIN_COMPONENT_DENY[@]}" | LC_ALL=C sort)"
-deny_word_count="$(printf '%s\n' "${DX_PBS_BUILTIN_COMPONENT_DENY[@]}" | wc -l | tr -d '[:space:]')"
-extracted="$(grep -oE -- "-name '[^']*'|-name [^ ]+" "$SELECTOR" | sed -E "s/^-name '?//; s/'\$//" | grep -vFx '.git')"
-extracted_count="$(printf '%s\n' "$extracted" | grep -c .)"
-extracted_sorted_unique="$(printf '%s\n' "$extracted" | LC_ALL=C sort -u)"
-if [ "$extracted_count" -eq $((deny_word_count * 4)) ] && [ "$extracted_sorted_unique" = "$deny_words_sorted" ]; then
-    test_pass "the deny-list's 4 inline find-expression copies agree with DX_PBS_BUILTIN_COMPONENT_DENY"
+# DX_PBS_BUILTIN_COMPONENT_DENY -- five independent, hand-synced copies. A
+# prior version of this guard only diffed the SOURCE TEXT of the four
+# `find` blocks against the variable (a config-parsing check); this
+# supersedes it with a BEHAVIOURAL one (constitution: "tests should
+# validate behaviour, not simply parsing configuration files"): build a
+# fixture containing EVERY built-in component-deny name as its own
+# directory (each with one file inside), plus one always-allowed
+# directory, then assert dx_pbs_walk_repo_files's and
+# dx_pbs_list_outside_repos's own traversal output is EXACTLY the set of
+# candidate files dx_pbs_path_denied accepts (denies none of the allowed
+# file, accepts none of the denied ones) -- true agreement between the
+# matcher and BOTH traversal entry points, not just that their source text
+# happens to match today. Scoped to component names only (not
+# DX_PBS_BUILTIN_PATH_DENY): PATH_DENY entries are anchored full-path globs,
+# never represented as `find -name` prune clauses at all (they are filtered
+# downstream, per candidate, by dx_pbs_path_denied itself -- see
+# dx_pbs_list_outside_repos and dx_pbs_emit_found_list), so they are
+# outside what these four `find` sites are responsible for pruning. ---
+eq_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-equiv.XXXXXX")"
+mkdir -p "$eq_fixture/allowed"
+printf 'kept\n' > "$eq_fixture/allowed/leaf.txt"
+for eq_name in node_modules target .direnv result result-anything __pycache__ \
+    .cache dist build .venv .tox .pytest_cache .mypy_cache .pnpm-store \
+    .Trash-1000 .tmp; do
+    mkdir -p "$eq_fixture/$eq_name"
+    printf 'denied\n' > "$eq_fixture/$eq_name/leaf.txt"
+done
+eq_empty_repos="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-equiv-repos.XXXXXX")"
+: > "$eq_empty_repos"
+
+eq_walk_paths="$(dx_pbs_walk_repo_files "$eq_fixture" 2>/dev/null | tr '\0' '\n' | grep -v '^$' | LC_ALL=C sort)"
+eq_outside_paths="$(dx_pbs_list_outside_repos "$eq_fixture" "$eq_empty_repos" 2>/dev/null | cut -f1 | LC_ALL=C sort)"
+eq_accepted="$(
+    for eq_name in allowed node_modules target .direnv result result-anything \
+        __pycache__ .cache dist build .venv .tox .pytest_cache .mypy_cache \
+        .pnpm-store .Trash-1000 .tmp; do
+        eq_candidate="$eq_name/leaf.txt"
+        dx_pbs_path_denied "$eq_candidate" || printf '%s\n' "$eq_candidate"
+    done | LC_ALL=C sort
+)"
+
+if [ "$eq_walk_paths" = "allowed/leaf.txt" ]; then
+    test_pass "dx_pbs_walk_repo_files's own find-pruning excludes every built-in component-deny name, keeping only the allowed file"
 else
-    test_fail "the deny-list's 4 inline find-expression copies agree with DX_PBS_BUILTIN_COMPONENT_DENY (extracted $extracted_count entries, expected $((deny_word_count * 4)); extracted set: [$extracted_sorted_unique]; variable set: [$deny_words_sorted])"
+    test_fail "dx_pbs_walk_repo_files's own find-pruning excludes every built-in component-deny name, keeping only the allowed file (got: [$eq_walk_paths])"
 fi
+if [ "$eq_outside_paths" = "allowed/leaf.txt" ]; then
+    test_pass "dx_pbs_list_outside_repos excludes every built-in component-deny name, keeping only the allowed file"
+else
+    test_fail "dx_pbs_list_outside_repos excludes every built-in component-deny name, keeping only the allowed file (got: [$eq_outside_paths])"
+fi
+if [ "$eq_walk_paths" = "$eq_accepted" ]; then
+    test_pass "dx_pbs_walk_repo_files's traversal output is exactly the set dx_pbs_path_denied accepts"
+else
+    test_fail "dx_pbs_walk_repo_files's traversal output is exactly the set dx_pbs_path_denied accepts (walk: [$eq_walk_paths], matcher-accepted: [$eq_accepted])"
+fi
+if [ "$eq_outside_paths" = "$eq_accepted" ]; then
+    test_pass "dx_pbs_list_outside_repos's traversal output is exactly the set dx_pbs_path_denied accepts"
+else
+    test_fail "dx_pbs_list_outside_repos's traversal output is exactly the set dx_pbs_path_denied accepts (outside: [$eq_outside_paths], matcher-accepted: [$eq_accepted])"
+fi
+rm -rf "$eq_fixture"
+rm -f "$eq_empty_repos"
 
 # --- Branch 17: --with-reason mode. Every line gets a 5th <TAB>reason
 # column: modified-untracked, whole-repo, outside-repo, or ignored-kept.

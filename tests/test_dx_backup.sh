@@ -170,6 +170,85 @@ DX_BACKUP_EXCLUDE_FILE="$FIXTURE/excludes.txt" "$BASE_DIR/bin/dx-backup" >/dev/n
 if [ ! -e "$BACKUP_ROOT/current/home/dx/drop-me.tmp" ]; then test_pass "DX_BACKUP_EXCLUDE_FILE is honoured end to end"; else test_fail "DX_BACKUP_EXCLUDE_FILE is honoured end to end"; fi
 rm -f "$FIXTURE/persist/home/dx/drop-me.tmp"
 
+# --- An explicit DX_BACKUP_EXCLUDE_FILE naming a NONEXISTENT path (Astra F6
+# / Muse B3 / WP3.3 defect C): dx_backup_read_exclude_patterns correctly
+# returns failure and prints an Error naming the path, but the original
+# code ran it inside `done < <(...)` -- a process substitution whose exit
+# status the surrounding `while` loop never inspects. Backup continued with
+# an empty extra deny-list, potentially copying data the operator
+# explicitly meant to exclude. Must abort BEFORE any guest round trip (no
+# point spending a container exec/list/system call on a run that is about
+# to fail anyway). A `container` fake that logs every single invocation
+# (not just `exec`, like the Branch 17 fakes above -- this must catch
+# container_exists/container_is_running's own `list` calls too) proves
+# "zero guest calls", not just "the transfer never happened". ---
+# A dedicated, fresh DX_BACKUP_DIR (like the shared_base/default-exclude
+# blocks elsewhere in this file): this sub-test's `container` fake returns
+# an empty listing unconditionally, which would otherwise corrupt
+# test-container's own manifest.tsv/current mirror (built up by every test
+# above and relied on by tests below) by making dx_backup_diff see
+# everything as "no longer at-risk". Isolating it here means this block
+# can never affect any other test's state.
+missing_exclude_backup_dir="$FIXTURE/missing-exclude-backups"
+rm -rf "$missing_exclude_backup_dir"
+CALL_LOG="$FIXTURE/call.log"
+: > "$CALL_LOG"
+fake_tool_write "$FAKE_DIR" container '
+printf "%s\n" "$*" >> '"'$CALL_LOG'"'
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container container-a container-b; exit 0 ;;
+    exec) exit 0 ;;
+esac
+exit 1
+'
+missing_exclude="$FIXTURE/does-not-exist-exclude.txt"
+rm -f "$missing_exclude"
+set +e
+missing_exclude_out="$(DX_BACKUP_DIR="$missing_exclude_backup_dir" DX_BACKUP_EXCLUDE_FILE="$missing_exclude" "$BASE_DIR/bin/dx-backup" 2>&1)"
+missing_exclude_rc=$?
+set -e
+if [ "$missing_exclude_rc" -ne 0 ]; then
+    test_pass "an explicit DX_BACKUP_EXCLUDE_FILE naming an absent path is a clear, nonzero error"
+else
+    test_fail "an explicit DX_BACKUP_EXCLUDE_FILE naming an absent path is a clear, nonzero error (rc=$missing_exclude_rc, out: $missing_exclude_out)"
+fi
+if printf '%s\n' "$missing_exclude_out" | stdin_matches -F "Error:" && printf '%s\n' "$missing_exclude_out" | stdin_matches -F "$missing_exclude"; then
+    test_pass "the error names the missing exclude file's path"
+else
+    test_fail "the error names the missing exclude file's path (out: $missing_exclude_out)"
+fi
+if [ -s "$CALL_LOG" ]; then
+    test_fail "an absent explicit exclude file aborts before any guest call (container was invoked: $(cat "$CALL_LOG"))"
+else
+    test_pass "an absent explicit exclude file aborts before any guest call"
+fi
+rm -f "$CALL_LOG"
+rm -rf "$missing_exclude_backup_dir"
+
+# Restore the well-behaved fake container for the remaining checks.
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$FIXTURE"'/persist"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container container-a container-b; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :; # a real guest'"'"'s tar is always GNU tar, which supports this; this test host'"'"'s own bsdtar (standing in for it here) does not, so it is stripped before the real local exec -- any ARG log this fake keeps is written before this filtering, so it still records that dx-backup passed it.
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+
 # --- CLI hygiene. ---
 if "$BASE_DIR/bin/dx-backup" --not-a-real-flag >/dev/null 2>&1; then test_fail "an unrecognized flag is a usage error"; else test_pass "an unrecognized flag is a usage error"; fi
 if DX_CONTAINER_NAME=no-such-container "$BASE_DIR/bin/dx-backup" >/dev/null 2>&1; then test_fail "a nonexistent container is a clear error"; else test_pass "a nonexistent container is a clear error"; fi
