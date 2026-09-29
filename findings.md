@@ -232,7 +232,7 @@ Every review ID and where it lands.
   rest. Remove each from `exclusions.txt` as it lands. *Red:* contract that
   sources each `bin/dx*` with no output, no exit, `<name>_main` defined.
   (Fable A4, Muse A1)
-- [ ] **WP4.2** `dx_wait_until <timeout> <interval> <cmd…>` with `DX_SLEEP`;
+- [x] 3de5916..41822f3 **WP4.2** `dx_wait_until <timeout> <interval> <cmd…>` with `DX_SLEEP`;
   migrate the seven loops one per commit; `dx-sync-bootstrap` honours
   `DX_BOOTSTRAP_WAIT_TIMEOUT`. (Fable A6)
 - [x] 2f734a7..b6ddceb **WP4.3** Config registry: validator rejects unknown names;
@@ -376,3 +376,4 @@ Every review ID and where it lands.
 - **2026-09-30** Entrypoint and F6 probes now run from files (kcov PS4/BASH_SOURCE); F6 additionally asserts the `1 failed` summary so a crash cannot satisfy it. Verified green under kcov in the image.
 - **2026-09-30** Fourth local kcov run: contracts and sections 3/22 green under kcov; `test_persist_backup_select.sh` failed WP6.1's chmod-000 case because the image runs as root (Astra F1 warned about this). Fix in progress: drop privileges with `setpriv` when root, classed skip otherwise.
 - **2026-09-30** Permission-denied case drops to uid 65534 via `setpriv` when root (classed skip without it); verified 94/94 as root under kcov in the image.
+- **2026-09-30** WP4.2 landed (7 commits through 41822f3): `dx_wait_until` with `DX_SLEEP`; `container_wait_stopped`, `dx_bootstrap_confirm_publication`, `dx_lock_acquire`, both `dx-sync-bootstrap` loops migrated (the 30-iteration loop now honours `DX_BOOTSTRAP_WAIT_TIMEOUT`); `dx-wait-ssh` keeps its wall-clock loop by design and only takes the `DX_SLEEP` seam; the launcher grace loop is guest heredoc text (WP5.2). Suite 36 (`test_host_util.sh`) registered in all runners. Two small documented behaviour refinements in `dx_lock_acquire` (identity check up front; no double timeout message on symlink refusal).
