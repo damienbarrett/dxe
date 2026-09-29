@@ -456,17 +456,17 @@ dx_backup_restore_status() {
     [ "${#target_list[@]}" -gt 0 ] || return 0
 
     hashes="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-hash.XXXXXX")"
-    if [ "${#target_list[@]}" -gt "$DX_BACKUP_HASH_PATHS_ARG_THRESHOLD" ]; then
-        local guest_list
-        if guest_list="$(dx_backup_ship_list_to_guest "$container_name" "$targets")"; then
+    local guest_list
+    if guest_list="$(dx_backup_ship_list "$container_name" "$targets" "${#target_list[@]}")"; then
+        if [ -n "$guest_list" ]; then
             dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" --hash-paths-file "$DX_BACKUP_GUEST_ROOT" "$guest_list" </dev/null > "$hashes"
             dx_backup_remove_guest_list "$container_name" "$guest_list"
         else
-            rm -f "$hashes"
-            return 1
+            dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" --hash-paths "$DX_BACKUP_GUEST_ROOT" "${target_list[@]}" > "$hashes"
         fi
     else
-        dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" --hash-paths "$DX_BACKUP_GUEST_ROOT" "${target_list[@]}" > "$hashes"
+        rm -f "$hashes"
+        return 1
     fi
 
     # Only a target the guest batch reports "present" can ever need a local
