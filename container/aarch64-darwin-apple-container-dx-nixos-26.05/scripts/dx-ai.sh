@@ -516,8 +516,34 @@ dx_ai_recover_generation() {
     echo "Recovered AI generation $predecessor (from $current)."
 }
 
+# Merge a jq filter into a JSON object file and replace it atomically.
+#
+# Refuses to touch a file that does not parse as a JSON object (an absent or
+# empty file is the caller's job to seed first, e.g. with
+# `[ -s "$file" ] || printf '%s\n' '{}' > "$file"`; this only guards the
+# merge itself) and refuses to install an empty or failed jq result over it.
+# Both guards matter: `jq -e '.someKey' "$file"`, the usual "does this
+# setting already exist" probe callers use to decide whether to call this at
+# all, fails identically for "key absent" and "not JSON" -- so an unparseable
+# file reaches here exactly like one that legitimately needs the merge, and
+# the type check is what tells them apart before anything is written.
+dx_ai_merge_json_setting() {
+    local file="$1" filter="$2" tmp
+    jq -e 'type=="object"' "$file" >/dev/null 2>&1 \
+        || { echo "Error: $file is not a JSON object; refusing to rewrite it" >&2; return 1; }
+    tmp="$file.tmp.$$"
+    jq "$filter" "$file" > "$tmp"
+    if [ -s "$tmp" ]; then
+        mv "$tmp" "$file"
+    else
+        rm -f "$tmp"
+        echo "Error: failed to update $file; left unchanged" >&2
+        return 1
+    fi
+}
+
 dx_ai_setup_credentials() {
-    local persist_home="${1:-/persist/home/dx}" home="${2:-$HOME}" settings tmp
+    local persist_home="${1:-/persist/home/dx}" home="${2:-$HOME}" settings
     dx_ai_load_opencode_persistence || return 1
     dx_ai_opencode_persistence "$persist_home" "$home" || return 1
     mkdir -p "$persist_home/.gemini/antigravity-cli" "$persist_home/.claude" "$persist_home/.codex" \
@@ -528,17 +554,7 @@ dx_ai_setup_credentials() {
     ln -sfnT "$persist_home/.local/share/keyrings" "$home/.local/share/keyrings"
     settings="$persist_home/.claude/settings.json"; [ -s "$settings" ] || printf '%s\n' '{}' > "$settings"
     if ! jq -e '.statusLine' "$settings" >/dev/null 2>&1; then
-        jq -e 'type=="object"' "$settings" >/dev/null 2>&1 \
-            || { echo "Error: $settings is not a JSON object; refusing to rewrite it" >&2; return 1; }
-        tmp="$settings.tmp.$$"
-        jq '. + {statusLine: {type: "command", command: "dx-claude-statusline"}}' "$settings" > "$tmp"
-        if [ -s "$tmp" ]; then
-            mv "$tmp" "$settings"
-        else
-            rm -f "$tmp"
-            echo "Error: failed to update $settings; left unchanged" >&2
-            return 1
-        fi
+        dx_ai_merge_json_setting "$settings" '. + {statusLine: {type: "command", command: "dx-claude-statusline"}}' || return 1
     fi
 }
 
