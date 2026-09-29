@@ -281,6 +281,41 @@ else
     test_fail "dx_pbs_path_denied: a CWD entry matching a deny glob (result-bin) does not stop that same glob from denying an unrelated path (result-abc)"
 fi
 
+# --- Regression (Fable B5 / WP3.3 defect B): dx_pbs_list_driver joins every
+# extra deny pattern from its own argv with `DX_PBS_EXTRA_DENY="$*"`,
+# flattening N separate patterns into ONE space-joined string BEFORE
+# dx_pbs_path_denied ever sees them -- so multiple extra patterns passed
+# together stop being independent records. A SINGLE extra pattern survives
+# "$*"'s join unchanged (nothing to join), so this only shows up with two or
+# more extra patterns passed at once -- exactly DX_BACKUP_EXCLUDE_FILE's
+# real shape (one pattern per line, all passed as separate positional
+# arguments by bin/dx-backup). Uses a small, isolated fixture (not the
+# shared $FIXTURE tree above) so the two extra patterns' effects are easy to
+# read in isolation. ---
+extra_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-extradeny.XXXXXX")"
+mkdir -p "$extra_fixture/my dir" "$extra_fixture/my" "$extra_fixture/second"
+printf 'denied by the space-containing pattern\n' > "$extra_fixture/my dir/keepme.txt"
+printf 'a bare "my" is a DIFFERENT path than "my dir" -- must survive\n' > "$extra_fixture/my/keepme.txt"
+printf 'denied by the second, sibling pattern\n' > "$extra_fixture/second/dropme.txt"
+extra_listing="$(dx_pbs_list "$extra_fixture" 'my dir/*' 'second/*' 2>/dev/null)"
+extra_paths="$(printf '%s\n' "$extra_listing" | cut -f1)"
+if printf '%s\n' "$extra_paths" | grep -Fxq "my dir/keepme.txt"; then
+    test_fail "a space-containing extra deny pattern is honoured as its own pattern (my dir/* denies my dir/keepme.txt)"
+else
+    test_pass "a space-containing extra deny pattern is honoured as its own pattern (my dir/* denies my dir/keepme.txt)"
+fi
+if printf '%s\n' "$extra_paths" | grep -Fxq "second/dropme.txt"; then
+    test_fail "a second extra deny pattern still applies alongside a space-containing sibling pattern (second/* denies second/dropme.txt)"
+else
+    test_pass "a second extra deny pattern still applies alongside a space-containing sibling pattern (second/* denies second/dropme.txt)"
+fi
+if printf '%s\n' "$extra_paths" | grep -Fxq "my/keepme.txt"; then
+    test_pass "a space-containing pattern's anchor is exact -- the bare prefix before the space (my/) is not swept in too"
+else
+    test_fail "a space-containing pattern's anchor is exact -- the bare prefix before the space (my/) is not swept in too"
+fi
+rm -rf "$extra_fixture"
+
 # --- dx_pbs_repo_at_risk_whole: direct unit-level checks. ---
 if dx_pbs_repo_at_risk_whole "$FIXTURE/persist/git/repo-a"; then test_fail "repo-a (pushed, clean HEAD) is not at-risk as a whole"; else test_pass "repo-a (pushed, clean HEAD) is not at-risk as a whole"; fi
 if dx_pbs_repo_at_risk_whole "$FIXTURE/persist/git/repo-b"; then test_pass "repo-b (unpushed commit) is at-risk as a whole"; else test_fail "repo-b (unpushed commit) is at-risk as a whole"; fi
