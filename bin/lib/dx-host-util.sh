@@ -51,6 +51,29 @@ dx_derived_port() {
 
 dx_port_in_use() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
+# WP3.4 (Fable A1) / qnap-dxe-plan.md Phase 2 item 7: the one place that
+# resolves "which local, per-profile identity segment scopes this
+# runtime's own state" -- used by dx_tunnel_key (bin/lib/dx-tunnel.sh),
+# dx_backup_resolve_dir (bin/lib/dx-backup.sh) and dx_ssh_known_hosts_dir
+# (bin/lib/dx-ssh-common.sh), so the three can no longer diverge on how
+# they call dx_runtime_host_identity or on whether they fail closed when it
+# fails. Fails closed: a caller that does not check this function's own
+# exit status (`identity="$(dx_profile_state_segment)" || return 1`) is the
+# exact bug this closes -- a failing identity resolution used only as a
+# printf/command argument does not abort a caller running under `set -e`.
+# For DX_RUNTIME=apple there is only ever one local Apple runtime, so
+# nothing to disambiguate: prints nothing, byte-for-byte the prior
+# behaviour every apple call site already had. For docker-ssh, prints
+# dx_runtime_host_identity's own value RAW (colons intact) -- a caller
+# that embeds this in a filesystem path segment sanitises it itself
+# (dx_backup_resolve_dir, dx_ssh_known_hosts_dir already did, and still
+# do); dx_tunnel_key's own key shape is colon-delimited by design and uses
+# it unsanitised, exactly as before this change.
+dx_profile_state_segment() {
+    [ "${DX_RUNTIME:-apple}" = docker-ssh ] || return 0
+    dx_runtime_host_identity
+}
+
 dx_require_positive_integer() {
     case "$2" in
         ''|*[!0-9]*|0) echo "Error: $1 must be a positive integer, got '$2'." >&2; return 1 ;;

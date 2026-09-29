@@ -64,7 +64,7 @@ dx_backup_resolve_dir() {
     local container_name="${1:-${DX_CONTAINER_NAME:?}}"
     if [ "${DX_RUNTIME:-apple}" = docker-ssh ]; then
         local identity
-        identity="$(dx_runtime_host_identity)"
+        identity="$(dx_profile_state_segment)" || return 1
         printf '%s/%s/%s\n' "${DX_BACKUP_DIR:?}" "$container_name" "${identity//:/_}"
     else
         printf '%s/%s\n' "${DX_BACKUP_DIR:?}" "$container_name"
