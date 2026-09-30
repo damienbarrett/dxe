@@ -212,23 +212,118 @@ else
     test_fail "guest dx-ai script passes bash syntax check"
 fi
 
-if grep -q "nix flake update" "$DX_AI_SCRIPT" && grep -q "nixpkgs-unstable" "$DX_AI_SCRIPT"; then
+# WP8.2 (commit 2cd212b) split dx-ai.sh's nixpkgs-unstable refresh, agy-pin
+# handling, and post-install credential setup out into
+# scripts/lib/dx-ai-{generation,pin,post-install}.sh. The text these seven
+# cases used to grep for now lives in those library files as real function
+# bodies, not in $DX_AI_SCRIPT's own text -- source the real script once
+# (the same eager-load chain tests/test_section17_dx_ai_runtime.sh relies
+# on: dx-ai.sh's own dx_ai_bootstrap_load pulls in dx-ai-generation.sh,
+# dx-ai-pin.sh and dx-ai-post-install.sh eagerly) and drive its real
+# functions with the same narrow curl/nix stand-ins that suite uses,
+# instead of grepping for text that moved out from under these assertions.
+# shellcheck source=/dev/null
+source "$DX_AI_SCRIPT"
+
+# dx_ai_update_flake (scripts/lib/dx-ai-generation.sh) refreshes the agy pin
+# THEN updates nixpkgs-unstable -- log both stand-ins' invocations in call
+# order and prove both properties from the one real call: the
+# nixpkgs-unstable update actually happens, and the agy-manifest refresh
+# happens first (dx_ai_main_update, dx-ai.sh, unchanged by this split,
+# always finishes dx_ai_update_flake before it ever calls
+# dx_ai_install_profile, so "first" here is also "before install").
+AGY_UPDATE_FLAKE_LOG="$(mktemp "${TMPDIR:-/tmp}/dxe-s6-update-flake.XXXXXX")"
+AGY_UPDATE_FLAKE_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-s6-update-flake-stage.XXXXXX")"
+(
+    dx_ai_refresh_pin() { printf 'refresh-pin\n' >> "$AGY_UPDATE_FLAKE_LOG"; }
+    nix() { printf '%s\n' "$*" >> "$AGY_UPDATE_FLAKE_LOG"; }
+    dx_ai_update_flake "$AGY_UPDATE_FLAKE_STAGE" aarch64-linux
+) >/dev/null
+if grep -q "flake update.*nixpkgs-unstable" "$AGY_UPDATE_FLAKE_LOG"; then
     test_pass "guest dx-ai updates nixpkgs-unstable"
 else
     test_fail "guest dx-ai updates nixpkgs-unstable"
 fi
+if [ "$(head -n1 "$AGY_UPDATE_FLAKE_LOG")" = "refresh-pin" ]; then
+    test_pass "guest dx-ai refreshes the agy manifest before install"
+else
+    test_fail "guest dx-ai refreshes the agy manifest before install"
+fi
+rm -rf "$AGY_UPDATE_FLAKE_STAGE"
+rm -f "$AGY_UPDATE_FLAKE_LOG"
+
 # Branch 11 / Phase 4 (docs/refactor/arch-neutral-guest.md section 3): the
 # single flat AGY_MANIFEST_URL constant became a per-system function --
 # deliberate, not a regression (AGY_MANIFEST_URL had no consumer outside
-# this one static assertion; confirmed by grep across the tree).
-assert_file_contains "$DX_AI_SCRIPT" "dx_ai_agy_manifest_url" "guest dx-ai resolves a per-system agy updater manifest URL"
-assert_file_contains "$DX_AI_SCRIPT" "Refreshing Antigravity CLI manifest" "guest dx-ai refreshes the agy manifest before install"
-assert_file_contains "$DX_AI_SCRIPT" "nix hash convert --hash-algo sha512 --to sri" "guest dx-ai converts agy manifest hash to Nix SRI"
-assert_file_contains_literal "$DX_AI_SCRIPT" "pins/agy.json" "guest dx-ai updates the structured agy pin"
+# this one static assertion; confirmed by grep across the tree). Call the
+# real dx_ai_agy_manifest_url (scripts/lib/dx-ai-pin.sh) directly: a pure
+# dispatch with no side effects, so no stand-ins are needed.
+if [ "$(dx_ai_agy_manifest_url aarch64-linux)" = "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json" ] \
+    && [ "$(dx_ai_agy_manifest_url x86_64-linux)" = "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json" ]; then
+    test_pass "guest dx-ai resolves a per-system agy updater manifest URL"
+else
+    test_fail "guest dx-ai resolves a per-system agy updater manifest URL"
+fi
+
+# dx_ai_refresh_pin (scripts/lib/dx-ai-pin.sh): drive the real function
+# against a fixture pin, with curl and nix stubbed (no real network fetch,
+# and this host has no nix) -- jq is real (this host has jq), so the
+# manifest-field extraction and the pin merge both run for real, not a
+# hardcoded stand-in, the same way test_section17_dx_ai_runtime.sh's own
+# generic-splice dx_ai_refresh_pin case does.
+AGY_REFRESH_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-s6-agy-refresh.XXXXXX")"
+mkdir -p "$AGY_REFRESH_ROOT/pins"
+printf '%s\n' '{"aarch64-linux":{"version":"1.0.5","url":"https://example.invalid/old-arm","hash":"sha512-old"}}' \
+    > "$AGY_REFRESH_ROOT/pins/agy.json"
+AGY_REFRESH_SHA512_HEX="$(printf 'a%.0s' $(seq 1 128))"
+AGY_REFRESH_NIX_LOG="$(mktemp "${TMPDIR:-/tmp}/dxe-s6-agy-refresh-nix.XXXXXX")"
+(
+    curl() { printf '%s\n' '{"version":"9.9.9","url":"https://example.invalid/new-arm","sha512":"'"$AGY_REFRESH_SHA512_HEX"'"}'; }
+    nix() { if [ "$1" = hash ]; then printf '%s\n' "$*" >> "$AGY_REFRESH_NIX_LOG"; printf 'sha512-newarmhash\n'; else command nix "$@"; fi; }
+    dx_ai_refresh_pin "$AGY_REFRESH_ROOT" aarch64-linux
+) >/dev/null
+
+if grep -qF "hash convert --hash-algo sha512 --to sri $AGY_REFRESH_SHA512_HEX" "$AGY_REFRESH_NIX_LOG"; then
+    test_pass "guest dx-ai converts agy manifest hash to Nix SRI"
+else
+    test_fail "guest dx-ai converts agy manifest hash to Nix SRI"
+fi
+if [ "$(jq -r '.["aarch64-linux"].version' "$AGY_REFRESH_ROOT/pins/agy.json" 2>/dev/null)" = "9.9.9" ] \
+    && [ "$(jq -r '.["aarch64-linux"].url' "$AGY_REFRESH_ROOT/pins/agy.json" 2>/dev/null)" = "https://example.invalid/new-arm" ] \
+    && [ "$(jq -r '.["aarch64-linux"].hash' "$AGY_REFRESH_ROOT/pins/agy.json" 2>/dev/null)" = "sha512-newarmhash" ]; then
+    test_pass "guest dx-ai updates the structured agy pin"
+else
+    test_fail "guest dx-ai updates the structured agy pin"
+fi
+rm -rf "$AGY_REFRESH_ROOT"
+rm -f "$AGY_REFRESH_NIX_LOG"
+
 assert_file_not_contains "$DX_AI_SCRIPT" "sed -i" "guest dx-ai does not rewrite Nix source ranges"
 
 assert_file_not_contains "$DX_AI_SCRIPT" "touch /persist/home/dx/.claude.json" "guest dx-ai does not create empty Claude JSON config"
-assert_file_contains "$DX_AI_SCRIPT" "printf '%s\\\\n' '{}' > \"\$persist_home/.claude.json\"" "guest dx-ai initializes empty Claude config as JSON"
+
+# dx_ai_setup_credentials (scripts/lib/dx-ai-post-install.sh): drive the
+# real function against an isolated fixture (never the real $HOME or
+# /persist) and check its actual on-disk effect -- a freshly-created, valid
+# empty JSON object, not merely the literal `printf` source line. macOS
+# bash 3.2's ln lacks GNU's -T, so it is shimmed here exactly the way
+# test_section17_dx_ai_runtime.sh's own creds_ln_shim does for the same
+# reason (BSD ln rejects -sfnT outright).
+CREDS_JSON_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-s6-creds-json.XXXXXX")"
+CREDS_JSON_FIXTURE="$(cd "$CREDS_JSON_FIXTURE" && pwd -P)"
+CREDS_JSON_PERSIST="$CREDS_JSON_FIXTURE/persist/home/dx"
+CREDS_JSON_HOME="$CREDS_JSON_FIXTURE/home/dx"
+mkdir -p "$CREDS_JSON_PERSIST" "$CREDS_JSON_HOME"
+if (
+    ln() { if [ "${1:-}" = -sfnT ]; then command ln -sfn "$2" "$3"; else command ln "$@"; fi; }
+    dx_ai_setup_credentials "$CREDS_JSON_PERSIST" "$CREDS_JSON_HOME"
+) >/dev/null 2>&1 && jq -e '. == {}' "$CREDS_JSON_PERSIST/.claude.json" >/dev/null 2>&1; then
+    test_pass "guest dx-ai initializes empty Claude config as JSON"
+else
+    test_fail "guest dx-ai initializes empty Claude config as JSON"
+fi
+rm -rf "$CREDS_JSON_FIXTURE"
+
 AGY_PIN="$CONTAINER_DIR/pins/agy.json"
 assert_file_contains_literal "$AGY_PIN" '"version": "1.0.5"' "agy pin uses a version with OAuth persistence fixes"
 assert_file_not_contains "$FLAKE_NIX" 'version = "1.0.0";' "agy derivation is not pinned to the OAuth persistence bug version"
@@ -254,7 +349,25 @@ else
     test_skip "nix not available, skipping checks.aarch64-linux.agy-pin-shape"
     test_skip "nix not available, skipping checks.x86_64-linux.agy-pin-shape"
 fi
-assert_file_contains_literal "$DX_AI_SCRIPT" '$persist_home/.gemini/antigravity-cli' "guest dx-ai prepares persisted agy state directory"
+# dx_ai_setup_credentials (scripts/lib/dx-ai-post-install.sh) mkdir -p's the
+# persisted Antigravity CLI state directory under the persisted ~/.gemini --
+# same real-function-and-fixture approach as the Claude JSON config case
+# above, checking the actual directory dx-ai creates rather than its
+# `mkdir -p` source line.
+CREDS_AGY_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-s6-creds-agy.XXXXXX")"
+CREDS_AGY_FIXTURE="$(cd "$CREDS_AGY_FIXTURE" && pwd -P)"
+CREDS_AGY_PERSIST="$CREDS_AGY_FIXTURE/persist/home/dx"
+CREDS_AGY_HOME="$CREDS_AGY_FIXTURE/home/dx"
+mkdir -p "$CREDS_AGY_PERSIST" "$CREDS_AGY_HOME"
+if (
+    ln() { if [ "${1:-}" = -sfnT ]; then command ln -sfn "$2" "$3"; else command ln "$@"; fi; }
+    dx_ai_setup_credentials "$CREDS_AGY_PERSIST" "$CREDS_AGY_HOME"
+) >/dev/null 2>&1 && [ -d "$CREDS_AGY_PERSIST/.gemini/antigravity-cli" ]; then
+    test_pass "guest dx-ai prepares persisted agy state directory"
+else
+    test_fail "guest dx-ai prepares persisted agy state directory"
+fi
+rm -rf "$CREDS_AGY_FIXTURE"
 assert_file_contains "$CONTAINER_DIR/bootstrap/activation.sh" "/persist/home/dx/.gemini/antigravity-cli" "bootstrap prepares persisted agy state directory"
 
 if printf '%s\n' "$AI_PACKAGES_BLOCK" | stdin_matches -E "codex"; then
