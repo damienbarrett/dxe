@@ -314,6 +314,40 @@ dxe_s19_check "dx-reverse rejects an unknown option" \
     else
         test_fail "dx_tunnel_cli refuses an invalid direction (direct call) (rc=$rc, out: $out)"
     fi
+
+    # dx_tunnel_cli's own default ("a real port mapping") branch: bare-port
+    # parsing (dx_tunnel_cli_parse_arg's own "no colon" arm), both
+    # directions' dx_tunnel_cli_wait_ssh selections, and the
+    # require_prerequisites + dx_tunnel_start dispatch loop -- all
+    # deliberately left untested above (a real mapping needs a real
+    # container/SSH, exactly what SKIP_INTEGRATION means to skip).
+    # dx_tunnel_require_prerequisites and dx_tunnel_start are overridden
+    # here (this whole battery runs in one already-isolated subshell; the
+    # overrides never escape it) so this reaches dx_tunnel_cli's OWN lines
+    # with no real network or container activity -- dx_tunnel_start's own
+    # body is exercised for real elsewhere (this file's live round trip
+    # below, when not skipped).
+    dxe_s19_start_log="$dxe_s19_cli_state.start.log"
+    dx_tunnel_require_prerequisites() { :; }
+    dx_tunnel_start() { printf '%s %s %s\n' "$1" "$2" "$3" >> "$dxe_s19_start_log"; }
+
+    : > "$dxe_s19_start_log"
+    out="$(dx_tunnel_cli forward 8080 2>&1)"; rc=$?
+    if [ "$rc" -eq 0 ] && [ "$(cat "$dxe_s19_start_log")" = "forward 8080 8080" ]; then
+        test_pass "dx_tunnel_cli forward with a bare port (no colon) maps it to itself and reaches dx_tunnel_start (direct call)"
+    else
+        test_fail "dx_tunnel_cli forward with a bare port (no colon) maps it to itself and reaches dx_tunnel_start (direct call) (rc=$rc, log: $(cat "$dxe_s19_start_log" 2>/dev/null))"
+    fi
+
+    : > "$dxe_s19_start_log"
+    out="$(dx_tunnel_cli reverse 8080:9090 2>&1)"; rc=$?
+    if [ "$rc" -eq 0 ] && [ "$(cat "$dxe_s19_start_log")" = "reverse 9090 8080" ]; then
+        test_pass "dx_tunnel_cli reverse with a colon mapping reaches dx_tunnel_start with both ports resolved (direct call)"
+    else
+        test_fail "dx_tunnel_cli reverse with a colon mapping reaches dx_tunnel_start with both ports resolved (direct call) (rc=$rc, log: $(cat "$dxe_s19_start_log" 2>/dev/null))"
+    fi
+
+    rm -f "$dxe_s19_start_log"
 )
 
 rm -rf "$dxe_s19_cli_state"
