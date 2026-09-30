@@ -129,3 +129,45 @@ The week's exercise list is `docs/qnap-runbook.md` section 9; entries for
 the exercised items, the relay-fallback observation, the rebuild and
 recreate, the restore drill and the spike lifecycle follow below as they
 happen.
+
+### Step 3 — image rebuild + `dx-recreate` (2026-10-01, day 3)
+
+Run by the coordinating session from a clean clone of `main` `4e8c5cc`
+(the canary profile and key pair copied in), stdin from `/dev/null`
+throughout, at a moment the canary was idle: no established connection to
+its port on the NAS, no logged-in user, guest load average below 1. Runbook
+section 9.2, no pin change (same `main` the canary was built from, so
+`dx-recreate` rather than the "MIND THE PIN" branch). Immediately before
+the recreate a fresh `dx-backup` of the canary was taken (1,450 files,
+104 MiB; the following dry-run reported 0 files to transfer), which is
+also the restore drill's step 1.
+
+| Check | Before | After |
+| --- | --- | --- |
+| container | running, restart count 0, `unless-stopped`, 2 CPU / 8 GB, `healthy` | same; `healthy` again 60 s after start |
+| binding and labels | `2222/tcp` on `<tailnet address>` only; managed/profile/role/schema/system labels | unchanged |
+| `DX_IMAGE_IDENTITY` | `sha256:ca0b6c21…` | `sha256:ca0b6c21…` (see note) |
+| bootstrap generation | running = published `20260928T181516Z-37816` | same; the host-side sync reported "Bootstrap content is unchanged; generation … stays current" |
+| `dx-backup --dry-run` | 0 files after the fresh backup | 1 file, 0 bytes (`.config/herdr/.dxe-persistence-ready`, a boot marker) — `/persist` content unchanged |
+| `dx-ssh` right after the recreate | — | `SSH_OK`, `x86_64`, `dx`; **no host-key mismatch warning**, no `ssh-keygen -R` needed (the expectation in 9.2, now verified) |
+| `dx-status` keyring line | `live` | `stale` until `dx-keyring start` (idempotent), then `live` |
+| `dx-recreate` wall clock | — | 34 s from `dx-destroy` to "Guest is ready" (image layers cached on the NAS; base image "up to date") |
+
+Notes. (1) The image identity did not change: with the pin and the
+context tree unchanged, the NAS's build cache reproduced the identical
+image, so "identity changed" in 9.2 is only observable when the build
+inputs change — the check that matters held (the sync compared the
+identity and the bootstrap content and correctly left the generation
+alone). (2) The `keyring: stale` after a recreate is the same behaviour
+`dx-host` promotion #8 recorded on Apple ("before dx-ai: stale", live
+after `dx-ai`); the guest keyring is started by `dx-ai`/`dx-keyring
+start`, not by boot, so a recreate always shows it stale until first use.
+(3) `dx` ends by attaching the guest tmux session; under stdin from
+`/dev/null` that prints "open terminal failed: not a terminal" and
+"duplicate session: dx", cosmetic only.
+
+Recorded once for the week's final validation: NixOS release pin
+`nixos-26.05` (`nixpkgs`), `nixpkgs-unstable`, Home Manager
+`release-26.05`; base image `nixos/nix:2.34.7` at digest
+`sha256:bf1d9388…`; `DX_IMAGE_IDENTITY` before and after the rebuild as
+above.
