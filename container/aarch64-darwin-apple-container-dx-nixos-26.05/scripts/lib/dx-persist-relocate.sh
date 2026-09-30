@@ -21,10 +21,12 @@
 # dx_prepare_owned_directory when THAT function is in scope (declare -F),
 # exactly as dx-opencode-persistence.sh's own dx_opencode_prepare_directory
 # already did before this consolidation; publishing the symlink itself goes
-# through run_as_dx (a root bootstrap caller's own privilege-drop primitive)
-# the same way when THAT is in scope, so a root caller's symlink ends up
-# dx-owned exactly as it did before this consolidation -- a dx-native caller
-# (dx-ai.sh) has no such function in scope and just links directly.
+# through run_as_dx_argv (a root bootstrap caller's own argv-form
+# privilege-drop primitive, Fable B10) the same way when THAT is in scope
+# and opted into (see dx_persist_publish_link's own as_dx parameter below),
+# so a root caller's symlink ends up dx-owned exactly as it did before this
+# consolidation -- a dx-native caller (dx-ai.sh) has no such function in
+# scope and just links directly.
 #
 # OpenCode (dx-opencode-persistence.sh) is NOT rewired to call
 # dx_persist_relocate_dir/dx_persist_migrate_live_path directly: its own
@@ -130,24 +132,25 @@ dx_persist_migrate_live_path() {
 # failure), and a refusal -- not a silent nested symlink -- when $2 is
 # occupied by anything else (a real directory/file, or a symlink elsewhere).
 #
-# $3 (as_dx, default 0/unset): when true AND run_as_dx (bootstrap/common.sh's
-# own privilege-drop primitive) is in scope, publishes the link through it,
-# exactly as gh/Herdr's own prior `run_as_dx "ln -sfnT ..."` calls did --
-# an explicit, caller-chosen opt-in rather than an automatic declare -F
-# check, because this file is sourced into test processes that source
-# bootstrap/common.sh for unrelated reasons (bringing the REAL run_as_dx,
-# which shells out to setpriv, into scope) without themselves wanting a
-# privilege-dropped publish; OpenCode's own dx_opencode_publish_link (which
-# delegates here) is one such caller and always leaves this unset,
-# preserving its pre-existing, always-direct behavior byte for byte. A
-# dx-native caller (dx-ai.sh) also leaves it unset, since it is already
-# running as dx.
+# $3 (as_dx, default 0/unset): when true AND run_as_dx_argv (bootstrap/
+# common.sh's own argv-form privilege-drop primitive, Fable B10) is in
+# scope, publishes the link through it, exactly as gh/Herdr's own prior
+# `run_as_dx "ln -sfnT ..."` calls did (now argv-form: no quoting needed
+# for $target/$live, however they are spelled) -- an explicit, caller-chosen
+# opt-in rather than an automatic declare -F check, because this file is
+# sourced into test processes that source bootstrap/common.sh for unrelated
+# reasons (bringing the REAL run_as_dx_argv, which shells out to setpriv,
+# into scope) without themselves wanting a privilege-dropped publish;
+# OpenCode's own dx_opencode_publish_link (which delegates here) is one such
+# caller and always leaves this unset, preserving its pre-existing,
+# always-direct behavior byte for byte. A dx-native caller (dx-ai.sh) also
+# leaves it unset, since it is already running as dx.
 dx_persist_publish_link() {
     local target="$1" live="$2" as_dx="${3:-0}" temporary
     if [ -L "$live" ] && [ "$(readlink "$live")" = "$target" ]; then return 0; fi
     [ ! -e "$live" ] && [ ! -L "$live" ] || return 1
-    if [ "$as_dx" = 1 ] && declare -F run_as_dx >/dev/null; then
-        run_as_dx "ln -sfnT '$target' '$live'"
+    if [ "$as_dx" = 1 ] && declare -F run_as_dx_argv >/dev/null; then
+        run_as_dx_argv ln -sfnT "$target" "$live"
         return $?
     fi
     temporary="$(dx_persist_unused_path "$live.dxe-link")" || return 1

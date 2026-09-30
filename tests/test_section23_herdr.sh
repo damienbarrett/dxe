@@ -419,6 +419,18 @@ herdr_persist_run_as_dx() {
     local cmd="${1/ln -sfnT/ln -sfn}"
     bash -c "$cmd"
 }
+# Fable B10: the argv-form counterpart, for sites migrated to
+# run_as_dx_argv (the symlink publish step). Same real-execution/-T
+# translation as herdr_persist_run_as_dx above, just over an argv instead
+# of a single command string.
+herdr_persist_run_as_dx_argv() {
+    local args=() a
+    for a in "$@"; do
+        case "$a" in -sfnT) args+=(-sfn) ;; *) args+=("$a") ;;
+        esac
+    done
+    "${args[@]}"
+}
 
 fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-herdr-persist.XXXXXX")"
 trap 'rm -rf "$fixture_root"' EXIT
@@ -434,6 +446,7 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    run_as_dx_argv() { herdr_persist_run_as_dx_argv "$@"; }
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     set +e
@@ -458,6 +471,7 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    run_as_dx_argv() { herdr_persist_run_as_dx_argv "$@"; }
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     set +e
@@ -484,6 +498,7 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    run_as_dx_argv() { herdr_persist_run_as_dx_argv "$@"; }
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     set +e
@@ -509,6 +524,7 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    run_as_dx_argv() { herdr_persist_run_as_dx_argv "$@"; }
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     set +e
@@ -524,14 +540,18 @@ fi
 
 # R2: configure_guest calls activation in an || list, which disables Bash's
 # ambient errexit for this function. The first failed home link must return
-# explicitly and prevent the state-side link from being attempted.
+# explicitly and prevent the state-side link from being attempted. Fable
+# B10: the publish step now goes through run_as_dx_argv, which -- like
+# run_as_dx -- shells out to setpriv; fake that instead of run_as_dx so this
+# still gates the actual privilege-dropped publish regardless of which of
+# the two wraps it.
 if (
     persist_home="$fixture_root/r2/persist/home/dx"
     home="$fixture_root/r2/home/dx"
     mkdir -p "$persist_home/.config" "$persist_home/.local/state" "$home/.config" "$home/.local/state"
     calls=0
     chown() { herdr_persist_chown "$@"; }
-    run_as_dx() { calls=$((calls + 1)); [ "$calls" -ne 1 ]; }
+    setpriv() { calls=$((calls + 1)); [ "$calls" -ne 1 ]; }
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     set +e
@@ -555,8 +575,9 @@ if (
     calls=0
     chown() { herdr_persist_chown "$@"; }
     # Config-link succeeds; state-link fails. The marker must be gone even
-    # though setup returns non-zero before a complete activation.
-    run_as_dx() { calls=$((calls + 1)); [ "$calls" -ne 2 ]; }
+    # though setup returns non-zero before a complete activation. Fable B10:
+    # fake setpriv, not run_as_dx -- see the R2 case above.
+    setpriv() { calls=$((calls + 1)); [ "$calls" -ne 2 ]; }
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     set +e
@@ -582,6 +603,7 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    run_as_dx_argv() { herdr_persist_run_as_dx_argv "$@"; }
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/activation.sh
@@ -611,6 +633,7 @@ if (
         esac
     }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    run_as_dx_argv() { herdr_persist_run_as_dx_argv "$@"; }
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/activation.sh
@@ -640,6 +663,7 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    run_as_dx_argv() { herdr_persist_run_as_dx_argv "$@"; }
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     setup_herdr_persistence "$persist_home" "$home" >/dev/null 2>&1
@@ -661,6 +685,7 @@ if (
 
     chown() { herdr_persist_chown "$@"; }
     run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    run_as_dx_argv() { herdr_persist_run_as_dx_argv "$@"; }
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     setup_herdr_persistence "$persist_home" "$home" >/dev/null 2>&1
@@ -742,6 +767,20 @@ herdr_boundary_run_as_dx() {
         return 1
     fi
 }
+# Fable B10: the argv-form counterpart -- the destination is simply the
+# last argv element (${!#}, bash's own "last positional parameter" idiom),
+# no sed regex needed the way the single-string form above requires.
+herdr_boundary_run_as_dx_argv() {
+    local dest="${!#}" dest_dir args=() a
+    dest_dir="$(dirname "$dest")"
+    if [ -f "$herdr_owned_manifest" ] && grep -qxF "$dest_dir" "$herdr_owned_manifest"; then
+        for a in "$@"; do case "$a" in -sfnT) args+=(-sfn) ;; *) args+=("$a") ;; esac; done
+        "${args[@]}"
+    else
+        echo "ln: failed to create symbolic link '$dest': Permission denied" >&2
+        return 1
+    fi
+}
 
 if diag="$(
     persist_home="$fixture_root/f/persist/home/dx"
@@ -757,6 +796,7 @@ if diag="$(
 
     chown() { herdr_boundary_chown "$@"; }
     run_as_dx() { herdr_boundary_run_as_dx "$@"; }
+    run_as_dx_argv() { herdr_boundary_run_as_dx_argv "$@"; }
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
 
