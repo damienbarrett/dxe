@@ -345,7 +345,7 @@ Every review ID and where it lands.
   behind one facade; claims to `dx-claims.sh`; `dx-forward`/`dx-reverse`
   merged into `dx_tunnel_cli`; narrative comments moved to decisions.
   (Muse A2, Fable A7, Astra R3)
-- [~] 012c39b+18022a6 (a) **WP8.4** Tests: split `test_docker_runtime_adapter.sh` on its
+- [x] 012c39b..387f6da **WP8.4** Tests: split `test_docker_runtime_adapter.sh` on its
   section headers; `test_sourceable_coverage.sh` probes migrated to owning
   suites with asserted outcomes (`|| true` count ratcheted from 149); D7's six
   conversions; remaining source-text contracts gathered in
@@ -448,3 +448,4 @@ Every review ID and where it lands.
 - **2026-09-30** Unit-tier sweep through `tests/run.sh` (snapshot 2880930): 42 suites, 2,298 passed, 1 failed: section 9's new dx-wait-ssh periodic-tick case (WP8.4a D7 item 3) is wall-clock dependent and failed while the gate VM loaded the host; being made deterministic. Gate run 12 died at exit 126 because the header-derived coverage list execs suites directly and eleven test files lacked the executable bit; all `tests/test_*.sh` are now executable; run 13 in progress.
 - **2026-09-30** **Gate green.** Fourteenth isolated kcov run (snapshot 7550b8f): 100% line coverage of the scope, every suite passing under kcov, `scope_exec_lines=3935` (floor was 3306), `unscoped_prod_exec_lines=2634` (ceiling was 3173; it fell because WP8.2 moved dx-ai's logic into scripts/lib). Both ratcheted to the measured values. The runner now passes `--memory 4g` (run 13 was OOM-killed with twenty suites instrumented) and every suite is executable (run 12: exit 126).
 - **2026-09-30** The dx-wait-ssh periodic-tick case is deterministic (df8dcea): a `DX_SSH_PROGRESS_INTERVAL_FIRST` seam (default unchanged) plus `DX_SLEEP` and a `container logs` argv transcript; passes five times in a row and under artificial load. Root cause: a one-second real-time window for the tick before the timeout branch.
+- **2026-09-30** WP8.4b landed (5231c6e, 387f6da): `tests/test_contracts_source.sh` gathers the reviewed source-text contracts (78 checks: CI literals, single-FROM Containerfile, no-test-seam, DX_AI_TOOLS/aiPackages and bootstrapEssentials ties, bootstrap.sh structure, dx-ai anti-patterns); the coverage driver's config-parser probes moved into section 21 with asserted outcomes (163) and a ratchet caps its remaining scope-function `|| true` probes at 117 (was 129). Verified in the image: the driver still reaches its final line. Section 14's ~35 theme-script text checks were left in place (live-tmux feature specs). WP8.4 complete.
