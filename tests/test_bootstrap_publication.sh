@@ -1130,20 +1130,20 @@ result_dir="$direct_root/result-codec"; mkdir -p "$result_dir"
 
 # --- WP5.2 (Fable A3/B3, extends Astra R3): one fixture, run against ALL
 # THREE implementations of the guest publication-lock protocol -- the
-# launcher's rendering (dx_bootstrap_launch_command) and the sync's
-# rendering (dx_sync_guest_program, with
-# dx_guest_publication_protocol_snippet prepended exactly as
-# dx_bootstrap_sync itself does at call time) -- asserting identical
-# outcomes AND identical stderr for: a live, same-boot owner (waits, times
-# out); an owner recorded under a previous boot (reclaimed); a reused pid
-# whose recorded start time no longer matches a live process (reclaimed);
-# an ownerless lock directory (reclaimed after a short grace); and a
-# reclaim whose own rename target is already occupied (falls through to
-# the same timeout, never takes over). `sleep` is stubbed to a no-op in
-# every context so the two 30s-bounded waits (the live-owner and the
-# reclaim-loses cases) finish immediately. The guest's own dx-ai-lock.sh
-# joins this same fixture as a third implementation once it shares this
-# protocol too (WP5.2 Refactor).
+# launcher's rendering (dx_bootstrap_launch_command), the sync's rendering
+# (dx_sync_guest_program, with dx_guest_publication_protocol_snippet
+# prepended exactly as dx_bootstrap_sync itself does at call time), and the
+# guest's own dx-ai-lock.sh (container/.../scripts/lib/dx-ai-lock.sh,
+# sourced directly) -- asserting identical outcomes AND identical stderr
+# for: a live, same-boot owner (waits, times out); an owner recorded under
+# a previous boot (reclaimed); a reused pid whose recorded start time no
+# longer matches a live process (reclaimed); an ownerless lock directory
+# (reclaimed after the same short grace all three now share -- dx-ai-lock.sh
+# used to reclaim this immediately, with no grace at all); and a reclaim
+# whose own rename target is already occupied (falls through to the same
+# timeout, never takes over). `sleep` is stubbed to a no-op in every
+# context so the two 30s-bounded waits (the live-owner and the
+# reclaim-loses cases) finish immediately.
 # A subdirectory of $fixture, not a fresh mktemp -d: $fixture's own cleanup
 # trap (set at the top of this file) already removes everything under it
 # on exit, so this needs no EXIT trap of its own -- setting one here would
@@ -1187,6 +1187,19 @@ wp52_run_sync() {
     sh "$wp52_dir/sync_probe.sh" "$lock" "$proc_root" "$collide" 2>"$wp52_dir/err"; rc=$?
     printf '%s' "$rc"
 }
+wp52_run_dxai() {
+    local lock="$1" proc_root="$2" collide="${3:-0}" rc=0
+    (
+        # shellcheck source=/dev/null
+        source "$CONTAINER_DIR/scripts/lib/dx-ai-lock.sh"
+        sleep() { :; }
+        mkdir -p "$proc_root/$$"
+        printf '%s\n' "$$ (probe) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 555" > "$proc_root/$$/stat"
+        [ "$collide" = 1 ] && : > "$lock.reclaim.$$"
+        dx_ai_lock_acquire "$lock" "$proc_root"
+    ) 2>"$wp52_dir/err"; rc=$?
+    printf '%s' "$rc"
+}
 
 wp52_self_boot="feedfeed-0000-0000-0000-000000000000"
 
@@ -1196,10 +1209,10 @@ wp52_self_boot="feedfeed-0000-0000-0000-000000000000"
 wp52_case() {
     local scenario="$1" setup="$2" collide="${3:-0}"
     local impl rc err owner
-    local rc_launcher="" rc_sync=""
-    local err_launcher="" err_sync=""
-    local owner_boot_launcher="" owner_boot_sync=""
-    for impl in launcher sync; do
+    local rc_launcher="" rc_sync="" rc_dxai=""
+    local err_launcher="" err_sync="" err_dxai=""
+    local owner_boot_launcher="" owner_boot_sync="" owner_boot_dxai=""
+    for impl in launcher sync dxai; do
         local base="$wp52_dir/case-$scenario-$impl"
         rm -rf "$base"
         local proc_root="$base/proc" lock="$base/lock"
@@ -1208,6 +1221,7 @@ wp52_case() {
         case "$impl" in
             launcher) rc="$(wp52_run_launcher "$lock" "$proc_root" "$collide")" ;;
             sync) rc="$(wp52_run_sync "$lock" "$proc_root" "$collide")" ;;
+            dxai) rc="$(wp52_run_dxai "$lock" "$proc_root" "$collide")" ;;
         esac
         err="$(cat "$wp52_dir/err" 2>/dev/null || true)"
         owner=""
@@ -1215,18 +1229,20 @@ wp52_case() {
         case "$impl" in
             launcher) rc_launcher="$rc"; err_launcher="$err"; owner_boot_launcher="$owner" ;;
             sync) rc_sync="$rc"; err_sync="$err"; owner_boot_sync="$owner" ;;
+            dxai) rc_dxai="$rc"; err_dxai="$err"; owner_boot_dxai="$owner" ;;
         esac
     done
-    if [ "$rc_launcher" = "$rc_sync" ] && [ "$err_launcher" = "$err_sync" ]; then
-        test_pass "WP5.2: $scenario -- launcher/sync agree (rc=$rc_launcher)"
+    if [ "$rc_launcher" = "$rc_sync" ] && [ "$rc_sync" = "$rc_dxai" ] \
+        && [ "$err_launcher" = "$err_sync" ] && [ "$err_sync" = "$err_dxai" ]; then
+        test_pass "WP5.2: $scenario -- launcher/sync/dx-ai-lock.sh agree (rc=$rc_launcher)"
     else
-        test_fail "WP5.2: $scenario -- launcher/sync diverge (rc: launcher=$rc_launcher sync=$rc_sync; stderr: launcher='$err_launcher' sync='$err_sync')"
+        test_fail "WP5.2: $scenario -- launcher/sync/dx-ai-lock.sh diverge (rc: launcher=$rc_launcher sync=$rc_sync dxai=$rc_dxai; stderr: launcher='$err_launcher' sync='$err_sync' dxai='$err_dxai')"
     fi
     if [ "$rc_launcher" = 0 ]; then
-        if [ "$owner_boot_launcher" = "$wp52_self_boot" ] && [ "$owner_boot_sync" = "$wp52_self_boot" ]; then
-            test_pass "WP5.2: $scenario -- both record the acquirer's own boot id"
+        if [ "$owner_boot_launcher" = "$wp52_self_boot" ] && [ "$owner_boot_sync" = "$wp52_self_boot" ] && [ "$owner_boot_dxai" = "$wp52_self_boot" ]; then
+            test_pass "WP5.2: $scenario -- all three record the acquirer's own boot id"
         else
-            test_fail "WP5.2: $scenario -- both record the acquirer's own boot id (got launcher='$owner_boot_launcher' sync='$owner_boot_sync')"
+            test_fail "WP5.2: $scenario -- all three record the acquirer's own boot id (got launcher='$owner_boot_launcher' sync='$owner_boot_sync' dxai='$owner_boot_dxai')"
         fi
     fi
 }

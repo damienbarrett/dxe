@@ -851,6 +851,26 @@ else
     diff <(printf '%s\n' "$launcher_protocol_block") <(printf '%s\n' "$sync_protocol_block") >&2 || true
     failures=$((failures + 1))
 fi
+
+# Ship the SAME text as container/.../scripts/lib/dx-publication.sh, so
+# dx-ai-lock.sh sources one real, on-disk copy instead of a fourth hand
+# maintained one. Assert the shipped file's protocol block matches the
+# rendered snippet's, byte-for-byte after the same whitespace
+# normalisation.
+shipped_publication_file="$container_dir/scripts/lib/dx-publication.sh"
+if [ -f "$shipped_publication_file" ]; then
+    shipped_protocol_block="$(dxe_extract_publication_protocol_block < "$shipped_publication_file" | dxe_normalise_whitespace)"
+    if [ "$shipped_protocol_block" = "$launcher_protocol_block" ]; then
+        :
+    else
+        echo "FAIL: $shipped_publication_file's protocol block does not match the rendered dx_guest_publication_protocol_snippet (WP5.2/Fable A3 Refactor):" >&2
+        diff <(printf '%s\n' "$shipped_protocol_block") <(printf '%s\n' "$launcher_protocol_block") >&2 || true
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL: $shipped_publication_file does not exist (WP5.2/Fable A3 Refactor: dx-ai-lock.sh's shared publication lock protocol)" >&2
+    failures=$((failures + 1))
+fi
 rm -rf "$wp52_probe_dir"
 
 [ "$failures" -eq 0 ]
