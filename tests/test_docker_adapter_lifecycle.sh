@@ -284,6 +284,30 @@ echo "UNMATCHED: $*" >&2; exit 99'
 [ "$?" -eq 0 ] && test_pass "container_create (docker-ssh): refuses to attach an EXISTING foreign nix volume, zero docker create calls reached" \
     || test_fail "container_create (docker-ssh): refuses to attach an EXISTING foreign nix volume, zero docker create calls reached"
 
+# The same "writable attachment" checkpoint, for the OTHER two configured
+# named volumes (persist/bootstrap), which share the switch's default arm
+# rather than the nix branch's own dedicated case label above.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "volume inspect") echo "<no value>|<no value>|<no value>|<no value>|<no value>"; exit 0 ;;
+esac
+case "$1" in
+    create) echo "docker create should never mount a foreign volume" >&2; exit 99 ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux DX_PERSIST_VOLUME=dx-qnap-persist
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_container_create --name dx-qnap --image dx-qnap-nixos \
+        --volume "persist:dx-qnap-persist:/persist:rw" --entrypoint-cmd 'echo hi' 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "container_create (docker-ssh): refuses to attach an EXISTING foreign persist/bootstrap volume, zero docker create calls reached" \
+    || test_fail "container_create (docker-ssh): refuses to attach an EXISTING foreign persist/bootstrap volume, zero docker create calls reached"
+
 # An ABSENT volume needs no ownership proof (nothing to adopt yet); the
 # create proceeds normally.
 (
