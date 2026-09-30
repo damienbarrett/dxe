@@ -1316,5 +1316,21 @@ wp52_setup_garbage_boot_id() {
 }
 wp52_case "a boot id file containing non-hex/dash garbage" wp52_setup_garbage_boot_id
 
+# (7) A /proc/stat carrying a `btime` line whose VALUE is garbage (not a
+# plain non-negative integer), with no boot_id file present at all --
+# dx-publication.sh:43's own INLINE `''|*[!0-9]*) return 1 ;;` case arm,
+# distinct from case (6) above (a garbage boot_id file whose fixture
+# provides no /proc/stat at all, so every implementation instead fails the
+# earlier `[ -r "$dxgpp_proc_root/stat" ] || return 1` readability guard,
+# never entering the stat-scan loop this case targets). No fallback
+# identity is available either way, so every implementation must fail
+# closed with the same "cannot identify lock owner process" refusal.
+wp52_setup_garbage_btime() {
+    local proc_root="$1" lock="$2"
+    printf 'cpu  100 200 300 400\nbtime not-a-number\n' > "$proc_root/stat"
+    mkdir -p "$lock"
+}
+wp52_case "a /proc/stat btime field that is garbage, with no boot_id file" wp52_setup_garbage_btime
+
 print_summary
 exit_with_code

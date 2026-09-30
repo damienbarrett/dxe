@@ -164,6 +164,37 @@ mkdir -p "$snapshot_root"
 ) && test_fail "a renamed legacy workspace-persistence variable refuses to resolve" \
     || test_pass "a renamed legacy workspace-persistence variable refuses to resolve"
 
+# Coverage: dx_init_config's own root-derivation fallback
+# (bin/lib/dx-config.sh:365, `root="$(cd "$(dirname "${BASH_SOURCE[0]}")/
+# ../.." && pwd)"`) only runs when its caller passes NO explicit root
+# argument at all -- exactly the call shape this suite otherwise always
+# avoids (see the comment above $snapshot_root: resolving THIS checkout's
+# own real configuration into the running test process would be Fable
+# D9/D4's stale-workspace-reference hazard all over again). A nested,
+# genuinely separate `bash` process sources dx-config.sh fresh and calls
+# dx_init_config with no argument, so its exported DX_PROJECT_ROOT
+# (assigned immediately after the fallback, before any of dx_init_config's
+# later parsing/validation that has nothing to do with this fallback) can
+# only have come from the BASH_SOURCE-derived path -- and any side effect
+# of resolving this checkout's real .env stays confined to that throwaway
+# process, never this one. `bash "$root_probe"`, never `bash -c`: the
+# isolated kcov coverage driver keys its line attribution on BASH_SOURCE,
+# which a `-c` script never has.
+root_probe="$fixture/dx-config-root-probe.sh"
+cat > "$root_probe" <<'PROBE'
+#!/bin/bash
+set -uo pipefail
+probe_base_dir="$1"
+# shellcheck disable=SC1091
+source "$probe_base_dir/bin/lib/dx-config.sh"
+dx_init_config >/dev/null 2>&1
+printf '%s\n' "$DX_PROJECT_ROOT"
+PROBE
+root_probe_out="$(bash "$root_probe" "$BASE_DIR")"
+[ "$root_probe_out" = "$BASE_DIR" ] \
+    && test_pass "dx_init_config with no argument derives the project root from BASH_SOURCE (dx-config.sh:365)" \
+    || test_fail "dx_init_config with no argument derives the project root from BASH_SOURCE (dx-config.sh:365) (got '$root_probe_out', want '$BASE_DIR')"
+
 it "dx_config_set_resolved rejects an unregistered field name"
 expect_exit 1 dx_config_set_resolved UNKNOWN value default
 it "dx_config_set_resolved rejects an invalid value for a registered field"

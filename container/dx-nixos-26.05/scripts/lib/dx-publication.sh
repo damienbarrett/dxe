@@ -32,7 +32,7 @@ boot_id() {
     dxgpp_proc_root=${DX_LOCK_PROC_ROOT:-/proc}
     if dxgpp_boot=$(cat "$dxgpp_proc_root/sys/kernel/random/boot_id" 2>/dev/null) && [ -n "$dxgpp_boot" ]; then
         case "$dxgpp_boot" in
-            *[!0-9A-Fa-f-]*) ;;
+            *[!0-9A-Fa-f-]*) : ;;
             *) printf "%s\n" "$dxgpp_boot"; return 0 ;;
         esac
     fi
@@ -44,7 +44,7 @@ boot_id() {
                 *) printf "btime:%s\n" "$dxgpp_value"; return 0 ;;
             esac
         fi
-    done < "$dxgpp_proc_root/stat"
+    done < "$dxgpp_proc_root/stat" # KCOV_LOOP_TERMINATOR
     return 1
 }
 publication_lock_acquire() {
