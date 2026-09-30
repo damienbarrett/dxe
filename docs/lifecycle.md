@@ -370,7 +370,14 @@ and a restore, can never interleave their own reads or writes of the
 mirror — the second one refuses (or waits, up to a bounded timeout) rather
 than reading or writing a partly-published state. `--dry-run`/`--summary`
 never take this lock and never create the mirror directory: they only read
-the guest listing and the previously published generation's manifest.
+the guest listing and the previously published generation's manifest. A
+mirror created before this generation model existed (`current/` a real
+directory, `manifest.tsv` sitting directly beside it) is migrated
+automatically, in place, the first time a real `dx-backup` run takes the
+lock — its existing content is renamed (never copied or re-transferred)
+into `generations/legacy-<id>/`, retained as the previous generation
+exactly like any other; `dx-restore` never migrates anything, so an
+unmigrated mirror still restores correctly, read-only.
 
 **What is captured (the at-risk set).** `dx-backup` runs a selector inside the
 guest, as `dx`, over `/persist`. For every git work tree it finds there (a

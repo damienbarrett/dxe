@@ -361,6 +361,73 @@ dx_backup_generation_manifest_path() {
     fi
 }
 
+# A legacy manifest's own timestamp turned into a generation id
+# ("legacy-<epoch>"), or -- when there is no old manifest to read a
+# timestamp from at all (a mirror directory that exists but never completed
+# a successful run) -- "legacy-" plus the CURRENT time. Shares
+# dx-persist-backup-select.sh's own stat primitive (dx_pbs_stat_mtime,
+# already sourced above) rather than duplicating its GNU/BSD `stat`
+# fallback.
+dx_backup_generation_legacy_id() {
+    local backup_dir="$1" mtime=""
+    if [ -f "$backup_dir/manifest.tsv" ]; then
+        mtime="$(dx_pbs_stat_mtime "$backup_dir/manifest.tsv" 2>/dev/null)" || mtime=""
+    fi
+    [ -n "$mtime" ] || mtime="$(date -u +%s)"
+    printf 'legacy-%s\n' "$mtime"
+}
+
+# One-time, idempotent adoption of a mirror created before this generation
+# model existed (Astra F5 / WP6.9 follow-up: the loud "exists and is not a
+# symlink" refusal in dx_backup_generation_publish below cannot ship
+# as-is -- a real, already-deployed mirror has exactly this shape, and a
+# hand migration is not acceptable): `current/` a real directory (every run
+# extracted straight over it), with manifest.tsv sitting directly under
+# BACKUP_DIR instead of inside a generation. Called by bin/dx-backup only
+# for a real run, right after acquiring the mirror lock and before ever
+# contacting the guest, so a concurrent backup or restore can never observe
+# (or race) a half-migrated mirror.
+#
+# The OLD content is RENAMED (never copied) into generations/<legacy-id>/ --
+# the very same inodes carried across, byte-identical by construction,
+# never re-transferred -- and its manifest.tsv (absent on a mirror that
+# exists but never completed a successful run) moves alongside it if
+# present. `current` is then repointed at that generation with the exact
+# same `ln -sfn` dx_backup_generation_publish uses below, so every
+# subsequent read (dx-restore, another dx-backup's own diff) sees it as an
+# ordinary, already-published generation -- the very next successful backup
+# publishes forward from it and retains it as the one generation before,
+# exactly like any other.
+#
+# Idempotent: a mirror with no `current` at all (nothing to migrate -- the
+# very first backup ever) or one where `current` is ALREADY a symlink (this
+# mirror was created by, or has already been touched by, this generation
+# model) is a no-op. Refuses -- before ever touching anything -- only when
+# `current` exists and is neither a symlink nor a plain directory (some
+# other, unrecognised shape): the same guard dx_backup_generation_publish
+# enforces at publish time, surfaced here first so it fails before a wasted
+# guest round trip.
+dx_backup_generation_migrate_legacy() {
+    local backup_dir="$1" legacy_id
+    [ -e "$backup_dir/current" ] || return 0
+    [ ! -L "$backup_dir/current" ] || return 0
+    if [ ! -d "$backup_dir/current" ]; then
+        echo "Error: $backup_dir/current exists and is neither a symlink nor a directory; refusing to migrate or publish over it." >&2
+        return 1
+    fi
+    legacy_id="$(dx_backup_generation_legacy_id "$backup_dir")"
+    mkdir -p "$backup_dir/generations" || return 1
+    if [ -e "$backup_dir/generations/$legacy_id" ] || [ -L "$backup_dir/generations/$legacy_id" ]; then
+        echo "Error: legacy generation id $legacy_id already exists; refusing to migrate." >&2
+        return 1
+    fi
+    mv "$backup_dir/current" "$backup_dir/generations/$legacy_id" || return 1
+    if [ -f "$backup_dir/manifest.tsv" ]; then
+        mv "$backup_dir/manifest.tsv" "$backup_dir/generations/$legacy_id/manifest.tsv" || return 1
+    fi
+    ln -sfn "generations/$legacy_id" "$backup_dir/current"
+}
+
 # Hard-link every regular file/symlink under PREV_DIR into the same relative
 # path under NEW_DIR, except any path listed (one per line, relative) in
 # SKIP_FILE -- the paths this run is fetching fresh or has removed, which
