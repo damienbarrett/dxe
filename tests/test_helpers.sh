@@ -1,7 +1,17 @@
 #!/bin/bash
 # Test helper functions for DX Experience tests
 
-set -uo pipefail
+# No `set -uo pipefail` here (Fable D4 / WP1.6): this file is SOURCED, not
+# executed, into every suite that calls it, and a sourced file's `set`
+# changes the CALLING shell's own control state -- exactly the import-
+# purity violation tests/test_refactor_contracts.sh's purity loop now
+# actually catches (it used to be unable to see it at all; see that file's
+# own WP1.6 history). Every suite that sources this file already sets both
+# flags itself before doing so (confirmed by grep across every
+# tests/test_*.sh that sources it), so nothing here needs to set them again
+# -- and setting them again, in the sourced file, would silently overwrite
+# whatever the caller chose (e.g. a suite that deliberately omits `-e` to
+# capture a command's exit status by hand).
 
 # Match stdin against a pattern without short-circuiting the writer.
 #
@@ -32,7 +42,7 @@ file_mode() {
 }
 
 # A listing of every path under the REAL SSH known-hosts pin tree
-# (dx_ssh_known_hosts_dir in bin/lib/dx-ssh-common.sh writes under
+# (dx_ssh_known_hosts_dir in dx-ssh-common.sh writes under
 # "${XDG_STATE_HOME:-$HOME/.local/state}/dxe"), computed with THIS SHELL's
 # own ambient HOME/XDG_STATE_HOME -- never call this from inside a subshell
 # that has already overridden either variable to a fixture, or it silently
@@ -73,11 +83,26 @@ TESTS_PASSED=0
 TESTS_FAILED=0
 TESTS_SKIPPED=0
 
-# Base directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Base directory. Fable D4 / WP1.6: this file's OWN directory, under its
+# own name (DXE_TESTS_DIR), never the caller's SCRIPT_DIR -- every suite
+# that sources this file already sets its own SCRIPT_DIR to this exact
+# same directory first (a repo-wide convention), so reassigning it here
+# used to be invisible: the clobber and the caller's own value always
+# coincided. That is precisely why the import-purity probe pins a
+# SCRIPT_DIR canary rather than diffing the caller's ambient value -- and
+# precisely why this file must never assign to SCRIPT_DIR at all.
+DXE_TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(cd "$DXE_TESTS_DIR/.." && pwd)"
 
-CONTAINER_DIR="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
+# dx_test_guest_dir -- the single guest tree every suite's CONTAINER_DIR/
+# FLAKE_*/BOOTSTRAP/CONTAINERFILE/SHELL_NIX below is derived from. A
+# function, not a hardcoded path repeated at every call site, so a future
+# rename of the architecture-named directory is a one-line change here.
+dx_test_guest_dir() {
+    printf '%s' "$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
+}
+
+CONTAINER_DIR="$(dx_test_guest_dir)"
 FLAKE_NIX="$CONTAINER_DIR/flake.nix"
 FLAKE_LOCK="$CONTAINER_DIR/flake.lock"
 NIXVIM_NIX="$CONTAINER_DIR/nixvim.nix"
@@ -89,15 +114,19 @@ DX_EXPECTED_NIXOS_RELEASE="${DX_EXPECTED_NIXOS_RELEASE:-26.05}"
 DX_EXPECTED_NIXOS_BRANCH="${DX_EXPECTED_NIXOS_BRANCH:-nixos-$DX_EXPECTED_NIXOS_RELEASE}"
 DX_CONTAINER_NAME="${DX_CONTAINER_NAME:-dx-host}"
 DX_SSH_PORT="${DX_SSH_PORT:-2222}"
-# Pure host helpers are safe on machines without Apple Container.
-source "$BASE_DIR/bin/lib/dx-host-util.sh"
+# Fable D4 / WP1.6: this file no longer sources production code (the
+# dx-host-util.sh library) -- tests/test_refactor_contracts.sh asserts
+# that directly (a literal, comment-blind substring check, so this
+# comment itself is careful not to spell out the path it forbids). A
+# suite that needs one of that library's functions sources it itself,
+# right after sourcing this file.
 
 # tests/lib/harness.sh (WP1.1, Fable D1): the results-file recorder
 # test_pass/test_fail/test_skip/print_summary/exit_with_code below are now
 # shims over. Also supplies RED/GREEN/YELLOW/NC, so this file no longer
 # defines its own copies.
 # shellcheck source=lib/harness.sh
-source "$SCRIPT_DIR/lib/harness.sh"
+source "$DXE_TESTS_DIR/lib/harness.sh"
 
 # Test assertion functions
 assert_file_exists() {
@@ -219,10 +248,11 @@ test_section() {
 # Requires running container
 #
 # Uses stdin_matches (this file's own read-all idiom, see its comment above)
-# rather than `grep -F -x -q` directly: this file sets `set -uo pipefail` at
-# its own top, and a `grep -q` pipeline can read a real match as absent under
-# pipefail the same way bin/lib/dx-container.sh's container_is_running/
-# container_exists did before their fix (tests/test_section20_skip_integration.sh).
+# rather than `grep -F -x -q` directly: every suite that sources this file
+# sets its own `set -uo pipefail` (or `-euo pipefail`) before doing so, and
+# a `grep -q` pipeline can read a real match as absent under pipefail the
+# same way dx-container.sh's container_is_running/container_exists did
+# before their fix (tests/test_section20_skip_integration.sh).
 #
 # Fable D11: SKIP_INTEGRATION is checked by hand in twelve suites (each
 # gating its whole file before ever calling this) and, until now, never
@@ -279,8 +309,26 @@ container_exec_dx() {
 container_exec_dx_bash() {
     container_exec_dx bash -lc "$1"
 }
-# shellcheck source=lib/tmux-probes.sh
-source "$SCRIPT_DIR/lib/tmux-probes.sh"
+
+# dxe_require_tmux_probes -- lazy, idempotent loader for
+# tests/lib/tmux-probes.sh (Fable D4 / WP1.6): live-guest tmux probes
+# (tmux_guest_probe and friends) that only two suites actually call
+# (test_section6_tools.sh, test_section14_tinty_theming.sh) but every OTHER
+# suite that sources this file used to pay to source anyway. Callers
+# invoke this unconditionally near their own top, right after sourcing this
+# file -- NOT gated behind requires_container: test_section6_tools.sh calls
+# tmux_guest_resurrect_probe at unit tier against a fully faked
+# container_exec_dx_bash, with no real container present, so gating this
+# loader behind container discovery would make that unit-tier case fail to
+# find the function it needs.
+DXE_TMUX_PROBES_LOADED=""
+dxe_require_tmux_probes() {
+    if [ -z "$DXE_TMUX_PROBES_LOADED" ]; then
+        # shellcheck source=lib/tmux-probes.sh
+        source "$DXE_TESTS_DIR/lib/tmux-probes.sh"
+        DXE_TMUX_PROBES_LOADED=1
+    fi
+}
 
 # Extract one value from a captured tmux_guest_probe blob.
 #   probe_value "$blob" status-keys

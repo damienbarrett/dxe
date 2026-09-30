@@ -6,6 +6,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
+dxe_require_tmux_probes
 set +e
 
 HOME_NIX="$CONTAINER_DIR/home.nix"

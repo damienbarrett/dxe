@@ -18,6 +18,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
+# shellcheck source=../bin/lib/dx-host-util.sh
+source "$BASE_DIR/bin/lib/dx-host-util.sh"
 test_section "Host Util: dx_wait_until"
 
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-host-util.XXXXXX")"
