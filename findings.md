@@ -345,7 +345,7 @@ Every review ID and where it lands.
   behind one facade; claims to `dx-claims.sh`; `dx-forward`/`dx-reverse`
   merged into `dx_tunnel_cli`; narrative comments moved to decisions.
   (Muse A2, Fable A7, Astra R3)
-- [ ] **WP8.4** Tests: split `test_docker_runtime_adapter.sh` on its
+- [~] 012c39b+18022a6 (a) **WP8.4** Tests: split `test_docker_runtime_adapter.sh` on its
   section headers; `test_sourceable_coverage.sh` probes migrated to owning
   suites with asserted outcomes (`|| true` count ratcheted from 149); D7's six
   conversions; remaining source-text contracts gathered in
@@ -438,3 +438,4 @@ Every review ID and where it lands.
 - **2026-09-30** CI at 7b79ed1: container-free step fails only in section 24 (`test_herdr_config_persistence.sh`, eight Herdr cases) on the Linux runner; the suite passes on macOS and is outside the kcov subset. Same WP8.2 class: fixtures shim `run_as_dx` but the publish now goes through `run_as_dx_argv`/`setpriv`. Fix in flight; also running the whole container-free suite inside the Linux image to catch anything else the kcov subset misses.
 - **2026-09-30** Whole container-free suite inside the Linux image (snapshot 2bf945d): 35 suites, 2,155 passed, 10 failed = section 24's eight (fix in flight) + two section 6 `git ls-files` cases that cannot see a worktree's gitdir from the container (they pass on CI's real checkout). Nothing else Linux-only.
 - **2026-09-30** Section 24 fixed for Linux (030b9bb): fixtures shim `run_as_dx_argv` too; on macOS the whole guest body is skipped (`uname` guard), which is why only CI saw it. Linux: 47 passed.
+- **2026-09-30** WP8.4a landed (012c39b, 18022a6): the adapter suite is five standalone parts (transport 51, identity 42, lifecycle 44, lock 22, health 49) behind the one registered aggregate (208, labels identical); four Fable D7 source-text checks converted (dx-wait-ssh logs, dx-herdr guest command, dx-ai call shape, sshd_config rendered and validated with `sshd -T`, duplicate in section 13 removed). Left: WP8.4b (gather remaining source-text contracts, migrate sourceable-coverage probes to owning suites).
