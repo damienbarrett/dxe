@@ -1,6 +1,7 @@
 #!/bin/bash
 # tier: unit
 # bash32: yes
+# coverage: yes
 set -euo pipefail
 
 # Red for WP4.2 / Fable A6: dx_wait_until <timeout> <interval> <cmd...>, the

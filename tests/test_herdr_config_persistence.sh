@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
+# coverage: yes
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

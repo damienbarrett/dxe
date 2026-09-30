@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
 # Section 13: Final Review
 # Tests for: all final checks before completion
 

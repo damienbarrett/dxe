@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: yes
 # Section 27: QNAP Phase 0 scripts (tests/qnap/phase0-inventory.sh,
 # tests/qnap/phase0-spike.sh)
 #

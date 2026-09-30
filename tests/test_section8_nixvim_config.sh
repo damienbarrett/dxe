@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
 # Section 8: Clean Up NixVim Configuration
 # Tests for: no duplicate plugins, proper use of NixVim modules
 

@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
+# coverage: yes
 # Section 16: Persist Storage Across Destroy
 # /persist lives on its own named volume (dx-persist) so files survive
 # dx-destroy-container + dx-create-container. The volume name is configurable

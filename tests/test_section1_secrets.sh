@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
 # Section 1: Protect Local Secrets And Generated Files
 # Tests for: .gitignore setup, secret exclusion, DS_Store handling
 

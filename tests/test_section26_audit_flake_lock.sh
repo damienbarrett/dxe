@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
 # Section 26: flake.lock refresh audit (tests/lib/audit-flake-lock.sh)
 #
 # audit-flake-lock.sh proves a flake.lock diff is confined to a "stable

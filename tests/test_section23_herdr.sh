@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
+# coverage: yes
 # Section 23: Herdr Integration
 # Tests for: dx-herdr host wrapper, Herdr persistence, config seeding, and capability probe
 #

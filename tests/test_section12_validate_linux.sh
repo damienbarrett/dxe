@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: live
+# bash32: no
 # Section 12: Validate Host-Agnostic Guest Bootstrap
 # Tests for: bootstrap.sh works on Linux without Apple container
 # These tests are designed to run INSIDE a Linux environment with Nix.

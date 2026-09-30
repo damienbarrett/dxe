@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
+# coverage: yes
 # Section 19: Reverse Forward Runtime
 # Verifies dx-reverse exposes a macOS loopback service inside the running guest.
 

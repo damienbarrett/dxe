@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
 # Section 7: Remove lazy.nvim
 # Tests for: NixVim is canonical, lazy.nvim removed
 

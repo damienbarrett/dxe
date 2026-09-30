@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
 # Section 14: Tinty Theming
 # Tests for: Tinty package/config, dx-theme wrapper, Neovim integration, and safe runtime assumptions
 

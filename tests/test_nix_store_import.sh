@@ -1,4 +1,8 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
+# coverage: yes
+# skip-ok: yes
 # Behaviour tests for the ownership-correct, atomic image-store importer.
 set -euo pipefail
 

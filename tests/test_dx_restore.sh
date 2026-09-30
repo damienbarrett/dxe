@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: unit
+# bash32: yes
+# coverage: yes
 set -uo pipefail
 # Increment 3 (Branch 10, feat/persist-backup): dx-restore, driven through the
 # same fake-container boundary as tests/test_dx_backup.sh (see that file's
