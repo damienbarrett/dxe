@@ -844,6 +844,26 @@ echo "dx-qnap-running	dx-qnap-nixos	Up 2 hours"'
 [ "$?" -eq 0 ] && test_pass "dx_runtime_docker_daemon_id_cache_write: a failed rename returns non-zero, and leaves neither the published host-identity file nor its own tmp file behind" \
     || test_fail "dx_runtime_docker_daemon_id_cache_write: a failed rename returns non-zero, and leaves neither the published host-identity file nor its own tmp file behind"
 
+# Direct-call battery: dx_runtime_docker_resource_owned's own defensive
+# "unknown kind" arm. Every real caller passes a fixed literal kind
+# (dx_runtime_docker_container_owned always passes "container",
+# dx_runtime_docker_volume_owned always passes "volume"), so this branch is
+# unreachable through either public wrapper -- call the shared function
+# directly, exactly as it would be misused, to prove it fails closed rather
+# than silently treating an unrecognized kind as owned.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_docker_resource_owned bogus-kind some-name container use 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "dx_runtime_docker_resource_owned: unknown kind 'bogus-kind'"
+)
+[ "$?" -eq 0 ] && test_pass "dx_runtime_docker_resource_owned: refuses an unrecognized kind rather than guessing (direct call)" \
+    || test_fail "dx_runtime_docker_resource_owned: refuses an unrecognized kind rather than guessing (direct call)"
+
 rm -rf "$fixture" 2>/dev/null || true
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
