@@ -66,7 +66,9 @@ if dx_mount_manifest_publish_new "$v2" >/dev/null 2>&1; then test_fail "first pu
 
 audit="$(DX_MOUNT_IDENTITY_DIR="$state" "$MOUNT" --audit-manifests)"
 if printf '%s\n' "$audit" | stdin_matches 'v2.env format=v2 complete=true'; then test_pass "manifest audit reports v2 completeness"; else test_fail "manifest audit reports v2 completeness"; fi
-assert_file_not_contains "$MOUNT" 'DX_MOUNT_TEST_MODE' "dx-mount has no production test seam"
+# WP8.4b (Fable D7): the "no production test seam" check moved to
+# tests/test_contracts_source.sh, beside dx-forward/dx-reverse's own
+# (test_section9_host_scripts.sh).
 assert_file_not_contains "$MOUNT" 'source "$identity_file"' "dx-mount never sources persisted identity data"
 
 print_summary

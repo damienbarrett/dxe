@@ -320,8 +320,10 @@ if dx_tunnel_cli_collect forward 80 >/dev/null 2>&1; then test_fail "forward wra
 source "$BASE_DIR/bin/dx-reverse"
 if dx_tunnel_cli_collect reverse 5432 3000:13000 && [ "$(printf '%s\n' "${DX_TUNNEL_CLI_MAPPINGS[@]}")" = $'5432:5432\n13000:3000' ]; then test_pass "reverse wrapper parses direction-specific mappings"; else test_fail "reverse wrapper parses direction-specific mappings"; fi
 
-assert_file_not_contains "$BASE_DIR/bin/dx-forward" 'DX_FORWARD_TEST_MODE' "forward has no production test seam"
-assert_file_not_contains "$BASE_DIR/bin/dx-reverse" 'DX_REVERSE_TEST_MODE' "reverse has no production test seam"
+# WP8.4b (Fable D7): the "no production test seam" checks for dx-forward and
+# dx-reverse moved to tests/test_contracts_source.sh, beside dx-mount's own
+# (test_section18_mount_git.sh). dx-reclaim's two checks below stay: they
+# are not test-seam checks.
 assert_file_not_contains "$BASE_DIR/bin/dx-reclaim" 'df -h "\$@" | sed' "reclaim filesystem reporting does not require guest sed"
 assert_file_contains_literal "$BASE_DIR/bin/dx-reclaim" 'export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"' "reclaim uses the GC-rooted essentials profile PATH"
 if (

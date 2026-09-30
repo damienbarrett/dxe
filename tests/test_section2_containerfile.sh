@@ -45,33 +45,10 @@ assert_file_not_contains "$CONTAINERFILE" "^COPY " "Containerfile does not copy 
 assert_file_not_contains "$CONTAINERFILE" "^CMD " "Containerfile does not define runtime bootstrap command"
 assert_file_not_contains "$CONTAINERFILE" ".dx-bootstrap-ready" "Containerfile does not contain bootstrap sync logic"
 
-# Test: Containerfile is only the base image selection
-if [ "$(grep -cve '^[[:space:]]*$' "$CONTAINERFILE")" -eq 1 ]; then
-    test_pass "Containerfile only selects the base image"
-else
-    test_fail "Containerfile only selects the base image"
-fi
-
-# Test: Containerfile's single non-blank line is EXACTLY the adopted
-# official base reference. This is a fixed-
-# string, full-line equality check, not a pattern through
-# assert_file_contains (that helper runs plain `grep -q`, i.e. BASIC
-# regular expressions - an ERE like `+`/`{64}` could never match a
-# sha256 digest through it). One string comparison is sufficient to
-# catch every corruption mode: a wrong tag, a changed digest, a
-# digest-only reference (no tag), `latest`, an extra instruction line,
-# and an extra non-blank line all produce a captured value that differs
-# from the expected line below (the extra-line case also already fails
-# the one-non-blank-line check above, and is captured here as well
-# since `$(...)` would embed a newline that cannot equal the single-line
-# expectation).
-DX_EXPECTED_CONTAINERFILE_LINE="FROM nixos/nix:2.34.7@sha256:bf1d938835ab96312f098fa6c2e9cab367728e0aad0646ee3e02a787c80d8fb8"
-actual_containerfile_line="$(grep -ve '^[[:space:]]*$' "$CONTAINERFILE")"
-if [ "$actual_containerfile_line" = "$DX_EXPECTED_CONTAINERFILE_LINE" ]; then
-    test_pass "Containerfile's non-blank line exactly matches the adopted official base reference"
-else
-    test_fail "Containerfile's non-blank line exactly matches the adopted official base reference (got: '$actual_containerfile_line')"
-fi
+# WP8.4b (Fable D7): the single-FROM-line contract (exactly one non-blank
+# line, and it is byte-identical to the adopted official base reference)
+# moved to tests/test_contracts_source.sh, alongside the other reviewed
+# source-text contracts.
 
 print_summary
 exit_with_code

@@ -37,31 +37,11 @@ for lint_arg in "$@"; do
     [ "$lint_arg" = "--strict" ] && DXE_LINT_STRICT=1
 done
 
-# The CI contract is asserted before the local-toolchain gate below, because it
-# must hold on a developer host that has no ShellCheck installed -- which is
-# exactly the host that cannot otherwise notice a broken lint gate.
-WORKFLOW="$BASE_DIR/.github/workflows/ci.yml"
-assert_file_exists "$WORKFLOW" "CI workflow exists"
-
-# ShellCheck must stay pinned. 0.11.0 aborts with "Non-exhaustive patterns in
-# checkCmd" on x="$(source f)", the construct test_refactor_contracts.sh uses to
-# prove libraries are import-pure, so taking whatever the runner image ships
-# turns a mandatory gate into a version lottery.
-assert_file_not_contains "$WORKFLOW" 'apt-get install -y shellcheck' "CI does not take ShellCheck from the runner image"
-assert_file_contains_literal "$WORKFLOW" 'nixpkgs/${NIXPKGS_PIN}#shellcheck' "CI runs a pinned ShellCheck"
-assert_file_contains "$WORKFLOW" 'NIXPKGS_PIN: nixos-' "CI records the ShellCheck pin"
-
-# Every gate the validation matrix calls CI-required must be present. A dropped
-# step would otherwise leave CI green while enforcing less than it claims.
-for required in \
-    'bash -n' \
-    'tests/run_all_tests.sh --skip-integration' \
-    'tests/run-coverage-linux.sh' \
-    'nix flake check --no-build --no-write-lock-file --all-systems' \
-    'tests/run-bash32-tests.sh'
-do
-    assert_file_contains_literal "$WORKFLOW" "$required" "CI enforces: $required"
-done
+# WP8.4b (Fable D7): the CI-workflow-literal checks that used to live here
+# (CI's ShellCheck pin, and every gate the validation matrix calls
+# CI-required) moved to tests/test_contracts_source.sh, alongside the other
+# reviewed source-text contracts -- this file keeps only ShellCheck's own
+# execution and the --strict self-test below.
 
 # Fable E1 / Muse E2 (WP9.3): prove --strict/DXE_LINT_STRICT=1 fails loudly,
 # naming shellcheck, under a fake PATH that genuinely has no shellcheck on it

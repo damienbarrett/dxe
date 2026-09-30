@@ -315,38 +315,9 @@ f6_probe_summary="$(sed 's/\x1b\[[0-9;]*m//g' <<<"$f6_probe_output")"
 f6_summary_reports_one_failed() { grep -q '1 failed' <<<"$f6_probe_summary"; }
 check f6_summary_reports_one_failed
 
-# --- F13 contract: DX_AI_TOOLS is no longer just an inventory to keep tidy,
-# it is load-bearing. dx_ai_validate_generation requires an executable of that
-# name in every published generation's profile, and dx_ai_verify runs
-# `command -v` over the same list, so a name added there without a matching
-# package in flake.nix's aiPackages makes *every* generation fail validation
-# and every dx-ai run fail at verification. That is a worse failure mode than
-# the cosmetic duplication F13 described, and nothing tied the two together.
-#
-# The two lists cannot be compared verbatim -- these are binary names, not Nix
-# attribute names (`claude` ships in `claude-code`; gemini-cli was the same
-# kind of mismatch before findings.md's 2026-09-30 user decision dropped it).
-# The contract asserted is the one that catches the real mistake: every tool
-# dx-ai will demand has *some* package whose attribute name starts with it.
-declared_tools="$(sed -n 's/^DX_AI_TOOLS="\(.*\)"$/\1/p' "$container_dir/scripts/dx-ai.sh")"
-check test -n "$declared_tools"
-ai_packages="$(sed -n '/aiPackages = /,/^[[:space:]]*\];$/p' "$container_dir/flake.nix" | sed -n 's/^[[:space:]]*\([A-Za-z][A-Za-z0-9_.-]*\)$/\1/p')"
-has_package_for() {
-    local tool="$1" package
-    for package in $ai_packages; do
-        case "${package#pkgs.}" in "$tool"|"$tool"-*) return 0 ;; esac
-    done
-    return 1
-}
-for tool in $declared_tools; do
-    check has_package_for "$tool"
-done
-
-# The user-facing install message in bin/dx-herdr names the bundle's contents.
-# It is the one copy of the inventory a user actually reads before waiting
-# ~2 minutes for an install, so it must not drift from what is installed.
-herdr_message_tools="$(sed -n 's/.*Installing optional AI tools bundle (\([^)]*\)).*/\1/p' "$ROOT/bin/dx-herdr" | tr -d ',')"
-check test "$herdr_message_tools" = "$declared_tools"
+# WP8.4b (Fable D7): the DX_AI_TOOLS/aiPackages tie (the old "F13 contract")
+# moved to tests/test_contracts_source.sh, alongside the other reviewed
+# source-text contracts.
 
 # The SIGPIPE behavior probe deliberately lives in Section 9 rather than here.
 # This file runs under kcov, and kcov's bash instrumentation leaves BASH_SOURCE
@@ -366,61 +337,10 @@ check test "$herdr_message_tools" = "$declared_tools"
 # at all.
 check grep -q 'cat >/dev/null' "$ROOT/bin/lib/dx-bootstrap-sync.sh"
 
-# --- The bootstrap essentials closure is the guest's entire pre-sshd
-# dependency set, and since it moved out of the bootstrap scripts into
-# flake.nix's `bootstrapEssentials` it is declared in exactly one place.
-# A tidy-up of that list ("coreutils surely provides tar") has nothing else
-# standing between it and a guest that dies before sshd -- the failure class
-# this whole change exists to prevent.
-#
-# The binary -> nixpkgs attribute mapping is the part that is easy to get
-# wrong: tar is gnutar, useradd is shadow, mkfs.btrfs is btrfs-progs. Assert
-# it in both directions -- the providing package is still declared, and the
-# binary is still genuinely invoked by bootstrap -- so a stale entry here gets
-# reported rather than left silently guarding nothing.
-#
-# Packages in the list that bootstrap never invokes (gzip, procps, which,
-# sudo) are deliberately not asserted: they serve the dx user's shell after
-# boot rather than bootstrap itself.
-bootstrap_essentials="$(sed -n '/bootstrapEssentials = /,/^[[:space:]]*\];$/p' "$container_dir/flake.nix" | sed -n 's/^[[:space:]]*\([A-Za-z][A-Za-z0-9_.-]*\)$/\1/p')"
-check test -n "$bootstrap_essentials"
-bootstrap_sources=("$container_dir/bootstrap.sh" "$container_dir"/bootstrap/*.sh)
-# Full-line comments are stripped so a binary named only in prose cannot stand
-# in for a real invocation. `-Fw` rather than an anchored ERE: word-matching a
-# fixed string is exactly the intent, and it avoids the `(^|[^[:alnum:]...])`
-# construct that some grep builds (ugrep) silently fail to match.
-#
-# The stripped text is materialized once and matched from a herestring rather
-# than piped: `grep -q` exits at the first match, and under `set -o pipefail`
-# the resulting EPIPE in the upstream `sed` would fail every *successful*
-# lookup -- the same SIGPIPE-under-pipefail defect described at the end of
-# this file.
-bootstrap_source_text="$(sed 's/^[[:space:]]*#.*//' "${bootstrap_sources[@]}")"
-bootstrap_invokes() { grep -Fqw "$1" <<<"$bootstrap_source_text"; }
-bootstrap_declares() {
-    local declared
-    for declared in $bootstrap_essentials; do
-        [ "$declared" = "$1" ] && return 0
-    done
-    return 1
-}
-for pair in useradd:shadow groupadd:shadow usermod:shadow ssh-keygen:openssh \
-    sshd:openssh tar:gnutar mount:util-linux sed:gnused grep:gnugrep \
-    chown:coreutils mktemp:coreutils stat:coreutils mkfs.btrfs:btrfs-progs \
-    mkfs.ext4:e2fsprogs bash:bashInteractive; do
-    check bootstrap_declares "${pair##*:}"
-    check bootstrap_invokes "${pair%%:*}"
-done
-
-# --- Branch 16: bootstrap keeps no keyring knowledge at all. The guest
-# keyring (D-Bus session bus + gnome-keyring Secret Service, used only by
-# agy) is owned entirely by dx-ai and the explicit dx-keyring command
-# (scripts/lib/dx-keyring.sh, scripts/dx-ai.sh, scripts/dx-keyring.sh).
-# A plain substring grep, not bootstrap_invokes's `-Fw` word-matching: the
-# retired identifiers (dx_resolve_keyring_bin, setup_keyring_service) embed
-# "keyring"/"dbus" inside one underscore-joined token, which word-boundary
-# matching would not catch as a substring.
-check test -z "$(grep -i 'keyring\|dbus' <<<"$bootstrap_source_text")"
+# WP8.4b (Fable D7): the bootstrapEssentials tie (binary <-> nixpkgs
+# attribute, both directions) and the Branch 16 "no keyring knowledge in
+# bootstrap" check moved to tests/test_contracts_source.sh, alongside the
+# other reviewed source-text contracts.
 
 # --- WP4.1 (Fable A4 / Muse A1): every bin/dx* entrypoint except dx-lib.sh
 # (a library) must be safely sourceable -- no output, exit 0, and a defined
