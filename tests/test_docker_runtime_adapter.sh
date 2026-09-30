@@ -2498,6 +2498,8 @@ esac'
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
+    calls_log="$dir/mutating-calls.log"
+    : > "$calls_log"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
     "version --format") echo "27.3.1"; exit 0 ;;
@@ -2512,9 +2514,7 @@ case "$1 $2" in
 esac
 case "$1" in
     ps) echo "NAMES	IMAGE	STATUS"; echo "dx-qnap	dx-qnap-nixos	Up 2 hours"; exit 0 ;;
-    stop) echo "docker stop should never run on a foreign RUNNING container" >&2; exit 99 ;;
-    kill) echo "docker kill should never run on a foreign RUNNING container" >&2; exit 99 ;;
-    rm) echo "docker rm should never run on a foreign RUNNING container" >&2; exit 99 ;;
+    stop|kill|rm) printf "%s\n" "$*" >> "'"$calls_log"'"; echo "docker $1 should never run on a foreign RUNNING container" >&2; exit 99 ;;
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
@@ -2523,7 +2523,7 @@ esac'
         DX_STOP_COMMAND_TIMEOUT=2 DX_STOP_GRACE_SECONDS=1 DX_STOP_WAIT_TIMEOUT=1 \
         PATH="$dir:/usr/bin:/bin" \
         "$BASE_DIR/bin/dx-destroy-container" 2>&1)"; rc=$?
-    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+    [ "$rc" -ne 0 ] && [ ! -s "$calls_log" ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
 )
 [ "$?" -eq 0 ] && test_pass "dx-destroy-container (docker-ssh): a foreign RUNNING container receives ZERO stop/kill/rm calls, exiting non-zero and naming the ownership mismatch" \
     || test_fail "dx-destroy-container (docker-ssh): a foreign RUNNING container receives ZERO stop/kill/rm calls, exiting non-zero and naming the ownership mismatch"
@@ -2534,6 +2534,8 @@ esac'
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
+    calls_log="$dir/mutating-calls.log"
+    : > "$calls_log"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
     "version --format") echo "27.3.1"; exit 0 ;;
@@ -2548,8 +2550,7 @@ case "$1 $2" in
 esac
 case "$1" in
     ps) echo "NAMES	IMAGE	STATUS"; echo "dx-qnap	dx-qnap-nixos	Up 2 hours"; exit 0 ;;
-    stop) echo "docker stop should never run on a foreign RUNNING container" >&2; exit 99 ;;
-    kill) echo "docker kill should never run on a foreign RUNNING container" >&2; exit 99 ;;
+    stop|kill) printf "%s\n" "$*" >> "'"$calls_log"'"; echo "docker $1 should never run on a foreign RUNNING container" >&2; exit 99 ;;
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
@@ -2558,7 +2559,7 @@ esac'
         DX_STOP_COMMAND_TIMEOUT=2 DX_STOP_GRACE_SECONDS=1 DX_STOP_WAIT_TIMEOUT=1 \
         PATH="$dir:/usr/bin:/bin" \
         "$BASE_DIR/bin/dx-stop-container" 2>&1)"; rc=$?
-    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+    [ "$rc" -ne 0 ] && [ ! -s "$calls_log" ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
 )
 [ "$?" -eq 0 ] && test_pass "dx-stop-container (docker-ssh): a foreign RUNNING container receives ZERO stop/kill calls, exiting non-zero and naming the ownership mismatch" \
     || test_fail "dx-stop-container (docker-ssh): a foreign RUNNING container receives ZERO stop/kill calls, exiting non-zero and naming the ownership mismatch"
@@ -2690,14 +2691,21 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # Astra F3 item 4: dx_runtime_docker_labels_owned (verify_labels' fixed
 # successor) reads schema but must actually VALIDATE it -- an unknown
 # future schema (999) is refused even though managed/profile/role all
-# match, and an incompatible io.dxe.system is refused even though
-# managed/schema/profile/role all match.
+# match. A plain 4-field response (no io.dxe.system at all, a resource
+# labelled by an older adapter build before Phase 4 added that label) is
+# used deliberately here rather than the current 5-field shape: bash's
+# `read` assigns every FIELD BEYOND the last named variable to that last
+# variable, rejoined by IFS, so a 5-field response fed into a would-be
+# 4-variable reader corrupts "role" into "role|system" -- a confound this
+# schema-specific case must not depend on. The refusal below is therefore
+# attributable to schema alone (managed/profile/role are all otherwise a
+# clean, exact match).
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
-    "container inspect") echo "true|999|qnap-dxe__dx-qnap|container|x86_64-linux" ;;
+    "container inspect") echo "true|999|qnap-dxe__dx-qnap|container" ;;
     *) echo "docker rm should never run on an unsupported schema" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
@@ -2709,13 +2717,17 @@ esac'
 [ "$?" -eq 0 ] && test_pass "labels_owned: refuses an unknown/unsupported schema (999) even when managed/profile/role all match" \
     || test_fail "labels_owned: refuses an unknown/unsupported schema (999) even when managed/profile/role all match"
 
+# The same "an older/foreign labelling never carried io.dxe.system at all"
+# shape (4 fields, same reasoning as above), this time isolating the
+# system check: schema/managed/profile/role are all a clean exact match,
+# so the refusal is attributable to the missing system label alone.
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
-    "container inspect") echo "true|1|qnap-dxe__dx-qnap|container|aarch64-linux" ;;
-    *) echo "docker rm should never run on an incompatible system" >&2; exit 99 ;;
+    "container inspect") echo "true|1|qnap-dxe__dx-qnap|container" ;;
+    *) echo "docker rm should never run without a matching io.dxe.system" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
@@ -2723,8 +2735,24 @@ esac'
     out="$(dx_runtime_container_delete dx-qnap 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
 )
-[ "$?" -eq 0 ] && test_pass "labels_owned: refuses an incompatible io.dxe.system even when managed/schema/profile/role all match" \
-    || test_fail "labels_owned: refuses an incompatible io.dxe.system even when managed/schema/profile/role all match"
+[ "$?" -eq 0 ] && test_pass "labels_owned: refuses a resource with no io.dxe.system label at all, even when managed/schema/profile/role all match" \
+    || test_fail "labels_owned: refuses a resource with no io.dxe.system label at all, even when managed/schema/profile/role all match"
+
+# Direct, precise unit coverage of the same io.dxe.system dimension, for a
+# genuinely PRESENT but WRONG value (the fully realistic "built for the
+# other guest architecture" case) -- calling the pure predicate directly
+# sidesteps the read/field-count confound entirely, since there is no
+# comparison against any prior parsing shape here at all.
+(
+    DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
+    dx_runtime_docker_labels_owned container "true|1|qnap-dxe__dx-qnap|container|aarch64-linux"
+) && test_fail "labels_owned: a present but WRONG io.dxe.system (aarch64-linux vs configured x86_64-linux) must be refused" \
+    || test_pass "labels_owned: a present but WRONG io.dxe.system (aarch64-linux vs configured x86_64-linux) must be refused"
+(
+    DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
+    dx_runtime_docker_labels_owned container "true|1|qnap-dxe__dx-qnap|container|x86_64-linux"
+) && test_pass "labels_owned: a matching io.dxe.system, schema, profile and role together is owned" \
+    || test_fail "labels_owned: a matching io.dxe.system, schema, profile and role together is owned"
 
 # dx-reset-nix-volume (Branch 12, store-trust-plan.md): the same DQ6 label
 # check dx-destroy-container/dx-destroy-volumes already go through
