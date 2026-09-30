@@ -85,7 +85,7 @@ dx_ai_generation_tools() {
         seen="$seen$tool "
         inventory="$inventory${inventory:+
 }$tool"
-    done < "$manifest"
+    done < "$manifest" # KCOV_LOOP_TERMINATOR
     [ -n "$inventory" ] || return 1
     printf '%s\n' "$inventory"
 }
