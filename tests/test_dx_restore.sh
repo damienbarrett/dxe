@@ -16,7 +16,7 @@ source "$SCRIPT_DIR/lib/fake-tools.sh"
 # second real process.
 # shellcheck source=../bin/lib/dx-host-util.sh
 source "$BASE_DIR/bin/lib/dx-host-util.sh"
-GUEST="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
+GUEST="$BASE_DIR/container/dx-nixos-26.05"
 test_section "Persist backup: dx-restore (fake-container boundary)"
 
 FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dx-restore-test.XXXXXX")"

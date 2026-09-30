@@ -62,7 +62,7 @@ DX_SSH_PORT	port	=2222
 DX_SSH_KEY	abspath	@root:dx_key
 DX_SSH_KEY_PUB	abspath	@root:dx_key.pub
 DX_SSH_CONNECT_TIMEOUT	posint	=15
-DX_CONTEXT_DIR	abspath	@root:container/aarch64-darwin-apple-container-dx-nixos-26.05
+DX_CONTEXT_DIR	abspath	@root:container/dx-nixos-26.05
 DX_BOOTSTRAP_SOURCE	abspath	@field:DX_CONTEXT_DIR
 DX_BOOTSTRAP_VOLUME	name	=dx-bootstrap
 DX_BOOTSTRAP_PATH	abspath	=/guest-bootstrap

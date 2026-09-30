@@ -37,7 +37,7 @@ configure_timezone
 exec sshd -D -e -p 2222
 ```
 
-`container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/base-and-storage.sh`,
+`container/dx-nixos-26.05/bootstrap/base-and-storage.sh`,
 today (`apple-image`, the only mode that exists before this branch):
 
 - `prepare_nix_volume_impl`: if `/nix` is already mounted with the target

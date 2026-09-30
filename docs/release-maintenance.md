@@ -10,7 +10,7 @@
 ### One release pin
 
 The NixOS release is pinned in exactly one file — the flake inputs in
-`container/aarch64-darwin-apple-container-dx-nixos-26.05/flake.nix`:
+`container/dx-nixos-26.05/flake.nix`:
 
 ```nix
 nixpkgs.url      = "github:nixos/nixpkgs/nixos-26.05";
@@ -58,7 +58,7 @@ A release bump is therefore:
 #    is not a flake); nixpkgs-unstable is left untouched so the optional AI set
 #    does not move during a stable release bump:
 nix flake update nixpkgs nixvim home-manager \
-    --flake container/aarch64-darwin-apple-container-dx-nixos-26.05
+    --flake container/dx-nixos-26.05
 # 3. Check the base-image alignment rule (below), then apply — MIND THE PIN:
 #    - if the recheck did NOT change the Nix image pin, dx-recreate (which
 #      reuses the /nix volume) is fine;

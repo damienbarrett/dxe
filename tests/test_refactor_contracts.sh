@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-container_dir="$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05"
+container_dir="$ROOT/container/dx-nixos-26.05"
 failures=0
 check() { if "$@"; then :; else echo "FAIL: $*" >&2; failures=$((failures + 1)); fi; }
 reject() { ! "$@"; }
@@ -227,7 +227,7 @@ check reject container_image_exists absent-image
 # file's own leaking-override contract (below) would otherwise flag it.
 unset -f container
 
-source "$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib/dx-keyring.sh"
+source "$ROOT/container/dx-nixos-26.05/scripts/lib/dx-keyring.sh"
 check dx_keyring_address_valid unix:path=/tmp/dbus-test
 check reject dx_keyring_address_valid not-an-address
 legacy_keyring="$fixture/legacy-keyring.env"

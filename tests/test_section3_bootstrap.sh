@@ -1605,7 +1605,7 @@ rm -rf "$p9_fixture"
 # own $FUNCNAME, and call bootstrap_phases() -- not by comparing grep line
 # numbers in bootstrap.sh's source text.
 p10b_output="$({
-    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh
+    # shellcheck source=../container/dx-nixos-26.05/bootstrap.sh
     source "$BOOTSTRAP"
     configure_single_user_nix() { printf '%s\n' "${FUNCNAME[0]}"; }
     install_essentials() { printf '%s\n' "${FUNCNAME[0]}"; }

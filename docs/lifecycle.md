@@ -235,7 +235,7 @@ or perform maintenance operations.
 | [`bin/dx-reset-nix-volume`](../bin/dx-reset-nix-volume) | Removes ONLY the Nix volume (`/persist` and the bootstrap volume are untouched); refuses while the container still exists or the runtime reports the volume in use. The volume-scoped recovery path both `store-trust-plan.md` refusals (a collision at a pin bump, or a broken prerequisite right after the volume reaches its final place) name by command: run this, then `./bin/dx` to rebuild `/nix` from the image and re-seed it. Replaces the earlier "no valid procedure, full destroy-and-rebuild with salvage" pin-bump text in `docs/release-maintenance.md`. |
 | [`bin/dx-backup`](../bin/dx-backup) | Captures the at-risk contents of `/persist` into a Mac folder, incrementally. |
 | [`bin/dx-restore`](../bin/dx-restore) | Pushes a captured mirror (or a named subpath of it) back into a running guest's `/persist`. |
-| [`container/.../bootstrap.sh`](../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh) | Runs the ordered sourceable phases from the atomically published, leased bootstrap generation. |
+| [`container/.../bootstrap.sh`](../container/dx-nixos-26.05/bootstrap.sh) | Runs the ordered sourceable phases from the atomically published, leased bootstrap generation. |
 
 ### Reclaiming host disk space
 

@@ -34,7 +34,7 @@ are D5-hardening — see
   be eliminated, not relocated.
 
 - [x] **5. Remove the `DX_BOOTSTRAP_TEST_MODE=guard` branch** at
-  [`bootstrap.sh`](../../../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh#L707).
+  [`bootstrap.sh`](../../../container/dx-nixos-26.05/bootstrap.sh#L707).
   It is the same production test-mode anti-pattern Phase 2 removes from the
   tunnel commands, and once `guard_old_base` is a function in a sourceable
   module it can be called directly.
@@ -58,14 +58,14 @@ are D5-hardening — see
   readable/executable, while only the explicit `/persist` state is writable by `dx`.
 
 - [x] **8. Remove the unused `start_ssh` function**
-  ([`bootstrap.sh`](../../../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh#L699-L704),
+  ([`bootstrap.sh`](../../../container/dx-nixos-26.05/bootstrap.sh#L699-L704),
   no callers anywhere in the repository) after the main-path test proves the
   `exec sshd -D -e -p 2222` tail is the canonical SSH startup path.
 
 - [x] **9. Move the Antigravity pin out of the derivation.** Put version, URL, and
   hash into `pins/agy.json`, make the Nix derivation read that file, and remove the
   range-sensitive source editing at
-  [`dx-ai.sh`](../../../container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/dx-ai.sh#L111-L142).
+  [`dx-ai.sh`](../../../container/dx-nixos-26.05/scripts/dx-ai.sh#L111-L142).
   Do this **before** making generations immutable.
 
 - [x] **10. Implement mutable AI working generations under `/persist`.** Stage a new

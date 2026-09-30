@@ -47,7 +47,7 @@ a non-empty `flake/` directory. Failure retains the prior `current` generation.
 Before any of this, move the Antigravity version, URL, and hash into
 `pins/agy.json` and make the Nix derivation read that file, removing the
 range-sensitive `sed` editing at
-[`dx-ai.sh`](../../../container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/dx-ai.sh#L111-L142).
+[`dx-ai.sh`](../../../container/dx-nixos-26.05/scripts/dx-ai.sh#L111-L142).
 
 ### Keyring state is data
 
@@ -60,7 +60,7 @@ parsed once with an exact non-evaluating reader and then removed after successfu
 conversion.
 
 Of the current consumers, only the Bash `.` at
-[`home/shell.nix`](../../../container/aarch64-darwin-apple-container-dx-nixos-26.05/home/shell.nix#L10)
+[`home/shell.nix`](../../../container/dx-nixos-26.05/home/shell.nix#L10)
 evaluates the file; Fish (`:49-50`) and Nushell (`:113`) already parse it. All
 three move to the raw address format.
 

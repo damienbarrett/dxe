@@ -6,7 +6,7 @@
 #
 # The selection RULES themselves (what is at-risk, the deny-list, hashing)
 # live in the guest selector, shipped through the bootstrap volume:
-# container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib/dx-persist-backup-select.sh
+# container/dx-nixos-26.05/scripts/lib/dx-persist-backup-select.sh
 # (see that file's header for why). This library sources it directly by path
 # -- both live in the same repository checkout on the host -- to reuse its
 # hashing/stat primitives for hashing the LOCAL mirror during restore's
@@ -19,8 +19,8 @@
 
 DX_BACKUP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DX_BACKUP_PROJECT_ROOT="$(cd "$DX_BACKUP_LIB_DIR/../.." && pwd)"
-DX_BACKUP_SELECTOR_SOURCE="$DX_BACKUP_PROJECT_ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib/dx-persist-backup-select.sh"
-# shellcheck source=../../container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib/dx-persist-backup-select.sh
+DX_BACKUP_SELECTOR_SOURCE="$DX_BACKUP_PROJECT_ROOT/container/dx-nixos-26.05/scripts/lib/dx-persist-backup-select.sh"
+# shellcheck source=../../container/dx-nixos-26.05/scripts/lib/dx-persist-backup-select.sh
 source "$DX_BACKUP_SELECTOR_SOURCE"
 
 # The path under /persist every real run targets. Not user-configurable (see

@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUT="$SCRIPT_DIR/coverage/out"
-SCOPE="$ROOT/bin/lib,$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap,$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib"
+SCOPE="$ROOT/bin/lib,$ROOT/container/dx-nixos-26.05/bootstrap,$ROOT/container/dx-nixos-26.05/scripts/lib"
 
 if [ "${DXE_COVERAGE_ISOLATED:-}" != 1 ]; then
     # Pick the first runtime that is actually usable, not merely installed. An
@@ -52,8 +52,8 @@ while IFS= read -r source; do
     }
 done < <(find \
     "$ROOT/bin/lib" \
-    "$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap" \
-    "$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib" \
+    "$ROOT/container/dx-nixos-26.05/bootstrap" \
+    "$ROOT/container/dx-nixos-26.05/scripts/lib" \
     -type f -name '*.sh' -print | sort)
 covered="$(sed -n 's/.*"percent_covered"[[:space:]]*:[[:space:]]*"\{0,1\}\([0-9.]*\).*/\1/p' "$summary" | tail -1)"
 case "$covered" in

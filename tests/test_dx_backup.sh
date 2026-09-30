@@ -30,7 +30,7 @@ source "$BASE_DIR/bin/lib/dx-runtime.sh"
 # (RED 3) without spawning a second real process.
 # shellcheck source=../bin/lib/dx-host-util.sh
 source "$BASE_DIR/bin/lib/dx-host-util.sh"
-GUEST="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
+GUEST="$BASE_DIR/container/dx-nixos-26.05"
 # Captured before PATH is ever extended with FAKE_DIR below, so a fake `ln`
 # installed later (Astra F5 RED 2, simulating a failed publish) can still
 # `exec` the REAL `ln` for every call it does not itself intercept.

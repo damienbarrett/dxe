@@ -108,7 +108,7 @@ recorded here.
 ## Old-base guards
 
 **Introduced by:** pre-existing.
-**Covers:** [`bootstrap.sh`](../../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh#L11-L29)
+**Covers:** [`bootstrap.sh`](../../container/dx-nixos-26.05/bootstrap.sh#L11-L29)
 and [`bin/dx-start-container`](../../bin/dx-start-container#L21-L44).
 **Removed by:** [Phase 6](checklists/phase-6.md) item 1.
 

@@ -501,7 +501,7 @@ find bin tests container -type f \( -name '*.sh' -o -path 'bin/dx*' \) -print0 |
 shellcheck --severity=warning   # via the pinned nixpkgs shell in CI
 ./tests/run_all_tests.sh --skip-integration
 ./tests/run-coverage-linux.sh
-nix flake check --no-build --no-write-lock-file ./container/aarch64-darwin-apple-container-dx-nixos-26.05
+nix flake check --no-build --no-write-lock-file ./container/dx-nixos-26.05
 ./tests/run-bash32-tests.sh
 ```
 

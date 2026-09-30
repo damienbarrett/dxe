@@ -48,7 +48,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-CONTAINER_DIR="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
+CONTAINER_DIR="$BASE_DIR/container/dx-nixos-26.05"
 CONTAINERFILE="$CONTAINER_DIR/Containerfile"
 # shellcheck source=lib/phase0-common.sh
 source "$SCRIPT_DIR/lib/phase0-common.sh"

@@ -477,7 +477,7 @@ by name.
 | --- | --- |
 | G1 Static and contracts | The ShellCheck and syntax commands from `.github/workflows/ci.yml`; `tests/run-bash32-tests.sh` on macOS `/bin/bash` 3.2; and under Bash 5 on Linux, `tests/run_all_tests.sh --skip-integration` plus `tests/test_refactor_contracts.sh` (the aggregate runner doesn't dispatch the latter) |
 | G2 Coverage | `tests/run-coverage-linux.sh`, using Docker, Podman or Apple `container`. Requires 100% of the declared kcov scope, the scope-share ratchet, non-skipped Section 25, and the changed-code report below |
-| G3 Nix | In a named `aarch64-linux` Nix environment (CI's x86_64 job only evaluates the flake): `nix flake check --no-build --no-write-lock-file` on `container/aarch64-darwin-apple-container-dx-nixos-26.05`. Then build `default`, `ai-tools`, `bootstrap-essentials` and `homeConfigurations.dx.activationPackage`, run Section 12, and confirm the lock file is unchanged |
+| G3 Nix | In a named `aarch64-linux` Nix environment (CI's x86_64 job only evaluates the flake): `nix flake check --no-build --no-write-lock-file` on `container/dx-nixos-26.05`. Then build `default`, `ai-tools`, `bootstrap-essentials` and `homeConfigurations.dx.activationPackage`, run Section 12, and confirm the lock file is unchanged |
 | G4 Live | On isolated guests (`dx-test`), per the branch's own list. Record the version that actually booted, not just the `current` pointer. A zero exit code with required checks skipped is a fail |
 | G5 CI | Both jobs green for the exact commit that lands. Queued, skipped or cancelled runs don't count |
 

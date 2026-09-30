@@ -424,7 +424,7 @@ exit 0
 # --- docker daemon would.                                                ---
 BASEIMG_PULLED_FLAG="$STUB_DIR/baseimage-pulled.flag"
 rm -f "$BASEIMG_PULLED_FLAG"
-BASE_REF_FOR_TEST="$(sed -n "s/^FROM //p" "$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05/Containerfile" | head -n1)"
+BASE_REF_FOR_TEST="$(sed -n "s/^FROM //p" "$BASE_DIR/container/dx-nixos-26.05/Containerfile" | head -n1)"
 BASE_TAG_FOR_TEST="$(printf "%s" "$BASE_REF_FOR_TEST" | sed "s/@sha256:[0-9a-f]*\$//")"
 write_stub ssh_baseimage_diff '
 printf "ssh %s\n" "$*" >> "'"$MARKER"'"
