@@ -171,3 +171,29 @@ Recorded once for the week's final validation: NixOS release pin
 `release-26.05`; base image `nixos/nix:2.34.7` at digest
 `sha256:bf1d9388…`; `DX_IMAGE_IDENTITY` before and after the rebuild as
 above.
+
+### Step 5 — destructive lifecycle on a disposable, canary live (2026-10-01, day 3)
+
+Runbook section 9.3, run by the coordinating session from a clean clone
+of `main` `4a1e3ce`, stdin from `/dev/null`, with `dx-qnap-canary`
+running (healthy, restart count 0) throughout. A disposable
+`dx-qnap-spike2` profile (own names, own key pair, port 2225, policy
+`no`, 8 GB / 2 CPU) was created, destroyed through the immutable
+ownership plan, and its resources confirmed gone; the canary's container
+and three volumes were the only managed resources on the NAS before,
+during (alongside the spike's) and after.
+
+| Step | Result |
+| --- | --- |
+| `dx-create-keys`, `dx` (image from the cached layers, volumes, container, start, `dx-wait-ssh`) | ready in 195 s; `SSH_OK`, `x86_64`, user `dx` |
+| inventory with the spike live | containers: spike2 and canary; volumes: three per profile; canary `running/healthy/restarts=0` |
+| `dx-stop-container`, then `dx-factory-reset --force` under the spike profile | the immutable plan printed first (container and three volumes, each `labels=true|1|<host>__dx-qnap-spike2|<role>`), then the container, image, the three volumes and the key pair removed; "Factory reset complete." |
+| inventory after the reset | only the canary's container and volumes; canary `running/healthy/restarts=0` |
+| negative case: an **unlabelled** volume created under the spike's nix-volume name, then `dx-destroy-volumes --force` | refused: "it exists but is unlabelled or labelled for a different profile/role … this is a collision, not an adoption candidate", then "refusing to destroy any volume"; the unlabelled volume still existed afterwards (zero deletes); removed by hand |
+| leftovers | no spike2 image tag, no spike2 local state, profile and keys removed from the clone; final inventory identical to the initial one |
+
+No command in this step named the canary; the misnamed-target case used
+the spike's own name deliberately, since a profile that reused the
+canary's container name would resolve to the canary's own labels and is
+exactly what "never run any destructive command against the canary"
+forbids.
