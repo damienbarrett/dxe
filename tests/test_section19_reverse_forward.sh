@@ -294,6 +294,17 @@ dxe_s19_check "dx-reverse rejects an unknown option" \
         test_fail "dx_tunnel_cli forward --stop-all refuses extra arguments (direct call) (rc=$rc, out: $out)"
     fi
 
+    # --stop <port>'s actual dispatch (dx_tunnel_stop), distinct from the
+    # earlier --stop cases above (which only ever reach the usage/port
+    # validation before it): like --list/--stop-all, dx_tunnel_stop only
+    # reads local tunnel state, so this needs no container or SSH either.
+    out="$(dx_tunnel_cli forward --stop 8080 2>&1)"; rc=$?
+    if [ "$rc" -eq 0 ] && [ "$out" = "No dx-forward forward found for host port 8080." ]; then
+        test_pass "dx_tunnel_cli forward --stop <port> reports none found against empty state (direct call)"
+    else
+        test_fail "dx_tunnel_cli forward --stop <port> reports none found against empty state (direct call) (rc=$rc, out: $out)"
+    fi
+
     out="$(dx_tunnel_cli forward 8080:9090:1000 2>&1)"; rc=$?
     if [ "$rc" -eq 1 ] && [ "$out" = "Error: Invalid forward '8080:9090:1000'. Use <guest_port> or <guest_port>:<host_port>." ]; then
         test_pass "dx_tunnel_cli forward refuses a mapping with more than one colon (direct call)"
