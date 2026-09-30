@@ -67,9 +67,33 @@ fingerprints. Run logs are retained privately.
    `./bin/dx-profile dx-test bash tests/run.sh --live --tier unit` and
    `--tier live`.
 
+## Recreate + full sweep (later the same day, branch tip `6d92647`)
+
+The user authorised one recreate of `dx-test` only. `./bin/dx-profile
+dx-test ./bin/dx-recreate hostname </dev/null`, stdin from `/dev/null`:
+container and image destroyed (2.16 GB reclaimed), keys kept, base image
+rebuilt from the Containerfile, container created onto the three existing
+`dx-test-*` volumes, started, bootstrap generation unchanged, guest ready
+after the store fetches (`hostname` then exited 127 because the guest has
+no such binary; not a fault).
+
+| Step | Result |
+| --- | --- |
+| WP6.7 readiness marker under the new launcher | `.locks/ready/1.49` present and byte-equal to the lease `leases/<generation>.1` (generation, boot id, pid 1, start 49) |
+| WP6.7 healthcheck command, executed inside the guest | exit 0 |
+| `dx-status` | running = published generation, SSH port open, tools resolved from `~/.nix-profile/bin` |
+| `tests/run.sh --live --tier unit` | 40 suites, 2,527 passed, 0 failed, 79 skipped |
+| `tests/run.sh --tier live` | 3 suites, 25 passed, 0 failed |
+| `dx-backup --dry-run --summary` (scratch mirror) | still fails with finding 4's exact error |
+| cold stop | clean; `dx-test` left stopped |
+
+WP6.4 (ownership check before mutation) and WP6.5 (one lifecycle lock for
+the whole create+start orchestration) ran on the real runtime as part of
+the recreate without refusal or a second acquire; they were not otherwise
+instrumented.
+
 ## Not done
 
-- QNAP canary: not started, per the standing decision that it follows a
-  green `dx-test`; finding 4 keeps `dx-test` short of green.
-- Full sweep not repeated end to end after the fixes (time-boxed session);
-  the five affected suites were re-run individually.
+- QNAP canary: not started. `dx-test` is green except finding 4, and a
+  backup that fails on every real guest is exactly what the canary week
+  would depend on, so the canary waits for that decision.
