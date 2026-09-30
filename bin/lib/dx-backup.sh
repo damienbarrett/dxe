@@ -473,14 +473,14 @@ dx_backup_generation_carry_forward() {
         while IFS= read -r d || [ -n "$d" ]; do
             [ -n "$d" ] || continue
             mkdir -p "$new_dir/$d" || { rc=1; break; }
-        done < "$dirs"
+        done < "$dirs" # KCOV_LOOP_TERMINATOR
         rm -f "$dirs"
         if [ "$rc" -eq 0 ]; then
             local rel
             while IFS= read -r rel || [ -n "$rel" ]; do
                 [ -n "$rel" ] || continue
                 ln -P "$prev_dir/$rel" "$new_dir/$rel" || { rc=1; break; }
-            done < "$carry"
+            done < "$carry" # KCOV_LOOP_TERMINATOR
         fi
     fi
     rm -f "$all_sorted" "$skip_sorted" "$carry"
@@ -506,7 +506,7 @@ dx_backup_verify_fetched() {
             echo "Error: $path changed between listing and transfer; refusing to commit an inconsistent snapshot." >&2
             rc=1
         fi
-    done < "$fetch_lines"
+    done < "$fetch_lines" # KCOV_LOOP_TERMINATOR
     return "$rc"
 }
 
