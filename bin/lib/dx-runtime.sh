@@ -257,3 +257,28 @@ dx_runtime_export() { dx_runtime_dispatch export "$@"; }
 # mounts, bind mounts, restart policy, host filesystem reclamation. See each
 # adapter file's own comment for what its answers mean and why.
 dx_runtime_capability() { dx_runtime_dispatch capability "$@"; }
+
+# dx_runtime_lock_acquire/_release/_path (Astra F4, WP6.5): the lifecycle
+# lock bin/lib/dx-container.sh's dx_lifecycle_lock_acquire/_release use,
+# under EITHER runtime -- unlike dx_runtime_docker_lock_audit/_release
+# (bin/dx-lock's and bin/dx-status's own read-only surface, which never
+# runs for DX_RUNTIME=apple at all, so those two names stay the narrow,
+# reasoned exception already granted in
+# tests/test_runtime_boundary_audit.sh), this needs a real dispatch for
+# both, so it goes through the ordinary dx_runtime_dispatch here like every
+# other dx_runtime_<op> contract operation, rather than either adapter's
+# lock function being named directly outside its own file. _acquire prints
+# the owner token it claimed (Docker: a minted host:pid:random:timestamp
+# string; Apple: the local lock directory's own path); _release takes that
+# same token back; _path (Apple's own deterministic lock directory path,
+# computable without acquiring anything) exists only so a caller that must
+# avoid capturing _acquire's stdout through a command substitution -- doing
+# so would fork a subshell, and bin/lib/dx-host-util.sh's own
+# dx_lock_acquire sets DXE_HELD_LOCK as a plain, never-exported shell
+# variable that would not survive it -- can still fetch the token
+# separately afterward. Docker-ssh has no local path of its own to expose
+# through it (bin/lib/dx-runtime-docker-lock.sh's own dx_runtime_docker_lock_path
+# stub explains why), so no caller ever dispatches to it under docker-ssh.
+dx_runtime_lock_acquire() { dx_runtime_dispatch lock_acquire "$@"; }
+dx_runtime_lock_release() { dx_runtime_dispatch lock_release "$@"; }
+dx_runtime_lock_path() { dx_runtime_dispatch lock_path "$@"; }

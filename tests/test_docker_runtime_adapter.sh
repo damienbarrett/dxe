@@ -2194,7 +2194,14 @@ esac
     source "$BASE_DIR/bin/lib/dx-host-util.sh"
     export DX_TUNNEL_LOCK_TIMEOUT=1
     export DXE_SELF_PROCESS_IDENTITY="wp65-daemon-scope-$$"
-    container_exists() { return 1; }
+    # container_exists is keyed on which container the test is currently
+    # simulating as having actually been created (the same technique this
+    # file's own pre-existing claim tests use in
+    # tests/test_section9_host_scripts.sh), rather than on real live-process
+    # identity matching, which DXE_SELF_PROCESS_IDENTITY's own artificial
+    # value here does not satisfy.
+    existing="containerA"
+    container_exists() { [ "$existing" = "$1" ]; }
     claim_home="$fixture/wp65-daemon-claim-home"
     HOME="$claim_home"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=hostA DXE_RUNTIME_DOCKER_DAEMON_ID=daemonA
@@ -2210,8 +2217,8 @@ esac
     dirB="$(dx_nix_volume_claim_dir)"
     DX_REMOTE_HOST=hostA DXE_RUNTIME_DOCKER_DAEMON_ID=daemonA
     # Back on hostA's own identity: a second, distinct container contending
-    # for the SAME volume while this same live process still holds hostA's
-    # claim is correctly refused -- proving hostA's own scope is a real
+    # for the SAME volume while containerA still (per the stub above)
+    # exists is correctly refused -- proving hostA's own scope is a real
     # exclusion, not merely a no-op that let everything through.
     dx_nix_volume_claim_acquire shared-vol containerC
     rc3=$?

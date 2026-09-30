@@ -4,7 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
-release_pending_claim() { [ "${claim_pending:-false}" != true ] || dx_nix_volume_claim_release "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME" || true; }
+release_pending_claim() {
+    [ "${claim_pending:-false}" != true ] || dx_nix_volume_claim_release "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME" || true
+    dx_lifecycle_lock_release || true
+}
 
 create_container_main() {
 dx_require_container_cli
@@ -21,14 +24,22 @@ if container_exists "$DX_CONTAINER_NAME"; then
     exit 0
 fi
 
-dx_nix_volume_claim_acquire "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME"
-claim_pending=true
-trap release_pending_claim EXIT HUP INT TERM
-
+# Astra F4 item 6: the lifecycle lock's own container (docker-ssh) needs
+# $DX_IMAGE to already exist -- `docker create` requires an existing base
+# image even for a container that is never started. Checking that FIRST,
+# before ever attempting the lock, means a plain first run (no image yet)
+# still gets today's exact "run dx-create-image first" message instead of
+# a confusing lock-acquisition failure.
 if ! container_image_exists "$DX_IMAGE"; then
     echo "Error: Image $DX_IMAGE does not exist. Run ./bin/dx-create-image first (or ./bin/dx, which builds it if missing)." >&2
     exit 1
 fi
+
+dx_lifecycle_lock_acquire || exit 1
+trap release_pending_claim EXIT HUP INT TERM
+
+dx_nix_volume_claim_acquire "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME"
+claim_pending=true
 
 echo "Creating container $DX_CONTAINER_NAME from image $DX_IMAGE..."
 
@@ -144,5 +155,6 @@ CREATE_ARGS+=(--entrypoint-cmd "$BOOTSTRAP_LAUNCH_CMD" --entrypoint-arg "$DX_BOO
 dx_runtime_container_create "${CREATE_ARGS[@]}"
 claim_pending=false
 trap - EXIT HUP INT TERM
+dx_lifecycle_lock_release
 }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then create_container_main "$@"; fi

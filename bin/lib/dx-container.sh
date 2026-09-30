@@ -302,7 +302,30 @@ dx_bootstrap_confirm_publication() {
     echo "The running guest will not pick this publish up on its own. Restart it so its launcher waits for publication fresh: ./bin/dx-stop-container && ./bin/dx-start-container." >&2
     return 1
 }
-dx_nix_volume_claim_dir() { printf '%s/.dx-cache/nix-volume-claims\n' "${HOME:?}"; }
+# Astra F4 item 5: this used to be a bare "$HOME/.dx-cache/nix-volume-claims"
+# with no daemon identity in it at all, so two docker-ssh profiles pointed
+# at DIFFERENT NASs (different DX_REMOTE_HOST/daemon id) but sharing the
+# same $HOME and DX_NIX_VOLUME name would collide on the SAME local claim
+# file, even though they can never actually contend for the same remote
+# resource. dx_profile_state_segment (WP3.4, bin/lib/dx-host-util.sh) is the
+# one place that already resolves "which local, per-profile identity
+# segment scopes this runtime's own state" for tunnels/backups/known-hosts;
+# folding it in here too means a claim can no longer be scoped by $HOME
+# alone. Fails closed on a failed identity resolution (that function's own
+# contract), same as its other three call sites. Apple prints an empty
+# segment (single local daemon, nothing to disambiguate), so its claim path
+# is unchanged, byte for byte. The segment is hashed (dx_short_hash,
+# bin/lib/dx-host-util.sh), not used raw, because docker-ssh's own value can
+# contain ":" and is not by itself a safe path segment.
+dx_nix_volume_claim_dir() {
+    local segment
+    segment="$(dx_profile_state_segment)" || return 1
+    if [ -n "$segment" ]; then
+        printf '%s/.dx-cache/nix-volume-claims/%s\n' "${HOME:?}" "$(dx_short_hash "$segment")"
+    else
+        printf '%s/.dx-cache/nix-volume-claims\n' "${HOME:?}"
+    fi
+}
 
 dx_nix_volume_claim_name_valid() {
     case "$1" in ''|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
@@ -379,4 +402,99 @@ EOF
         [ "$claim_container" != "$container_name" ] || rm -f "$claim"
     fi
     dx_lock_release "$lock"
+}
+
+# --- Lifecycle-wide lock (Astra F4, WP6.5) ----------------------------------
+#
+# bin/lib/dx-runtime-docker-lock.sh's dx_runtime_docker_lock_acquire/_release
+# had no production caller before this: two controllers could run
+# overlapping create/recreate/destroy sequences against the same profile.
+# dx_lifecycle_lock_acquire/_release are the operation-level boundary every
+# mutating entrypoint (bin/dx-create-container, bin/dx-start-container,
+# bin/dx-stop-container, bin/dx-destroy-container, bin/dx-destroy,
+# bin/dx-recreate, bin/dx) now calls before its first mutating runtime call.
+#
+# Nested-command ownership: an orchestrator that runs a mutating entrypoint
+# as a CHILD PROCESS (bin/dx running bin/dx-create-container/bin/dx-start-container,
+# bin/dx-destroy running bin/dx-destroy-container/bin/dx-destroy-image)
+# acquires once and exports DXE_LIFECYCLE_LOCK_OWNER; every
+# dx_lifecycle_lock_acquire call that finds it already set is a
+# nested/inherited call -- it returns success immediately, issuing no
+# runtime call of its own and taking no local release responsibility.
+# DXE_LIFECYCLE_LOCK_HELD (deliberately never exported) is what makes that
+# safe: it is a plain shell variable, so it exists only in the ONE process
+# that actually performed the acquire, and a nested child's own
+# dx_lifecycle_lock_release, finding it unset (false), is a no-op. This is
+# fork/exec-boundary aware: DXE_LIFECYCLE_LOCK_OWNER survives across a plain
+# fork+wait child (bin/dx calling bin/dx-create-container) exactly as it
+# survives across `exec` (bin/dx-recreate execing into bin/dx) -- both just
+# inherit the exported environment -- but a NEW program image's own local
+# DXE_LIFECYCLE_LOCK_HELD does not survive either boundary. bin/dx and
+# bin/dx-recreate account for this explicitly: each releases (never merely
+# traps) immediately before its own final `exec` into the next stage, since
+# an EXIT trap never runs across `exec` (the process image it would fire in
+# is gone).
+#
+# Docker: dispatches (through bin/lib/dx-runtime.sh's neutral
+# dx_runtime_lock_acquire/_release/_path -- never either adapter's own
+# dx_runtime_{apple,docker}_lock_* name directly from this file, which
+# tests/test_runtime_boundary_audit.sh would otherwise flag as a boundary
+# leak; that audit's narrow, reasoned exception for
+# dx_runtime_docker_lock_audit/_release is scoped to exactly bin/dx-lock
+# and bin/dx-status, not here) to the existing remote lock-container
+# protocol (bin/lib/dx-runtime-docker-lock.sh) -- one real
+# controller-exclusion primitive shared by every profile on this
+# DX_REMOTE_HOST. Its own create-fails-if-present primitive cannot
+# distinguish a live owner from an interrupted one, so an acquire failure
+# is never silently retried or stolen: dx_runtime_docker_lock_acquire
+# itself (the one file already exempted from that same audit) prints the
+# audit's own owner/creation-time metadata plus the remedy (`dx-lock
+# status`, `dx-lock unlock --force`) on refusal, and an operator confirms
+# staleness by other means before forcing it.
+#
+# Apple: Apple Container is always local -- one controller, one daemon, so
+# there is no remote owner to exclude, and bin/dx-lock itself already
+# refuses outright for DX_RUNTIME=apple. This is a NARROWER safety net for
+# the one real local hazard: two dx/dx-create-container/... invocations
+# from this SAME machine, against the SAME DX_CONTAINER_NAME, running at
+# once (a developer running `dx` twice, or a script and a human at once).
+# bin/lib/dx-runtime-apple.sh's own dx_runtime_apple_lock_acquire/_release
+# hold the actual mkdir+owner-file mechanism (bin/lib/dx-host-util.sh's
+# dx_lock_acquire/_release, the same primitive bin/lib/dx-tunnel.sh already
+# uses for its own per-key lock).
+dx_lifecycle_lock_acquire() {
+    [ -z "${DXE_LIFECYCLE_LOCK_OWNER:-}" ] || return 0
+    local owner
+    if [ "${DX_RUNTIME:-apple}" = docker-ssh ]; then
+        owner="$(dx_runtime_lock_acquire)" || {
+            echo "Error: refusing to proceed: another controller may already hold this profile's lifecycle lock (see above)." >&2
+            return 1
+        }
+    else
+        # Deliberately not "owner=$(dx_runtime_lock_acquire)": that would
+        # capture its stdout through a command substitution, which forks a
+        # subshell -- bin/lib/dx-host-util.sh's own dx_lock_acquire sets
+        # DXE_HELD_LOCK as a plain (never exported) shell variable, so it
+        # would be set only inside that subshell and lost the instant the
+        # substitution completes, before dx_lifecycle_lock_release ever
+        # runs in THIS shell. A plain call keeps everything dx_lock_acquire
+        # sets in this same shell; the token itself is deterministic (the
+        # lock path), so it is fetched separately (dx_runtime_lock_path),
+        # with no side effects of its own, straight after.
+        dx_runtime_lock_acquire >/dev/null || {
+            echo "Error: refusing to proceed: another local dx process already holds ${DX_CONTAINER_NAME:-this profile}'s lifecycle lock. Wait for it to finish; if it is gone, remove the stale lock directory." >&2
+            return 1
+        }
+        owner="$(dx_runtime_lock_path)"
+    fi
+    DXE_LIFECYCLE_LOCK_OWNER="$owner"
+    export DXE_LIFECYCLE_LOCK_OWNER
+    DXE_LIFECYCLE_LOCK_HELD=true
+}
+
+dx_lifecycle_lock_release() {
+    [ "${DXE_LIFECYCLE_LOCK_HELD:-false}" = true ] || return 0
+    dx_runtime_lock_release "$DXE_LIFECYCLE_LOCK_OWNER" || true
+    DXE_LIFECYCLE_LOCK_HELD=false
+    unset DXE_LIFECYCLE_LOCK_OWNER
 }

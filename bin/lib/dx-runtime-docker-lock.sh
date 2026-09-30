@@ -60,6 +60,18 @@ dx_runtime_docker_lock_acquire() {
         --label "io.dxe.owner=$owner" \
         "$DX_IMAGE" >/dev/null 2>&1 || {
         echo "Error: could not acquire the remote lock '$lock_name' (it may already be held -- run 'dx-lock status' to see by whom)." >&2
+        # Astra F4 / WP6.5: this atomic create-fails-if-present primitive
+        # can never distinguish a live owner from an interrupted one (the
+        # process that minted the owner token below may be long gone), so
+        # a caller (bin/lib/dx-container.sh's dx_lifecycle_lock_acquire,
+        # via the neutral dx_runtime_lock_acquire dispatch in
+        # bin/lib/dx-runtime.sh) never guesses either way -- it always
+        # prints the current owner/creation-time metadata plus the remedy
+        # here, in this file (the one place already exempted from
+        # tests/test_runtime_boundary_audit.sh's boundary scan), so an
+        # operator can confirm staleness by other means before forcing it.
+        dx_runtime_docker_lock_audit >&2 || true
+        echo "Review the owner above; confirm by other means whether it is genuinely stale, then either wait for it to finish or clear it with 'dx-lock unlock --force' (see 'dx-lock status')." >&2
         return 1
     }
     printf '%s' "$owner"
@@ -108,5 +120,16 @@ dx_runtime_docker_lock_release() {
         return 1
     fi
     dx_runtime_docker_cli rm "$lock_name" >/dev/null
+}
+
+# dx_runtime_lock_path's docker-ssh implementation (bin/lib/dx-runtime.sh's
+# dispatch). The remote lock container has no local path to expose -- its
+# "owner token" is the minted host:pid:random:timestamp string
+# dx_runtime_docker_lock_acquire already prints, which a caller reads
+# directly rather than ever dispatching here. Exists only so the dispatch
+# has a docker-ssh target to resolve to at all; always fails closed.
+dx_runtime_docker_lock_path() {
+    echo "Error: dx_runtime_docker_lock_path: docker-ssh's lock lives in the remote lock container, not a local directory." >&2
+    return 1
 }
 

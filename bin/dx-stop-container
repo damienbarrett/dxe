@@ -7,6 +7,12 @@ source "$SCRIPT_DIR/dx-lib.sh"
 stop_container_main() {
 dx_require_container_cli
 
+# Astra F4 / WP6.5: acquired before the first mutating call
+# (container_stop_bounded's own existence/running checks are read-only,
+# but the stop/kill it can issue are not); released on any exit.
+dx_lifecycle_lock_acquire || exit 1
+trap dx_lifecycle_lock_release EXIT HUP INT TERM
+
 container_stop_bounded "$DX_CONTAINER_NAME"
 }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then stop_container_main "$@"; fi
