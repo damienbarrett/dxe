@@ -92,6 +92,94 @@ else
     test_fail "AI publication atomically advances current and retains predecessor"
 fi
 
+# A copy failure (from the published bootstrap into the new stage) must
+# discard the partial stage rather than leave it behind for a later run to
+# trip over.
+cpfail_state="$ai_fixture/cpfail-state"
+mkdir -p "$cpfail_state/generations"
+if (
+    cp() { return 1; }
+    dx_ai_stage_generation "$published" "$cpfail_state" next
+) >/dev/null 2>&1; then
+    test_fail "AI staging discards its stage when copying the published bootstrap fails"
+elif [ -e "$cpfail_state/generations/.staging-next" ]; then
+    test_fail "AI staging discards its stage when copying the published bootstrap fails"
+else
+    test_pass "AI staging discards its stage when copying the published bootstrap fails"
+fi
+
+# The very first generation ever staged has no state/current to read a
+# predecessor from at all (not merely an empty one, as "previous" above
+# already seeded) -- the empty case must still succeed and record an empty
+# predecessor.
+freshpred_state="$ai_fixture/freshpred-state"
+mkdir -p "$freshpred_state"
+freshpred_stage="$(dx_ai_stage_generation "$published" "$freshpred_state" first)"
+if [ -n "$freshpred_stage" ] && [ "$(cat "$freshpred_stage/.predecessor")" = "" ]; then
+    test_pass "AI staging records an empty predecessor for the very first generation"
+else
+    test_fail "AI staging records an empty predecessor for the very first generation"
+fi
+
+# An invalid predecessor name recorded at state/current (corrupt or hostile,
+# not merely absent) is refused rather than staged over.
+badpred_state="$ai_fixture/badpred-state"
+mkdir -p "$badpred_state/generations"
+ln -s "generations/bad!name" "$badpred_state/current"
+if dx_ai_stage_generation "$published" "$badpred_state" next >/dev/null 2>&1; then
+    test_fail "AI staging refuses an invalid predecessor generation name"
+elif [ -e "$badpred_state/generations/.staging-next" ]; then
+    test_fail "AI staging refuses an invalid predecessor generation name"
+else
+    test_pass "AI staging refuses an invalid predecessor generation name"
+fi
+
+# dx_ai_update_flake, unstubbed: it refreshes the agy pin for the named
+# system, then updates and re-evaluates the flake's own metadata -- every
+# dx_ai_main-level test below stubs this function away entirely, so its own
+# real control flow is proven here instead.
+updateflake_stage="$ai_fixture/updateflake-stage"
+mkdir -p "$updateflake_stage/pins"
+printf '%s\n' '{"aarch64-linux":{"version":"1","url":"https://example.invalid/agy","hash":"sha512-test"}}' > "$updateflake_stage/pins/agy.json"
+printf '%s\n' fixture > "$updateflake_stage/flake.nix"
+printf '%s\n' fixture > "$updateflake_stage/flake.lock"
+updateflake_calls="$ai_fixture/updateflake-calls.log"
+: > "$updateflake_calls"
+if (
+    dx_ai_refresh_pin() { printf 'refresh_pin %s %s\n' "$1" "$2" >> "$updateflake_calls"; }
+    nix() { printf 'nix %s\n' "$*" >> "$updateflake_calls"; }
+    dx_ai_update_flake "$updateflake_stage" aarch64-linux
+) >/dev/null 2>&1; then
+    test_pass "dx_ai_update_flake completes its real refresh/update/metadata sequence"
+else
+    test_fail "dx_ai_update_flake completes its real refresh/update/metadata sequence"
+fi
+if grep -qxF "refresh_pin $updateflake_stage aarch64-linux" "$updateflake_calls" \
+    && grep -q "^nix flake update .*nixpkgs-unstable$" "$updateflake_calls" \
+    && grep -q "^nix flake metadata .*$updateflake_stage$" "$updateflake_calls"; then
+    test_pass "dx_ai_update_flake calls dx_ai_refresh_pin, then updates and re-evaluates the flake, in order"
+else
+    test_fail "dx_ai_update_flake calls dx_ai_refresh_pin, then updates and re-evaluates the flake, in order (log: $(cat "$updateflake_calls" | tr '\n' '|'))"
+fi
+
+# dx_ai_install_profile, unstubbed: every dx_ai_main-level test below stubs
+# it away entirely, so its own real `nix profile add` argv is proven here.
+installprofile_calls="$ai_fixture/installprofile-calls.log"
+: > "$installprofile_calls"
+if (
+    nix() { printf 'nix %s\n' "$*" >> "$installprofile_calls"; }
+    dx_ai_install_profile "$ai_fixture/installprofile-stage"
+) >/dev/null 2>&1; then
+    test_pass "dx_ai_install_profile builds the isolated AI tools profile via nix profile add"
+else
+    test_fail "dx_ai_install_profile builds the isolated AI tools profile via nix profile add"
+fi
+if grep -q "^nix profile add --profile $ai_fixture/installprofile-stage/profile .*$ai_fixture/installprofile-stage#ai-tools\$" "$installprofile_calls"; then
+    test_pass "dx_ai_install_profile forwards the exact --profile path and #ai-tools attribute"
+else
+    test_fail "dx_ai_install_profile forwards the exact --profile path and #ai-tools attribute (log: $(cat "$installprofile_calls"))"
+fi
+
 failed_stage="$(dx_ai_stage_generation "$published" "$state" failed)"
 seed_ai_profile "$failed_stage"
 if (
@@ -195,6 +283,25 @@ else
     test_fail "AI publication accepts the same candidate after its opencode executable is added"
 fi
 
+# A generation that cannot be made read-only (`chmod -R a-w`) must be rolled
+# back entirely -- removed rather than left behind half-published and
+# writable -- and state/current must stay on whatever it already pointed at.
+chmodfail_stage="$(dx_ai_stage_generation "$published" "$state" chmodfail)"
+seed_ai_profile "$chmodfail_stage"
+chmodfail_current_before="$(readlink "$state/current")"
+if (
+    chmod() { case "$*" in "-R a-w "*) return 1 ;; *) command chmod "$@" ;; esac; }
+    dx_ai_publish_generation "$state" chmodfail "$chmodfail_stage"
+) >/dev/null 2>&1; then
+    test_fail "AI publication rolls back a generation it cannot make read-only"
+elif [ -e "$state/generations/chmodfail" ]; then
+    test_fail "AI publication rolls back a generation it cannot make read-only"
+elif [ "$(readlink "$state/current")" != "$chmodfail_current_before" ]; then
+    test_fail "AI publication rolls back a generation it cannot make read-only"
+else
+    test_pass "AI publication rolls back a generation it cannot make read-only"
+fi
+
 # WP1.8 (Fable D6): mv() above exists only to emulate GNU mv -T/-Tf for
 # dx_ai_publish_generation/dx_ai_recover_generation/dx_ai_main's pointer-
 # switch and lock-reclaim paths, which macOS's own mv lacks. None of the
@@ -229,6 +336,18 @@ elif printf '%s\n' "$verify_output" | stdin_matches '^  codex -> '; then
     test_fail "AI verification validates its complete inventory before reporting any tool"
 else
     test_pass "AI verification validates its complete inventory before reporting any tool"
+fi
+
+# dx_ai_verify with NO generation argument validates against PATH itself
+# (the "AI tools were installed the old way, straight onto PATH" shape) --
+# and fails as soon as any DX_AI_TOOLS entry is missing from it, the same
+# way the generation-local branch fails on a missing executable above.
+if verify_path_output="$(PATH="$ai_fixture/no-such-verify-path" dx_ai_verify 2>&1)"; then
+    test_fail "AI verification against PATH fails when a DX_AI_TOOLS entry is missing from it"
+elif printf '%s\n' "$verify_path_output" | stdin_matches '^  codex -> $'; then
+    test_pass "AI verification against PATH fails when a DX_AI_TOOLS entry is missing from it"
+else
+    test_fail "AI verification against PATH fails when a DX_AI_TOOLS entry is missing from it"
 fi
 
 # --- dx_ai_check_cached / dx_ai_ensure_cached: refuse silent source builds ---
@@ -351,6 +470,50 @@ elif printf '%s\n' "$check_out" | stdin_matches '^codex-core-0\.157\.0$' \
     test_pass "dx_ai_check_cached reports a heavy cache miss"
 else
     test_fail "dx_ai_check_cached reports a heavy cache miss"
+fi
+
+# Case: nix itself fails to even evaluate the dry-run (distinct from
+# succeeding and reporting a heavy miss) -- reported at rc=2, with the
+# evaluation error surfaced, not silently treated as "nothing to build".
+if (
+    nix() {
+        case "$*" in
+            "build --dry-run "*"#ai-tools")
+                echo "error: evaluation failed" >&2
+                return 1
+                ;;
+            *) command nix "$@" ;;
+        esac
+    }
+    check_evalfail_out="$(dx_ai_check_cached "$cache_fixture" 2>&1)"
+    check_evalfail_rc=$?
+    [ "$check_evalfail_rc" -eq 2 ] \
+        && printf '%s\n' "$check_evalfail_out" | stdin_matches -F "could not evaluate the AI tools profile" \
+        && printf '%s\n' "$check_evalfail_out" | stdin_matches -F "evaluation failed"
+); then
+    test_pass "dx_ai_check_cached reports rc=2 when nix itself fails to evaluate"
+else
+    test_fail "dx_ai_check_cached reports rc=2 when nix itself fails to evaluate"
+fi
+
+# Case: a non-path line appears inside the "will be built" section (nix has
+# never been observed to print one, but the parser must not silently treat
+# it as a store path either) -- it is skipped, and a real heavy miss further
+# down the same section is still caught.
+dryrun_with_noise="these 2 derivations will be built:
+  note: an annotation line, not a /nix/store path
+  /nix/store/aaaa10000000000000000000000006-dx-ai-tools.drv
+  /nix/store/cccc10000000000000000000000001-codex-core-0.157.0.drv
+this path will be fetched (1.0 MiB download, 2.0 MiB unpacked):
+  /nix/store/bbbb10000000000000000000000001-codex-0.157.0"
+reset_cache_fixture "$dryrun_with_noise"
+if check_out="$(dx_ai_check_cached "$cache_fixture" 2>/dev/null)"; then
+    test_fail "dx_ai_check_cached skips a non-path line inside the 'will be built' section"
+elif printf '%s\n' "$check_out" | stdin_matches '^codex-core-0\.157\.0$' \
+    && ! printf '%s\n' "$check_out" | stdin_matches '^dx-ai-tools$'; then
+    test_pass "dx_ai_check_cached skips a non-path line inside the 'will be built' section"
+else
+    test_fail "dx_ai_check_cached skips a non-path line inside the 'will be built' section"
 fi
 
 # --- dx_ai_ensure_cached: fall back to the previous generation's lock, then
@@ -563,6 +726,43 @@ if (
     test_pass "dx_ai_refresh_pin updates only the named system's key"
 else
     test_fail "dx_ai_refresh_pin updates only the named system's key"
+fi
+
+# dx_ai_refresh_pin: a merge whose `jq` invocation itself fails (distinct
+# from one that runs cleanly but produces a byte-identical or malformed
+# result, both already covered above) must discard its temp file and fail,
+# never leaving a stray temp pin file behind or touching the real one.
+refresh_jqfail_fixture="$ai_fixture/refresh-pin-jqfail"
+mkdir -p "$refresh_jqfail_fixture/pins"
+printf '%s\n' '{"aarch64-linux":{"version":"1.0.5","url":"https://example.invalid/old-arm","hash":"sha512-oldarm"}}' > "$refresh_jqfail_fixture/pins/agy.json"
+if (
+    curl() { printf '%s\n' '{"version":"9.9.9","url":"https://example.invalid/new-arm","sha512":"'"$(printf 'a%.0s' $(seq 1 128))"'"}'; }
+    nix() { [ "$1" = hash ] && printf 'sha512-newarmhash\n' || command nix "$@"; }
+    # Same narrow jq stand-in as the fixture above, except the final merge
+    # assignment (identified by lacking -r, unlike every other call this
+    # function makes) always fails -- isolating dx_ai_refresh_pin's own
+    # `if ! jq ...; then rm -f "$tmp"; return 1; fi` guard from a merge that
+    # merely produces an unwanted result.
+    jq() {
+        if [ "$1" = -r ] && [ "$2" = --arg ] && [ "$3" = system ] && [ "$5" = '(.[$system] // null) == null' ]; then
+            printf 'false\n'
+            return
+        fi
+        case "$1 $2" in
+            "-r .version // empty") sed -n 's/.*"version":"\([^"]*\)".*/\1/p' ;;
+            "-r .url // empty") sed -n 's/.*"url":"\([^"]*\)".*/\1/p' ;;
+            "-r .sha512 // empty") sed -n 's/.*"sha512":"\([^"]*\)".*/\1/p' ;;
+            *) return 1 ;;
+        esac
+    }
+    dx_ai_refresh_pin "$refresh_jqfail_fixture" aarch64-linux
+); then
+    test_fail "dx_ai_refresh_pin discards its temp file when the merge jq invocation itself fails"
+elif [ -z "$(find "$refresh_jqfail_fixture/pins" -maxdepth 1 -name '.agy.json.*')" ] \
+    && grep -qF '"aarch64-linux":{"version":"1.0.5"' "$refresh_jqfail_fixture/pins/agy.json"; then
+    test_pass "dx_ai_refresh_pin discards its temp file when the merge jq invocation itself fails"
+else
+    test_fail "dx_ai_refresh_pin discards its temp file when the merge jq invocation itself fails"
 fi
 
 # Finding 2 (dx-test live tier): the live gate showed dx_ai_refresh_pin
@@ -1777,6 +1977,54 @@ else
     test_fail "a settings.json that already has statusLine is left byte-identical"
 fi
 rm -rf "$statusline_fixture"
+
+# --- dx_ai_merge_json_setting: a filter that runs cleanly but produces no
+# output at all (e.g. `empty`, or any filter whose result happens to be
+# empty) must never be allowed to overwrite a working settings file with
+# silence -- `-s "$tmp"` is what tells this apart from a merge that legitimately
+# writes zero bytes, since `jq`'s own exit code is 0 either way.
+mergeempty_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-merge-json-empty.XXXXXX")"
+printf '%s\n' '{"kept":"value"}' > "$mergeempty_fixture/settings.json"
+cp "$mergeempty_fixture/settings.json" "$mergeempty_fixture/before.json"
+mergeempty_stderr="$(dx_ai_merge_json_setting "$mergeempty_fixture/settings.json" 'empty' 2>&1 >/dev/null)"
+mergeempty_status=$?
+if [ "$mergeempty_status" -ne 0 ] \
+    && printf '%s\n' "$mergeempty_stderr" | stdin_matches -F "Error: failed to update $mergeempty_fixture/settings.json; left unchanged" \
+    && cmp -s "$mergeempty_fixture/before.json" "$mergeempty_fixture/settings.json" \
+    && [ -z "$(find "$mergeempty_fixture" -maxdepth 1 -name 'settings.json.tmp.*')" ]; then
+    test_pass "dx_ai_merge_json_setting refuses a filter that produces no output and leaves the file untouched"
+else
+    test_fail "dx_ai_merge_json_setting refuses a filter that produces no output and leaves the file untouched"
+fi
+rm -rf "$mergeempty_fixture"
+
+# --- dx_ai_ensure_keyring: its own address_file is fixed and depends on
+# nothing about the caller's environment. Verified directly, since every
+# dx_ai_main-level test stubs this function away entirely.
+keyring_ensure_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-ensure-keyring.XXXXXX")"
+keyring_ensure_marker="$keyring_ensure_fixture/marker"
+(
+    dx_ai_load_keyring() { :; }
+    dx_keyring_start() { printf '%s\n' "$1" > "$keyring_ensure_marker"; }
+    dx_ai_ensure_keyring
+)
+if [ "$(cat "$keyring_ensure_marker" 2>/dev/null)" = /persist/home/dx/.local/state/dx/keyring-address ]; then
+    test_pass "dx_ai_ensure_keyring starts the keyring at its fixed persisted address"
+else
+    test_fail "dx_ai_ensure_keyring starts the keyring at its fixed persisted address"
+fi
+(
+    dx_ai_load_keyring() { return 1; }
+    dx_keyring_start() { echo "unexpected dx_keyring_start call" >&2; return 1; }
+    dx_ai_ensure_keyring
+)
+keyring_ensure_load_fail_rc=$?
+if [ "$keyring_ensure_load_fail_rc" -ne 0 ]; then
+    test_pass "dx_ai_ensure_keyring returns early when dx_ai_load_keyring fails"
+else
+    test_fail "dx_ai_ensure_keyring returns early when dx_ai_load_keyring fails"
+fi
+rm -rf "$keyring_ensure_fixture"
 
 # Fable B11: dx_keyring_start (scripts/lib/dx-keyring.sh) used to swallow a
 # genuine gnome-keyring-daemon launch failure with `|| true` and then print
