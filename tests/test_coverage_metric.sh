@@ -148,6 +148,20 @@ else
     test_fail "(b) expected scope=$scope_baseline unscoped=$unscoped_baseline, got scope=$scope_b unscoped=$unscoped_b"
 fi
 
+# (b2) A compatibility symlink beside the guest directory (WP9.4 keeps the
+# old architecture-named path as a symlink to dx-nixos-26.05 for one
+# release) changes neither number: the container/* globs must not count the
+# same tree twice through its alias.
+ln -s dx-fixture "$fixture/container/dx-fixture-alias"
+metric_b2="$(dx_coverage_metric "$fixture" "$coverage_json")"
+scope_b2="$(read_metric_field "$metric_b2" scope_exec_lines)"
+unscoped_b2="$(read_metric_field "$metric_b2" unscoped_prod_exec_lines)"
+if [ "$scope_b2" = "$scope_baseline" ] && [ "$unscoped_b2" = "$unscoped_baseline" ]; then
+    test_pass "(b2) a symlink alias of the guest directory changes neither number"
+else
+    test_fail "(b2) expected scope=$scope_baseline unscoped=$unscoped_baseline, got scope=$scope_b2 unscoped=$unscoped_b2 (alias counted twice)"
+fi
+
 # (c) Simulate moving 10 executable lines out of the scope library and into
 # the exempt entrypoint: lower the scope library's kcov total_lines by 10
 # (the coverage.json a real kcov run would produce after the move) and add
