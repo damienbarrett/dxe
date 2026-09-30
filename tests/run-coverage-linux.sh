@@ -27,7 +27,10 @@ if [ "${DXE_COVERAGE_ISOLATED:-}" != 1 ]; then
     [ -n "$provider" ] || { echo "Error: coverage needs a usable Docker, Podman, or Apple container runtime for the isolated pinned runner." >&2; exit 1; }
     echo "Using $provider for the isolated coverage runner."
     "$provider" build -t dxe-kcov:ubuntu-24.04 -f "$SCRIPT_DIR/coverage/Dockerfile" "$ROOT"
-    exec "$provider" run --rm -e DXE_COVERAGE_ISOLATED=1 -v "$ROOT:/work" -w /work dxe-kcov:ubuntu-24.04 tests/run-coverage-linux.sh
+    # kcov keeps every instrumented process's line table in memory; with the
+    # header-derived contracts list (twenty suites) the runtime's default
+    # allocation (1 GB under Apple's container) is OOM-killed (exit 137).
+    exec "$provider" run --rm --memory 4g -e DXE_COVERAGE_ISOLATED=1 -v "$ROOT:/work" -w /work dxe-kcov:ubuntu-24.04 tests/run-coverage-linux.sh
 fi
 [ "$(uname -s)" = Linux ] && command -v kcov >/dev/null 2>&1 || { echo "Error: isolated coverage image is missing Linux kcov." >&2; exit 1; }
 
