@@ -88,6 +88,27 @@
           # are not in guest-tools.nix -- see that file's header -- but
           # their commands are still part of the inventory contract.
           dxVerifyInventoryScript = ./scripts/dx-verify-inventory.sh;
+
+          # WP8.3 (checks.<system>.guest-libs-installed below): the
+          # source-of-truth list of every scripts/lib/*.sh Home Manager must
+          # install under .local/lib/dx/ (home/tools.nix's own
+          # guestLibDir/guestLibExcludes/guestLibs table is built the same
+          # way, over the same directory). dx-persist-backup-select.sh is
+          # excluded here for the same reason home/tools.nix excludes it
+          # from its install table (see that file's comment: it ships to
+          # the guest through the bootstrap-volume context sync instead,
+          # never through Home Manager) -- keep both exclusions in sync if
+          # this ever changes.
+          guestLibsDir = ./scripts/lib;
+          guestLibExcludes = [ "dx-persist-backup-select.sh" ];
+          guestLibNames = builtins.attrNames
+            (pkgs.lib.filterAttrs
+              (name: type:
+                type == "regular"
+                && pkgs.lib.hasSuffix ".sh" name
+                && !(pkgs.lib.elem name guestLibExcludes))
+              (builtins.readDir guestLibsDir));
+
           requiredInventory = pkgs.lib.concatLists (pkgs.lib.attrValues guestTools) ++ [
             "nvim" # nixvim.legacyPackages.${system}.makeNixvimWithModule, below
             "man" # manual.manpages.enable (Home Manager default)
@@ -374,6 +395,41 @@
                 diff <(printf '%s\n' "$script_list") <(printf '%s\n' "$nix_list") >&2 || true
                 exit 1
               fi
+              touch $out
+            '';
+
+            # WP8.3: dx-ai.sh's/dx-keyring.sh's three-candidate library
+            # loader (scripts/lib/dx-ai-loader.sh's dx_ai_load_library)
+            # looks for its Home-Manager-installed copy under
+            # ~/.local/lib/dx/ -- but WP8.2/WP3.5 added seven guest
+            # libraries under scripts/lib/ (dx-ai-lock.sh, dx-ai-loader.sh,
+            # dx-ai-generation.sh, dx-ai-pin.sh, dx-ai-cache-policy.sh,
+            # dx-ai-post-install.sh, dx-persist-relocate.sh) with no install
+            # site at all, so on a freshly-provisioned guest (no
+            # bootstrap-volume fallback yet either -- the same gap Fable B7
+            # already fixed for dx-opencode-persistence.sh/
+            # dx-guest-system.sh/dx-keyring.sh) every one of those would
+            # fail to load. This proves it, over the REAL config.home-files
+            # this flake ships (not a hand-written fixture): every
+            # guestLibNames entry is present under .local/lib/dx/ with
+            # byte-identical content to its scripts/lib/ source.
+            guest-libs-installed = pkgs.runCommand "guest-libs-installed"
+              {
+                homeFiles = homeConfiguration.config.home-files;
+                libSrc = guestLibsDir;
+              } ''
+              set -euo pipefail
+              for name in ${pkgs.lib.escapeShellArgs guestLibNames}; do
+                installed="$homeFiles/.local/lib/dx/$name"
+                if [ ! -e "$installed" ]; then
+                  echo "missing guest library: .local/lib/dx/$name" >&2
+                  exit 1
+                fi
+                if ! cmp -s "$libSrc/$name" "$installed"; then
+                  echo "guest library drifted from its scripts/lib/ source: .local/lib/dx/$name" >&2
+                  exit 1
+                fi
+              done
               touch $out
             '';
 

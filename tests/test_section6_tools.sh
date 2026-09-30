@@ -332,6 +332,59 @@ fi
 # (scripts/lib/dx-opencode-persistence.sh) rather than inline in dx-ai.sh and
 # activation.sh, so it is intentionally not duplicated as a text check.
 
+# WP8.3: WP8.2/WP3.5 added seven guest libraries under scripts/lib/
+# (dx-ai-lock.sh, dx-ai-loader.sh, dx-ai-generation.sh, dx-ai-pin.sh,
+# dx-ai-cache-policy.sh, dx-ai-post-install.sh, dx-persist-relocate.sh) that
+# dx-ai.sh's three-candidate loader (dx-ai-loader.sh's dx_ai_load_library)
+# looks for under ~/.local/lib/dx/, but home/tools.nix never installed any
+# of them there -- only dx-opencode-persistence.sh, dx-guest-system.sh and
+# dx-keyring.sh had a hand-written `home.file` entry. home/tools.nix now
+# installs every scripts/lib/*.sh (minus the one bootstrap-volume-only
+# exclusion, dx-persist-backup-select.sh -- see that file's own comment)
+# from a single builtins.readDir-driven table, so a static text check
+# against a per-file literal would not prove anything a future library
+# could still fall through; these two checks assert the mechanism itself
+# and its real, evaluated result instead.
+assert_file_contains "$TOOLS_NIX" "builtins.readDir guestLibDir" "home/tools.nix installs scripts/lib/*.sh from a builtins.readDir-driven table"
+assert_file_contains "$TOOLS_NIX" 'dx-persist-backup-select.sh' "home/tools.nix documents its one guest-lib install exclusion"
+assert_file_contains "$FLAKE_NIX" "guest-libs-installed = pkgs.runCommand" "flake.nix exposes the guest-libs-installed behavioural check"
+
+# Eval-only (no build): home.file's attribute names are fully determined by
+# evaluation alone (home.file entries are Nix values, not yet a built
+# home-files derivation), so this proves -- without paying for a build --
+# that every one of the seven newly-added libraries actually reaches a
+# ".local/lib/dx/<name>" home.file entry on both systems. The real,
+# built-and-diffed proof (installed content is byte-identical to its
+# scripts/lib/ source) is checks.<system>.guest-libs-installed itself,
+# exercised by Section 5's eval/warnings loop and by `nix build` directly.
+DX_NEW_GUEST_LIBS=(
+    dx-ai-lock.sh dx-ai-loader.sh dx-ai-generation.sh dx-ai-pin.sh
+    dx-ai-cache-policy.sh dx-ai-post-install.sh dx-persist-relocate.sh
+)
+if command -v nix >/dev/null 2>&1; then
+    for system in aarch64-linux x86_64-linux; do
+        if home_file_names="$(nix eval --json --no-write-lock-file "$CONTAINER_DIR#homeConfigurations.dx-$system.config.home.file" --apply 'builtins.attrNames' 2>&1)"; then
+            for lib in "${DX_NEW_GUEST_LIBS[@]}"; do
+                if printf '%s\n' "$home_file_names" | stdin_matches -F ".local/lib/dx/$lib"; then
+                    test_pass "homeConfigurations.dx-$system installs $lib under .local/lib/dx/"
+                else
+                    test_fail "homeConfigurations.dx-$system installs $lib under .local/lib/dx/"
+                fi
+            done
+        else
+            for lib in "${DX_NEW_GUEST_LIBS[@]}"; do
+                test_fail "homeConfigurations.dx-$system installs $lib under .local/lib/dx/ (nix eval failed: ${home_file_names})"
+            done
+        fi
+    done
+else
+    for system in aarch64-linux x86_64-linux; do
+        for lib in "${DX_NEW_GUEST_LIBS[@]}"; do
+            test_skip "nix not available, skipping homeConfigurations.dx-$system home.file check for $lib"
+        done
+    done
+fi
+
 # --- Branch 11 / Phase 4 (qnap-dxe-plan.md Phase 4 item 4, docs/refactor/
 # arch-neutral-guest.md section 5): scripts/dx-verify-inventory.sh prints
 # present/missing for the guest's required CLI inventory after bootstrap,

@@ -57,6 +57,9 @@ if command -v nix >/dev/null 2>&1; then
         # WP7.3/WP7.4 (docs/reviews/2026-09-29-fable.md findings C3, C4):
         # inventory / inventory-list are the reverse-direction package <->
         # command contract (guest-tools.nix, scripts/dx-verify-inventory.sh);
+        # WP8.3: guest-libs-installed proves every scripts/lib/*.sh guest
+        # library (minus the one bootstrap-volume-only exclusion) reaches
+        # .local/lib/dx/ byte-identical to its source;
         # bash-integration / fish-integration / nushell-integration prove the
         # typed programs.starship/direnv/yazi options actually wire up in
         # each shell (home/shell.nix) -- the same eval-only, zero-warnings
@@ -67,7 +70,7 @@ if command -v nix >/dev/null 2>&1; then
         # WP7.6 (Fable C6): agy-pin-shape proves every per-system agy pin is
         # well-formed.
         for check_name in home-activation ai-tools bootstrap-essentials \
-            inventory inventory-list \
+            inventory inventory-list guest-libs-installed \
             bash-integration fish-integration nushell-integration \
             scripts-hermetic nvim agy-pin-shape; do
             if check_output="$(nix eval --raw --no-write-lock-file "$CONTAINER_DIR#checks.$system.$check_name.drvPath" 2>&1)"; then
@@ -116,6 +119,8 @@ else
         test_skip "nix not available, skipping checks.$system.inventory warnings check"
         test_skip "nix not available, skipping checks.$system.inventory-list evaluation"
         test_skip "nix not available, skipping checks.$system.inventory-list warnings check"
+        test_skip "nix not available, skipping checks.$system.guest-libs-installed evaluation"
+        test_skip "nix not available, skipping checks.$system.guest-libs-installed warnings check"
         test_skip "nix not available, skipping checks.$system.bash-integration evaluation"
         test_skip "nix not available, skipping checks.$system.bash-integration warnings check"
         test_skip "nix not available, skipping checks.$system.fish-integration evaluation"
