@@ -1,6 +1,32 @@
 #!/usr/bin/env bash
 # Source-only OpenCode persistence helpers shared by dx-ai and activation.
 
+# This file is sourced directly by two independent entry points (dx-ai's
+# dx_ai_load_opencode_persistence and bootstrap/activation.sh's own,
+# separate loader), neither of which is guaranteed to have already loaded
+# scripts/lib/dx-ai-loader.sh's dx_ai_load_library -- so this is its own
+# small, self-contained three-candidate loader, sibling-relative rather
+# than lib/-relative (this file already lives inside scripts/lib itself;
+# see dx-ai.sh's own dx_ai_bootstrap_load for the same reasoning).
+dx_opencode_bootstrap_load_persist_relocate() {
+    declare -F dx_persist_relocate_dir >/dev/null && return 0
+    local script_directory candidate
+    script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+    for candidate in \
+        "$script_directory/dx-persist-relocate.sh" \
+        "$HOME/.local/lib/dx/dx-persist-relocate.sh" \
+        "${DX_BOOTSTRAP_ROOT:-/guest-bootstrap}/scripts/lib/dx-persist-relocate.sh"; do
+        [ -r "$candidate" ] || continue
+        # shellcheck source=dx-persist-relocate.sh
+        source "$candidate" || return 1
+        declare -F dx_persist_relocate_dir >/dev/null && return 0
+    done
+    echo "Error: persist-relocate library is unavailable." >&2
+    return 1
+}
+dx_opencode_bootstrap_load_persist_relocate \
+    || { echo "Error: OpenCode persistence could not load the shared persist-relocate library." >&2; return 1 2>/dev/null || exit 1; }
+
 dx_opencode_validate_directory_path() {
     local path="$1" description="$2" remainder component current=""
     case "$path" in
@@ -26,19 +52,11 @@ dx_opencode_validate_directory_path() {
     done
 }
 
+# Fable B9: identical body to scripts/lib/dx-persist-relocate.sh's
+# dx_persist_prepare_directory (gh/Herdr/the AI-credential sites' own copy
+# of this same primitive) -- delegated rather than duplicated.
 dx_opencode_prepare_directory() {
-    local directory="$1" mode="$2"
-    if [ ! -d "$directory" ]; then
-        if declare -F dx_prepare_owned_directory >/dev/null; then
-            dx_prepare_owned_directory "$directory" "$mode" || return 1
-        else
-            mkdir "$directory" || return 1
-        fi
-    elif [ "$mode" = 0700 ] && declare -F dx_prepare_owned_directory >/dev/null; then
-        dx_prepare_owned_directory "$directory" "$mode" || return 1
-    fi
-    [ -d "$directory" ] && [ ! -L "$directory" ] || return 1
-    [ "$mode" != 0700 ] || chmod 0700 "$directory"
+    dx_persist_prepare_directory "$@"
 }
 
 # This is deliberately an activation-only operation.  `dx-ai` runs as dx and
@@ -60,15 +78,18 @@ dx_ai_opencode_prepare_activation_ancestors() {
     dx_prepare_owned_directory "$persist_home/.local/share" 0755 || return 1
 }
 
+# Fable B9: identical body to dx-persist-relocate.sh's dx_persist_unused_path
+# -- delegated rather than duplicated.
 dx_opencode_unused_path() {
-    local prefix="$1" candidate="$1.$$" suffix=0
-    while [ -e "$candidate" ] || [ -L "$candidate" ]; do
-        suffix=$((suffix + 1))
-        candidate="$prefix.$$.$suffix"
-    done
-    printf '%s\n' "$candidate"
+    dx_persist_unused_path "$@"
 }
 
+# Kept as OpenCode's own copy rather than delegated to dx-persist-relocate.sh's
+# generalized, label-parameterized dx_persist_migrate_live_path: this exact
+# function name and its exact `.dxe-conflict-<item>`/`.dxe-conflict-
+# live-opencode` backup naming (no label segment) are pinned by direct unit
+# tests in tests/test_sourceable_coverage.sh, outside this work package's
+# edit scope.
 dx_opencode_migrate_live_path() {
     local live="$1" persistent="$2" item destination backup
     [ ! -L "$live" ] || return 0
@@ -90,13 +111,10 @@ dx_opencode_migrate_live_path() {
     fi
 }
 
+# Fable B9: identical body to dx-persist-relocate.sh's
+# dx_persist_publish_link -- delegated rather than duplicated.
 dx_opencode_publish_link() {
-    local target="$1" live="$2" temporary
-    if [ -L "$live" ] && [ "$(readlink "$live")" = "$target" ]; then return 0; fi
-    [ ! -e "$live" ] && [ ! -L "$live" ] || return 1
-    temporary="$(dx_opencode_unused_path "$live.dxe-link")" || return 1
-    ln -s "$target" "$temporary" || return 1
-    if ! mv -f "$temporary" "$live"; then rm -f "$temporary"; return 1; fi
+    dx_persist_publish_link "$@"
 }
 
 dx_ai_opencode_persistence() {

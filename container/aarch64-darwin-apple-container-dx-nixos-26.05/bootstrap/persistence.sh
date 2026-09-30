@@ -13,6 +13,17 @@ if ! declare -F dx_validate_atomic_marker_path >/dev/null; then
     source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 fi
 
+# Fable B9: setup_gh_persistence/setup_herdr_persistence's migrate/backup-
+# conflicts/link logic is scripts/lib/dx-persist-relocate.sh's shared
+# dx_persist_relocate_dir. Unlike dx-ai.sh/dx-keyring.sh, this bootstrap
+# phase is never packaged as a Home Manager home.file -- it only ever runs
+# from the bootstrap volume, alongside scripts/lib as a fixed sibling -- so
+# a single sibling-relative source, not the full three-candidate loader, is
+# enough here.
+if ! declare -F dx_persist_relocate_dir >/dev/null; then
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../scripts/lib/dx-persist-relocate.sh"
+fi
+
 dx_ensure_tree_owner() {
     local target="$1"
     local marker="$2"
@@ -122,6 +133,11 @@ setup_persist() {
 }
 
 # 3. Configure SSH (Section 4)
+#
+# Fable B9: the migrate/backup-conflicts/link shape below is now
+# scripts/lib/dx-persist-relocate.sh's shared dx_persist_relocate_dir --
+# see setup_herdr_persistence and dx-ai's own dx_ai_setup_credentials/
+# activation.sh's AI-credential setup for its other call sites.
 setup_gh_persistence() {
     local persist_home="${1:-/persist/home/dx}"
     local home="${2:-/home/dx}"
@@ -129,40 +145,13 @@ setup_gh_persistence() {
     local persistent_gh="$persistent_config_dir/gh"
     local home_config_dir="$home/.config"
     local home_gh="$home_config_dir/gh"
-    local timestamp=""
-    local backup_path=""
 
     dx_ensure_tree_owner "$persist_home" "$persist_home/.dxe-owner-v1" "persisted guest home" || return 1
     dx_prepare_owned_directory "$persistent_config_dir" 0755 || return 1
     dx_prepare_owned_directory "$home_config_dir" 0755 || return 1
 
-    if [ -e "$persistent_gh" ] && [ ! -d "$persistent_gh" ]; then
-        timestamp="$(date +%Y%m%d%H%M%S)" || return 1
-        backup_path="$persistent_config_dir/gh.non-directory-backup.$timestamp"
-        mv "$persistent_gh" "$backup_path"
-        echo "Moved non-directory GitHub CLI config target to $backup_path"
-    fi
-
-    if [ -L "$home_gh" ]; then
-        rm -f "$home_gh"
-    elif [ -e "$home_gh" ]; then
-        if [ ! -e "$persistent_gh" ]; then
-            mv "$home_gh" "$persistent_gh"
-        elif [ -d "$persistent_gh" ] && [ -z "$(ls -A "$persistent_gh" 2>/dev/null)" ]; then
-            rmdir "$persistent_gh"
-            mv "$home_gh" "$persistent_gh"
-        else
-            timestamp="$(date +%Y%m%d%H%M%S)" || return 1
-            backup_path="$persistent_config_dir/gh.ephemeral-backup.$timestamp"
-            mv "$home_gh" "$backup_path"
-            echo "Moved ephemeral GitHub CLI config to $backup_path"
-        fi
-    fi
-
-    dx_prepare_owned_directory "$persistent_gh" 0700 || return 1
+    dx_persist_relocate_dir "$home_gh" "$persistent_gh" "$persistent_config_dir" gh 1 || return 1
     chown dx:dx "$home_config_dir" "$persistent_gh" || return 1
-    chmod 700 "$persistent_gh" || return 1
-    run_as_dx "ln -sfnT '$persistent_gh' '$home_gh'" || return 1
 }
 
 # Persist tmux-resurrect save data across container rebuilds. /persist is a
@@ -204,8 +193,6 @@ setup_herdr_persistence() {
     local home_config_parent="$home/.config"
     local home_state_parent="$home/.local/state"
     local ready_marker="$persistent_config/.dxe-persistence-ready"
-    local timestamp=""
-    local backup_path=""
     local unsafe_path=""
 
     for unsafe_path in \
@@ -280,36 +267,16 @@ setup_herdr_persistence() {
         chmod 0700 "$home_state_parent" || return 1
     fi
 
-    # 1. Config directory persistence
-    if [ -e "$persistent_config" ] && [ ! -d "$persistent_config" ]; then
-        timestamp="$(date +%Y%m%d%H%M%S)" || return 1
-        backup_path="$persistent_config_parent/herdr.non-directory-backup.$timestamp"
-        mv "$persistent_config" "$backup_path" || return 1
-        chown -h dx:dx "$backup_path" || return 1
-        chmod 0700 "$backup_path" || return 1
-        echo "Moved non-directory herdr config target to $backup_path"
-    fi
-
-    if [ -L "$home_config" ]; then
-        rm -f "$home_config" || return 1
-    elif [ -e "$home_config" ]; then
-        if [ ! -e "$persistent_config" ]; then
-            mv "$home_config" "$persistent_config" || return 1
-        elif [ -d "$persistent_config" ] && [ -z "$(ls -A "$persistent_config" 2>/dev/null)" ]; then
-            rmdir "$persistent_config" || return 1
-            mv "$home_config" "$persistent_config" || return 1
-        else
-            timestamp="$(date +%Y%m%d%H%M%S)" || return 1
-            backup_path="$persistent_config_parent/herdr.ephemeral-backup.$timestamp"
-            mv "$home_config" "$backup_path" || return 1
-            chown -h dx:dx "$backup_path" || return 1
-            chmod 0700 "$backup_path" || return 1
-            echo "Moved ephemeral herdr config to $backup_path"
-        fi
-    fi
-
-    dx_prepare_owned_directory "$persistent_config" 0700 || return 1
-    chmod 0700 "$persistent_config" || return 1
+    # 1. Config directory persistence. Fable B9: the migrate/backup-conflicts
+    # shape (formerly duplicated here and in "2." below, byte-identical apart
+    # from names) is now scripts/lib/dx-persist-relocate.sh's shared
+    # dx_persist_prepare_relocate_target/dx_persist_migrate_live_path; the
+    # marker recheck below needs a seam between migration and publishing the
+    # symlink, so this call site uses those two (and dx_persist_publish_link)
+    # directly rather than the combined dx_persist_relocate_dir convenience
+    # wrapper "2." uses.
+    dx_persist_prepare_relocate_target "$persistent_config" "$persistent_config_parent" herdr-config || return 1
+    dx_persist_migrate_live_path "$home_config" "$persistent_config" "$persistent_config_parent" herdr-config || return 1
 
     # The config target might have been created above or populated by moving
     # an existing home directory. Re-check its marker after that migration:
@@ -321,37 +288,8 @@ setup_herdr_persistence() {
     fi
     dx_validate_atomic_marker_path "$ready_marker" "Herdr persistence readiness marker" || return 1
     rm -f "$ready_marker" || return 1
-    run_as_dx "ln -sfnT '$persistent_config' '$home_config'" || return 1
+    dx_persist_publish_link "$persistent_config" "$home_config" 1 || return 1
 
     # 2. State directory persistence
-    if [ -e "$persistent_state" ] && [ ! -d "$persistent_state" ]; then
-        timestamp="$(date +%Y%m%d%H%M%S)" || return 1
-        backup_path="$persistent_state_parent/herdr.non-directory-backup.$timestamp"
-        mv "$persistent_state" "$backup_path" || return 1
-        chown -h dx:dx "$backup_path" || return 1
-        chmod 0700 "$backup_path" || return 1
-        echo "Moved non-directory herdr state target to $backup_path"
-    fi
-
-    if [ -L "$home_state" ]; then
-        rm -f "$home_state" || return 1
-    elif [ -e "$home_state" ]; then
-        if [ ! -e "$persistent_state" ]; then
-            mv "$home_state" "$persistent_state" || return 1
-        elif [ -d "$persistent_state" ] && [ -z "$(ls -A "$persistent_state" 2>/dev/null)" ]; then
-            rmdir "$persistent_state" || return 1
-            mv "$home_state" "$persistent_state" || return 1
-        else
-            timestamp="$(date +%Y%m%d%H%M%S)" || return 1
-            backup_path="$persistent_state_parent/herdr.ephemeral-backup.$timestamp"
-            mv "$home_state" "$backup_path" || return 1
-            chown -h dx:dx "$backup_path" || return 1
-            chmod 0700 "$backup_path" || return 1
-            echo "Moved ephemeral herdr state to $backup_path"
-        fi
-    fi
-
-    dx_prepare_owned_directory "$persistent_state" 0700 || return 1
-    chmod 0700 "$persistent_state" || return 1
-    run_as_dx "ln -sfnT '$persistent_state' '$home_state'" || return 1
+    dx_persist_relocate_dir "$home_state" "$persistent_state" "$persistent_state_parent" herdr-state 1 || return 1
 }

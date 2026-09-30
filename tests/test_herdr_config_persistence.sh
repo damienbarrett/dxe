@@ -291,11 +291,12 @@ if (
     setup_herdr_persistence "$repair_persist" "$repair_home"
 ); then
     shopt -s nullglob
-    # This branch's setup_herdr_persistence names both backups after the
-    # directory being repaired, disambiguated by their parent; the guest
-    # branch's dropped implementation used a herdr-<label> prefix instead.
-    config_backups=("$repair_persist/.config"/herdr.non-directory-backup.*)
-    state_backups=("$repair_persist/.local/state"/herdr.non-directory-backup.*)
+    # Fable B9: the non-directory-backup shape is now scripts/lib/
+    # dx-persist-relocate.sh's shared dx_persist_prepare_relocate_target,
+    # whose conflict naming is `.dxe-conflict-<label>-target.<pid>...` (the
+    # same `.dxe-conflict-` convention OpenCode's own copy already used).
+    config_backups=("$repair_persist/.config"/.dxe-conflict-herdr-config-target.*)
+    state_backups=("$repair_persist/.local/state"/.dxe-conflict-herdr-state-target.*)
     shopt -u nullglob
     if [ -d "$repair_persist/.config/herdr" ] && [ -d "$repair_persist/.local/state/herdr" ] \
         && [ "${#config_backups[@]}" -eq 1 ] && [ "${#state_backups[@]}" -eq 1 ] \

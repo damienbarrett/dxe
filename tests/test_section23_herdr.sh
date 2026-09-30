@@ -626,7 +626,12 @@ else
     test_fail "dx_activate_herdr publishes no readiness marker when preparation fails (R3)"
 fi
 
-# Timestamped backups get explicit dx:dx ownership and mode 0700.
+# A conflict backup gets explicit dx:dx ownership and mode 0700. Fable B9:
+# the non-directory-backup shape is now scripts/lib/dx-persist-relocate.sh's
+# shared dx_persist_prepare_relocate_target/dx_persist_secure_backup, whose
+# conflict naming is `.dxe-conflict-<label>-target.<pid>...` (the same
+# `.dxe-conflict-` convention OpenCode's own copy already used), not the
+# former herdr-specific `herdr.non-directory-backup.<timestamp>`.
 if (
     persist_home="$fixture_root/c/persist/home/dx"
     home="$fixture_root/c/home/dx"
@@ -638,14 +643,14 @@ if (
     # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
     source "$PERSISTENCE"
     setup_herdr_persistence "$persist_home" "$home" >/dev/null 2>&1
-    backup="$(ls "$persist_home"/.config/herdr.non-directory-backup.* 2>/dev/null | head -n1)"
+    backup="$(ls "$persist_home"/.config/.dxe-conflict-herdr-config-target.* 2>/dev/null | head -n1)"
     [ -n "$backup" ] || exit 1
     mode="$(dx_path_mode "$backup")"
     [ "$mode" = "700" ]
 ); then
-    test_pass "setup_herdr_persistence gives timestamped backups explicit ownership and mode 0700 (F5)"
+    test_pass "setup_herdr_persistence gives conflict backups explicit ownership and mode 0700 (F5)"
 else
-    test_fail "setup_herdr_persistence gives timestamped backups explicit ownership and mode 0700 (F5)"
+    test_fail "setup_herdr_persistence gives conflict backups explicit ownership and mode 0700 (F5)"
 fi
 
 # Repeat activation is a no-op apart from repairing declared ownership/modes.

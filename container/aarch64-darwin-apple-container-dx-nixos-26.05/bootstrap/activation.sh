@@ -223,6 +223,7 @@ configure_guest() {
     echo "Configuring guest environment with Home Manager..."
     local phase_started
     local opencode_persistence_library
+    local persist_relocate_library
 
     # Hand over Nix ownership to dx for true single-user operation (§7)
     ensure_nix_ownership "$content_validated"
@@ -266,25 +267,43 @@ configure_guest() {
             # shellcheck source=/dev/null
             source "$opencode_persistence_library"
         fi
+        # Fable B9: scripts/lib/dx-persist-relocate.sh's dx_persist_relocate_dir
+        # is the shared "relocate a live directory into /persist and link"
+        # primitive dx-ai.sh's own AI-credential setup (dx_ai_setup_credentials)
+        # also uses -- before this, this root-context site used a bare
+        # `run_as_dx "ln -sfn ..."` (no -T) that nested a symlink inside a
+        # pre-existing real ~/.gemini/~/.claude/~/.codex instead of relocating
+        # or refusing it, unlike dx-ai's own `ln -sfnT` (which refused
+        # correctly, but in a `||` context whose failure was itself never
+        # surfaced). Loaded the same way dx-opencode-persistence.sh just above
+        # is: sourced directly if not already in scope, since this can run
+        # before any AI generation (and its home.file copies) is published.
+        if ! declare -F dx_persist_relocate_dir >/dev/null; then
+            persist_relocate_library="${DX_BOOTSTRAP_ROOT:-/guest-bootstrap}/scripts/lib/dx-persist-relocate.sh"
+            if [ ! -r "$persist_relocate_library" ]; then
+                echo "Error: persist-relocate library is missing: $persist_relocate_library" >&2
+                return 1
+            fi
+            # shellcheck source=/dev/null
+            source "$persist_relocate_library"
+        fi
         # dx-ai itself runs as dx, so it cannot repair a common persisted XDG
         # ancestor that an earlier root-run setup left root-owned. Do that
         # bounded repair only here, after the helper has preflighted every
         # ancestor without traversing a symlink.
         dx_ai_opencode_prepare_activation_ancestors /persist/home/dx || return 1
         dx_ai_opencode_persistence /persist/home/dx /home/dx || return 1
+        dx_persist_relocate_dir /home/dx/.gemini /persist/home/dx/.gemini /persist/home/dx gemini 1 || return 1
         dx_prepare_owned_directory /persist/home/dx/.gemini/antigravity-cli 0700 || return 1
-        dx_prepare_owned_directory /persist/home/dx/.claude 0700 || return 1
-        dx_prepare_owned_directory /persist/home/dx/.codex 0700 || return 1
+        dx_persist_relocate_dir /home/dx/.claude /persist/home/dx/.claude /persist/home/dx claude 1 || return 1
+        dx_persist_relocate_dir /home/dx/.codex /persist/home/dx/.codex /persist/home/dx codex 1 || return 1
         if [ ! -s /persist/home/dx/.claude.json ]; then
             printf '%s\n' '{}' > /persist/home/dx/.claude.json
             chown dx:dx /persist/home/dx/.claude.json
             chmod 0600 /persist/home/dx/.claude.json
         fi
-        echo "Bootstrap phase: AI persistence ownership setup completed in $((SECONDS - phase_started))s."
-        run_as_dx "ln -sfn /persist/home/dx/.gemini ~/.gemini"
-        run_as_dx "ln -sfn /persist/home/dx/.claude ~/.claude"
         run_as_dx "ln -sfn /persist/home/dx/.claude.json ~/.claude.json"
-        run_as_dx "ln -sfn /persist/home/dx/.codex ~/.codex"
+        echo "Bootstrap phase: AI persistence ownership setup completed in $((SECONDS - phase_started))s."
     fi
 
     # Activate Herdr persistence and seed config unconditionally (F4). This is
