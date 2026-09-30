@@ -24,7 +24,7 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded dx_bootstrap_scratch_dir dx_persist_durable_identity_record dx_read_durable_identity_record dx_write_nix_volume_record dx_read_nix_volume_record dx_parse_nix_volume_record dx_persist_image_default_profile_target dx_read_image_default_profile_target essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id dx_parse_durable_identity_record create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded dx_bootstrap_scratch_dir dx_persist_durable_identity_record dx_read_durable_identity_record dx_write_nix_volume_record dx_read_nix_volume_record dx_parse_nix_volume_record dx_persist_image_default_profile_target dx_read_image_default_profile_target essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id dx_parse_durable_identity_record create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_as_dx_argv dx_nix_root_writable_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -255,6 +255,7 @@ persist_behavior="$({
         printf '%s\n' "$*" >> "$fixture/persistence-chown.log"
     }
     run_as_dx() { bash -c "$1"; }
+    run_as_dx_argv() { "$@"; }
     gh_persist="$fixture/gh-persist/home/dx"
     gh_home="$fixture/gh-home"
     mkdir -p "$gh_persist/.config" "$gh_home/.config" "$gh_persist/.cache"
@@ -279,6 +280,7 @@ persist_behavior="$({
     mkdir -p "$herdr_persist/.config" "$herdr_persist/.local/state" "$herdr_home"
     printf '%s\n' history > "$herdr_persist/.local/state/history"
     run_as_dx() { :; }
+    run_as_dx_argv() { :; }
     setup_herdr_persistence "$herdr_persist" "$herdr_home"
     setup_herdr_persistence "$herdr_persist" "$herdr_home"
     [ -r "$herdr_persist/.local/state/history" ]
@@ -289,6 +291,41 @@ if [ $? -eq 0 ]; then
 else
     test_fail "GitHub and Herdr migrations leave persisted data usable without recurring recursive chowns ($persist_behavior)"
 fi
+
+# Fable B10: run_as_dx_argv passes every argument through untouched -- no
+# shell re-parses it, so a path is one argv element regardless of its
+# content. setup_gh_persistence's own relocate/link step (dx_persist_
+# relocate_dir/dx_persist_publish_link, scripts/lib/dx-persist-relocate.sh)
+# now goes through it (as_dx=1) instead of a string-interpolated
+# `run_as_dx "ln -sfnT '$persistent_gh' '$home_gh'"`. A fake setpriv (what
+# both run_as_dx and run_as_dx_argv shell out to) records its own argv;
+# drive setup_gh_persistence against a fixture path containing both a space
+# and an apostrophe -- the two characters careful quoting of a shell
+# string would have had to get right -- and assert the recorded argv holds
+# each path as one intact element.
+argv_capture_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-argv-capture.XXXXXX")"
+argv_capture_log="$argv_capture_fixture/setpriv-argv.log"
+gh_argv_persist="$argv_capture_fixture/gh persist/home/dx"
+gh_argv_home="$argv_capture_fixture/gh's home"
+mkdir -p "$gh_argv_persist/.config" "$gh_argv_home/.config"
+(
+    chown() {
+        local args=() arg
+        for arg in "$@"; do
+            if [ "$arg" = dx:dx ]; then args+=("$(id -u):$(id -g)"); else args+=("$arg"); fi
+        done
+        command chown "${args[@]}"
+    }
+    setpriv() { : > "$argv_capture_log"; printf '%s\n' "$@" >> "$argv_capture_log"; }
+    setup_gh_persistence "$gh_argv_persist" "$gh_argv_home"
+) >/dev/null 2>&1
+if grep -qFx "$gh_argv_persist/.config/gh" "$argv_capture_log" 2>/dev/null \
+    && grep -qFx "$gh_argv_home/.config/gh" "$argv_capture_log" 2>/dev/null; then
+    test_pass "run_as_dx_argv passes a path containing a space and an apostrophe through as one argv element"
+else
+    test_fail "run_as_dx_argv passes a path containing a space and an apostrophe through as one argv element (captured: $(cat "$argv_capture_log" 2>/dev/null | tr '\n' '|'))"
+fi
+rm -rf "$argv_capture_fixture"
 
 # A factory-reset persist volume has no pre-existing XDG tree.  The bootstrap
 # must establish the shared ~/.local parent and its state/share children as dx
@@ -370,6 +407,7 @@ if (
         printf '%s\n' "$*" >> "$ownership_root/chown.log"
     }
     run_as_dx() { return 0; }
+    run_as_dx_argv() { return 0; }
     essentials_store_valid() { return 0; }
 
     mkdir -p "$ownership_root/fresh/store" "$ownership_root/fresh/var/nix"
@@ -465,6 +503,7 @@ marker_content_output="$({
         command chown "${args[@]}"
     }
     run_as_dx() { return 0; }
+    run_as_dx_argv() { return 0; }
     essentials_store_valid() { return 0; }
     DX_NIX_OWNERSHIP_ROOT="$marker_content_fixture" publish_nix_ownership_marker
     DX_NIX_OWNERSHIP_ROOT="$marker_content_fixture" ensure_nix_ownership
@@ -572,6 +611,7 @@ p_eno_output="$({
         command chown "${args[@]}"
     }
     run_as_dx() { return 0; }
+    run_as_dx_argv() { return 0; }
     essentials_store_valid() { return 0; }
     mkdir -p "$p_eno_root/store" "$p_eno_root/var/nix"
     DX_NIX_OWNERSHIP_ROOT="$p_eno_root" publish_nix_ownership_marker >/dev/null

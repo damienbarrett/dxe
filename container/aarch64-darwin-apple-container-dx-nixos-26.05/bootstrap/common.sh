@@ -391,6 +391,22 @@ run_as_dx() {
     setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx PATH="/home/dx/.nix-profile/bin:$PATH" bash -l -c "$cmd"
 }
 
+# Fable B10: the argv form already exists for run_as_dx_with_timeout (below)
+# -- this is the same shape for a plain (untimed) command. Every argument
+# reaches the target command exactly as given, with no shell re-parsing it,
+# so a path with a space, a quote, or any other shell metacharacter is one
+# argv element regardless of its content -- unlike run_as_dx's own `bash -l
+# -c "$cmd"`, which is exactly why a caller that only needs to run a plain
+# command (an `ln`, a `test`, an `mkdir` -- not one that wants a login
+# shell's PATH/profile expansion or shell operators like && or ~) should
+# reach for this instead. Never invokes a shell at all -- no ~ expansion, no
+# &&/||, no $HOME -- a caller migrating a shell-string call site to this
+# form must spell out any of those explicitly (an absolute path instead of
+# ~, one call per command instead of &&).
+run_as_dx_argv() {
+    setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx PATH="/home/dx/.nix-profile/bin:$PATH" "$@"
+}
+
 run_as_dx_with_timeout() {
     local timeout_seconds="$1"
     shift

@@ -68,6 +68,18 @@ run_home_manager_activation() {
     done
 }
 
+# Fable B10: both writability checks now run through run_as_dx_argv (no
+# shell needed for a plain `test -w`), replacing the single
+# `run_as_dx "test -w '$root/store' && test -w '$root/var/nix'"` string this
+# site repeated five times across publish_nix_ownership_marker/
+# ensure_nix_ownership below. Two separate argv calls ANDed in the calling
+# (root) shell, rather than one string relying on run_as_dx's own login
+# shell to parse &&, are equivalent: each test still runs as dx.
+dx_nix_root_writable_as_dx() {
+    local root="$1"
+    run_as_dx_argv test -w "$root/store" && run_as_dx_argv test -w "$root/var/nix"
+}
+
 # `.dx-owner-layout-v1` records the ownership *layout* migration. It is not
 # superseded by base-and-storage.sh's `.dx-durable-identity-v1`, which records a
 # separate one-time migration on the same volume; the two are versioned
@@ -84,7 +96,7 @@ publish_nix_ownership_marker() {
     dx_owner="$(id -u dx):$(id -g dx)"
     dx_validate_atomic_marker_path "$sentinel" "Nix ownership sentinel" || return 1
     dx_validate_atomic_marker_path "$marker" "Nix ownership layout marker" || return 1
-    if ! run_as_dx "test -w '$root/store' && test -w '$root/var/nix'"; then
+    if ! dx_nix_root_writable_as_dx "$root"; then
         echo "Error: cannot publish Nix ownership marker; dx cannot write the Nix roots." >&2
         return 1
     fi
@@ -156,7 +168,7 @@ ensure_nix_ownership_impl() {
     if [ "$marker_owner" = "$dx_owner" ] \
         && printf '%s\n' "$marker_contents" | grep '^ownership-layout=1$' >/dev/null \
         && printf '%s\n' "$marker_contents" | grep "^owner=$dx_owner$" >/dev/null \
-        && run_as_dx "test -w '$root/store' && test -w '$root/var/nix'"; then
+        && dx_nix_root_writable_as_dx "$root"; then
         echo "Nix ownership already set. Skipping recursive ownership repair."
         [ -f "$sentinel" ] || publish_nix_ownership_marker "$content_validated"
         return 0
@@ -165,7 +177,7 @@ ensure_nix_ownership_impl() {
     # A valid legacy sentinel plus writable roots is enough to upgrade without
     # walking the store. This is the common first boot after the refactor.
     if [ -f "$sentinel" ] && [ "$sentinel_owner" = "$dx_owner" ] \
-        && run_as_dx "test -w '$root/store' && test -w '$root/var/nix'"; then
+        && dx_nix_root_writable_as_dx "$root"; then
         echo "Upgrading legacy Nix ownership marker without recursive repair."
         publish_nix_ownership_marker "$content_validated"
         return
@@ -174,14 +186,14 @@ ensure_nix_ownership_impl() {
     # A freshly imported volume has already passed bounded essentials-content
     # validation. Its owner-mapped roots need only marker publication.
     if [ "$content_validated" = true ] \
-        && run_as_dx "test -w '$root/store' && test -w '$root/var/nix'"; then
+        && dx_nix_root_writable_as_dx "$root"; then
         publish_nix_ownership_marker true
         return
     fi
 
     echo "Migrating legacy Nix ownership (one time)..."
     chown -R dx:dx "$root"
-    if ! run_as_dx "test -w '$root/store' && test -w '$root/var/nix'"; then
+    if ! dx_nix_root_writable_as_dx "$root"; then
         echo "Error: Nix ownership migration did not make the store writable by dx." >&2
         return 1
     fi
@@ -236,10 +248,14 @@ configure_guest() {
     dx_ensure_tree_owner /nix/cache /nix/cache/.dxe-owner-v1 "Nix cache" || return 1
     dx_prepare_owned_directory /nix/cache/nix 0755 || return 1
     echo "Bootstrap phase: Nix cache ownership setup completed in $((SECONDS - phase_started))s."
-    run_as_dx "mkdir -p ~/.cache && ln -sf /nix/cache/nix ~/.cache/nix"
+    # Fable B10: two argv-form calls (one per command) instead of one
+    # `mkdir -p ~/.cache && ln -sf ...` string -- run_as_dx_argv invokes
+    # neither a shell nor ~ expansion, so the home-relative path is spelled
+    # out absolutely instead.
+    run_as_dx_argv mkdir -p /home/dx/.cache && run_as_dx_argv ln -sf /nix/cache/nix /home/dx/.cache/nix
 
     # Expose persistent /persist volume at a stable path inside $HOME.
-    run_as_dx "ln -sfnT /persist /home/dx/persist"
+    run_as_dx_argv ln -sfnT /persist /home/dx/persist
 
     # Persist GitHub CLI credentials/configuration across container rebuilds.
     phase_started=$SECONDS
@@ -302,7 +318,7 @@ configure_guest() {
             chown dx:dx /persist/home/dx/.claude.json
             chmod 0600 /persist/home/dx/.claude.json
         fi
-        run_as_dx "ln -sfn /persist/home/dx/.claude.json ~/.claude.json"
+        run_as_dx_argv ln -sfn /persist/home/dx/.claude.json /home/dx/.claude.json
         echo "Bootstrap phase: AI persistence ownership setup completed in $((SECONDS - phase_started))s."
     fi
 
