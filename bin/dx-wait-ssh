@@ -67,7 +67,21 @@ trap 'rm -f "$PROBE_STDERR"' EXIT
 # reflects total time actually spent waiting -- including a slow or hanging
 # ssh probe -- rather than only the time we ourselves spent sleeping.
 SECONDS=0
-NEXT_PROGRESS="$PROGRESS_INTERVAL"
+# DX_SSH_PROGRESS_INTERVAL_FIRST overrides only the first tick's own
+# threshold, never the recurring PROGRESS_INTERVAL the loop keeps enforcing
+# after it (below). Defaults to PROGRESS_INTERVAL itself, so this is a no-op
+# byte-for-byte everywhere DX_SSH_PROGRESS_INTERVAL_FIRST is unset, which is
+# every production caller. Unlike ${DX_SLEEP:-sleep} (this loop's other test
+# seam, used near its bottom), a test cannot advance SECONDS itself from a
+# child process -- the first probe attempt's own real-world cost still lands
+# in ELAPSED however long it actually took. Forcing this threshold down to 0
+# instead makes the first tick fire on the loop's first iteration no matter
+# what ELAPSED reads there, closing the race a fixed PROGRESS_INTERVAL left
+# open: on a loaded host the one narrow SECONDS window between "tick due" and
+# "timeout due" can be skipped over entirely (the WAIT_TIMEOUT check below
+# runs before the tick check on every iteration), losing the tick's own
+# guest-log pull outright, not merely delaying it.
+NEXT_PROGRESS="${DX_SSH_PROGRESS_INTERVAL_FIRST:-$PROGRESS_INTERVAL}"
 while ! dx_ssh_probe_login_shell "$PROBE_STDERR"; do
     ELAPSED=$SECONDS
     if container_exists "$DX_CONTAINER_NAME" && ! container_is_running "$DX_CONTAINER_NAME"; then

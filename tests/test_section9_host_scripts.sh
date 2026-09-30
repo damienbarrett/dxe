@@ -471,6 +471,23 @@ fi
 # SHORT pull's own guest-log output reached stdout during the tick -- the
 # behaviour "bootstrap progress shows several recent guest log lines" used
 # to be asserted as literal source text for.
+#
+# This case itself was observed to fail once during a loaded full sweep
+# (rc=1, out truncated to "Waiting for guest SSH to become re..."): the
+# loop's ELAPSED is real SECONDS (WP4.2, deliberately -- see bin/dx-wait-ssh),
+# so with DX_SSH_PROGRESS_INTERVAL=1 the tick's only window was one narrow
+# real second before DX_SSH_WAIT_TIMEOUT=2 took the timeout branch instead
+# (that check runs first every iteration) -- a host slow enough to push the
+# first probe attempt's own wall-clock cost past that window skips the tick
+# outright, not merely late. Neither seam below depends on how many real
+# seconds anything takes: DX_SSH_PROGRESS_INTERVAL_FIRST=0 forces the tick
+# onto the loop's unconditional first iteration (see its own comment in
+# bin/dx-wait-ssh, next to where NEXT_PROGRESS is set), and DX_SLEEP names a
+# fake that records every call instead of truly sleeping, so nothing here
+# depends on a real sleep finishing on time under contention either. The
+# container fake also records every `logs` invocation's own arguments, so
+# the pass condition is the `-n 5` pull actually having happened, never
+# elapsed seconds.
 if diag="$(
     fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
     fake_tool_write "$fake_dir" container '
@@ -478,6 +495,7 @@ case "$1" in
     list) printf "%s\n" dx-host ;;
     logs)
         shift
+        printf "%s\n" "$*" >> "$DX_FAKE_CONTAINER_LOGS_ARGV"
         case "$*" in
             "-n 5 "*) printf "%s\n" GUEST-LOG-PROGRESS-TICK ;;
             "-n 80 "*) printf "%s\n" GUEST-LOG-TIMEOUT-TAIL ;;
@@ -486,13 +504,22 @@ case "$1" in
 esac
 exit 0'
     fake_tool_write "$fake_dir" ssh 'echo "ssh: connect to host 127.0.0.1 port 2222: Connection timed out during banner exchange" >&2; exit 255'
+    fake_tool_write "$fake_dir" fake-sleep '
+[ -z "${DX_FAKE_SLEEP_LOG:-}" ] || printf "%s\n" "$1" >> "$DX_FAKE_SLEEP_LOG"
+exit 0'
     export PATH="$fake_dir:$PATH"
     : > "$fake_dir/ssh-key"
-    out="$(DX_SSH_KEY="$fake_dir/ssh-key" DX_SSH_WAIT_TIMEOUT=2 DX_SSH_POLL_INTERVAL=1 DX_SSH_PROGRESS_INTERVAL=1 "$BASE_DIR/bin/dx-wait-ssh" 2>&1)"
+    export DX_FAKE_CONTAINER_LOGS_ARGV="$fake_dir/container-logs.argv"
+    : > "$DX_FAKE_CONTAINER_LOGS_ARGV"
+    export DX_FAKE_SLEEP_LOG="$fake_dir/sleep.log"
+    : > "$DX_FAKE_SLEEP_LOG"
+    out="$(DX_SSH_KEY="$fake_dir/ssh-key" DX_SSH_WAIT_TIMEOUT=2 DX_SSH_POLL_INTERVAL=1 DX_SSH_PROGRESS_INTERVAL=1 DX_SSH_PROGRESS_INTERVAL_FIRST=0 DX_SLEEP=fake-sleep "$BASE_DIR/bin/dx-wait-ssh" 2>&1)"
     rc=$?
+    logs_argv="$(cat "$DX_FAKE_CONTAINER_LOGS_ARGV")"
     rm -rf "$fake_dir"
-    printf 'rc=%s out=%s' "$rc" "$out"
-    printf '%s\n' "$out" | stdin_matches -F -- 'GUEST-LOG-PROGRESS-TICK'
+    printf 'rc=%s logs=[%s] out=%s' "$rc" "$(printf '%s' "$logs_argv" | tr '\n' ';')" "$out"
+    printf '%s\n' "$logs_argv" | stdin_matches -F -- '-n 5 ' \
+        && printf '%s\n' "$out" | stdin_matches -F -- 'GUEST-LOG-PROGRESS-TICK'
 )"; then
     test_pass "the periodic progress tick prints the guest's own recent log lines (print_container_logs 5), not just their absence"
 else
