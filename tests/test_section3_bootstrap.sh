@@ -2645,5 +2645,56 @@ fi
 unset DX_BOOTSTRAP_SCRATCH_DIR
 rm -rf "$p17_fixture"
 
+# --- P18: common.sh's record readers/writer on a malformed or unreachable
+# scratch path ---------------------------------------------------------
+#
+# Every reader/writer above is already exercised for its happy path and its
+# content-validation refusals; these close the remaining defensive corners
+# flagged by the coverage report: a symlinked record file, in place of a
+# regular or absent one, on each of the three scratch-directory record
+# readers, and dx_write_nix_volume_record's own scratch-directory creation
+# failure.
+p18_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-section3-p18.XXXXXX")"
+export DX_BOOTSTRAP_SCRATCH_DIR="$p18_fixture/scratch"
+mkdir -p "$DX_BOOTSTRAP_SCRATCH_DIR"
+
+ln -sfn /nonexistent-target "$DX_BOOTSTRAP_SCRATCH_DIR/durable-identity-record"
+if [ "$(dx_read_durable_identity_record)" = "" ]; then
+    test_pass "P18: dx_read_durable_identity_record ignores a symlinked record file"
+else
+    test_fail "P18: dx_read_durable_identity_record ignores a symlinked record file"
+fi
+rm -f "$DX_BOOTSTRAP_SCRATCH_DIR/durable-identity-record"
+
+ln -sfn /nonexistent-target "$DX_BOOTSTRAP_SCRATCH_DIR/image-default-profile-target"
+if [ "$(dx_read_image_default_profile_target)" = "" ]; then
+    test_pass "P18: dx_read_image_default_profile_target ignores a symlinked record file"
+else
+    test_fail "P18: dx_read_image_default_profile_target ignores a symlinked record file"
+fi
+rm -f "$DX_BOOTSTRAP_SCRATCH_DIR/image-default-profile-target"
+
+ln -sfn /nonexistent-target "$DX_BOOTSTRAP_SCRATCH_DIR/nix-volume-record"
+if ! dx_read_nix_volume_record >/dev/null 2>&1; then
+    test_pass "P18: dx_read_nix_volume_record refuses a symlinked record file"
+else
+    test_fail "P18: dx_read_nix_volume_record refuses a symlinked record file"
+fi
+rm -f "$DX_BOOTSTRAP_SCRATCH_DIR/nix-volume-record"
+
+# dx_write_nix_volume_record's own `mkdir -p "$dir" || return 1`: point the
+# scratch directory at a path whose parent is a regular file, so mkdir -p
+# can never create it.
+: > "$p18_fixture/not-a-directory"
+DX_BOOTSTRAP_SCRATCH_DIR="$p18_fixture/not-a-directory/scratch"
+if ! dx_write_nix_volume_record already-mounted /nix >/dev/null 2>&1; then
+    test_pass "P18: dx_write_nix_volume_record fails when its scratch directory cannot be created"
+else
+    test_fail "P18: dx_write_nix_volume_record fails when its scratch directory cannot be created"
+fi
+
+unset DX_BOOTSTRAP_SCRATCH_DIR
+rm -rf "$p18_fixture"
+
 print_summary
 exit_with_code
