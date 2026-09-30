@@ -70,6 +70,18 @@ dx_coverage_json_file_totals() {
     ' "$coverage_json"
 }
 
+# dx_coverage_guest_dir_is_alias ROOT PATH
+#
+# True when PATH's container/<guest> component under ROOT is a symlink: a
+# compatibility alias of another guest directory (WP9.4 keeps the old
+# architecture-named path as a symlink for one release). Both numbers must
+# count a guest tree once, so every container/* glob skips aliases.
+dx_coverage_guest_dir_is_alias() {
+    local root="$1"
+    local rel="${2#"$1"/container/}"
+    [ -L "$root/container/${rel%%/*}" ]
+}
+
 # dx_coverage_scope_exec_lines ROOT COVERAGE_JSON
 #
 # Sum of kcov total_lines over files whose path falls under one of the
@@ -84,9 +96,11 @@ dx_coverage_scope_exec_lines() {
     scope_dirs=("$root/bin/lib")
     local d
     for d in "$root"/container/*/bootstrap; do
+        dx_coverage_guest_dir_is_alias "$root" "$d" && continue
         [ -d "$d" ] && scope_dirs+=("$d")
     done
     for d in "$root"/container/*/scripts/lib; do
+        dx_coverage_guest_dir_is_alias "$root" "$d" && continue
         [ -d "$d" ] && scope_dirs+=("$d")
     done
 
@@ -144,9 +158,11 @@ dx_coverage_unscoped_prod_lines() {
         [ -f "$f" ] && files+=("$f")
     done
     for f in "$root"/container/*/bootstrap.sh; do
+        dx_coverage_guest_dir_is_alias "$root" "$f" && continue
         [ -f "$f" ] && files+=("$f")
     done
     for f in "$root"/container/*/scripts/*.sh; do
+        dx_coverage_guest_dir_is_alias "$root" "$f" && continue
         [ -f "$f" ] && files+=("$f")
     done
 
