@@ -1723,6 +1723,37 @@ dx_opencode_prepare_directory "$opencode_fixture/persist/home/dx/.config" 0700
 ( unset -f dx_prepare_owned_directory; dx_ai_opencode_prepare_activation_ancestors "$opencode_fixture/persist/home/dx" >/dev/null 2>&1 || true )
 ( unset -f dx_prepare_owned_directory; dx_opencode_prepare_directory "$fixture/opencode-no-helper" 0755; [ -d "$fixture/opencode-no-helper" ] )
 
+# dx_opencode_bootstrap_load_persist_relocate's own three-candidate loader
+# (module-load time, above): when sourced from a location whose own sibling,
+# $HOME, and DX_BOOTSTRAP_ROOT candidates all fail to provide
+# dx_persist_relocate_dir, it must refuse loudly rather than leave OpenCode
+# persistence half-wired. Source a *symlink* to the real file from an
+# otherwise-empty directory: BASH_SOURCE[0] resolves relative to the
+# symlink's own (sibling-less) directory, defeating candidate 1, while kcov
+# still attributes the executed lines to the real underlying file.
+opencode_loader_fixture="$fixture/opencode-loader-unavailable"
+mkdir -p "$opencode_loader_fixture/empty-home" "$opencode_loader_fixture/empty-root"
+ln -s "$GUEST/scripts/lib/dx-opencode-persistence.sh" "$opencode_loader_fixture/dx-opencode-persistence.sh"
+opencode_loader_out="$opencode_loader_fixture/out"
+(
+    HOME="$opencode_loader_fixture/empty-home"
+    DX_BOOTSTRAP_ROOT="$opencode_loader_fixture/empty-root"
+    unset -f dx_persist_relocate_dir
+    if source "$opencode_loader_fixture/dx-opencode-persistence.sh"; then
+        echo "load_rc=0"
+    else
+        echo "load_rc=$?"
+    fi
+) >"$opencode_loader_out" 2>&1
+if grep -qxF 'load_rc=1' "$opencode_loader_out" \
+    && stdin_matches -F 'persist-relocate library is unavailable' < "$opencode_loader_out" \
+    && stdin_matches -F 'OpenCode persistence could not load the shared persist-relocate library' < "$opencode_loader_out"; then
+    :
+else
+    echo "Error: dx_opencode_bootstrap_load_persist_relocate did not refuse with no available candidate ($(cat "$opencode_loader_out"))" >&2
+    exit 1
+fi
+
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin /home/dx/.nix-profile/bin
 : > /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex; chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex
 : > /home/dx/.nix-profile/bin/nu
