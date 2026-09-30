@@ -982,8 +982,13 @@ noagy_output_log="$ai_fixture/noagy-output.log"
     dx_ai_ensure_keyring() { :; }
     dx_ai_verify() { :; }
     id() { printf '%s\n' 1000; }
-    dx_ai_boot_id() { printf '%s\n' test-boot-id; }
-    dx_ai_process_start() { printf '%s\n' 123; }
+    # WP5.2: dx_ai_lock_acquire now delegates to the shared
+    # publication_lock_acquire (bin/lib/dx-bootstrap-protocol.sh /
+    # scripts/lib/dx-publication.sh), which calls boot_id/process_start
+    # directly, not the dx_ai_boot_id/dx_ai_process_start wrappers -- stub
+    # the names it actually calls.
+    boot_id() { printf '%s\n' test-boot-id; }
+    process_start() { printf '%s\n' 123; }
     DX_AI_BOOTSTRAP_ROOT="$noagy_published" DX_AI_STATE_ROOT="$noagy_state" dx_ai_main
 ) >"$noagy_output_log" 2>&1
 noagy_manifest="$(readlink -f "$noagy_state/current" 2>/dev/null)"
@@ -1241,8 +1246,8 @@ id() { printf '%s\n' 1000; }
 # The host running this unit test may not expose Linux /proc. Provide the
 # identity that a real guest supplies so F8 keeps testing lock release rather
 # than the R5 fail-closed guard above.
-dx_ai_boot_id() { printf '%s\n' test-boot-id; }
-dx_ai_process_start() { printf '%s\n' 123; }
+boot_id() { printf '%s\n' test-boot-id; }
+process_start() { printf '%s\n' 123; }
 # The host running this unit test may report a Darwin-style uname -m (e.g.
 # "arm64") that the shared guest-system helper's Linux-only mapping does not
 # recognize -- production dx-ai.sh only ever runs inside the Linux guest.
@@ -1296,8 +1301,8 @@ dx_ai_setup_credentials() { :; }
 dx_ai_ensure_keyring() { :; }
 dx_ai_verify() { :; }
 id() { printf '%s\n' 1000; }
-dx_ai_boot_id() { printf '%s\n' test-boot-id; }
-dx_ai_process_start() { printf '%s\n' 123; }
+boot_id() { printf '%s\n' test-boot-id; }
+process_start() { printf '%s\n' 123; }
 dx_guest_resolve_system() { printf '%s\n' aarch64-linux; }
 nix() {
     case "$*" in
@@ -1440,8 +1445,8 @@ unset -f id dx_ai_update_flake dx_ai_ensure_cached dx_ai_install_profile dx_ai_s
 # shellcheck source=/dev/null
 source "$AI_SCRIPT"
 dx_ai_load_lock
-dx_ai_boot_id() { printf '%s\n' test-boot-id; }
-dx_ai_process_start() { printf '%s\n' 123; }
+boot_id() { printf '%s\n' test-boot-id; }
+process_start() { printf '%s\n' 123; }
 dx_guest_resolve_system() { printf '%s\n' aarch64-linux; }
 
 # --- F15: --supports is a silent, exact-arity capability probe ---
@@ -1653,8 +1658,8 @@ herdrfail_rc=$?
 unset -f id mv dx_ai_update_flake dx_ai_ensure_cached dx_ai_install_profile dx_ai_setup_credentials dx_ai_ensure_keyring dx_ai_verify dx_ai_install_herdr_integrations
 # shellcheck source=/dev/null
 source "$AI_SCRIPT"
-dx_ai_boot_id() { printf '%s\n' test-boot-id; }
-dx_ai_process_start() { printf '%s\n' 123; }
+boot_id() { printf '%s\n' test-boot-id; }
+process_start() { printf '%s\n' 123; }
 dx_guest_resolve_system() { printf '%s\n' aarch64-linux; }
 
 if [ "$herdrfail_rc" -eq 0 ] && [ -f "$herdrfail_marker" ]; then

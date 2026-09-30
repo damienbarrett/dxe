@@ -83,6 +83,35 @@ interrupted owner is reported, not silently stolen" claim, which depends on
 the real daemon continuing to refuse a name conflict exactly the way the
 fakes assume.
 
+**WP5.2 / Fable A3+B3 (extends Astra R3) -- the shared guest publication-
+lock protocol.** `bin/lib/dx-bootstrap-protocol.sh`'s
+`dx_guest_publication_protocol_snippet` is now the one rendering of
+`process_start`/`boot_id`/`publication_lock_acquire`/
+`publication_lock_release` the launcher (`dx_bootstrap_launch_command`),
+the sync's guest program (`dx_sync_guest_program`), the health probe
+(`dx_bootstrap_health_command`), and the guest's own `dx-ai-lock.sh` all
+share -- closing the launcher/sync drift Fable A3 found (a missing
+`[ -z "$live_start" ]` clause) and dx-ai-lock.sh's own narrower gaps
+(Fable B3: no grace period before reclaiming an ownerless lock directory,
+and a GNU-only `mv -T` for its stale-owner takeover, both now the same
+rename-then-remove-via-the-portable-form every copy uses).
+`tests/test_refactor_contracts.sh` pins the launcher's and the sync's
+rendered text as byte-identical, and pins the shipped
+`container/.../scripts/lib/dx-publication.sh` as identical to the rendered
+snippet; `tests/test_bootstrap_publication.sh` runs one fixture (a live
+owner, an owner from a previous boot, a reused pid, an ownerless
+directory, and a reclaim whose rename target already exists) against all
+three implementations, asserting identical outcomes and stderr. All of
+this is Unit/static-tier: real `/proc`-shaped fixtures under a fake root
+(`DX_LOCK_PROC_ROOT`), never a real Linux `/proc`, since this suite runs on
+the macOS host. It has not been re-confirmed against an actual guest
+kernel's `/proc` (real boot ids, real pid reuse timing) -- the Live
+isolated tier's ordinary guest boots exercise the launcher and health-probe
+renderings for real on every promotion, which is the closest this gets
+today; a dedicated concurrent-publish drill against a live guest would
+still be the stronger confirmation Astra R3's own suggested sequence asks
+for.
+
 ## Useful final commands
 
 ```sh
