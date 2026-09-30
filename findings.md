@@ -292,7 +292,7 @@ Every review ID and where it lands.
   selection. *Red:* detached local commit yields entries and `.git`. (Astra F2)
 - [x] c1b0feb **WP6.3** Restore directory selection joins paths as data. *Red:*
   `a&b`, `#`, backslash, leading hyphen. (Astra F9)
-- [ ] **WP6.4** One owned-resource check before adopt/attach/start/stop/kill/
+- [x] d211eb8..dfa5864 **WP6.4** One owned-resource check before adopt/attach/start/stop/kill/
   delete; schema and system labels validated. *Red:* foreign running
   container receives zero stop/kill/delete calls; schema 999 refused. (Astra F3)
 - [ ] **WP6.5** Operation-level lifecycle lock acquired by every mutating
@@ -424,3 +424,4 @@ Every review ID and where it lands.
 - **2026-09-30** Seventh local kcov run (snapshot 327f6bb): suites green except two WP8.1 probes in `test_sourceable_coverage.sh` (:247, :1916); line coverage 95.6%: `dx-bootstrap-sync.sh` 29% and `dx-tunnel.sh` 87% despite sections 22/19 driving their entrypoints (suspect fixture copies of `bin/` outside kcov's include path), plus 8 lines in `common.sh`, 2 in `base-and-storage.sh`, 2 in `dx-backup.sh`. Coverage agent diagnosing with per-line reports in the image.
 - **2026-09-30** WP6.6 landed (ddb574b, 785ad5d, 9832b25, 51a643e, ff4d2a0): backups publish as generations under `generations/<id>/` with hard-link carry-forward, a `current` symlink switched atomically after per-file hash verification, a per-mirror lock shared with restore, prune to two generations, and automatic in-place migration of a legacy mirror (real `current/` dir) on the first run. Backup suite 53 → 101, restore 59 → 64. Note for the live tier: `dx-host`'s existing mirror is legacy-shaped and will migrate on its first backup after promotion; verify on `dx-test` first.
 - **2026-09-30** CI at 2d3a4fc: Syntax, ShellCheck and the container-free contracts step all green on Linux; the job now fails only at sourceable coverage (the gaps under repair), Nix evaluation not yet reached.
+- **2026-09-30** WP6.4 landed (d211eb8, 7cda2f7, dfa5864): `dx_runtime_docker_resource_owned` before adoption, writable attachment, start, stop, kill and delete; schema and `io.dxe.system` validated; absent vs could-not-inspect distinct and fail-closed; Apple counterparts are documented no-ops (no per-object labels). Section 33: 181 → 196, section 9: 159. Transcript fixture gained three inspect lines. Live-only assumption recorded: Docker's exact "No such container/volume" wording.
