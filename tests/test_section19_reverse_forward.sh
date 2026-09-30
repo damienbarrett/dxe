@@ -238,6 +238,82 @@ dxe_s19_check "dx-reverse rejects an unknown option" \
     "Error: Unknown option '--bogus'." 1 \
     "$DX_REVERSE" --bogus
 
+# --- Direct-call battery: dx_tunnel_cli's own branches ---------------------
+#
+# Every case above already proves its string and exit code through the real
+# bin/dx-forward/bin/dx-reverse entrypoints -- but each of those forks a
+# brand-new bash process, and this sandbox's kcov does not attribute a
+# forked script's own lines back to it (checked directly outside this
+# suite: a trivial two-line script that always runs reports 0/2 lines
+# covered when forked as a traced parent's child, and 2/2 when sourced and
+# run in this same process), so the coverage gate never sees dx_tunnel_cli's
+# own body execute no matter how many entrypoint-level cases exist above.
+# These call it directly, in this already-traced process, for the branches
+# above plus the ones WP8.3 did not yet have a case for: no arguments,
+# --stop-all, a real --list call (not just its "extra arguments" refusal),
+# and dx_tunnel_cli_collect's own duplicate-port and three-colon
+# rejections. --list/--stop-all need no container or SSH at all
+# (dx_tunnel_list/dx_tunnel_stop_all only read local tunnel state), so
+# DX_TUNNEL_STATE_DIR alone keeps them container-free; a real port mapping
+# does need dx_tunnel_require_prerequisites (SSH key, container up), which
+# is exactly what SKIP_INTEGRATION means to skip, so that path stays
+# untested here, same as above.
+(
+    source "$BASE_DIR/bin/dx-lib.sh"
+    DX_TUNNEL_STATE_DIR="$dxe_s19_cli_state"
+    DX_CONTAINER_NAME=dx-s19-direct
+    export DX_TUNNEL_STATE_DIR DX_CONTAINER_NAME
+
+    out="$(dx_tunnel_cli forward 2>&1)"; rc=$?
+    if [ "$rc" -eq 1 ] && [ "$out" = "$(dx_tunnel_cli_usage forward)" ]; then
+        test_pass "dx_tunnel_cli forward with no arguments prints its usage and fails (direct call)"
+    else
+        test_fail "dx_tunnel_cli forward with no arguments prints its usage and fails (direct call) (rc=$rc, out: $out)"
+    fi
+
+    out="$(dx_tunnel_cli forward --list 2>&1)"; rc=$?
+    if [ "$rc" -eq 0 ] && [ "$out" = "No dx-forward forwards found for dx-s19-direct." ]; then
+        test_pass "dx_tunnel_cli forward --list reports no forwards against empty state (direct call)"
+    else
+        test_fail "dx_tunnel_cli forward --list reports no forwards against empty state (direct call) (rc=$rc, out: $out)"
+    fi
+
+    out="$(dx_tunnel_cli reverse --stop-all 2>&1)"; rc=$?
+    if [ "$rc" -eq 0 ] && [ "$out" = "No dx-reverse reverse forwards found for dx-s19-direct." ]; then
+        test_pass "dx_tunnel_cli reverse --stop-all reports none found against empty state (direct call)"
+    else
+        test_fail "dx_tunnel_cli reverse --stop-all reports none found against empty state (direct call) (rc=$rc, out: $out)"
+    fi
+
+    out="$(dx_tunnel_cli forward --stop-all extra 2>&1)"; rc=$?
+    if [ "$rc" -eq 1 ] && [ "$out" = "Error: --stop-all does not accept port arguments." ]; then
+        test_pass "dx_tunnel_cli forward --stop-all refuses extra arguments (direct call)"
+    else
+        test_fail "dx_tunnel_cli forward --stop-all refuses extra arguments (direct call) (rc=$rc, out: $out)"
+    fi
+
+    out="$(dx_tunnel_cli forward 8080:9090:1000 2>&1)"; rc=$?
+    if [ "$rc" -eq 1 ] && [ "$out" = "Error: Invalid forward '8080:9090:1000'. Use <guest_port> or <guest_port>:<host_port>." ]; then
+        test_pass "dx_tunnel_cli forward refuses a mapping with more than one colon (direct call)"
+    else
+        test_fail "dx_tunnel_cli forward refuses a mapping with more than one colon (direct call) (rc=$rc, out: $out)"
+    fi
+
+    out="$(dx_tunnel_cli forward 8080:9090 8081:9090 2>&1)"; rc=$?
+    if [ "$rc" -eq 1 ] && [ "$out" = "Error: Host port 9090 was requested more than once." ]; then
+        test_pass "dx_tunnel_cli forward refuses the same host port requested twice (direct call)"
+    else
+        test_fail "dx_tunnel_cli forward refuses the same host port requested twice (direct call) (rc=$rc, out: $out)"
+    fi
+
+    out="$(dx_tunnel_cli bogus-direction 2>&1)"; rc=$?
+    if [ "$rc" -eq 1 ] && [ -z "$out" ]; then
+        test_pass "dx_tunnel_cli refuses an invalid direction (direct call)"
+    else
+        test_fail "dx_tunnel_cli refuses an invalid direction (direct call) (rc=$rc, out: $out)"
+    fi
+)
+
 rm -rf "$dxe_s19_cli_state"
 
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
