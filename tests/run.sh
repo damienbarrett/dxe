@@ -18,7 +18,7 @@
 # run-bash32-tests.sh and run-coverage-contracts.sh are now one-line
 # wrappers over this file.
 #
-# Usage: tests/run.sh --tier TIER [--bash32] [--section N | --file PATH]
+# Usage: tests/run.sh --tier TIER [--bash32] [--section N | --file PATH] [--live]
 #
 #   --tier TIER     unit | host-contract | live | destructive. With no
 #                   --section/--file, runs every tests/test_*.sh whose own
@@ -44,26 +44,36 @@
 #                   table names for section N (that table is the one place
 #                   left that maps a section number to a file; this file
 #                   reads it rather than keeping a second copy). --tier, if
-#                   also given, only sets SKIP_INTEGRATION (see below) --
+#                   also given, only affects SKIP_INTEGRATION (see below) --
 #                   it does not filter which file --section resolves to.
 #   --file PATH     Run only PATH directly.
+#   --live          Explicit opt-in to real guest work (see below).
 #
-# Every suite runs with SKIP_INTEGRATION=true when --tier unit is in
-# effect (matching run_all_tests.sh --skip-integration's long-standing
-# meaning: unit tier is container-free by construction, proven behaviourally
-# by tests/test_section20_skip_integration.sh) and SKIP_INTEGRATION=false
-# otherwise, so a --tier live sweep (or a bare --section/--file with no
-# --tier) still performs real guest work. DXE_SKIP_SLOW_TESTS and every
-# other already-set environment variable pass through unchanged: each suite
-# is a real child process that inherits this shell's environment exactly
-# as tests/run_all_tests.sh's own `bash "$test_file"` always has.
+# SKIP_INTEGRATION safety default (fixes the tests/run.sh --section/--file
+# incident: this used to inherit SKIP_INTEGRATION from the CALLER's shell for
+# a bare --section/--file, so `bash tests/run.sh --section 17` on a developer
+# machine with SKIP_INTEGRATION simply unset ran section 17's live
+# dx-ai-in-guest case against a real guest). --section, --file, --tier unit
+# and --tier host-contract now force SKIP_INTEGRATION=true for the selected
+# suite(s) UNLESS --live is given; --tier live and --tier destructive imply
+# --live (so they still perform real guest work exactly as before). Reaching
+# a live guest is therefore always an explicit opt-in, proven behaviourally
+# by tests/test_section20_skip_integration.sh. An environment
+# SKIP_INTEGRATION=false given without --live (and without a tier that
+# implies it) is refused with exit 2 rather than silently honoured, so the
+# old inherited path cannot be reached by accident either way -- only an
+# unset (or true) SKIP_INTEGRATION is silently overridden to the safe
+# default. DXE_SKIP_SLOW_TESTS and every other already-set environment
+# variable still pass through unchanged: each suite is a real child process
+# that inherits this shell's environment exactly as tests/run_all_tests.sh's
+# own `bash "$test_file"` always has, SKIP_INTEGRATION included.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
     cat <<'USAGE'
-Usage: tests/run.sh --tier unit|host-contract|live|destructive [--bash32] [--section N|--file PATH]
+Usage: tests/run.sh --tier unit|host-contract|live|destructive [--bash32] [--section N|--file PATH] [--live]
 
   --tier TIER     Run every tests/test_*.sh whose `# tier:` header is
                   exactly TIER (unit|host-contract|live|destructive).
@@ -72,9 +82,15 @@ Usage: tests/run.sh --tier unit|host-contract|live|destructive [--bash32] [--sec
   --section N     Run only the suite run_all_tests.sh dispatches as
                   section N.
   --file PATH     Run only PATH directly.
+  --live          Explicit opt-in to real guest work: sets
+                  SKIP_INTEGRATION=false for the selected suite(s) instead
+                  of the safe default (SKIP_INTEGRATION=true). Implied by
+                  --tier live and --tier destructive.
 
 --section and --file are mutually exclusive. Exactly one of --tier,
---section or --file is required.
+--section or --file is required. An environment SKIP_INTEGRATION=false
+given without --live (or a tier that implies it) is refused: pass --live
+to opt in, or unset SKIP_INTEGRATION to accept the safe default.
 USAGE
 }
 
@@ -82,6 +98,7 @@ TIER=""
 BASH32=false
 SECTION=""
 FILE=""
+LIVE=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -113,6 +130,10 @@ while [ $# -gt 0 ]; do
             FILE="${1#*=}"
             shift
             ;;
+        --live)
+            LIVE=true
+            shift
+            ;;
         --help|-h)
             usage
             exit 0
@@ -124,6 +145,12 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# --tier live/destructive always performed real guest work before --live
+# existed; keep that true without requiring the flag too.
+case "$TIER" in
+    live|destructive) LIVE=true ;;
+esac
 
 if [ -n "$SECTION" ] && [ -n "$FILE" ]; then
     echo "Error: --section and --file are mutually exclusive." >&2
@@ -214,17 +241,31 @@ run_suite() {
     fi
 }
 
-# A tier explicitly forces SKIP_INTEGRATION; a bare --section/--file with
-# no --tier (e.g. run_all_tests.sh delegating its own --section=N with no
-# --skip-integration) instead inherits whatever the caller's shell already
-# has, defaulting to false -- the same default run_all_tests.sh's own
-# SKIP_INTEGRATION=false always had before any flag was parsed.
-if [ "$TIER" = unit ]; then
-    RUN_SKIP_INTEGRATION=true
-elif [ -n "$TIER" ]; then
+# The tests/run.sh --section/--file incident: a bare --section/--file (or
+# --tier unit/host-contract) used to inherit SKIP_INTEGRATION from the
+# CALLER's shell, defaulting to false when unset -- the same default
+# run_all_tests.sh's own SKIP_INTEGRATION=false always had before any flag
+# was parsed -- so a plain `bash tests/run.sh --section 17` on a developer
+# machine (SKIP_INTEGRATION simply never set) ran section 17's live
+# dx-ai-in-guest case for real. LIVE (the --live flag, or implied above by
+# --tier live/destructive) is now the ONLY thing that can make this runner
+# perform real guest work: every selection forces SKIP_INTEGRATION to the
+# opposite of LIVE, ignoring whatever the environment happened to already
+# hold. An explicit SKIP_INTEGRATION=false in the environment without LIVE
+# is refused outright (loudly, exit 2) rather than silently overridden to
+# true, so a caller who set it on purpose but forgot --live cannot
+# accidentally reach the old inherited-false path either; an unset or
+# `true` SKIP_INTEGRATION is silently overridden, since both already agree
+# with the safe default.
+if [ "${SKIP_INTEGRATION+set}" = set ] && [ "$SKIP_INTEGRATION" = false ] && [ "$LIVE" != true ]; then
+    echo "Error: SKIP_INTEGRATION=false in the environment requires --live (or a --tier that implies it: live, destructive); refusing to silently perform real guest work. Pass --live to opt in, or unset SKIP_INTEGRATION to accept the safe default." >&2
+    exit 2
+fi
+
+if [ "$LIVE" = true ]; then
     RUN_SKIP_INTEGRATION=false
 else
-    RUN_SKIP_INTEGRATION="${SKIP_INTEGRATION:-false}"
+    RUN_SKIP_INTEGRATION=true
 fi
 
 SELECTED=()

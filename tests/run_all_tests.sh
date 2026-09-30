@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run all DX Experience tests
-# Usage: ./run_all_tests.sh [--section=N] [--skip-integration]
+# Usage: ./run_all_tests.sh [--section=N] [--skip-integration] [--live]
 #
 # WP1.4 (Fable D2): this file is now a wrapper over tests/run.sh, which
 # selects suites by their own `# tier:` header instead of a second,
@@ -14,6 +14,15 @@
 # real file, and vice versa. Deleting this table is deferred until the
 # header contract alone is proven to cover everything B2 does (Fable D2's
 # own Refactor step).
+#
+# The tests/run.sh --section/--file incident: tests/run.sh's own default is
+# now safe (SKIP_INTEGRATION forced true unless --live is given), so the
+# --live flag here is this wrapper's own explicit opt-in, threaded straight
+# through to tests/run.sh. A bare invocation (no --section, no
+# --skip-integration, no --live) used to run BOTH tiers -- unit and live --
+# unconditionally; it now runs only the unit tier and prints a one-line
+# notice instead of silently reaching a live guest, so the documented
+# "run everything" command is now `tests/run_all_tests.sh --live`.
 
 set -euo pipefail
 
@@ -22,6 +31,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Parse arguments
 SECTION=""
 SKIP_INTEGRATION=false
+LIVE=false
 
 # Every section this runner can dispatch. Read (not executed) by
 # tests/test_refactor_contracts.sh's B2 contract, which is why it stays
@@ -38,12 +48,19 @@ for arg in "$@"; do
         --skip-integration)
             SKIP_INTEGRATION=true
             ;;
+        --live)
+            LIVE=true
+            ;;
         --help)
-            echo "Usage: $0 [--section=N] [--skip-integration]"
+            echo "Usage: $0 [--section=N] [--skip-integration] [--live]"
             echo ""
             echo "Options:"
             echo "  --section=N         Run only section N (0-36)"
             echo "  --skip-integration  Skip integration tests and live checks"
+            echo "  --live              Opt in to real guest work (required for the"
+            echo "                      live tier; without it, a bare invocation runs"
+            echo "                      only the unit tier and notes the live tier was"
+            echo "                      skipped)"
             echo "  --help              Show this help message"
             exit 0
             ;;
@@ -56,6 +73,8 @@ done
 if [ -n "$SECTION" ]; then
     if [ "$SKIP_INTEGRATION" = true ]; then
         exec "$SCRIPT_DIR/run.sh" --tier unit --section "$SECTION"
+    elif [ "$LIVE" = true ]; then
+        exec "$SCRIPT_DIR/run.sh" --live --section "$SECTION"
     else
         exec "$SCRIPT_DIR/run.sh" --section "$SECTION"
     fi
@@ -65,16 +84,29 @@ if [ "$SKIP_INTEGRATION" = true ]; then
     exec "$SCRIPT_DIR/run.sh" --tier unit
 fi
 
-# No --section, no --skip-integration: the historical "everything" run.
-# tests/run.sh has no single tier spanning both container-free and live
-# suites (WP1.4 splits that exactly along the SKIP_INTEGRATION-gated
-# sections 11/12 the table below always singled out: "unit" for everything
-# else, "live" for those two), so this runs both tiers in turn and reports
-# failure if either did.
+if [ "$LIVE" != true ]; then
+    # No --section, no --skip-integration, no --live: run only the hermetic
+    # tier and say so, rather than silently attempting the live tier's real
+    # guest work the way this "everything" invocation used to (the
+    # tests/run.sh --section/--file incident this wrapper's own header
+    # above describes).
+    unit_status=0
+    "$SCRIPT_DIR/run.sh" --tier unit || unit_status=$?
+    echo ""
+    echo "NOTE: skipped the live tier (needs a running guest); pass --live to include it: tests/run_all_tests.sh --live" >&2
+    exit "$unit_status"
+fi
+
+# --live, no --section, no --skip-integration: the historical "everything"
+# run, now an explicit opt-in. tests/run.sh has no single tier spanning both
+# container-free and live suites (WP1.4 splits that exactly along the
+# SKIP_INTEGRATION-gated sections 11/12 the table below always singled out:
+# "unit" for everything else, "live" for those two), so this runs both
+# tiers in turn and reports failure if either did.
 unit_status=0
 "$SCRIPT_DIR/run.sh" --tier unit || unit_status=$?
 live_status=0
-"$SCRIPT_DIR/run.sh" --tier live || live_status=$?
+"$SCRIPT_DIR/run.sh" --live --tier live || live_status=$?
 if [ "$unit_status" -eq 0 ] && [ "$live_status" -eq 0 ]; then
     exit 0
 fi
