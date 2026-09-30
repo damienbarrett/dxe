@@ -18,7 +18,6 @@ source "$SCRIPT_DIR/lib/fake-tools.sh"
 test_section "Section 23: Herdr Integration"
 
 DX_HERDR="$BASE_DIR/bin/dx-herdr"
-SSH_COMMON="$BASE_DIR/bin/lib/dx-ssh-common.sh"
 COMMON="$CONTAINER_DIR/bootstrap/common.sh"
 PERSISTENCE="$CONTAINER_DIR/bootstrap/persistence.sh"
 ACTIVATION="$CONTAINER_DIR/bootstrap/activation.sh"
@@ -364,11 +363,20 @@ else
     test_fail "dx-herdr restores the guest theme before starting herdr (Layer 1) ($diag)"
 fi
 
-# The restore prefix is shared rather than inline in each caller: it was inline
-# in dx-ssh only, which is precisely how dx-herdr shipped without it.
-assert_file_contains "$SSH_COMMON" "dx_guest_theme_restore_prefix" "the shared SSH boundary owns the theme-restore prefix"
-assert_file_contains "$DX_HERDR" "dx_guest_theme_restore_prefix" "dx-herdr takes the theme-restore prefix from the shared boundary"
-assert_file_not_contains "$DX_HERDR" 'dx_run_interactive_ssh "herdr"' "dx-herdr no longer attaches without restoring the theme"
+# Fable D7 item 4: the restore prefix being shared (rather than inlined
+# separately in dx-ssh and dx-herdr, which is precisely how dx-herdr shipped
+# without it) used to be asserted by grepping both files' source text for
+# the function name "dx_guest_theme_restore_prefix", plus a third check
+# that dx-herdr's source no longer contains the literal old attach call
+# 'dx_run_interactive_ssh "herdr"'. All three are source-text stand-ins for
+# exactly the property the behavioural case just above already proves by
+# decoding the real guest command dx-herdr sends (DX_FAKE_GUEST_CMD): the
+# restore genuinely runs, and runs before herdr, regardless of which
+# function or file happens to render it -- a stronger, harder-to-evade
+# proof than a name grep, and already the only property that matters here.
+# tests/test_sourceable_coverage.sh's own direct call to
+# dx_guest_theme_restore_prefix (proving the shared helper's own output
+# shape) covers the "shared, not duplicated" half independently.
 
 # --- The seeding contract now lives behind the merger ---
 #

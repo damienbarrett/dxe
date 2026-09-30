@@ -40,13 +40,14 @@ fi
 # Test: Containerfile does not install tools
 assert_file_not_contains "$CONTAINERFILE" "RUN nix profile install" "Containerfile does not install tools"
 
-# Test: SSH is key-only
-assert_file_contains "$CONTAINER_DIR/bootstrap/system.sh" "PubkeyAuthentication yes" "SSH has PubkeyAuthentication yes"
-assert_file_contains "$CONTAINER_DIR/bootstrap/system.sh" "PasswordAuthentication no" "SSH has PasswordAuthentication no"
-assert_file_contains "$CONTAINER_DIR/bootstrap/system.sh" "PermitEmptyPasswords no" "SSH has PermitEmptyPasswords no"
-
-# Test: passwordless sudo still works for dx
-assert_file_contains "$CONTAINER_DIR/bootstrap/system.sh" "dx ALL=(ALL) NOPASSWD:ALL" "passwordless sudo works for dx"
+# Fable D7 item 6: SSH-is-key-only and passwordless-sudo used to be
+# re-asserted here as four literal greps of bootstrap/system.sh, byte-for-
+# byte duplicating tests/test_section4_ssh.sh's own checks of the same
+# settings. Section 4 now proves the sshd_config settings behaviourally
+# (rendering configure_ssh's real heredoc through the installed `sshd -T`
+# parser) and still keeps the passwordless-sudo literal check, so this
+# duplicate is deleted rather than converted a second time; see
+# tests/test_section4_ssh.sh for the one remaining copy of each.
 
 print_summary
 exit_with_code
