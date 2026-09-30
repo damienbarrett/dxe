@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# dx-ai's post-install steps: AI-credential symlinks, the keyring, and Herdr
+# agent integrations. Safe to source (import-only). Moved out of dx-ai.sh
+# (Fable B7) so this logic sits under scripts/lib, in kcov's coverage scope
+# (unlike scripts/*.sh -- see tests/coverage/exclusions.txt).
+
+# dx_ai_load_opencode_persistence/dx_ai_load_keyring (called just below) are
+# thin wrappers over dx_ai_load_library, defined back in dx-ai.sh rather
+# than here: dx_ai_load_library resolves candidate 1 (the CALLING script's
+# own colocated lib/ directory) from the calling frame's own file
+# (BASH_SOURCE[1]), and dx-ai.sh -- not this already-inside-scripts/lib/
+# file -- is the one whose sibling lib/ directory candidate 1 is meant to
+# name. Bash functions are process-global regardless of which sourced file
+# defines them, so calling them from here is exactly like calling any other
+# already-loaded function.
+
+# Merge a jq filter into a JSON object file and replace it atomically.
+#
+# Refuses to touch a file that does not parse as a JSON object (an absent or
+# empty file is the caller's job to seed first, e.g. with
+# `[ -s "$file" ] || printf '%s\n' '{}' > "$file"`; this only guards the
+# merge itself) and refuses to install an empty or failed jq result over it.
+# Both guards matter: `jq -e '.someKey' "$file"`, the usual "does this
+# setting already exist" probe callers use to decide whether to call this at
+# all, fails identically for "key absent" and "not JSON" -- so an unparseable
+# file reaches here exactly like one that legitimately needs the merge, and
+# the type check is what tells them apart before anything is written.
+dx_ai_merge_json_setting() {
+    local file="$1" filter="$2" tmp
+    jq -e 'type=="object"' "$file" >/dev/null 2>&1 \
+        || { echo "Error: $file is not a JSON object; refusing to rewrite it" >&2; return 1; }
+    tmp="$file.tmp.$$"
+    jq "$filter" "$file" > "$tmp"
+    if [ -s "$tmp" ]; then
+        mv "$tmp" "$file"
+    else
+        rm -f "$tmp"
+        echo "Error: failed to update $file; left unchanged" >&2
+        return 1
+    fi
+}
+
+dx_ai_setup_credentials() {
+    local persist_home="${1:-/persist/home/dx}" home="${2:-$HOME}" settings
+    dx_ai_load_opencode_persistence || return 1
+    dx_ai_opencode_persistence "$persist_home" "$home" || return 1
+    mkdir -p "$persist_home/.gemini/antigravity-cli" "$persist_home/.claude" "$persist_home/.codex" \
+        "$persist_home/.local/share/keyrings" "$home/.config" "$home/.local/share"
+    [ -s "$persist_home/.claude.json" ] || printf '%s\n' '{}' > "$persist_home/.claude.json"
+    ln -sfnT "$persist_home/.gemini" "$home/.gemini"; ln -sfnT "$persist_home/.claude" "$home/.claude"
+    ln -sfnT "$persist_home/.claude.json" "$home/.claude.json"; ln -sfnT "$persist_home/.codex" "$home/.codex"
+    ln -sfnT "$persist_home/.local/share/keyrings" "$home/.local/share/keyrings"
+    settings="$persist_home/.claude/settings.json"; [ -s "$settings" ] || printf '%s\n' '{}' > "$settings"
+    if ! jq -e '.statusLine' "$settings" >/dev/null 2>&1; then
+        dx_ai_merge_json_setting "$settings" '. + {statusLine: {type: "command", command: "dx-claude-statusline"}}' || return 1
+    fi
+}
+
+dx_ai_ensure_keyring() {
+    local address_file=/persist/home/dx/.local/state/dx/keyring-address
+    dx_ai_load_keyring || return 1
+    dx_keyring_start "$address_file"
+}
+
+# Decide whether `herdr integration install <target>` still has work to do.
+#
+# Detect the states that mean "not done" rather than the one that means "done".
+# Herdr reports an up-to-date integration as `current (v7)`, not `installed`;
+# matching the latter treated every healthy integration as missing and
+# reinstalled both of them on every dx-ai run, rewriting their hook files each
+# time. Verified against herdr 0.8.0, whose status vocabulary is `not installed`
+# / `outdated (vN)` / `current (vN)`.
+#
+# Inverting the test also fails safe across versions: a state neither of these
+# patterns recognises is left alone rather than reinstalled on a loop.
+dx_ai_herdr_integration_needs_install() {
+    local target="$1" status="$2" outdated="$3" line state
+    while IFS= read -r line; do
+        case "$line" in "$target: "*) ;; *) continue ;; esac
+        state="${line#*: }"; state="${state%% (*}"; state="${state% }"
+        case "$state" in
+            "not installed"|outdated) return 0 ;;
+        esac
+        break
+    done <<EOF
+$status
+EOF
+    # `--outdated-only` is a second, independent signal: an integration Herdr
+    # considers current in the full listing can still be named here.
+    while IFS= read -r line; do
+        case "$line" in "$target"|"$target: "*) return 0 ;; esac
+    done <<EOF
+$outdated
+EOF
+    return 1
+}
+
+dx_ai_install_herdr_integrations() {
+    local herdr_bin target status outdated
+    herdr_bin="${HERDR_BIN_PATH:-}"
+    [ -n "$herdr_bin" ] || herdr_bin="$(command -v herdr 2>/dev/null || true)"
+    [ -n "$herdr_bin" ] || { echo "Herdr is unavailable; skipping agent integrations."; return 0; }
+    status="$("$herdr_bin" integration status 2>/dev/null)" || { echo "Warning: could not read Herdr integration status." >&2; return 0; }
+    outdated="$("$herdr_bin" integration status --outdated-only 2>/dev/null || true)"
+    for target in "${DX_AI_HERDR_INTEGRATIONS[@]}"; do
+        dx_ai_herdr_integration_needs_install "$target" "$status" "$outdated" || continue
+        if "$herdr_bin" integration install "$target"; then
+            echo "Installed the Herdr $target integration."
+        else
+            echo "Warning: could not install the Herdr $target integration." >&2
+        fi
+    done
+}

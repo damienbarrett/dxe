@@ -1476,8 +1476,17 @@ rm -rf "$creds_fixture"
 # otherwise carry over from this process's own earlier sourcing), so
 # candidate 1 always misses and the intended candidate is the first that can.
 loader_fixture="$ai_fixture/loader"
-mkdir -p "$loader_fixture/bin"
+mkdir -p "$loader_fixture/bin/lib"
 cp "$AI_SCRIPT" "$loader_fixture/bin/dx-ai.sh"
+# dx-ai.sh eagerly loads the generation/pin/cache-policy/post-install
+# libraries as soon as it is sourced (Fable B7), regardless of what this
+# block is actually testing (dx_ai_load_opencode_persistence's own candidate
+# resolution) -- colocate them here so every case below still resolves those
+# via candidate 1, leaving only dx-opencode-persistence.sh itself absent
+# from this standalone copy's lib/ sibling.
+for loader_fixture_eager_lib in dx-ai-loader.sh dx-ai-generation.sh dx-ai-pin.sh dx-ai-cache-policy.sh dx-ai-post-install.sh; do
+    cp "$CONTAINER_DIR/scripts/lib/$loader_fixture_eager_lib" "$loader_fixture/bin/lib/$loader_fixture_eager_lib"
+done
 
 home_candidate="$loader_fixture/home-candidate"
 mkdir -p "$home_candidate/.local/lib/dx"
@@ -1506,6 +1515,53 @@ else
     test_pass "dx_ai_load_opencode_persistence fails closed when no candidate resolves"
 fi
 rm -rf "$loader_fixture"
+
+# Fable B7: dx_ai_load_library (scripts/lib/dx-ai-loader.sh) is the shared
+# body every one of dx-ai.sh's/dx-keyring.sh's loaders now delegates to
+# (dx_ai_load_opencode_persistence above is one such delegator). Exercise
+# its own candidate order directly, against a disposable probe function/
+# library pair, rather than only through one caller: a real entry-point
+# FILE is needed (not an inline `bash -c` string) so BASH_SOURCE[1] --
+# candidate 1's "the calling script's own directory" -- names a real path.
+shared_loader_fixture="$ai_fixture/shared-loader"
+shared_loader_entry="$shared_loader_fixture/entry"
+mkdir -p "$shared_loader_entry"
+cat > "$shared_loader_entry/probe.sh" <<PROBE
+#!/bin/bash
+# shellcheck source=/dev/null
+source "$CONTAINER_DIR/scripts/lib/dx-ai-loader.sh"
+dx_ai_load_library dx_shared_loader_fixture_probe dx-shared-loader-fixture.sh
+PROBE
+chmod +x "$shared_loader_entry/probe.sh"
+shared_loader_lib_content='dx_shared_loader_fixture_probe() { :; }'
+
+shared_loader_home_candidate="$shared_loader_fixture/home-candidate"
+mkdir -p "$shared_loader_home_candidate/.local/lib/dx"
+printf '%s\n' "$shared_loader_lib_content" > "$shared_loader_home_candidate/.local/lib/dx/dx-shared-loader-fixture.sh"
+if HOME="$shared_loader_home_candidate" DX_AI_BOOTSTRAP_ROOT="$shared_loader_fixture/no-such-bootstrap" \
+    "$shared_loader_entry/probe.sh"; then
+    test_pass "dx_ai_load_library resolves the Home-Manager-installed copy (candidate 2)"
+else
+    test_fail "dx_ai_load_library resolves the Home-Manager-installed copy (candidate 2)"
+fi
+
+shared_loader_bootstrap_candidate="$shared_loader_fixture/bootstrap-candidate"
+mkdir -p "$shared_loader_bootstrap_candidate/scripts/lib"
+printf '%s\n' "$shared_loader_lib_content" > "$shared_loader_bootstrap_candidate/scripts/lib/dx-shared-loader-fixture.sh"
+if HOME="$shared_loader_fixture/no-such-home" DX_AI_BOOTSTRAP_ROOT="$shared_loader_bootstrap_candidate" \
+    "$shared_loader_entry/probe.sh"; then
+    test_pass "dx_ai_load_library resolves the bootstrap-volume fallback (candidate 3)"
+else
+    test_fail "dx_ai_load_library resolves the bootstrap-volume fallback (candidate 3)"
+fi
+
+if HOME="$shared_loader_fixture/no-such-home" DX_AI_BOOTSTRAP_ROOT="$shared_loader_fixture/no-such-bootstrap" \
+    "$shared_loader_entry/probe.sh" >/dev/null 2>&1; then
+    test_fail "dx_ai_load_library fails closed when no candidate resolves"
+else
+    test_pass "dx_ai_load_library fails closed when no candidate resolves"
+fi
+rm -rf "$shared_loader_fixture"
 
 # Repeated setup (a second guest activation, or a second dx-ai run) must be
 # side-effect-free once every link is already correct.
