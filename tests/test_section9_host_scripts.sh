@@ -274,41 +274,12 @@ FAKE_EOF
 ) && test_pass "dx_lifecycle_lock_acquire/_release (apple): an inherited owner token is a no-op" \
     || test_fail "dx_lifecycle_lock_acquire/_release (apple): an inherited owner token is a no-op"
 
-# A genuinely different, still-live process holding the same profile's local
-# lock is refused through dx_lifecycle_lock_acquire itself (bin/lib/
-# dx-container.sh), not only through dx_runtime_apple_lock_acquire directly
-# above -- the entrypoint-level case below already proves this behaviourally,
-# but it forks bin/dx-stop-container as a brand-new bash process to do it,
-# and this sandbox's kcov does not attribute a forked script's own lines back
-# to it (dx-bootstrap-sync.sh's own direct-call battery documents the same
-# gap). Call dx_lifecycle_lock_acquire directly, in this already-traced
-# process, to reach its own distinct refusal message.
-(
-    lock_home="$config_fixture/apple-lifecycle-lock-contend-home"
-    export XDG_STATE_HOME="$lock_home/state"
-    unset DX_RUNTIME
-    export DX_CONTAINER_NAME=dxe-p9-apple-lifecycle-contend
-    export DX_TUNNEL_LOCK_TIMEOUT=1
-    ready="$config_fixture/apple-lifecycle-lock-contend-ready"; hold="$config_fixture/apple-lifecycle-lock-contend-hold"
-    rm -f "$ready" "$hold"; : > "$hold"
-    bash -c '
-        source "$1"
-        source "$2"
-        dx_runtime_apple_lock_acquire >/dev/null
-        : > "$3"
-        while [ -e "$4" ]; do sleep 1; done
-    ' _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-runtime-apple.sh" "$ready" "$hold" &
-    holder_pid=$!
-    for _ in $(seq 1 20); do [ -e "$ready" ] && break; sleep 1; done
-    [ -e "$ready" ] || { rm -f "$hold"; wait "$holder_pid" 2>/dev/null || true; exit 1; }
-    [ -z "${DXE_LIFECYCLE_LOCK_OWNER:-}" ] || exit 1
-    rc=0; out="$(dx_lifecycle_lock_acquire 2>&1)" || rc=$?
-    rm -f "$hold"
-    wait "$holder_pid" 2>/dev/null || true
-    [ "$rc" -ne 0 ] && [ -z "${DXE_LIFECYCLE_LOCK_OWNER:-}" ] \
-        && printf '%s\n' "$out" | stdin_matches -F -- "another local dx process already holds"
-) && test_pass "dx_lifecycle_lock_acquire (apple, direct call): refuses while another live process holds the local lifecycle lock" \
-    || test_fail "dx_lifecycle_lock_acquire (apple, direct call): refuses while another live process holds the local lifecycle lock"
+# The direct-call case proving dx_lifecycle_lock_acquire's own Apple
+# contended-lock refusal (bin/lib/dx-container.sh) lives in
+# tests/test_docker_adapter_lock.sh instead of here: this file is not one of
+# tests/run-coverage-contracts.sh's dispatched suites, so kcov's gate never
+# sees a case added here at all, no matter how directly it calls production
+# code in this already-traced process.
 
 # Entrypoint level: bin/dx-stop-container refuses while another live process
 # holds this profile's local lock, issuing ZERO `container` calls (the
