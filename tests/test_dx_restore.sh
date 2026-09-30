@@ -1044,6 +1044,110 @@ fi
 
 rm -rf "$DIRPUSH_FIXTURE"
 
+# --- dx_backup_restore_push: dx_backup_ship_list failing over the threshold
+# during the directory-precreation pass fails the whole push, before any
+# directory is created and before the tar transfer ever runs -- proven by
+# the fake `container` refusing every `sh -c` invocation (the shape
+# dx_backup_ship_list_to_guest's own `cat > "$1"` call takes) while still
+# letting `tar` through, so a pass reaching the tar step at all would prove
+# this case wrong.
+DIRSHIP_FAIL_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-dirship-fail-test.XXXXXX")"
+DIRSHIP_FAIL_PERSIST="$DIRSHIP_FAIL_FIXTURE/persist"
+DIRSHIP_FAIL_BACKUP="$DIRSHIP_FAIL_FIXTURE/backups/dirshipfail-container"
+mkdir -p "$DIRSHIP_FAIL_PERSIST" "$DIRSHIP_FAIL_BACKUP/current/a/b" "$DIRSHIP_FAIL_BACKUP/current/c/d"
+printf 'one\n' > "$DIRSHIP_FAIL_BACKUP/current/a/b/one.txt"
+printf 'two\n' > "$DIRSHIP_FAIL_BACKUP/current/c/d/two.txt"
+DIRSHIP_FAIL_TARGETS="$DIRSHIP_FAIL_FIXTURE/targets.txt"
+printf 'a/b/one.txt\nc/d/two.txt\n' > "$DIRSHIP_FAIL_TARGETS"
+
+fake_tool_write "$FAKE_DIR" container '
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" = -i ] && shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    if [ "${1:-}" = sh ]; then
+        echo "fake container: refusing to ship (simulated failure)" >&2
+        exit 1
+    fi
+    echo "UNEXPECTED non-ship exec reached: $*" >&2
+    exit 99
+fi
+exit 1
+'
+
+set +e
+DX_BACKUP_HASH_PATHS_ARG_THRESHOLD=1 dx_backup_restore_push test-container "$DIRSHIP_FAIL_BACKUP" "$DIRSHIP_FAIL_TARGETS"
+dirship_fail_rc=$?
+set -e
+
+if [ "$dirship_fail_rc" -ne 0 ] && [ ! -e "$DIRSHIP_FAIL_PERSIST/a" ] && [ ! -e "$DIRSHIP_FAIL_PERSIST/c" ]; then
+    test_pass "dx_backup_restore_push fails closed when shipping the directory batch fails over the threshold, before any directory is created"
+else
+    test_fail "dx_backup_restore_push fails closed when shipping the directory batch fails over the threshold, before any directory is created (rc=$dirship_fail_rc)"
+fi
+
+rm -rf "$DIRSHIP_FAIL_FIXTURE"
+
+# --- dx_backup_restore_push: dx_backup_ship_list failing over the threshold
+# during the ownership pass ALSO fails the whole push, after the directory
+# pass (skipped here -- a single flat target has no ancestor directory to
+# precreate) and the tar transfer have both already succeeded. The fake
+# `container` lets `tar` through for real (so the file really lands) but
+# refuses every `sh -c` invocation, which is only ever the ownership pass's
+# own ship-list call here.
+FILESHIP_FAIL_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-fileship-fail-test.XXXXXX")"
+FILESHIP_FAIL_PERSIST="$FILESHIP_FAIL_FIXTURE/persist"
+FILESHIP_FAIL_BACKUP="$FILESHIP_FAIL_FIXTURE/backups/fileshipfail-container"
+mkdir -p "$FILESHIP_FAIL_PERSIST" "$FILESHIP_FAIL_BACKUP/current"
+printf 'flat\n' > "$FILESHIP_FAIL_BACKUP/current/flat.txt"
+FILESHIP_FAIL_TARGETS="$FILESHIP_FAIL_FIXTURE/targets.txt"
+printf 'flat.txt\n' > "$FILESHIP_FAIL_TARGETS"
+
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$FILESHIP_FAIL_PERSIST"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    has_i=0
+    if [ "${1:-}" = -i ]; then has_i=1; shift; fi
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    if [ "${1:-}" = sh ]; then
+        echo "fake container: refusing to ship (simulated failure)" >&2
+        exit 1
+    fi
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        else args+=("$a"); fi
+    done
+    [ "$has_i" -eq 1 ] || exec "${args[@]}" </dev/null
+    exec "${args[@]}"
+fi
+exit 1
+'
+
+set +e
+DX_BACKUP_HASH_PATHS_ARG_THRESHOLD=0 dx_backup_restore_push test-container "$FILESHIP_FAIL_BACKUP" "$FILESHIP_FAIL_TARGETS"
+fileship_fail_rc=$?
+set -e
+
+if [ "$fileship_fail_rc" -ne 0 ] && [ "$(cat "$FILESHIP_FAIL_PERSIST/flat.txt" 2>/dev/null)" = flat ]; then
+    test_pass "dx_backup_restore_push fails closed when shipping the ownership batch fails over the threshold, after the file itself was already transferred"
+else
+    test_fail "dx_backup_restore_push fails closed when shipping the ownership batch fails over the threshold, after the file itself was already transferred (rc=$fileship_fail_rc)"
+fi
+
+rm -rf "$FILESHIP_FAIL_FIXTURE"
+
 # ---------------------------------------------------------------------------
 # Astra F5 / WP6.9 follow-up: dx-restore against an UNMIGRATED legacy-shaped
 # mirror (current/ a real directory, manifest.tsv sitting directly beside
