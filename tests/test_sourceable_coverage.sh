@@ -770,13 +770,17 @@ mkdir -p /persist
     setup_tmux_persistence
 )
 run_gh_case() (
-    chown() { :; }; run_as_dx() { :; }
+    chown() { :; }; run_as_dx() { :; }; run_as_dx_argv() { :; }
     setup_gh_persistence
 )
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /home/dx/.config
 : > /persist/home/dx/.config/gh; run_gh_case
+# Fable B9: an existing ~/.config/gh symlink pointing anywhere other than the
+# intended persistent target is now refused loudly (dx_persist_publish_link)
+# rather than silently unlinked and replaced (the pre-B9 behavior). Exercise
+# that refusal branch rather than expecting success.
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /home/dx/.config
-ln -s nowhere /home/dx/.config/gh; run_gh_case
+ln -s nowhere /home/dx/.config/gh; run_gh_case >/dev/null 2>&1 || true
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /home/dx/.config/gh
 : > /home/dx/.config/gh/config.yml; run_gh_case
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config/gh /home/dx/.config/gh
@@ -907,6 +911,7 @@ rm -rf "$fixture/herdr-activate"; mkdir -p "$fixture/herdr-activate/persist/home
 (
     chown() { :; }
     run_as_dx() { bash -c "$1"; }
+    run_as_dx_argv() { "$@"; }
     DX_BOOTSTRAP_ROOT="$GUEST"
     DX_HERDR_CONFIG_CHECK_BIN=/bin/true
     export DX_BOOTSTRAP_ROOT DX_HERDR_CONFIG_CHECK_BIN
@@ -1201,7 +1206,7 @@ rm -f "$fake_socket"
 # activation/ownership probes further down (which likewise recreate their own
 # /persist/home/dx and /home/dx before use).
 run_herdr_case() (
-    chown() { :; }; run_as_dx() { :; }
+    chown() { :; }; run_as_dx() { :; }; run_as_dx_argv() { :; }
     setup_herdr_persistence
 )
 # Live-defect coverage: a truly fresh guest has neither ~/.config nor
@@ -1212,8 +1217,12 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/hom
 run_herdr_case
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state
 : > /persist/home/dx/.config/herdr; : > /persist/home/dx/.local/state/herdr; run_herdr_case
+# Fable B9: same refusal as gh's own "elsewhere symlink" case above -- an
+# existing ~/.config/herdr (or ~/.local/state/herdr) symlink pointing
+# somewhere other than the intended persistent target is refused, not
+# silently replaced.
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state
-ln -s nowhere /home/dx/.config/herdr; ln -s nowhere /home/dx/.local/state/herdr; run_herdr_case
+ln -s nowhere /home/dx/.config/herdr; ln -s nowhere /home/dx/.local/state/herdr; run_herdr_case >/dev/null 2>&1 || true
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config/herdr /home/dx/.local/state/herdr
 : > /home/dx/.config/herdr/config.toml; : > /home/dx/.local/state/herdr/announcements; run_herdr_case
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config/herdr /persist/home/dx/.local/state/herdr /home/dx/.config/herdr /home/dx/.local/state/herdr
@@ -1368,8 +1377,11 @@ dx_seed_herdr_config "$herdr_test_cfg" >/dev/null 2>&1 || true
 (
     # Exercise the complete activation/readiness publication path. A no-op
     # privilege stub used to be enough here, but readiness now deliberately
-    # verifies the two links before writing its marker.
-    chown() { :; }; run_as_dx() { bash -c "$1"; }
+    # verifies the two links before writing its marker. Fable B9/B10: the
+    # symlink publish itself now goes through run_as_dx_argv (setpriv, like
+    # run_as_dx); execute it for real so the two links this probe verifies
+    # actually get created.
+    chown() { :; }; run_as_dx() { bash -c "$1"; }; run_as_dx_argv() { "$@"; }
     dx_activate_herdr
 )
 
@@ -1384,6 +1396,11 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/hom
         esac
     }
     run_as_dx() { bash -c "$1"; }
+    # Same B9/B10 reasoning as the probe above: run setup_herdr_persistence's
+    # own symlink publish for real so this reaches the readiness-marker chown
+    # failure it means to exercise, rather than failing earlier in
+    # setup_herdr_persistence itself.
+    run_as_dx_argv() { "$@"; }
     dx_activate_herdr >/dev/null 2>&1 || true
 )
 
@@ -1398,7 +1415,11 @@ ln -s "$fixture/herdr-outside-activate" /persist/home/dx/.config/herdr
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config/herdr /persist/home/dx/.local/state/herdr /home/dx/.config /home/dx/.local/state
 printf '%s\n' 'experimental.pane_history = true' > /persist/home/dx/.config/herdr/config.toml
 (
-    chown() { :; }; run_as_dx() { :; }
+    # Fable B9/B10: run setup_herdr_persistence's own symlink publish for real
+    # (run_as_dx_argv) so this reaches dx_seed_herdr_config's malformed-TOML
+    # failure -- the branch this probe means to exercise -- rather than
+    # failing earlier in setup_herdr_persistence itself.
+    chown() { :; }; run_as_dx() { :; }; run_as_dx_argv() { "$@"; }
     dx_activate_herdr >/dev/null 2>&1 || true
 )
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state
@@ -1409,7 +1430,11 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/hom
             *) return 0 ;;
         esac
     }
-    run_as_dx() { :; }
+    # No real chown call joins these two persistent paths, so this stub is
+    # always the success branch; run_as_dx (a no-op here, as before B9/B10)
+    # and run_as_dx_argv together keep the symlink publish step itself a
+    # no-op too, exactly as run_as_dx alone did pre-B9/B10.
+    run_as_dx() { :; }; run_as_dx_argv() { :; }
     dx_activate_herdr >/dev/null 2>&1 || true
 )
 rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/home/dx/.local/state /home/dx/.config /home/dx/.local/state
@@ -1420,7 +1445,10 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/hom
             *) return 0 ;;
         esac
     }
-    run_as_dx() { bash -c "$1"; }
+    # Reach dx_activate_herdr's own chown on the persisted config.toml file
+    # for real (the branch this probe means to exercise): run
+    # setup_herdr_persistence's symlink publish for real too.
+    run_as_dx() { bash -c "$1"; }; run_as_dx_argv() { "$@"; }
     dx_activate_herdr >/dev/null 2>&1 || true
 )
 
@@ -1457,9 +1485,12 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.config /persist/hom
     run_home_manager_activation >/dev/null 2>&1 || true
 )
 
-# Keep ownership coverage on a disposable tree. The real `run_as_dx` invokes
-# setpriv and cannot be used by sourceable coverage's rootless fixture; each
-# branch below supplies the privilege/content result it is meant to exercise.
+# Keep ownership coverage on a disposable tree. The real `run_as_dx`/
+# `run_as_dx_argv` invoke setpriv and cannot be used by sourceable coverage's
+# rootless fixture; each branch below supplies the privilege/content result
+# it is meant to exercise. Fable B10: the writability check itself
+# (dx_nix_root_writable_as_dx, activation.sh) now runs through run_as_dx_argv,
+# not run_as_dx, so every stub below pairs the two.
 ownership_fixture="$fixture/nix-ownership"
 mkdir -p "$ownership_fixture/store" "$ownership_fixture/var/nix"
 (
@@ -1468,6 +1499,7 @@ mkdir -p "$ownership_fixture/store" "$ownership_fixture/var/nix"
     stat() { printf '%s\n' "$ownership_stat"; }
     chown() { :; }
     run_as_dx() { return 0; }
+    run_as_dx_argv() { return 0; }
     essentials_store_valid() { return 0; }
 
     rm -f "$ownership_fixture/.dx-owner-set" "$ownership_fixture/.dx-owner-layout-v1"
@@ -1482,11 +1514,13 @@ mkdir -p "$ownership_fixture/store" "$ownership_fixture/var/nix"
     DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" ensure_nix_ownership
 
     run_as_dx() { return 1; }
+    run_as_dx_argv() { return 1; }
     ownership_status=0
     DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" ensure_nix_ownership || ownership_status=$?
     [ "$ownership_status" -ne 0 ]
 
     run_as_dx() { return 0; }
+    run_as_dx_argv() { return 0; }
     ownership_stat=0:0
     DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" ensure_nix_ownership
 
@@ -1498,8 +1532,10 @@ mkdir -p "$ownership_fixture/store" "$ownership_fixture/var/nix"
     DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" publish_nix_ownership_marker >/dev/null 2>&1 || true
     rm -f "$ownership_fixture/.dx-owner-layout-v1"
     run_as_dx() { return 1; }
+    run_as_dx_argv() { return 1; }
     DX_NIX_OWNERSHIP_ROOT="$ownership_fixture" publish_nix_ownership_marker >/dev/null 2>&1 || true
     run_as_dx() { return 0; }
+    run_as_dx_argv() { return 0; }
     ownership_stat=0:0
     rm -f "$ownership_fixture/.dx-owner-set"
     mv_count=0
@@ -1691,7 +1727,7 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.local/state/dx-ai/c
 : > /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex; chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex
 : > /home/dx/.nix-profile/bin/nu
 (
-    ensure_nix_ownership() { :; }; chown() { :; }; run_as_dx() { :; }
+    ensure_nix_ownership() { :; }; chown() { :; }; run_as_dx() { :; }; run_as_dx_argv() { :; }
     setup_gh_persistence() { :; }; setup_tmux_persistence() { :; }; dx_activate_herdr() { :; }
     run_home_manager_activation() { :; }; usermod() { :; }; grep() { return 1; }
     configure_guest
@@ -1721,7 +1757,7 @@ rm -rf /persist/home/dx /home/dx; mkdir -p /persist/home/dx/.local/state/dx-ai/c
 : > /home/dx/.nix-profile/bin/nu
 (
     unset -f dx_ai_opencode_persistence dx_ai_opencode_prepare_activation_ancestors
-    ensure_nix_ownership() { :; }; chown() { :; }; run_as_dx() { :; }
+    ensure_nix_ownership() { :; }; chown() { :; }; run_as_dx() { :; }; run_as_dx_argv() { :; }
     setup_gh_persistence() { :; }; setup_tmux_persistence() { :; }; dx_activate_herdr() { :; }
     run_home_manager_activation() { :; }; usermod() { :; }; grep() { return 1; }
     DX_BOOTSTRAP_ROOT="$GUEST" configure_guest
@@ -1740,7 +1776,7 @@ mkdir -p /persist/home/dx/.local/state/dx-ai/current/profile/bin
 chmod +x /persist/home/dx/.local/state/dx-ai/current/profile/bin/codex
 (
     unset -f dx_ai_opencode_persistence dx_ai_opencode_prepare_activation_ancestors
-    ensure_nix_ownership() { :; }; chown() { :; }; run_as_dx() { :; }
+    ensure_nix_ownership() { :; }; chown() { :; }; run_as_dx() { :; }; run_as_dx_argv() { :; }
     setup_gh_persistence() { :; }; setup_tmux_persistence() { :; }; dx_activate_herdr() { :; }
     run_home_manager_activation() { :; }; usermod() { :; }; grep() { return 1; }
     DX_BOOTSTRAP_ROOT="$fixture/missing-bootstrap" configure_guest >/dev/null 2>&1 || true
@@ -1981,7 +2017,10 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     root="$fixture/activation-marker-failure"
     mkdir -p "$root/store" "$root/var/nix"
     id() { printf '%s\n' 1000; }
-    run_as_dx() { :; }; essentials_store_valid() { :; }; chown() { :; }; stat() { printf '1000:1000\n'; }
+    # Fable B10: dx_nix_root_writable_as_dx (activation.sh) now runs through
+    # run_as_dx_argv, not run_as_dx; stub both so this reaches the mv failure
+    # this probe means to exercise, rather than failing earlier on writability.
+    run_as_dx() { :; }; run_as_dx_argv() { :; }; essentials_store_valid() { :; }; chown() { :; }; stat() { printf '1000:1000\n'; }
     : > "$root/.dx-owner-set"
     mv() { return 1; }
     DX_NIX_OWNERSHIP_ROOT="$root" publish_nix_ownership_marker >/dev/null 2>&1 || true
@@ -2026,7 +2065,9 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     mkdir -p "$root/store" "$root/var/nix"
     id() { printf '%s\n' 1000; }
     stat() { printf '%s\n' 1000:1000; }
-    run_as_dx() { return 0; }
+    # Fable B10: pair run_as_dx_argv with run_as_dx so dx_nix_root_writable_as_dx
+    # (activation.sh) reports the roots writable, as this probe intends.
+    run_as_dx() { return 0; }; run_as_dx_argv() { return 0; }
     chown() { :; }
     DX_NIX_OWNERSHIP_ROOT="$root" ensure_nix_ownership true
 )
