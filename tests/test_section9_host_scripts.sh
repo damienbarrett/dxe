@@ -3,6 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
+# WP1.6: the helper no longer sources production libraries; this suite's Apple
+# lock cases need dx_lock_acquire/_release from dx-host-util.sh.
+source "$BASE_DIR/bin/lib/dx-host-util.sh"
 source "$SCRIPT_DIR/lib/fake-tools.sh"
 test_section "Section 9: Host Library And Command Contracts"
 

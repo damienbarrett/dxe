@@ -174,7 +174,7 @@ Every review ID and where it lands.
   lines and comment lines changes nothing; moving 10 exec lines into
   `bin/dx-x` fires both). **CI-verified** for the live numbers. (Fable D3,
   Muse D2, Astra R1)
-- [ ] **WP1.6** `test_helpers.sh` import purity: no `set` in the sourcing
+- [x] 34838b5..5e039e8 **WP1.6** `test_helpers.sh` import purity: no `set` in the sourcing
   shell, `CONTAINER_DIR` via `dx_test_guest_dir`, no production sourcing from
   the helper. *Red:* extend the `$-` contract to `tests/lib/*.sh` and
   `test_helpers.sh`. (Fable D4)
@@ -431,3 +431,4 @@ Every review ID and where it lands.
 - **2026-09-30** WP6.5 landed (c9a7899, 43ba0ab, 2ba5775): `dx_lifecycle_lock_acquire`/`_release` through neutral `dx_runtime_lock_*` dispatch; owner token `DXE_LIFECYCLE_LOCK_OWNER` inherited by children (one acquire/release per orchestration; `dx`/`dx-recreate` release before their final `exec`); Docker uses the lock-container protocol and reports owner + remedy on refusal; Apple a local mkdir lock under the profile state dir; first-run image guard precedes the lock; Nix-volume claims scoped by daemon identity. Section 33: 196 → 208, section 9: 164. `dx-lock --acquire` deferred (boundary-audit allow-list). Live-only: a real racing-controller gate. WP6 complete.
 - **2026-09-30** Home Manager now installs every `scripts/lib/*.sh` (except the backup selector, which ships via the bootstrap volume) through one `readDir`-driven table, with `checks.guest-libs-installed` (a771ca6). Found: section 6 has seven `dx-ai.sh` text assertions broken by the WP8.2 split (its agent never ran section 6); fix in flight. Lesson: every guest-script change must run sections 6 and 17.
 - **2026-09-30** Full container-free suite on a snapshot of c0a087c (host quiet, `DXE_SKIP_SLOW_TESTS=1`): 35 suites, 2,059 passed, 7 failed — all the known section 6 text assertions from the WP8.2 split. No other cross-package regression.
+- **2026-09-30** WP1.6 landed (34838b5, 852c54c, 512076b, 5e039e8): the import-purity contract runs a real-subprocess probe file (proven on an impure fixture) and covers `tests/lib/*.sh` + `test_helpers.sh`; the helper no longer sets shell flags, clobbers `SCRIPT_DIR`, or sources production code (`dx_test_guest_dir`, `dxe_require_tmux_probes`); eight suites source `dx-host-util.sh` explicitly (section 9 needed it too for WP6.5's Apple lock cases). Section 6's seven dx-ai cases are behavioural again (7ec9d39): 118 passed.
