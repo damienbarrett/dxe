@@ -87,7 +87,11 @@ fakes assume.
 
 ```sh
 # CI-equivalent tiers (hermetic; see the table above), runnable anywhere
-# including a container-free machine
+# including a container-free machine. tests/run_all_tests.sh, run-tier.sh,
+# run-bash32-tests.sh and run-coverage-contracts.sh are one-line wrappers
+# over tests/run.sh (Fable D2), which selects suites by their own
+# `# tier:`/`# bash32:` header (tests/run.sh --tier unit is equivalent to
+# the first line below).
 tests/run_all_tests.sh --skip-integration
 tests/run-bash32-tests.sh
 tests/run-coverage-linux.sh

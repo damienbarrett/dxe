@@ -35,7 +35,9 @@ every root plan document must be indexed in [`../plans.md`](../plans.md).
   refactor retained.
 - [`refactor/validation-matrix.md`](refactor/validation-matrix.md) — test and
   validation tiers: what CI runs, what is manual and mac-only, and what needs
-  a live guest, stated once.
+  a live guest, stated once. [`tests/run.sh`](../tests/run.sh) is the single
+  runner every tier wrapper now delegates to, selecting suites by their own
+  `# tier:`/`# bash32:` header.
 - [`refactor/baselines.md`](refactor/baselines.md) — the refactor's
   measurable-targets baseline.
 - The rest of `refactor/*.md` records individual design decisions

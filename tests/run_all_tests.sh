@@ -1,21 +1,33 @@
 #!/bin/bash
 # Run all DX Experience tests
 # Usage: ./run_all_tests.sh [--section=N] [--skip-integration]
+#
+# WP1.4 (Fable D2): this file is now a wrapper over tests/run.sh, which
+# selects suites by their own `# tier:` header instead of a second,
+# hand-maintained copy of the table below. Every invocation execs into
+# tests/run.sh before ever reaching the KNOWN_SECTIONS/run_test dispatch
+# table further down, so that table is no longer actually run from here --
+# it is kept, unchanged, as DATA ONLY: tests/run.sh's own --section
+# resolution reads a section number's file straight out of this file's
+# text, and tests/test_refactor_contracts.sh's B2 contract still parses it
+# directly to prove every section number has exactly one entry naming a
+# real file, and vice versa. Deleting this table is deferred until the
+# header contract alone is proven to cover everything B2 does (Fable D2's
+# own Refactor step).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Source test helpers for exit_with_code function
-source "$SCRIPT_DIR/test_helpers.sh"
-
 # Parse arguments
 SECTION=""
 SKIP_INTEGRATION=false
 
-# Every section this runner can dispatch. An unknown --section= must fail rather
-# than report success over an empty run: tests/run-tier.sh selects whole tiers by
-# section number, so a silent no-op would shrink a tier without failing CI.
+# Every section this runner can dispatch. Read (not executed) by
+# tests/test_refactor_contracts.sh's B2 contract, which is why it stays
+# even though nothing in THIS file's own control flow references it any
+# more (every path below execs into tests/run.sh first).
+# shellcheck disable=SC2034
 KNOWN_SECTIONS="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36"
 
 for arg in "$@"; do
@@ -38,37 +50,54 @@ for arg in "$@"; do
     esac
 done
 
+# tests/run.sh validates the section number against its own reading of the
+# dispatch table below (the same data KNOWN_SECTIONS names) and rejects an
+# unknown one loudly, so this wrapper does not duplicate that check.
 if [ -n "$SECTION" ]; then
-    case " $KNOWN_SECTIONS " in
-        *" $SECTION "*) ;;
-        *) echo "Error: unknown section '$SECTION'. Known sections: $KNOWN_SECTIONS" >&2; exit 2 ;;
-    esac
+    if [ "$SKIP_INTEGRATION" = true ]; then
+        exec "$SCRIPT_DIR/run.sh" --tier unit --section "$SECTION"
+    else
+        exec "$SCRIPT_DIR/run.sh" --section "$SECTION"
+    fi
 fi
 
-export SKIP_INTEGRATION
+if [ "$SKIP_INTEGRATION" = true ]; then
+    exec "$SCRIPT_DIR/run.sh" --tier unit
+fi
 
-echo "======================================"
-echo "DX Experience Test Suite"
-echo "======================================"
-echo ""
+# No --section, no --skip-integration: the historical "everything" run.
+# tests/run.sh has no single tier spanning both container-free and live
+# suites (WP1.4 splits that exactly along the SKIP_INTEGRATION-gated
+# sections 11/12 the table below always singled out: "unit" for everything
+# else, "live" for those two), so this runs both tiers in turn and reports
+# failure if either did.
+unit_status=0
+"$SCRIPT_DIR/run.sh" --tier unit || unit_status=$?
+live_status=0
+"$SCRIPT_DIR/run.sh" --tier live || live_status=$?
+if [ "$unit_status" -eq 0 ] && [ "$live_status" -eq 0 ]; then
+    exit 0
+fi
+exit 1
 
-# Track overall success
-OVERALL_SUCCESS=0
-
-# Run tests based on section filter
+# --- Dispatch table (DATA ONLY past this point; see the file header) -----
+#
+# Never actually executed any more (every branch above already exited),
+# kept verbatim as the one place a section number maps to a file.
 run_test() {
     local test_file="$1"
     local section_num="$2"
-    
+
     if [ -n "$SECTION" ] && [ "$SECTION" != "$section_num" ]; then
         return
     fi
-    
+
     echo ""
     echo "Running: $(basename "$test_file")"
     echo "---"
     if ! bash "$test_file"; then
         echo "FAIL: $(basename "$test_file") failed."
+        # shellcheck disable=SC2034
         OVERALL_SUCCESS=1
     fi
 }
@@ -137,14 +166,3 @@ run_test "$SCRIPT_DIR/test_runtime_boundary_characterisation.sh" "31"
 # lifecycle verb outside bin/lib/dx-runtime-apple.sh).
 run_test "$SCRIPT_DIR/test_runtime_boundary_audit.sh" "32"
 run_test "$SCRIPT_DIR/test_docker_runtime_adapter.sh" "33"
-
-echo ""
-echo "======================================"
-if [ $OVERALL_SUCCESS -eq 0 ]; then
-    echo "All tests PASSED!"
-else
-    echo "Some tests FAILED."
-fi
-echo "======================================"
-
-exit $OVERALL_SUCCESS
