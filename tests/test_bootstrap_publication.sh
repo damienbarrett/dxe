@@ -959,5 +959,155 @@ assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" 'DX_HEALTHCHECK
 assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '--env "DX_BOOTSTRAP_PATH=$DX_BOOTSTRAP_PATH"' "DX_BOOTSTRAP_PATH crosses to the probe as container-environment data, not interpolated text"
 assert_file_not_contains "$BASE_DIR/bin/dx-create-container" 'DX_BOOTSTRAP_PATH/current' "no healthcheck program text is built by interpolating the configured path"
 
+# --- Direct-call battery: dx_bootstrap_sync and the sync-result codec -----
+#
+# Every branch above already runs through the real bin/dx-sync-bootstrap /
+# bin/dx-start-container entrypoints -- how a human actually restarts a
+# guest -- and every one of them passes. But each of those forks a brand-new
+# bash process to run the entrypoint, and this sandbox's kcov does not
+# attribute a forked script's own lines back to it (checked directly outside
+# this suite: a trivial two-line script that always runs, executed as a
+# forked child of a traced parent, reports 0/2 lines covered; the identical
+# two lines sourced and run in this same process report 2/2), so the
+# coverage gate never sees dx-bootstrap-sync.sh's body execute no matter how
+# many entrypoint-level cases exist above. These cases call the same
+# functions directly, in this already-traced process, reusing the exact
+# fakes the entrypoint cases above already proved correct, so the gate can
+# see what those cases already proved behaviourally. (The one part this
+# cannot reach is the generation-publish body itself: it is a string
+# dx_bootstrap_sync hands to `dx_runtime_exec -i ... sh -c`, which really
+# does fork a new interpreter for the guest side, exactly as production
+# does -- the "publishes"/"unchanged" entrypoint cases far above already
+# exercise that half behaviourally, through the same fake `container exec`
+# passthrough.)
+source "$BASE_DIR/bin/lib/dx-host-util.sh"
+source "$BASE_DIR/bin/lib/dx-runtime.sh"
+source "$BASE_DIR/bin/lib/dx-container.sh"
+source "$BASE_DIR/bin/lib/dx-bootstrap-sync.sh"
+
+direct_root="$fixture/direct-call"; mkdir -p "$direct_root"
+
+(
+    generation=""
+    direct_status=0
+    direct_out="$(PATH="$fake_dir_absent:$PATH" DX_CONTAINER_NAME=dx-bootstrap-absent DX_BOOTSTRAP_WAIT_TIMEOUT=1 \
+        dx_bootstrap_sync dx-bootstrap-absent "$good" "$direct_root/absent-root" 2>&1)" || direct_status=$?
+    [ "$direct_status" -eq 1 ] && printf '%s\n' "$direct_out" | stdin_matches -F 'Error: Container dx-bootstrap-absent does not exist. Run ./bin/dx-create-container first.'
+) && test_pass "dx_bootstrap_sync fails on a nonexistent container (direct call)" \
+  || test_fail "dx_bootstrap_sync fails on a nonexistent container (direct call)"
+
+(
+    generation=""
+    direct_status=0
+    direct_out="$(PATH="$fake_dir_wait:$PATH" DX_CONTAINER_NAME=dx-bootstrap-wait-contract DX_BOOTSTRAP_WAIT_TIMEOUT=1 DX_SLEEP=fake-sleep \
+        dx_bootstrap_sync dx-bootstrap-wait-contract "$good" "$direct_root/not-running-root" 2>&1)" || direct_status=$?
+    [ "$direct_status" -eq 1 ] && printf '%s\n' "$direct_out" | stdin_matches -F 'Error: Container dx-bootstrap-wait-contract is not running. Run ./bin/dx-start-container first.'
+) && test_pass "dx_bootstrap_sync fails when the container never reports running (direct call)" \
+  || test_fail "dx_bootstrap_sync fails when the container never reports running (direct call)"
+
+(
+    generation=""
+    direct_status=0
+    direct_out="$(PATH="$fake_dir:$PATH" DX_CONTAINER_NAME=dx-bootstrap-contract DX_BOOTSTRAP_WAIT_TIMEOUT=1 \
+        dx_bootstrap_sync dx-bootstrap-contract "$good" / 2>&1)" || direct_status=$?
+    [ "$direct_status" -eq 1 ] && printf '%s\n' "$direct_out" | stdin_matches -F 'Error: Unsafe DX_BOOTSTRAP_PATH: /'
+) && test_pass "dx_bootstrap_sync refuses an unsafe path of '/' (direct call)" \
+  || test_fail "dx_bootstrap_sync refuses an unsafe path of '/' (direct call)"
+
+(
+    generation=""
+    direct_status=0
+    direct_out="$(PATH="$fake_dir_never_ready:$PATH" DX_CONTAINER_NAME=dx-bootstrap-never-ready DX_BOOTSTRAP_WAIT_TIMEOUT=2 DX_SLEEP=fake-sleep \
+        dx_bootstrap_sync dx-bootstrap-never-ready "$good" "$direct_root/never-ready-root" 2>&1)" || direct_status=$?
+    [ "$direct_status" -eq 1 ] && printf '%s\n' "$direct_out" | stdin_matches -F 'Error: Container dx-bootstrap-never-ready entrypoint never became ready after 2s.'
+) && test_pass "dx_bootstrap_sync fails when the guest never signals readiness (direct call)" \
+  || test_fail "dx_bootstrap_sync fails when the guest never signals readiness (direct call)"
+
+(
+    generation=""
+    direct_missing_source_root="$direct_root/missing-source-root"; mkdir -p "$direct_missing_source_root"
+    : > "$direct_missing_source_root/.dx-bootstrap-waiting"
+    direct_no_source_dir="$direct_root/no-source"; mkdir -p "$direct_no_source_dir"
+    direct_status=0
+    direct_out="$(PATH="$fake_dir:$PATH" DX_CONTAINER_NAME=dx-bootstrap-contract DX_BOOTSTRAP_WAIT_TIMEOUT=1 \
+        dx_bootstrap_sync dx-bootstrap-contract "$direct_no_source_dir" "$direct_missing_source_root" 2>&1)" || direct_status=$?
+    [ "$direct_status" -eq 1 ] && printf '%s\n' "$direct_out" | stdin_matches -F "Error: Bootstrap source $direct_no_source_dir/bootstrap.sh does not exist."
+) && test_pass "dx_bootstrap_sync fails when the source is missing bootstrap.sh (direct call)" \
+  || test_fail "dx_bootstrap_sync fails when the source is missing bootstrap.sh (direct call)"
+
+# dx_bootstrap_sync_result_write/_read: the codec dx-start-container uses to
+# learn "did this sync really publish" without parsing dx-sync-bootstrap's
+# prose (docs/refactor/decisions/D7-start-generation.md). Its defensive
+# branches are otherwise only reachable by driving a full dx-start-container
+# round trip per case -- which is what made the "malformed result file" case
+# above need a whole reworded-prose fixture just to reach ONE of them; call
+# the codec directly, in this process, for the rest.
+result_dir="$direct_root/result-codec"; mkdir -p "$result_dir"
+
+(
+    ! dx_bootstrap_sync_result_write "$result_dir/bad-outcome" bogus gen-1
+) && test_pass "dx_bootstrap_sync_result_write refuses an outcome other than published/unchanged" \
+  || test_fail "dx_bootstrap_sync_result_write refuses an outcome other than published/unchanged"
+
+(
+    ! dx_bootstrap_sync_result_write "$result_dir/bad-generation" published ../escape
+) && test_pass "dx_bootstrap_sync_result_write refuses an unsafe generation id" \
+  || test_fail "dx_bootstrap_sync_result_write refuses an unsafe generation id"
+
+(
+    outcome=""; generation=""
+    dx_bootstrap_sync_result_write "$result_dir/roundtrip" published gen-42 \
+        && dx_bootstrap_sync_result_read "$result_dir/roundtrip" \
+        && [ "$outcome" = published ] && [ "$generation" = gen-42 ]
+) && test_pass "dx_bootstrap_sync_result_write/_read round-trip a published outcome" \
+  || test_fail "dx_bootstrap_sync_result_write/_read round-trip a published outcome"
+
+(
+    ! dx_bootstrap_sync_result_read "$result_dir/does-not-exist"
+) && test_pass "dx_bootstrap_sync_result_read refuses a missing file" \
+  || test_fail "dx_bootstrap_sync_result_read refuses a missing file"
+
+(
+    ln -sfn roundtrip "$result_dir/symlinked"
+    ! dx_bootstrap_sync_result_read "$result_dir/symlinked"
+) && test_pass "dx_bootstrap_sync_result_read refuses a symlinked result file" \
+  || test_fail "dx_bootstrap_sync_result_read refuses a symlinked result file"
+
+(
+    : > "$result_dir/empty"
+    ! dx_bootstrap_sync_result_read "$result_dir/empty"
+) && test_pass "dx_bootstrap_sync_result_read refuses an empty result file" \
+  || test_fail "dx_bootstrap_sync_result_read refuses an empty result file"
+
+(
+    printf 'outcome=published\n' > "$result_dir/one-line"
+    ! dx_bootstrap_sync_result_read "$result_dir/one-line"
+) && test_pass "dx_bootstrap_sync_result_read refuses a result file with only one line" \
+  || test_fail "dx_bootstrap_sync_result_read refuses a result file with only one line"
+
+(
+    printf 'outcome=published\ngeneration=gen-1\ntrailing\n' > "$result_dir/three-lines"
+    ! dx_bootstrap_sync_result_read "$result_dir/three-lines"
+) && test_pass "dx_bootstrap_sync_result_read refuses a result file with a trailing third line" \
+  || test_fail "dx_bootstrap_sync_result_read refuses a result file with a trailing third line"
+
+(
+    printf 'outcome=bogus\ngeneration=gen-1\n' > "$result_dir/bad-outcome-line"
+    ! dx_bootstrap_sync_result_read "$result_dir/bad-outcome-line"
+) && test_pass "dx_bootstrap_sync_result_read refuses an unrecognised outcome line" \
+  || test_fail "dx_bootstrap_sync_result_read refuses an unrecognised outcome line"
+
+(
+    printf 'outcome=published\nbogus=gen-1\n' > "$result_dir/bad-generation-line"
+    ! dx_bootstrap_sync_result_read "$result_dir/bad-generation-line"
+) && test_pass "dx_bootstrap_sync_result_read refuses a second line that is not generation=" \
+  || test_fail "dx_bootstrap_sync_result_read refuses a second line that is not generation="
+
+(
+    printf 'outcome=published\ngeneration=../escape\n' > "$result_dir/bad-generation-value"
+    ! dx_bootstrap_sync_result_read "$result_dir/bad-generation-value"
+) && test_pass "dx_bootstrap_sync_result_read refuses an unsafe generation value" \
+  || test_fail "dx_bootstrap_sync_result_read refuses an unsafe generation value"
+
 print_summary
 exit_with_code
