@@ -1084,6 +1084,39 @@ else
     test_fail "dx-ai refuses lock acquisition when the boot-id stat fallback finds no btime line (dx-ai-lock.sh:43) (rc=$no_btime_lock_rc out='$no_btime_lock_out')"
 fi
 
+# WP5.2 Refactor: dx-ai-lock.sh's OWN dx_ai_boot_id used to refuse a
+# /proc/sys/kernel/random/boot_id whose content was not a hex/dash string
+# (`case "$boot" in ''|*[!0-9A-Fa-f-]*) ;; esac`, from before WP5.2 unified
+# the three implementations' boot_id into the shared
+# scripts/lib/dx-publication.sh). Unifying it silently dropped that
+# validation -- the shared boot_id() accepted ANY non-empty content from
+# that file verbatim. A boot_id file containing garbage (not a UUID, not a
+# btime marker) must not be trusted as an identity: dx_ai_boot_id falls
+# through to the /proc/stat btime fallback exactly as it would if the
+# boot_id file were absent, and since this fixture's own /proc/stat also
+# carries no matching btime line, dx-ai must fail closed with its existing
+# "cannot identify lock owner process" refusal, never a lock acquired under
+# a garbage identity.
+garbage_boot_proc="$ai_fixture/garbage-boot-proc"
+garbage_boot_lock="$ai_fixture/garbage-boot.lock"
+mkdir -p "$garbage_boot_proc/sys/kernel/random" "$garbage_boot_proc/$$"
+printf 'not-a-boot-id\n' > "$garbage_boot_proc/sys/kernel/random/boot_id"
+printf 'cpu  100 200 300 400\n' > "$garbage_boot_proc/stat"
+printf '%s\n' "$$ (dx-ai) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 999" > "$garbage_boot_proc/$$/stat"
+garbage_boot_out="$(dx_ai_boot_id "$garbage_boot_proc")"; garbage_boot_rc=$?
+if [ "$garbage_boot_rc" -eq 1 ] && [ -z "$garbage_boot_out" ]; then
+    test_pass "dx_ai_boot_id refuses a non-hex/dash boot_id file and falls through to the btime fallback"
+else
+    test_fail "dx_ai_boot_id refuses a non-hex/dash boot_id file and falls through to the btime fallback (rc=$garbage_boot_rc out='$garbage_boot_out')"
+fi
+garbage_boot_lock_out="$(dx_ai_lock_acquire "$garbage_boot_lock" "$garbage_boot_proc" 2>&1)"; garbage_boot_lock_rc=$?
+if [ "$garbage_boot_lock_rc" -eq 1 ] && [ ! -e "$garbage_boot_lock" ] \
+    && printf '%s\n' "$garbage_boot_lock_out" | stdin_matches "cannot identify lock owner process"; then
+    test_pass "dx-ai refuses lock acquisition when boot_id contains non-hex/dash garbage"
+else
+    test_fail "dx-ai refuses lock acquisition when boot_id contains non-hex/dash garbage (rc=$garbage_boot_lock_rc out='$garbage_boot_lock_out')"
+fi
+
 # --- Fable B3/WP3.5: dx-ai's publication lock reclaims an ownerless
 # directory instead of waiting out the full timeout for an owner that will
 # never appear, writes its owner record via tmp+mv (never a partially

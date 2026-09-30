@@ -51,7 +51,7 @@ exit 1
 fake_tool_write "$fake_dir" chown 'exit 0'
 fake_tool_write "$fake_dir" cat '
 if [ "${1:-}" = /proc/sys/kernel/random/boot_id ]; then
-  printf "%s\n" test-boot-id
+  printf "%s\n" deadbeef-cafe-babe-dead-beefcafebabe
 elif [ "${1:-}" != "${1#/proc/}" ] && [ "${1##*/}" = stat ]; then
   printf "1 (sh) S"; field=4; while [ "$field" -le 21 ]; do printf " 0"; field=$((field + 1)); done; printf " 99\n"
 else
@@ -107,7 +107,7 @@ leased_id=leased-generation
 mkdir "$root/generations/$leased_id"
 for file in bootstrap.sh flake.nix flake.lock; do printf '%s\n' "leased-$file" > "$root/generations/$leased_id/$file"; done
 mkdir -p "$root/.locks/leases"
-printf '%s\t%s\t%s\t%s\n' "$leased_id" test-boot-id 4242 99 > "$root/.locks/leases/$leased_id.4242"
+printf '%s\t%s\t%s\t%s\n' "$leased_id" deadbeef-cafe-babe-dead-beefcafebabe 4242 99 > "$root/.locks/leases/$leased_id.4242"
 if run_sync "$good_two" >/dev/null && [ -d "$root/generations/$leased_id" ] && [ -f "$root/.locks/leases/$leased_id.4242" ]; then
     test_pass "collection retains a generation with a fully matching live lease"
 else
@@ -119,7 +119,7 @@ fi
 stale_id=stale-generation
 mkdir "$root/generations/$stale_id"
 for file in bootstrap.sh flake.nix flake.lock; do printf '%s\n' "stale-$file" > "$root/generations/$stale_id/$file"; done
-printf '%s\t%s\t%s\t%s\n' "$stale_id" test-boot-id 4343 98 > "$root/.locks/leases/$stale_id.4343"
+printf '%s\t%s\t%s\t%s\n' "$stale_id" deadbeef-cafe-babe-dead-beefcafebabe 4343 98 > "$root/.locks/leases/$stale_id.4343"
 if run_sync "$good" >/dev/null && [ ! -e "$root/generations/$stale_id" ] && [ ! -e "$root/.locks/leases/$stale_id.4343" ]; then
     test_pass "collection rejects a stale lease after PID identity reuse"
 else
@@ -302,7 +302,7 @@ fi
 # drift check reads a stale PID 1 lease and names the wrong running generation.
 mkdir -p "$root/.locks/leases"
 printf 'stale-gen\tother-boot-id\t1\t29\n' > "$root/.locks/leases/stale-gen.1"
-printf 'live-gen\ttest-boot-id\t1\t29\n' > "$root/.locks/leases/live-gen.1"
+printf 'live-gen\tdeadbeef-cafe-babe-dead-beefcafebabe\t1\t29\n' > "$root/.locks/leases/live-gen.1"
 run_sync "$good" >/dev/null
 if [ ! -e "$root/.locks/leases/stale-gen.1" ] && [ -f "$root/.locks/leases/live-gen.1" ]; then
     test_pass "an unchanged sync prunes leases from earlier boots and keeps the live one"
@@ -473,7 +473,7 @@ lease_the_published_generation() {
     gen=${gen##*/}
     [ "$delay" = 0 ] || sleep "$delay"
     mkdir -p "$root/.locks/leases"
-    printf '%s\t%s\t%s\t%s\n' "$gen" test-boot-id 1 99 > "$root/.locks/leases/$gen.1"
+    printf '%s\t%s\t%s\t%s\n' "$gen" deadbeef-cafe-babe-dead-beefcafebabe 1 99 > "$root/.locks/leases/$gen.1"
 }
 
 # (a) Published, lease names the new generation within the bound: success.
@@ -677,7 +677,7 @@ exit 1
 fake_tool_write "$lock_timeout_fake" chown 'exit 0'
 fake_tool_write "$lock_timeout_fake" cat '
 if [ "${1:-}" = /proc/sys/kernel/random/boot_id ]; then
-  printf "%s\n" test-boot-id
+  printf "%s\n" deadbeef-cafe-babe-dead-beefcafebabe
 elif [ "${1:-}" != "${1#/proc/}" ] && [ "${1##*/}" = stat ]; then
   printf "1 (sh) S"; field=4; while [ "$field" -le 21 ]; do printf " 0"; field=$((field + 1)); done; printf " 99\n"
 else
@@ -694,7 +694,7 @@ fake_tool_write "$lock_timeout_fake" sleep 'exit 0'
 lock_timeout_root="$fixture/lock-timeout-root"
 mkdir -p "$lock_timeout_root/.locks/publication"
 : > "$lock_timeout_root/.dx-bootstrap-waiting"
-printf 'test-boot-id\t424242\t99\n' > "$lock_timeout_root/.locks/publication/owner"
+printf 'deadbeef-cafe-babe-dead-beefcafebabe\t424242\t99\n' > "$lock_timeout_root/.locks/publication/owner"
 lock_timeout_status=0
 lock_timeout_out="$(env PATH="$lock_timeout_fake:$PATH" \
     DX_CONTAINER_NAME=dx-bootstrap-lock-timeout \
@@ -871,7 +871,7 @@ mkdir -p "$health_fixture"
 health_fake="$(fake_tool_dir_create "$health_fixture")"
 fake_tool_write "$health_fake" cat '
 case "$1" in
-  /proc/sys/kernel/random/boot_id) printf "%s\n" test-boot-id ;;
+  /proc/sys/kernel/random/boot_id) printf "%s\n" deadbeef-cafe-babe-dead-beefcafebabe ;;
   /proc/1/stat) printf "1 (sh) S"; f=4; while [ "$f" -le 21 ]; do printf " 0"; f=$((f + 1)); done; printf " 99\n" ;;
   /proc/*/stat) exit 1 ;;
   *) exec /bin/cat "$@" ;;
@@ -918,7 +918,7 @@ fi
 
 # F7: stale lease (dead pid) -> unhealthy.
 health_fresh
-printf 'review\ttest-boot-id\t999999\t50\n' > "$health_fixture/root/.locks/leases/review.999999"
+printf 'review\tdeadbeef-cafe-babe-dead-beefcafebabe\t999999\t50\n' > "$health_fixture/root/.locks/leases/review.999999"
 if health_run "$health_fixture/root" >/dev/null 2>&1; then
     test_fail "F7: a lease naming a pid that no longer exists is unhealthy"
 else
@@ -927,7 +927,7 @@ fi
 
 # F7: live pid, recorded start does not match live start (PID reuse) -> unhealthy.
 health_fresh
-printf 'review\ttest-boot-id\t1\t50\n' > "$health_fixture/root/.locks/leases/review.1"
+printf 'review\tdeadbeef-cafe-babe-dead-beefcafebabe\t1\t50\n' > "$health_fixture/root/.locks/leases/review.1"
 if health_run "$health_fixture/root" >/dev/null 2>&1; then
     test_fail "F7: a live pid whose recorded start time does not match /proc (pid reuse) is unhealthy"
 else
@@ -936,7 +936,7 @@ fi
 
 # F7: fully live, matching lease but no completion marker -> unhealthy (readiness).
 health_fresh
-printf 'review\ttest-boot-id\t1\t99\n' > "$health_fixture/root/.locks/leases/review.1"
+printf 'review\tdeadbeef-cafe-babe-dead-beefcafebabe\t1\t99\n' > "$health_fixture/root/.locks/leases/review.1"
 if health_run "$health_fixture/root" >/dev/null 2>&1; then
     test_fail "F7: a live matching lease with no completion marker is unhealthy (readiness, not ownership)"
 else
@@ -957,7 +957,7 @@ fi
 source "$CONTAINER_DIR/bootstrap/common.sh"
 marker_root="$health_fixture/marker-root"; mkdir -p "$marker_root"
 if (
-    DX_BOOTSTRAP_PATH="$marker_root" dx_bootstrap_publish_ready_marker review test-boot-id 99 4242
+    DX_BOOTSTRAP_PATH="$marker_root" dx_bootstrap_publish_ready_marker review deadbeef-cafe-babe-dead-beefcafebabe 99 4242
     [ -f "$marker_root/.locks/ready/4242.99" ] && [ ! -L "$marker_root/.locks/ready/4242.99" ]
 ); then
     test_pass "dx_bootstrap_publish_ready_marker writes a regular-file marker keyed by pid.start"
@@ -1299,6 +1299,22 @@ wp52_setup_reclaim_loses() {
     printf '%s\t%s\t%s\n' "$wp52_self_boot" 777777 999 > "$lock/owner"
 }
 wp52_case "a reclaim rename that loses" wp52_setup_reclaim_loses 1
+
+# (6) A boot_id file containing garbage -- not a hex/dash UUID, not a
+# btime marker -- must not be trusted as an identity. dx-ai-lock.sh's own
+# boot_id used to refuse this (`case "$boot" in ''|*[!0-9A-Fa-f-]*) ;;
+# esac`) before WP5.2 unified all three implementations' boot_id into one
+# shared function; this fixture's proc_root carries no /proc/stat at all,
+# so once the garbage boot_id is refused there is no fallback identity
+# either, and every implementation must fail closed with its existing
+# "cannot identify lock owner process" refusal rather than accept the
+# garbage content verbatim.
+wp52_setup_garbage_boot_id() {
+    local proc_root="$1" lock="$2"
+    printf 'not-a-boot-id\n' > "$proc_root/sys/kernel/random/boot_id"
+    mkdir -p "$lock"
+}
+wp52_case "a boot id file containing non-hex/dash garbage" wp52_setup_garbage_boot_id
 
 print_summary
 exit_with_code

@@ -31,8 +31,10 @@ process_start() {
 boot_id() {
     dxgpp_proc_root=${DX_LOCK_PROC_ROOT:-/proc}
     if dxgpp_boot=$(cat "$dxgpp_proc_root/sys/kernel/random/boot_id" 2>/dev/null) && [ -n "$dxgpp_boot" ]; then
-        printf "%s\n" "$dxgpp_boot"
-        return 0
+        case "$dxgpp_boot" in
+            *[!0-9A-Fa-f-]*) ;;
+            *) printf "%s\n" "$dxgpp_boot"; return 0 ;;
+        esac
     fi
     [ -r "$dxgpp_proc_root/stat" ] || return 1
     while read -r dxgpp_key dxgpp_value dxgpp_extra; do
