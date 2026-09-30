@@ -86,6 +86,17 @@ dx_runtime_volume_exists() { dx_runtime_dispatch volume_exists "$@"; }
 dx_runtime_volume_create() { dx_runtime_dispatch volume_create "$@"; }
 dx_runtime_volume_delete() { dx_runtime_dispatch volume_delete "$@"; }
 
+# dx_runtime_volume_owned <name> <verb> -- the ownership check (Astra F3,
+# qnap-dxe-plan.md DQ6) bin/lib/dx-container.sh's container_ensure_volume
+# runs before ADOPTING an existing volume (never before creating an absent
+# one, which needs no ownership proof): DX_RUNTIME=docker-ssh proves it via
+# DQ6 labels (bin/lib/dx-runtime-docker-lifecycle.sh's
+# dx_runtime_docker_volume_owned); DX_RUNTIME=apple has no per-object
+# labels at all (see dx-runtime-apple.sh's own comment on this) and is
+# always this one host's own by construction, so its implementation is an
+# unconditional success, not a placeholder for a future check.
+dx_runtime_volume_owned() { dx_runtime_dispatch volume_owned "$@"; }
+
 # dx_runtime_volume_usage <volume> -- capability-aware size report for
 # bin/dx-reclaim (Branch 11 / Phase 3, qnap-dxe-plan.md Phase 3 item 5).
 # Apple: today's host sparse-image size (unchanged wording: "missing" for
@@ -213,6 +224,18 @@ dx_runtime_container_start() { dx_runtime_dispatch container_start "$@"; }
 dx_runtime_container_stop() { dx_runtime_dispatch container_stop "$@"; }
 dx_runtime_container_kill() { dx_runtime_dispatch container_kill "$@"; }
 dx_runtime_container_delete() { dx_runtime_dispatch container_delete "$@"; }
+
+# dx_runtime_container_owned <name> <verb> -- the ownership check (Astra
+# F3, qnap-dxe-plan.md DQ6) bin/dx-create-container runs before treating an
+# EXISTING same-named container as already provisioned: DX_RUNTIME=docker-ssh
+# proves it via DQ6 labels (bin/lib/dx-runtime-docker-identity.sh's
+# dx_runtime_docker_container_owned, also reused internally by that
+# adapter's own container_start/stop/kill/delete before each real docker
+# command); DX_RUNTIME=apple has no per-object labels at all (see
+# dx-runtime-apple.sh's own comment on this) and is always this one host's
+# own by construction, so its implementation is an unconditional success,
+# not a placeholder for a future check.
+dx_runtime_container_owned() { dx_runtime_dispatch container_owned "$@"; }
 
 # Ephemeral run (no persistent container) -- see dx-runtime-apple.sh's own
 # comment on dx_runtime_apple_run_ephemeral for why this is in the contract

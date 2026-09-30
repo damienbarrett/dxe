@@ -89,6 +89,18 @@ dx_runtime_apple_volume_exists() { container volume inspect "$1" >/dev/null 2>&1
 dx_runtime_apple_volume_create() { container volume create "$@"; }
 dx_runtime_apple_volume_delete() { container volume rm "$@"; }
 
+# Astra F3 / DQ6 ownership check (bin/lib/dx-runtime.sh's dispatch):
+# Apple Container attaches no per-object labels to anything it creates --
+# no --label flag appears anywhere in this file's own container_create/
+# volume_create above -- and it is always a single local controller, so a
+# same-named resource IS this host's own by construction; there is no
+# foreign-resource concept to check against. Unconditional success, not a
+# stub for a future check (the same reasoning dx_runtime_apple_capability
+# below already applies to other docker-ssh-only concepts Apple has no
+# equivalent of).
+dx_runtime_apple_container_owned() { return 0; }
+dx_runtime_apple_volume_owned() { return 0; }
+
 # Branch 11 / Phase 3 (qnap-dxe-plan.md Phase 3 item 5): today's exact
 # bin/dx-reclaim host-side sparse-image sizing (moved here verbatim,
 # including "missing" for an absent image -- dx-reclaim's own pre-existing

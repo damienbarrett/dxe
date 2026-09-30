@@ -10,6 +10,13 @@ create_container_main() {
 dx_require_container_cli
 
 if container_exists "$DX_CONTAINER_NAME"; then
+    # Astra F3 / DQ6: an existing same-named container used to make this
+    # return success unconditionally, without ever checking whether it was
+    # actually this profile's own -- a foreign or unlabelled container
+    # would be silently treated as "already provisioned." container_owned
+    # prints its own detailed refusal (docker-ssh: a DQ6 label mismatch;
+    # apple: never fails, since Apple has no per-object labels at all).
+    container_owned "$DX_CONTAINER_NAME" create || exit 1
     echo "Container $DX_CONTAINER_NAME already exists; skipping create."
     exit 0
 fi

@@ -388,32 +388,121 @@ dx_runtime_docker_profile_id() {
     printf '%s__%s' "${DX_REMOTE_HOST:?}" "${DX_CONTAINER_NAME:?}"
 }
 
-dx_runtime_docker_volume_labels() {
-    local bin="$1" name="$2" fields
-    fields="$(dx_runtime_docker_ssh_exec "$bin" volume inspect --format '{{index .Labels "io.dxe.managed"}}|{{index .Labels "io.dxe.schema"}}|{{index .Labels "io.dxe.profile"}}|{{index .Labels "io.dxe.role"}}' "$name" 2>/dev/null)" || return 1
+# Runs "<bin> <noun> inspect --format <format> <name>" and returns the
+# formatted fields on success. Distinguishes WHY inspect failed (Astra F3
+# item 5) rather than collapsing every failure into "absent": Docker's own
+# "No such <noun>: NAME" stderr text means the resource is genuinely
+# absent (return 1, safe to adopt/create over); anything else -- a
+# connection drop, a daemon restart, a permissions problem -- means
+# ownership could not be determined AT ALL (return 2), which must never be
+# silently treated as absence. STDERR_FILE is a caller-supplied path (never
+# created here): every caller of this function is itself invoked through a
+# "$(...)" command substitution to capture the formatted fields on stdout,
+# which forks a subshell -- a plain shell variable assigned in here would
+# die with that subshell, exactly the trap tests/lib/harness.sh's own
+# header describes for test_pass/test_fail before Fable D1's fix. Writing
+# the raw stderr text to a FILE the caller already holds open (defaulting
+# to /dev/null for a caller that only wants fields-or-empty and does not
+# care why, like dx_runtime_docker_destructive_plan_and_verify below) is
+# what survives that boundary; dx_runtime_docker_resource_owned reads it
+# back itself, in ITS OWN shell, once the substitution returns.
+dx_runtime_docker_inspect_labels() {
+    local noun="$1" bin="$2" name="$3" format="$4" stderr_file="${5:-/dev/null}" fields rc
+    rc=0
+    fields="$(dx_runtime_docker_ssh_exec "$bin" "$noun" inspect --format "$format" "$name" 2>"$stderr_file")" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        case "$(cat "$stderr_file" 2>/dev/null)" in
+            *"No such $noun"*) return 1 ;;
+            *) return 2 ;;
+        esac
+    fi
     printf '%s\n' "$fields" | tail -n1 | tr -d '\r'
+}
+
+# Both queries now request a FIFTH field, io.dxe.system (Phase 4), on top
+# of the original four -- Astra F3 found the old check read schema but
+# never validated it, and never even queried the system label at all, so
+# a same-named object built for a different guest architecture (or a
+# future, incompatible label-schema version) was silently accepted as this
+# profile's own. dx_runtime_docker_labels_owned (below) is what actually
+# enforces both now. STDERR_FILE is optional, forwarded verbatim to
+# dx_runtime_docker_inspect_labels (see its own comment on why).
+dx_runtime_docker_volume_labels() {
+    dx_runtime_docker_inspect_labels volume "$1" "$2" '{{index .Labels "io.dxe.managed"}}|{{index .Labels "io.dxe.schema"}}|{{index .Labels "io.dxe.profile"}}|{{index .Labels "io.dxe.role"}}|{{index .Labels "io.dxe.system"}}' "${3:-}"
 }
 
 dx_runtime_docker_container_labels() {
-    local bin="$1" name="$2" fields
-    fields="$(dx_runtime_docker_ssh_exec "$bin" container inspect --format '{{index .Config.Labels "io.dxe.managed"}}|{{index .Config.Labels "io.dxe.schema"}}|{{index .Config.Labels "io.dxe.profile"}}|{{index .Config.Labels "io.dxe.role"}}' "$name" 2>/dev/null)" || return 1
-    printf '%s\n' "$fields" | tail -n1 | tr -d '\r'
+    dx_runtime_docker_inspect_labels container "$1" "$2" '{{index .Config.Labels "io.dxe.managed"}}|{{index .Config.Labels "io.dxe.schema"}}|{{index .Config.Labels "io.dxe.profile"}}|{{index .Config.Labels "io.dxe.role"}}|{{index .Config.Labels "io.dxe.system"}}' "${3:-}"
 }
 
-# Shared refusal logic: given a "managed|schema|profile|role" fields
-# string (or a failed lookup) and the expected role, refuse unless every
-# field matches this profile exactly.
+# Pure predicate, no I/O, no printing: does a "managed|schema|profile|role|
+# system" fields string prove THIS profile owns the resource for the given
+# expected role? Schema must match the schema this adapter actually writes
+# (DXE_RUNTIME_DOCKER_LABEL_SCHEMA, dx-runtime-docker-lifecycle.sh) exactly
+# -- Astra F3 found the old check accepted ANY schema value, including an
+# unknown future one (999) -- and io.dxe.system must match the configured
+# DX_GUEST_SYSTEM, which the old check never queried at all. Shared by
+# dx_runtime_docker_resource_owned (below) and
+# dx_runtime_docker_destructive_plan_and_verify
+# (dx-runtime-docker-lifecycle.sh), which prints its own unconditional
+# per-resource "labels=..." line before deciding pass/fail and so needs the
+# bare boolean, not a message.
+dx_runtime_docker_labels_owned() {
+    local expected_role="$1" fields="$2" managed schema profile role system
+    IFS='|' read -r managed schema profile role system <<<"$fields"
+    [ "$managed" = true ] \
+        && [ "$schema" = "$DXE_RUNTIME_DOCKER_LABEL_SCHEMA" ] \
+        && [ "$profile" = "$(dx_runtime_docker_profile_id)" ] \
+        && [ "$role" = "$expected_role" ] \
+        && [ "$system" = "${DX_GUEST_SYSTEM:-aarch64-linux}" ]
+}
 
-dx_runtime_docker_verify_labels() {
-    local kind="$1" name="$2" expected_role="$3" fields="$4" managed schema profile role
-    if [ -z "$fields" ]; then
-        echo "Error: refusing to delete $kind '$name': it does not exist or its labels could not be read." >&2
-        return 1
-    fi
-    IFS='|' read -r managed schema profile role <<<"$fields"
-    if [ "$managed" != true ] || [ "$profile" != "$(dx_runtime_docker_profile_id)" ] || [ "$role" != "$expected_role" ]; then
-        echo "Error: refusing to delete $kind '$name': it exists but is unlabelled or labelled for a different profile/role (qnap-dxe-plan.md DQ6 -- this is a collision, not an adoption candidate). Found managed=${managed:-<none>} schema=${schema:-<none>} profile=${profile:-<none>} role=${role:-<none>}; expected managed=true profile=$(dx_runtime_docker_profile_id) role=$expected_role." >&2
-        return 1
-    fi
+# The one owned-resource check (Astra F3's recommendation) every mutation
+# and adoption decision runs first, before any real docker mutation is
+# issued: KIND is container|volume, EXPECTED_ROLE is the DQ6 role that
+# resource must carry, VERB is a short word (adopt, create, start, stop,
+# kill, delete) folded into the one message this prints on refusal, so
+# every call site gets a complete, self-explanatory refusal without
+# duplicating the wording itself. Returns 0 (owned) silently; prints
+# exactly one line to stderr and returns 1 otherwise -- "does not exist"
+# (absent), "could not be read" (an inspect error, kept distinct from
+# absence -- Astra F3 item 5) or "collision, not an adoption candidate"
+# (exists, wrong labels) are never conflated with each other.
+dx_runtime_docker_resource_owned() {
+    local kind="$1" name="$2" expected_role="$3" verb="$4" bin fields rc stderr_file detail
+    bin="$(dx_runtime_docker_require_bin)" || return 1
+    stderr_file="$(mktemp "${TMPDIR:-/tmp}/dxe-docker-owned-stderr.XXXXXX")" || return 1
+    case "$kind" in
+        container) fields="$(dx_runtime_docker_container_labels "$bin" "$name" "$stderr_file")"; rc=$? ;;
+        volume) fields="$(dx_runtime_docker_volume_labels "$bin" "$name" "$stderr_file")"; rc=$? ;;
+        *) rm -f "$stderr_file"; echo "Error: dx_runtime_docker_resource_owned: unknown kind '$kind'." >&2; return 1 ;;
+    esac
+    detail="$(cat "$stderr_file" 2>/dev/null)"
+    rm -f "$stderr_file"
+    case "$rc" in
+        0)
+            dx_runtime_docker_labels_owned "$expected_role" "$fields" && return 0
+            echo "Error: refusing to $verb $kind '$name': it exists but is unlabelled or labelled for a different profile/role/schema/system (qnap-dxe-plan.md DQ6 -- this is a collision, not an adoption candidate). Found labels=${fields:-<none>}; expected managed=true schema=$DXE_RUNTIME_DOCKER_LABEL_SCHEMA profile=$(dx_runtime_docker_profile_id) role=$expected_role system=${DX_GUEST_SYSTEM:-aarch64-linux}." >&2
+            return 1
+            ;;
+        1)
+            echo "Error: refusing to $verb $kind '$name': it does not exist." >&2
+            return 1
+            ;;
+        *)
+            echo "Error: refusing to $verb $kind '$name': its labels could not be read (docker said: ${detail:-no further detail}) -- an inspect error, not the same as it being absent." >&2
+            return 1
+            ;;
+    esac
+}
+
+# dx_runtime_container_owned's docker-ssh implementation (bin/lib/
+# dx-runtime.sh's dispatch); the container-specific one-liner over
+# dx_runtime_docker_resource_owned above (the expected role for a
+# container is always the fixed constant "container"). VERB defaults to
+# "use" only so a direct call with no verb still prints something
+# sensible; every real caller passes its own verb explicitly.
+dx_runtime_docker_container_owned() {
+    dx_runtime_docker_resource_owned container "$1" container "${2:-use}"
 }
 
