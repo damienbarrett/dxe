@@ -727,7 +727,21 @@ DX_AUTH_ROOT="$fixture/auth" materialize_auth_files
     saved_sudoers=false saved_dx=false
     [ ! -e /etc/sudoers ] || { mv /etc/sudoers "$fixture/sudoers.saved"; saved_sudoers=true; }
     [ ! -e /etc/sudoers.d/dx ] || { mv /etc/sudoers.d/dx "$fixture/sudoers-dx.saved"; saved_dx=true; }
-    id() { return 1; }; groupadd() { :; }; useradd() { :; }; usermod() { :; }
+    # create_user's own trailing identity capture (Contract 5) calls
+    # `id -u dx`/`id -g dx` again after the stubbed useradd "creates" dx, so
+    # the stub must track that transition rather than fail every call: a
+    # blanket `return 1` makes that capture's command substitutions fail
+    # too, which is a bug in the probe, not in create_user.
+    _dx_created=false
+    id() {
+        if { [ "$1" = -u ] || [ "$1" = -g ]; } && [ "$2" = dx ]; then
+            [ "$_dx_created" = true ] || return 1
+            printf '%s\n' 1000
+            return 0
+        fi
+        return 1
+    }
+    groupadd() { :; }; useradd() { _dx_created=true; }; usermod() { :; }
     create_user
     [ "$saved_sudoers" = false ] || mv "$fixture/sudoers.saved" /etc/sudoers
     [ "$saved_dx" = false ] || mv "$fixture/sudoers-dx.saved" /etc/sudoers.d/dx
@@ -1913,8 +1927,21 @@ source "$GUEST/bootstrap/base-and-storage.sh"
     mkdir -p "$auth_root/etc"
     printf '%s\n' 'root:x:0:0:root:/root:/bin/sh' > "$auth_root/etc/passwd"
     printf '%s\n' 'root:x:0:' > "$auth_root/etc/group"
-    id() { [ "$1" = -u ] && [ "$2" = dx ] && return 1; builtin id "$@"; }
-    groupadd() { :; }; useradd() { :; }; usermod() { :; }
+    # create_user's own trailing identity capture (Contract 5) calls
+    # `id -u dx`/`id -g dx` again after the stubbed useradd "creates" dx, so
+    # the stub must track that transition rather than fail every `-u dx`
+    # call: a blanket failure makes that capture's command substitutions
+    # fail too, which is a bug in the probe, not in create_user.
+    _dx_created=false
+    id() {
+        if { [ "$1" = -u ] || [ "$1" = -g ]; } && [ "$2" = dx ]; then
+            [ "$_dx_created" = true ] || return 1
+            printf '%s\n' 42420
+            return 0
+        fi
+        builtin id "$@"
+    }
+    groupadd() { :; }; useradd() { _dx_created=true; }; usermod() { :; }
     # Contract 5 (refactor-v2-final.md, Fable B6 item 5): the durable
     # identity candidate is now a positional record, never
     # DX_NIX_DURABLE_UID/DX_NIX_DURABLE_GID.
