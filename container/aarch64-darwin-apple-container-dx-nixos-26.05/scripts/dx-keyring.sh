@@ -7,25 +7,38 @@
 # (explicit over magic) -- see docs/guest.md for why, and for the deferred
 # dbus-run-session-per-invocation alternative.
 
-# dx-keyring is packaged both as a Home Manager `home.file` (normal guest
-# use) and loadable straight off the bootstrap volume (so it still works
-# before any AI generation is published). Same three-candidate shape as
-# scripts/dx-ai.sh's dx_ai_load_opencode_persistence/dx_ai_load_keyring.
-dx_keyring_load_library() {
+# dx-keyring's own bootstrap: get the shared three-candidate library loader
+# (scripts/lib/dx-ai-loader.sh's dx_ai_load_library) into scope. This is the
+# one copy of the candidate loop that cannot itself go through
+# dx_ai_load_library -- a script cannot use a shared loader to load the
+# loader (Fable B7; scripts/dx-ai.sh keeps the analogous
+# dx_ai_bootstrap_load for the same reason -- dx-keyring is its own,
+# separate entry point/process, so it cannot simply reuse dx-ai's copy).
+dx_keyring_bootstrap_load() {
+    declare -F dx_ai_load_library >/dev/null && return 0
     local script_directory candidate
-    declare -F dx_keyring_start >/dev/null && return 0
     script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
     for candidate in \
-        "$script_directory/lib/dx-keyring.sh" \
-        "$HOME/.local/lib/dx/dx-keyring.sh" \
-        "${DX_KEYRING_BOOTSTRAP_ROOT:-/guest-bootstrap}/scripts/lib/dx-keyring.sh"; do
+        "$script_directory/lib/dx-ai-loader.sh" \
+        "$HOME/.local/lib/dx/dx-ai-loader.sh" \
+        "${DX_KEYRING_BOOTSTRAP_ROOT:-/guest-bootstrap}/scripts/lib/dx-ai-loader.sh"; do
         [ -r "$candidate" ] || continue
-        # shellcheck source=lib/dx-keyring.sh
+        # shellcheck source=lib/dx-ai-loader.sh
         source "$candidate" || return 1
-        declare -F dx_keyring_start >/dev/null && return 0
+        declare -F dx_ai_load_library >/dev/null && return 0
     done
-    echo "Error: keyring library is unavailable." >&2
+    echo "Error: dx-keyring library loader is unavailable." >&2
     return 1
+}
+
+# dx-keyring is packaged both as a Home Manager `home.file` (normal guest
+# use) and loadable straight off the bootstrap volume (so it still works
+# before any AI generation is published); dx_ai_load_library's own candidate
+# order handles both cases, using dx-keyring's own, separate
+# DX_KEYRING_BOOTSTRAP_ROOT override (unlike dx-ai's DX_AI_BOOTSTRAP_ROOT).
+dx_keyring_load_library() {
+    dx_keyring_bootstrap_load || return 1
+    dx_ai_load_library dx_keyring_start dx-keyring.sh DX_KEYRING_BOOTSTRAP_ROOT
 }
 
 dx_keyring_usage() {
