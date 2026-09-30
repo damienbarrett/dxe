@@ -1409,8 +1409,56 @@ else
     test_fail "an unreadable Herdr integration status installs nothing and does not fail"
 fi
 
-assert_grep_in_file "$AI_SCRIPT" '^ +dx_ai_install_herdr_integrations$' "dx-ai runs the Herdr integration step from its main flow"
-assert_file_not_contains "$AI_SCRIPT" 'dx_ai_install_herdr_integrations || return' "dx-ai never lets an optional Herdr integration fail the update"
+# Fable D7 item 5: dx-ai's main flow calling dx_ai_install_herdr_integrations
+# as a bare statement (never `|| return`) used to be asserted by grepping
+# dx-ai.sh's own source text for that exact call shape. Proven behaviourally
+# instead: stub dx_ai_install_herdr_integrations itself to fail loudly, run
+# dx_ai_main end to end (the same F8-style stub set -- id/update_flake/
+# ensure_cached/install_profile/credentials/keyring/verify all trivially
+# succeeding, so this isolates dx_ai_main's own control flow around the
+# Herdr step), and require BOTH that the stub really ran (a marker file, so
+# a call site that stopped invoking the function at all could never pass
+# vacuously) and that dx_ai_main still exits 0 -- the real property "an
+# optional Herdr integration never fails the update" names, regardless of
+# whether the call site happens to spell its guard as a bare statement or
+# something else entirely.
+herdrfail_published="$ai_fixture/herdrfail-published"; herdrfail_state="$ai_fixture/herdrfail-state"
+wp36_seed_published "$herdrfail_published"
+herdrfail_marker="$ai_fixture/herdrfail-called"
+rm -f "$herdrfail_marker"
+dx_ai_update_flake() { :; }
+dx_ai_ensure_cached() { :; }
+dx_ai_install_profile() {
+    local stage="$1" tool
+    mkdir -p "$stage/profile/bin"
+    for tool in codex gemini claude agy herdr opencode; do printf '#!/bin/sh\n' > "$stage/profile/bin/$tool"; chmod 0755 "$stage/profile/bin/$tool"; done
+}
+dx_ai_setup_credentials() { :; }
+dx_ai_ensure_keyring() { :; }
+dx_ai_verify() { :; }
+dx_ai_install_herdr_integrations() { touch "$herdrfail_marker"; return 1; }
+id() { printf '%s\n' 1000; }
+# dx_ai_main_update's own real publish step below this uses `mv -Tf`
+# (GNU's --no-target-directory), which this suite's macOS/BSD `mv` rejects
+# outright -- the same translation the F8 fixture above already needed and
+# left this file's own comment on; unset again below alongside this case's
+# other stubs, exactly like F8 does.
+mv() { case "${1:-}" in -Tf) shift; rm -f "$2"; command mv -f "$1" "$2" ;; -T) shift; { [ ! -e "$2" ] && [ ! -L "$2" ]; } && command mv "$1" "$2" ;; *) command mv "$@" ;; esac; }
+
+DX_AI_BOOTSTRAP_ROOT="$herdrfail_published" DX_AI_STATE_ROOT="$herdrfail_state" dx_ai_main >/dev/null 2>&1
+herdrfail_rc=$?
+unset -f id mv dx_ai_update_flake dx_ai_ensure_cached dx_ai_install_profile dx_ai_setup_credentials dx_ai_ensure_keyring dx_ai_verify dx_ai_install_herdr_integrations
+# shellcheck source=/dev/null
+source "$AI_SCRIPT"
+dx_ai_boot_id() { printf '%s\n' test-boot-id; }
+dx_ai_process_start() { printf '%s\n' 123; }
+dx_guest_resolve_system() { printf '%s\n' aarch64-linux; }
+
+if [ "$herdrfail_rc" -eq 0 ] && [ -f "$herdrfail_marker" ]; then
+    test_pass "a failed Herdr integration step (dx_ai_install_herdr_integrations) never fails an otherwise successful dx_ai_main"
+else
+    test_fail "a failed Herdr integration step (dx_ai_install_herdr_integrations) never fails an otherwise successful dx_ai_main (rc=$herdrfail_rc marker=$([ -f "$herdrfail_marker" ] && echo present || echo absent))"
+fi
 
 # --- dx_ai_setup_credentials: OpenCode persistence is wired through the
 # shared helper, and the pre-existing four (.gemini/.claude/.claude.json/

@@ -390,7 +390,6 @@ if (
 else
     test_fail "reclaim reports guest filesystems without a guest sed binary"
 fi
-assert_file_contains_literal "$BASE_DIR/bin/dx-wait-ssh" 'print_container_logs 5' "bootstrap progress shows several recent guest log lines"
 assert_file_contains_literal "$BASE_DIR/bin/dx-wait-ssh" 'approximately' "bootstrap wait budget is rendered in human-readable minutes"
 
 # --- dx-wait-ssh readiness probe under host contention ---
@@ -449,6 +448,45 @@ if diag="$(
     test_pass "a probe that never completes the banner exchange is named as such, with the load average that discriminates the two causes"
 else
     test_fail "a probe that never completes the banner exchange is named as such, with the load average that discriminates the two causes ($diag)"
+fi
+
+# Fable D7 item 3: dx-wait-ssh's periodic progress tick actually prints the
+# guest's own recent log lines while still waiting, not merely a source-text
+# mention of the print_container_logs call that renders them. Driven with
+# the same host-contention fakes as the two cases above (ssh always refuses
+# the banner exchange, so the wait genuinely spans a progress tick before
+# its own timeout), the fake `container logs` answers distinctly for the
+# periodic short pull (print_container_logs 5) versus the final long pull
+# on timeout (print_container_logs 80), so a pass here can only mean the
+# SHORT pull's own guest-log output reached stdout during the tick -- the
+# behaviour "bootstrap progress shows several recent guest log lines" used
+# to be asserted as literal source text for.
+if diag="$(
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_tool_write "$fake_dir" container '
+case "$1" in
+    list) printf "%s\n" dx-host ;;
+    logs)
+        shift
+        case "$*" in
+            "-n 5 "*) printf "%s\n" GUEST-LOG-PROGRESS-TICK ;;
+            "-n 80 "*) printf "%s\n" GUEST-LOG-TIMEOUT-TAIL ;;
+        esac
+        ;;
+esac
+exit 0'
+    fake_tool_write "$fake_dir" ssh 'echo "ssh: connect to host 127.0.0.1 port 2222: Connection timed out during banner exchange" >&2; exit 255'
+    export PATH="$fake_dir:$PATH"
+    : > "$fake_dir/ssh-key"
+    out="$(DX_SSH_KEY="$fake_dir/ssh-key" DX_SSH_WAIT_TIMEOUT=2 DX_SSH_POLL_INTERVAL=1 DX_SSH_PROGRESS_INTERVAL=1 "$BASE_DIR/bin/dx-wait-ssh" 2>&1)"
+    rc=$?
+    rm -rf "$fake_dir"
+    printf 'rc=%s out=%s' "$rc" "$out"
+    printf '%s\n' "$out" | stdin_matches -F -- 'GUEST-LOG-PROGRESS-TICK'
+)"; then
+    test_pass "the periodic progress tick prints the guest's own recent log lines (print_container_logs 5), not just their absence"
+else
+    test_fail "the periodic progress tick prints the guest's own recent log lines (print_container_logs 5), not just their absence ($diag)"
 fi
 # Branch 11 / Phase 2: dx-create-container now calls dx_runtime_container_create
 # with a runtime-neutral vocabulary (qnap-dxe-plan.md DQ2) instead of a raw

@@ -5,9 +5,45 @@ source "$SCRIPT_DIR/test_helpers.sh"
 SYSTEM="$CONTAINER_DIR/bootstrap/system.sh"
 test_section "Section 4: Harden SSH While Keeping Sudo Convenient"
 
-for setting in 'PermitRootLogin no' 'PubkeyAuthentication yes' 'PasswordAuthentication no' 'PermitEmptyPasswords no' 'Port 2222'; do
-    assert_file_contains_literal "$SYSTEM" "$setting" "sshd_config contains $setting"
-done
+# Fable D7 item 6: these five directives used to be five separate literal
+# greps of configure_ssh's own heredoc, three of which
+# (PubkeyAuthentication/PasswordAuthentication/PermitEmptyPasswords) were
+# ALSO grepped a second time from tests/test_section13_final_review.sh,
+# alongside the passwordless-sudo line below -- the same setting checked
+# twice, in two files, by source text. Rendered here instead: the exact
+# heredoc body configure_ssh writes to /etc/ssh/sshd_config is extracted
+# verbatim from system.sh (never retyped), written into a fixture file with
+# a throwaway HostKey appended (sshd -T needs one to run at all, but never
+# reads or trusts its content), and handed to the real, installed `sshd -T`
+# parser -- proving the settings are not merely present as text but valid
+# and in effect, from the real authority on what they mean, and folding
+# section 13's duplicate check into this one place. Skips (rather than
+# failing) on a host with no local sshd binary, the same way requires_container
+# skips a live check no fixture can stand in for.
+if ! command -v sshd >/dev/null 2>&1; then
+    test_skip "sshd_config directive check skipped: no local sshd binary to validate against"
+elif sshd_effective="$(
+    sshd_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-sshd-config-test.XXXXXX")"
+    trap 'rm -rf "$sshd_fixture"' EXIT
+    ssh-keygen -q -t ed25519 -N '' -f "$sshd_fixture/hostkey" </dev/null
+    {
+        sed -n '/cat > \/etc\/ssh\/sshd_config <<EOF/,/^EOF$/p' "$SYSTEM" | sed '1d;$d'
+        printf 'HostKey %s\n' "$sshd_fixture/hostkey"
+    } > "$sshd_fixture/sshd_config"
+    sshd -T -f "$sshd_fixture/sshd_config" 2>&1
+)"; then
+    if printf '%s\n' "$sshd_effective" | stdin_matches -F -x 'port 2222' \
+        && printf '%s\n' "$sshd_effective" | stdin_matches -F -x 'permitrootlogin no' \
+        && printf '%s\n' "$sshd_effective" | stdin_matches -F -x 'pubkeyauthentication yes' \
+        && printf '%s\n' "$sshd_effective" | stdin_matches -F -x 'passwordauthentication no' \
+        && printf '%s\n' "$sshd_effective" | stdin_matches -F -x 'permitemptypasswords no'; then
+        test_pass "configure_ssh's rendered sshd_config takes effect under the real sshd parser (port 2222, key-only auth, no root login, no empty passwords)"
+    else
+        test_fail "configure_ssh's rendered sshd_config takes effect under the real sshd parser (port 2222, key-only auth, no root login, no empty passwords) (sshd -T said: $sshd_effective)"
+    fi
+else
+    test_fail "configure_ssh's rendered sshd_config takes effect under the real sshd parser (sshd -T itself failed: $sshd_effective)"
+fi
 assert_file_contains_literal "$SYSTEM" 'mkdir -p /run /var/run/sshd' "bootstrap creates sshd runtime directories"
 assert_file_contains_literal "$SYSTEM" 'DX_PUB_KEY' "authorized keys are configurable"
 assert_file_contains_literal "$SYSTEM" 'dx ALL=(ALL) NOPASSWD:ALL' "passwordless sudo is preserved for dx"
