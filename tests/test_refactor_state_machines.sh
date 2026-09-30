@@ -185,6 +185,15 @@ cat > "$root_probe" <<'PROBE'
 #!/bin/bash
 set -uo pipefail
 probe_base_dir="$1"
+# Under bin/dx-profile (the live gate) the resolved DX_*/DXE_* fields arrive
+# exported, so this suite's own fixture assignment to DX_PROJECT_ROOT
+# inherits the export attribute and the rest of the snapshot changes the
+# no-argument path entirely; the fallback under test only runs from a bare
+# environment, so clear every DX_/DXE_ variable first -- and only those, so
+# kcov's own variables still reach this process (dx-test live gate,
+# 2026-10-01).
+# shellcheck disable=SC2046
+unset $(compgen -v DX_) $(compgen -v DXE_)
 # shellcheck disable=SC1091
 source "$probe_base_dir/bin/lib/dx-config.sh"
 dx_init_config >/dev/null 2>&1

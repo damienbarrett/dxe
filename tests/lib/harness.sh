@@ -122,14 +122,18 @@ _dxe_harness_record() {
 }
 
 # Count of recorded lines of one kind (pass|fail|skip). The `-s` guard
-# means a not-yet-created or still-empty results file reads as zero
-# without ever invoking awk on a missing path.
+# means a not-yet-created or still-empty results file reads as zero. Pure
+# bash on purpose: section 12 copies this file into the guest and runs it
+# there under the bootstrap essentials, which have no awk (live gate,
+# 2026-10-01: "harness.sh: line 129: awk: command not found").
 _dxe_harness_count() {
+    local kind rest c=0
     if [ -s "$DXE_TEST_RESULTS" ]; then
-        awk -F'\t' -v want="$1" '$1 == want { c++ } END { print c + 0 }' "$DXE_TEST_RESULTS"
-    else
-        printf '0\n'
+        while IFS=$'\t' read -r kind rest; do
+            [ "$kind" = "$1" ] && c=$((c + 1))
+        done < "$DXE_TEST_RESULTS"
     fi
+    printf '%s\n' "$c"
 }
 
 # expect_exit N cmd [args...]
@@ -522,10 +526,13 @@ _dxe_harness_skip_ok_header() {
 # left out of this summary -- finish's caller already sees its count in the
 # main "N skipped" line).
 _dxe_harness_skip_class_summary() {
-    awk -F'\t' '
-        $1 == "skip" && $2 != "" { c[$2]++ }
-        END { for (k in c) print k"="c[k] }
-    ' "$DXE_TEST_RESULTS" 2>/dev/null | sort | tr '\n' ' ' | sed 's/ *$//'
+    local kind class rest
+    {
+        [ -r "$DXE_TEST_RESULTS" ] || exit 0
+        while IFS=$'\t' read -r kind class rest; do
+            [ "$kind" = "skip" ] && [ -n "$class" ] && printf '%s\n' "$class"
+        done < "$DXE_TEST_RESULTS"
+    } | sort | uniq -c | while read -r n k; do printf '%s=%s\n' "$k" "$n"; done | tr '\n' ' ' | sed 's/ *$//'
 }
 
 # skip --class live|linux-root|destructive "reason"
