@@ -449,6 +449,44 @@ esac
 [ "$?" -eq 0 ] && test_pass "dx_lifecycle_lock_acquire/_release (docker-ssh): a forked child inherits the owner token; only the parent's release reaches docker" \
     || test_fail "dx_lifecycle_lock_acquire/_release (docker-ssh): a forked child inherits the owner token; only the parent's release reaches docker"
 
+# dx_lifecycle_lock_acquire's OTHER dispatch target: DX_RUNTIME=apple (the
+# default), where it refuses through dx_runtime_lock_acquire's local
+# mkdir-lock contention rather than any docker call at all (tests/
+# test_section9_host_scripts.sh proves the same behaviour through the real
+# bin/dx-stop-container entrypoint, but that suite is not one of
+# tests/run-coverage-contracts.sh's dispatched suites, so kcov's gate never
+# sees a case added there -- this file's own aggregate IS dispatched, so the
+# direct call belongs here instead). A genuinely different, still-live
+# process (a real bash -c child) holds the same profile's local Apple lock;
+# dx_lifecycle_lock_acquire must refuse, reporting the profile's own remedy
+# text, never silently stealing it.
+(
+    lock_home="$fixture/apple-lifecycle-lock-contend-home"
+    export XDG_STATE_HOME="$lock_home/state"
+    unset DX_RUNTIME
+    export DX_CONTAINER_NAME=dxe-p33-apple-lifecycle-contend
+    export DX_TUNNEL_LOCK_TIMEOUT=1
+    ready="$fixture/apple-lifecycle-lock-contend-ready"; hold="$fixture/apple-lifecycle-lock-contend-hold"
+    rm -f "$ready" "$hold"; : > "$hold"
+    bash -c '
+        source "$1"
+        source "$2"
+        dx_runtime_apple_lock_acquire >/dev/null
+        : > "$3"
+        while [ -e "$4" ]; do sleep 1; done
+    ' _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-runtime-apple.sh" "$ready" "$hold" &
+    holder_pid=$!
+    for _ in $(seq 1 20); do [ -e "$ready" ] && break; sleep 1; done
+    [ -e "$ready" ] || { rm -f "$hold"; wait "$holder_pid" 2>/dev/null || true; exit 1; }
+    [ -z "${DXE_LIFECYCLE_LOCK_OWNER:-}" ] || exit 1
+    rc=0; out="$(dx_lifecycle_lock_acquire 2>&1)" || rc=$?
+    rm -f "$hold"
+    wait "$holder_pid" 2>/dev/null || true
+    [ "$rc" -ne 0 ] && [ -z "${DXE_LIFECYCLE_LOCK_OWNER:-}" ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "another local dx process already holds"
+) && test_pass "dx_lifecycle_lock_acquire (apple, direct call): refuses while another live process holds the local lifecycle lock" \
+    || test_fail "dx_lifecycle_lock_acquire (apple, direct call): refuses while another live process holds the local lifecycle lock"
+
 # --- Entrypoints refuse while another controller holds the lock ------------
 #
 # Every mutating entrypoint below (Astra F4's own list) must refuse before
