@@ -63,11 +63,19 @@
 #
 # boot_id's raw-UUID short circuit only trusts a
 # /proc/sys/kernel/random/boot_id whose content is a hex/dash string (`case
-# "$dxgpp_boot" in *[!0-9A-Fa-f-]*) ;; esac`), falling through to the
+# "$dxgpp_boot" in *[!0-9A-Fa-f-]*) : ;; esac`), falling through to the
 # /proc/stat btime fallback otherwise -- dx-ai-lock.sh's own pre-WP5.2
 # dx_ai_boot_id had this same validation; unifying the three implementations
 # had silently dropped it, which would have let a corrupted or non-Linux
 # boot_id file be accepted verbatim as an identity instead of failing closed.
+# The garbage-branch case arm is `: ;;`, not a bare `;;` -- kcov cannot mark
+# an empty case arm as hit even when it runs, so the no-op `:` gives it a
+# statement to attribute coverage to. The stat-scan loop's own `done <
+# "$dxgpp_proc_root/stat"` line carries a `KCOV_LOOP_TERMINATOR` marker for
+# the same reason tests/run-coverage-linux.sh already excludes
+# KCOV_SUBSHELL_TERMINATOR lines: kcov's bash tracer does not attribute a
+# hit to a `done < file` loop-redirect line, so it is excluded from the
+# coverage gate rather than chased.
 dx_guest_publication_protocol_snippet() {
     cat <<'DX_GUEST_PUBLICATION_PROTOCOL'
 # --- BEGIN dx_guest_publication_protocol (WP5.2; bin/lib/dx-bootstrap-protocol.sh) ---
@@ -83,7 +91,7 @@ boot_id() {
     dxgpp_proc_root=${DX_LOCK_PROC_ROOT:-/proc}
     if dxgpp_boot=$(cat "$dxgpp_proc_root/sys/kernel/random/boot_id" 2>/dev/null) && [ -n "$dxgpp_boot" ]; then
         case "$dxgpp_boot" in
-            *[!0-9A-Fa-f-]*) ;;
+            *[!0-9A-Fa-f-]*) : ;;
             *) printf "%s\n" "$dxgpp_boot"; return 0 ;;
         esac
     fi
@@ -95,7 +103,7 @@ boot_id() {
                 *) printf "btime:%s\n" "$dxgpp_value"; return 0 ;;
             esac
         fi
-    done < "$dxgpp_proc_root/stat"
+    done < "$dxgpp_proc_root/stat" # KCOV_LOOP_TERMINATOR
     return 1
 }
 publication_lock_acquire() {

@@ -1117,6 +1117,35 @@ else
     test_fail "dx-ai refuses lock acquisition when boot_id contains non-hex/dash garbage (rc=$garbage_boot_lock_rc out='$garbage_boot_lock_out')"
 fi
 
+# Coverage: a $proc_root/stat that DOES contain a line whose key is
+# "btime", but whose VALUE is not a plain non-negative integer, must be
+# refused via the INLINE `''|*[!0-9]*) return 1 ;;` case arm
+# (dx-publication.sh:43) -- distinct from the "no btime line matches at
+# all" case above, which instead exhausts the loop and falls through to
+# the `return 1` AFTER it (dx-publication.sh:47/its KCOV_LOOP_TERMINATOR
+# line), and from the non-hex/dash boot_id file case, which never reaches
+# this stat-scan loop's btime branch at all. No sys/kernel/random/boot_id
+# file is present, so the raw-UUID short circuit is not what is under test
+# here either.
+garbage_btime_proc="$ai_fixture/garbage-btime-proc"
+garbage_btime_lock="$ai_fixture/garbage-btime.lock"
+mkdir -p "$garbage_btime_proc/$$"
+printf '%s\n' 'cpu  100 200 300 400' 'btime not-a-number' > "$garbage_btime_proc/stat"
+printf '%s\n' "$$ (dx-ai) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 999" > "$garbage_btime_proc/$$/stat"
+garbage_btime_out="$(dx_ai_boot_id "$garbage_btime_proc")"; garbage_btime_rc=$?
+if [ "$garbage_btime_rc" -eq 1 ] && [ -z "$garbage_btime_out" ]; then
+    test_pass "dx_ai_boot_id refuses a /proc/stat btime field that is not a plain integer (dx-publication.sh:43)"
+else
+    test_fail "dx_ai_boot_id refuses a /proc/stat btime field that is not a plain integer (dx-publication.sh:43) (rc=$garbage_btime_rc out='$garbage_btime_out')"
+fi
+garbage_btime_lock_out="$(dx_ai_lock_acquire "$garbage_btime_lock" "$garbage_btime_proc" 2>&1)"; garbage_btime_lock_rc=$?
+if [ "$garbage_btime_lock_rc" -eq 1 ] && [ ! -e "$garbage_btime_lock" ] \
+    && printf '%s\n' "$garbage_btime_lock_out" | stdin_matches "cannot identify lock owner process"; then
+    test_pass "dx-ai refuses lock acquisition when the boot-id stat fallback's btime field is garbage (dx-publication.sh:43)"
+else
+    test_fail "dx-ai refuses lock acquisition when the boot-id stat fallback's btime field is garbage (dx-publication.sh:43) (rc=$garbage_btime_lock_rc out='$garbage_btime_lock_out')"
+fi
+
 # --- Fable B3/WP3.5: dx-ai's publication lock reclaims an ownerless
 # directory instead of waiting out the full timeout for an owner that will
 # never appear, writes its owner record via tmp+mv (never a partially
@@ -1248,6 +1277,72 @@ if (
     test_pass "dx-ai refuses a lock whose parent path is an existing plain file (WP3.5)"
 else
     test_fail "dx-ai refuses a lock whose parent path is an existing plain file (WP3.5)"
+fi
+
+# Coverage (dx-publication.sh:82-84): `mkdir "$lock"` itself succeeds, but
+# the owner.tmp write immediately after it does not -- e.g. a filesystem
+# that denies the write once the directory exists. `mkdir "$lock"` only
+# ever needs write+execute on $lock's PARENT (left alone here); a umask of
+# 0200, set only around this one call, strips the OWNER's write bit from
+# the directory `mkdir "$lock"` itself creates, so the very next write
+# inside it -- the owner.tmp file -- fails EACCES for its own creator, with
+# no shim and no race. Root ignores directory permission bits outright, so
+# tests/run-coverage-linux.sh's isolated kcov image (which runs the WHOLE
+# suite as root) needs the same setpriv drop to uid/gid 65534 that WP6.1
+# (Astra F1, tests/test_persist_backup_select.sh) already established for
+# exactly this reason; the script-file indirection below (rather than
+# calling the sourced function directly, as every other case here does) is
+# what lets setpriv change the effective uid at all, since a plain function
+# call cannot.
+ownertmp_parent="$ai_fixture/ownertmp-fail-parent"
+ownertmp_proc="$ai_fixture/ownertmp-fail-proc"
+mkdir -p "$ownertmp_parent" "$ownertmp_proc"
+chmod 0777 "$ownertmp_parent" "$ownertmp_proc"
+# $ai_fixture itself is mktemp -d's usual 0700 (root-owned in the kcov
+# image) -- uid 65534 cannot even traverse INTO it to reach the two
+# world-writable directories just below, regardless of their own mode.
+# Execute-only (no read) is enough to reach a known child path without
+# making the rest of $ai_fixture's contents listable.
+chmod 0711 "$ai_fixture"
+# The probe file itself lives under the world-traversable/writable
+# $ownertmp_parent, not $ai_fixture -- uid 65534 needs to reach and read
+# it too, not just write inside the lock.
+ownertmp_probe="$ownertmp_parent/ownertmp-fail-probe.sh"
+cat > "$ownertmp_probe" <<'PROBE'
+#!/bin/bash
+set -uo pipefail
+proc_root="$1"; lock="$2"; container_dir="$3"
+# shellcheck disable=SC1091
+source "$container_dir/scripts/lib/dx-ai-lock.sh"
+mkdir -p "$proc_root/sys/kernel/random" "$proc_root/$$"
+printf '%s\n' '12121212-3434-3434-3434-343434343434' > "$proc_root/sys/kernel/random/boot_id"
+printf '%s\n' "$$ (probe) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 555" > "$proc_root/$$/stat"
+umask 0200
+dx_ai_lock_acquire "$lock" "$proc_root"
+PROBE
+chmod 0644 "$ownertmp_probe"
+ownertmp_lock="$ownertmp_parent/ownertmp-fail.lock"
+ownertmp_stderr="$ai_fixture/ownertmp-fail-stderr.log"
+ownertmp_assert() {
+    if [ "$ownertmp_rc" -eq 1 ] && [ ! -e "$ownertmp_lock" ] \
+        && grep -q '^Error: could not record the publication lock owner' "$ownertmp_stderr"; then
+        test_pass "WP5.2: an owner-tmp write failure is reported as an Error and the lock directory is removed (dx-publication.sh:82-84)"
+    else
+        test_fail "WP5.2: an owner-tmp write failure is reported as an Error and the lock directory is removed (dx-publication.sh:82-84) (rc=$ownertmp_rc stderr='$(cat "$ownertmp_stderr" 2>/dev/null)')"
+    fi
+}
+if [ "$(id -u)" -eq 0 ]; then
+    if command -v setpriv > /dev/null 2>&1; then
+        setpriv --reuid=65534 --regid=65534 --clear-groups env HOME=/tmp bash "$ownertmp_probe" "$ownertmp_proc" "$ownertmp_lock" "$CONTAINER_DIR" > /dev/null 2> "$ownertmp_stderr"
+        ownertmp_rc=$?
+        ownertmp_assert
+    else
+        test_skip "WP5.2: an owner-tmp write failure is reported as an Error and the lock directory is removed (running as root without setpriv: mode bits do not deny root; dx-publication.sh:82-84)"
+    fi
+else
+    bash "$ownertmp_probe" "$ownertmp_proc" "$ownertmp_lock" "$CONTAINER_DIR" > /dev/null 2> "$ownertmp_stderr"
+    ownertmp_rc=$?
+    ownertmp_assert
 fi
 
 # --- F8: a successful sourced dx_ai_main must release its lock and clear its EXIT trap ---
