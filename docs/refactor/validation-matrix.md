@@ -65,6 +65,24 @@ to "could not be read" (refuses), never silently to "absent" (which would
 adopt/create over it) -- so a wording drift would show up as an operator-
 visible refusal, not a silent DQ6 bypass.
 
+**WP6.5 / Astra F4 (the lifecycle lock) -- live-only assertion, not yet
+confirmed.** `dx_lifecycle_lock_acquire`/`_release` (`bin/lib/dx-container.sh`)
+and every mutating entrypoint's own use of it are proven entirely through
+fakes: a scripted `docker` standing in for the remote lock container
+(`bin/lib/dx-runtime-docker-lock.sh`'s existing create-fails-if-present
+protocol), and real local `bash -c`/backgrounded processes standing in for
+a second controller against Apple's own local lock. None of this has run
+two REAL controllers against the same live QNAP daemon, or two real
+`dx`/`dx-recreate` invocations racing on the same Apple host. The atomic
+primitive each side relies on (`docker create --name`'s own name-conflict
+error; a plain `mkdir` for Apple) is a real OS/daemon guarantee, not
+something this WP invented, so this is recorded as the same class of gap
+WP6.4/Astra F3's own entry above describes -- a live gate should still
+confirm it before relying on it operationally, particularly the "an
+interrupted owner is reported, not silently stolen" claim, which depends on
+the real daemon continuing to refuse a name conflict exactly the way the
+fakes assume.
+
 ## Useful final commands
 
 ```sh
