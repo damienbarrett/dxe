@@ -289,49 +289,24 @@ dx_run_interactive_ssh() {
     return "$status"
 }
 
+# WP5.2 (Fable A3, extends Astra R3): the publication-lock protocol itself
+# (process_start, boot_id, publication_lock_acquire, publication_lock_release)
+# is no longer inlined here -- it is rendered first, by
+# bin/lib/dx-bootstrap-protocol.sh's dx_guest_publication_protocol_snippet,
+# the exact same text bin/lib/dx-bootstrap-sync.sh's dx_sync_guest_program
+# prepends and container/.../scripts/lib/dx-publication.sh ships. The two had
+# already drifted once before this (a missing `[ -z "$live_start" ]` clause);
+# tests/test_refactor_contracts.sh now pins the two host renderings as
+# byte-identical.
 dx_bootstrap_launch_command() {
+    dx_guest_publication_protocol_snippet
     cat <<'EOF'
 set -eu
 root=$1
 lock="$root/.locks/publication"
-process_start() {
-    stat_line=$(cat "/proc/${1:-0}/stat" 2>/dev/null) || return 1
-    stat_fields=${stat_line##*) }
-    set -- $stat_fields
-    [ "$#" -ge 20 ] || return 1
-    shift 19
-    printf "%s\n" "$1"
-}
 [ -d "$root" ] && [ ! -L "$root" ] || { echo "Error: unsafe bootstrap root $root" >&2; exit 1; }
 for path in "$root/.locks" "$root/.locks/leases"; do [ ! -L "$path" ] || { echo "Error: unsafe bootstrap state path $path" >&2; exit 1; }; done
 mkdir -p /persist "$root/.locks/leases"
-acquire_publication_lock() {
-    elapsed=0
-    while ! mkdir "$lock" 2>/dev/null; do
-        if [ -f "$lock/owner" ]; then
-            tab=$(printf "\t")
-            IFS="$tab" read -r owner_boot owner_pid owner_start < "$lock/owner" || true
-            boot=$(cat /proc/sys/kernel/random/boot_id)
-            live_start=$(process_start "${owner_pid:-0}" || true)
-            if [ -z "${owner_boot:-}" ] || [ -z "${owner_pid:-}" ] || [ -z "${owner_start:-}" ] \
-                || [ "$owner_boot" != "$boot" ] || [ -z "$live_start" ] || [ "$owner_start" != "$live_start" ]; then
-                rm -f "$lock/owner"; rmdir "$lock" 2>/dev/null || true; continue
-            fi
-        elif [ "$elapsed" -ge 2 ] && rmdir "$lock" 2>/dev/null; then
-            elapsed=0
-            continue
-        fi
-        [ "$elapsed" -lt 30 ] || { echo "Error: timed out waiting for bootstrap publication lock." >&2; exit 1; }
-        sleep 1; elapsed=$((elapsed + 1))
-    done
-    boot=$(cat /proc/sys/kernel/random/boot_id)
-    start=$(process_start $$) || { rmdir "$lock" 2>/dev/null || true; exit 1; }
-    owner_tmp="$root/.locks/.owner.$$.tmp"
-    if ! printf "%s\t%s\t%s\n" "$boot" "$$" "$start" > "$owner_tmp" || ! mv "$owner_tmp" "$lock/owner"; then
-        rm -f "$owner_tmp"; rmdir "$lock" 2>/dev/null || true; exit 1
-    fi
-}
-release_publication_lock() { rm -f "$lock/owner"; rmdir "$lock"; }
 rm -f "$root/.dx-bootstrap-ready"
 touch "$root/.dx-bootstrap-waiting"
 echo "Waiting for bootstrap payload in $root..."
@@ -358,7 +333,7 @@ while [ ! -f "$root/.dx-bootstrap-ready" ]; do
     waited=$((waited + 1))
 done
 if [ -L "$root/current" ]; then
-    acquire_publication_lock
+    publication_lock_acquire "$lock" 30 || exit 1
     trap 'rm -f "$lock/owner"; rmdir "$lock" 2>/dev/null || true' EXIT HUP INT TERM
     generation=$(readlink "$root/current")
     case "$generation" in generations/*) generation=${generation#generations/} ;; *) echo "Error: invalid bootstrap current pointer" >&2; exit 1 ;; esac
@@ -376,7 +351,7 @@ if [ -L "$root/current" ]; then
     (umask 077; printf '%s\t%s\t%s\t%s\n' "$generation" "$boot_id" "$$" "$start" > "$lease_tmp")
     mv "$lease_tmp" "$root/.locks/leases/$generation.$$"
     payload="$root/generations/$generation"
-    release_publication_lock
+    publication_lock_release "$lock"
     trap - EXIT HUP INT TERM
 else
     payload="$root"
@@ -408,22 +383,19 @@ EOF
 # (Astra F7's own recommendation): entirely local `[ ]`/`readlink`/`cat`
 # file-state checks under $DX_BOOTSTRAP_PATH, so a transient tailnet issue
 # never reports the guest unhealthy.
+#
+# WP5.2: this used to carry its OWN, fourth inline copy of process_start
+# (WP6.7) -- it now reuses the same shared snippet the launcher and the sync
+# do, for process_start (and boot_id, in place of its own bare `cat`).
 dx_bootstrap_health_command() {
+    dx_guest_publication_protocol_snippet
     cat <<'EOF'
 root="$DX_BOOTSTRAP_PATH"
 [ -n "$root" ] || exit 1
-process_start() {
-    stat_line=$(cat "/proc/${1:-0}/stat" 2>/dev/null) || return 1
-    stat_fields=${stat_line##*) }
-    set -- $stat_fields
-    [ "$#" -ge 20 ] || return 1
-    shift 19
-    printf "%s\n" "$1"
-}
 cur=$(readlink "$root/current" 2>/dev/null) || exit 1
 case "$cur" in generations/*) generation=${cur#generations/} ;; *) exit 1 ;; esac
 case "$generation" in ""|*/*|[.-]*|*[!A-Za-z0-9_.-]*) exit 1 ;; esac
-boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || exit 1
+boot=$(boot_id) || exit 1
 tab=$(printf "\t")
 healthy=1
 for lease in "$root/.locks/leases/$generation".*; do

@@ -9,8 +9,17 @@ source "$SCRIPT_DIR/test_helpers.sh"
 # shellcheck source=../bin/lib/dx-host-util.sh
 source "$BASE_DIR/bin/lib/dx-host-util.sh"
 source "$SCRIPT_DIR/lib/fake-tools.sh"
+# WP5.2: dx_bootstrap_launch_command and dx_sync_guest_program both now
+# concatenate dx_guest_publication_protocol_snippet's rendered text in
+# front of their own logic (bin/lib/dx-bootstrap-protocol.sh), so this file
+# must exist before either one is sourced -- exactly the order
+# bin/dx-lib.sh itself uses.
+# shellcheck source=../bin/lib/dx-bootstrap-protocol.sh
+source "$BASE_DIR/bin/lib/dx-bootstrap-protocol.sh"
 # shellcheck source=../bin/lib/dx-ssh-common.sh
 source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
+# shellcheck source=../bin/lib/dx-bootstrap-sync.sh
+source "$BASE_DIR/bin/lib/dx-bootstrap-sync.sh"
 test_section "Transactional Bootstrap Publication"
 
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bootstrap-publication.XXXXXX")"
@@ -183,7 +192,12 @@ else
     test_fail "the container-running preflight honours DX_BOOTSTRAP_WAIT_TIMEOUT via the injectable DX_SLEEP seam, not a hard-coded 30 real sleeps (fake sleep recorded $wait_sleep_count calls)"
 fi
 
-assert_file_contains_literal "$BASE_DIR/bin/lib/dx-ssh-common.sh" 'acquire_publication_lock' "launcher creates its execution lease under the publication lock"
+# WP5.2: acquire_publication_lock was inlined in the launcher; the lock
+# acquisition itself now comes from the shared
+# dx_guest_publication_protocol_snippet (bin/lib/dx-bootstrap-protocol.sh),
+# concatenated in front of the launcher's own remaining logic below.
+assert_file_contains_literal "$BASE_DIR/bin/lib/dx-ssh-common.sh" 'dx_guest_publication_protocol_snippet' "launcher renders the shared publication-lock protocol in front of its own logic"
+assert_file_contains_literal "$BASE_DIR/bin/lib/dx-ssh-common.sh" 'publication_lock_acquire "$lock" 30 || exit 1' "launcher creates its execution lease under the publication lock"
 assert_file_contains_literal "$BASE_DIR/bin/lib/dx-ssh-common.sh" 'payload="$root/generations/$generation"' "launcher executes the exact leased generation"
 
 # The execution lease is written under a restrictive umask, but that umask must
@@ -688,7 +702,7 @@ lock_timeout_out="$(env PATH="$lock_timeout_fake:$PATH" \
     DX_BOOTSTRAP_PATH="$lock_timeout_root" \
     DX_BOOTSTRAP_WAIT_TIMEOUT=1 \
     "$BASE_DIR/bin/dx-sync-bootstrap" 2>&1)" || lock_timeout_status=$?
-if [ "$lock_timeout_status" -ne 0 ] && printf '%s\n' "$lock_timeout_out" | stdin_matches -F 'timed out waiting for bootstrap publication lock'; then
+if [ "$lock_timeout_status" -ne 0 ] && printf '%s\n' "$lock_timeout_out" | stdin_matches -F 'timed out waiting for the guest publication lock'; then
     test_pass "a permanently held publication lock times out rather than waiting forever"
 else
     test_fail "a permanently held publication lock times out rather than waiting forever (status $lock_timeout_status, out '$lock_timeout_out')"
@@ -1113,6 +1127,162 @@ result_dir="$direct_root/result-codec"; mkdir -p "$result_dir"
     ! dx_bootstrap_sync_result_read "$result_dir/bad-generation-value"
 ) && test_pass "dx_bootstrap_sync_result_read refuses an unsafe generation value" \
   || test_fail "dx_bootstrap_sync_result_read refuses an unsafe generation value"
+
+# --- WP5.2 (Fable A3/B3, extends Astra R3): one fixture, run against ALL
+# THREE implementations of the guest publication-lock protocol -- the
+# launcher's rendering (dx_bootstrap_launch_command) and the sync's
+# rendering (dx_sync_guest_program, with
+# dx_guest_publication_protocol_snippet prepended exactly as
+# dx_bootstrap_sync itself does at call time) -- asserting identical
+# outcomes AND identical stderr for: a live, same-boot owner (waits, times
+# out); an owner recorded under a previous boot (reclaimed); a reused pid
+# whose recorded start time no longer matches a live process (reclaimed);
+# an ownerless lock directory (reclaimed after a short grace); and a
+# reclaim whose own rename target is already occupied (falls through to
+# the same timeout, never takes over). `sleep` is stubbed to a no-op in
+# every context so the two 30s-bounded waits (the live-owner and the
+# reclaim-loses cases) finish immediately. The guest's own dx-ai-lock.sh
+# joins this same fixture as a third implementation once it shares this
+# protocol too (WP5.2 Refactor).
+# A subdirectory of $fixture, not a fresh mktemp -d: $fixture's own cleanup
+# trap (set at the top of this file) already removes everything under it
+# on exit, so this needs no EXIT trap of its own -- setting one here would
+# only replace that earlier one, not run alongside it.
+wp52_dir="$fixture/wp52-cross-impl"
+mkdir -p "$wp52_dir"
+
+wp52_extract_protocol_block() {
+    awk '
+        /^# --- BEGIN dx_guest_publication_protocol/ { flag=1 }
+        flag { print }
+        /^# --- END dx_guest_publication_protocol/ { flag=0 }
+    '
+}
+
+wp52_driver='
+    sleep() { :; }
+lock=$1
+proc_root=$2
+collide=${3:-0}
+DX_LOCK_PROC_ROOT=$proc_root
+mkdir -p "$proc_root/$$"
+printf "%s\n" "$$ (probe) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 555" > "$proc_root/$$/stat"
+[ "$collide" = 1 ] && : > "$lock.reclaim.$$"
+publication_lock_acquire "$lock" 30
+'
+
+launcher_rendering="$(dx_bootstrap_launch_command)"
+sync_rendering="$(printf '%s\n%s' "$(dx_guest_publication_protocol_snippet)" "$dx_sync_guest_program")"
+
+{ printf '%s\n' "$launcher_rendering" | wp52_extract_protocol_block; printf '%s\n' "$wp52_driver"; } > "$wp52_dir/launcher_probe.sh"
+{ printf '%s\n' "$sync_rendering" | wp52_extract_protocol_block; printf '%s\n' "$wp52_driver"; } > "$wp52_dir/sync_probe.sh"
+
+wp52_run_launcher() {
+    local lock="$1" proc_root="$2" collide="${3:-0}" rc=0
+    sh "$wp52_dir/launcher_probe.sh" "$lock" "$proc_root" "$collide" 2>"$wp52_dir/err"; rc=$?
+    printf '%s' "$rc"
+}
+wp52_run_sync() {
+    local lock="$1" proc_root="$2" collide="${3:-0}" rc=0
+    sh "$wp52_dir/sync_probe.sh" "$lock" "$proc_root" "$collide" 2>"$wp52_dir/err"; rc=$?
+    printf '%s' "$rc"
+}
+
+wp52_self_boot="feedfeed-0000-0000-0000-000000000000"
+
+# wp52_case <scenario-name> <fixture-setup-fn>
+# <fixture-setup-fn> is called once per implementation as
+# `fn <proc_root> <lock>`, before that implementation's runner executes.
+wp52_case() {
+    local scenario="$1" setup="$2" collide="${3:-0}"
+    local impl rc err owner
+    local rc_launcher="" rc_sync=""
+    local err_launcher="" err_sync=""
+    local owner_boot_launcher="" owner_boot_sync=""
+    for impl in launcher sync; do
+        local base="$wp52_dir/case-$scenario-$impl"
+        rm -rf "$base"
+        local proc_root="$base/proc" lock="$base/lock"
+        mkdir -p "$proc_root/sys/kernel/random"
+        "$setup" "$proc_root" "$lock"
+        case "$impl" in
+            launcher) rc="$(wp52_run_launcher "$lock" "$proc_root" "$collide")" ;;
+            sync) rc="$(wp52_run_sync "$lock" "$proc_root" "$collide")" ;;
+        esac
+        err="$(cat "$wp52_dir/err" 2>/dev/null || true)"
+        owner=""
+        [ -f "$lock/owner" ] && owner="$(cut -f1 "$lock/owner" 2>/dev/null || true)"
+        case "$impl" in
+            launcher) rc_launcher="$rc"; err_launcher="$err"; owner_boot_launcher="$owner" ;;
+            sync) rc_sync="$rc"; err_sync="$err"; owner_boot_sync="$owner" ;;
+        esac
+    done
+    if [ "$rc_launcher" = "$rc_sync" ] && [ "$err_launcher" = "$err_sync" ]; then
+        test_pass "WP5.2: $scenario -- launcher/sync agree (rc=$rc_launcher)"
+    else
+        test_fail "WP5.2: $scenario -- launcher/sync diverge (rc: launcher=$rc_launcher sync=$rc_sync; stderr: launcher='$err_launcher' sync='$err_sync')"
+    fi
+    if [ "$rc_launcher" = 0 ]; then
+        if [ "$owner_boot_launcher" = "$wp52_self_boot" ] && [ "$owner_boot_sync" = "$wp52_self_boot" ]; then
+            test_pass "WP5.2: $scenario -- both record the acquirer's own boot id"
+        else
+            test_fail "WP5.2: $scenario -- both record the acquirer's own boot id (got launcher='$owner_boot_launcher' sync='$owner_boot_sync')"
+        fi
+    fi
+}
+
+# (1) A live, same-boot owner: every implementation waits it out and times
+# out, leaving the owner record untouched.
+wp52_setup_live_owner() {
+    local proc_root="$1" lock="$2"
+    printf '%s\n' "$wp52_self_boot" > "$proc_root/sys/kernel/random/boot_id"
+    mkdir -p "$lock" "$proc_root/777777"
+    printf '%s\n' '777777 (owner) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 42' > "$proc_root/777777/stat"
+    printf '%s\t%s\t%s\n' "$wp52_self_boot" 777777 42 > "$lock/owner"
+}
+wp52_case "a live same-boot owner" wp52_setup_live_owner
+
+# (2) An owner recorded under a previous boot: reclaimed and acquired.
+wp52_setup_previous_boot_owner() {
+    local proc_root="$1" lock="$2"
+    printf '%s\n' "$wp52_self_boot" > "$proc_root/sys/kernel/random/boot_id"
+    mkdir -p "$lock" "$proc_root/777777"
+    printf '%s\n' '777777 (owner) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 42' > "$proc_root/777777/stat"
+    printf '%s\t%s\t%s\n' "previous-boot-id" 777777 42 > "$lock/owner"
+}
+wp52_case "an owner from a previous boot" wp52_setup_previous_boot_owner
+
+# (3) A reused pid: the recorded start time no longer matches the live
+# process at that pid (a dead owner's pid reassigned to something else).
+wp52_setup_reused_pid() {
+    local proc_root="$1" lock="$2"
+    printf '%s\n' "$wp52_self_boot" > "$proc_root/sys/kernel/random/boot_id"
+    mkdir -p "$lock" "$proc_root/777777"
+    printf '%s\n' '777777 (new-owner) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 42' > "$proc_root/777777/stat"
+    printf '%s\t%s\t%s\n' "$wp52_self_boot" 777777 999 > "$lock/owner"
+}
+wp52_case "a reused pid with a different start time" wp52_setup_reused_pid
+
+# (4) An ownerless lock directory: reclaimed after the same short grace
+# every implementation now shares (WP3.5's dx-ai copy used to reclaim this
+# immediately, with no such grace).
+wp52_setup_ownerless() {
+    local proc_root="$1" lock="$2"
+    printf '%s\n' "$wp52_self_boot" > "$proc_root/sys/kernel/random/boot_id"
+    mkdir -p "$lock"
+}
+wp52_case "an ownerless lock directory" wp52_setup_ownerless
+
+# (5) A reclaim whose own rename target is already occupied: this attempt
+# does not take over -- it falls through to the same wait/timeout every
+# other contender uses, leaving the stale owner record untouched.
+wp52_setup_reclaim_loses() {
+    local proc_root="$1" lock="$2"
+    printf '%s\n' "$wp52_self_boot" > "$proc_root/sys/kernel/random/boot_id"
+    mkdir -p "$lock"
+    printf '%s\t%s\t%s\n' "$wp52_self_boot" 777777 999 > "$lock/owner"
+}
+wp52_case "a reclaim rename that loses" wp52_setup_reclaim_loses 1
 
 print_summary
 exit_with_code

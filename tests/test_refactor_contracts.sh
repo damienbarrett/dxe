@@ -790,5 +790,67 @@ while IFS=: read -r manifest_lineno manifest_dispatch_text; do
     manifest_actual="$(sed -n 's/^# tier: //p' "$ROOT/tests/$manifest_file" | head -n1)"
     check test "$manifest_actual" = "$manifest_expected"
 done < <(grep -nE 'run_test[[:space:]]+"\$SCRIPT_DIR/[^"]+"[[:space:]]+"[0-9]+"' "$manifest_runner")
+# --- WP5.2 (Fable A3/B3, extends Astra R3): the guest publication-lock
+# protocol is rendered from ONE source, bin/lib/dx-bootstrap-protocol.sh's
+# dx_guest_publication_protocol_snippet, not hand-copied. Before this, the
+# launcher's rendering (dx_bootstrap_launch_command,
+# bin/lib/dx-ssh-common.sh) and the sync's (dx_sync_guest_program,
+# bin/lib/dx-bootstrap-sync.sh) had already drifted once: the launcher
+# checked `[ -z "$live_start" ]` before declaring an owner stale, the sync
+# did not. This cheap guard extracts each rendering's protocol block (the
+# text between the "# --- BEGIN dx_guest_publication_protocol" and
+# "# --- END dx_guest_publication_protocol" marker comments the shared
+# snippet itself emits) and asserts they are identical after normalising
+# whitespace -- it would have failed on that exact diff.
+dxe_extract_publication_protocol_block() {
+    awk '
+        /^# --- BEGIN dx_guest_publication_protocol/ { flag=1 }
+        flag { print }
+        /^# --- END dx_guest_publication_protocol/ { flag=0 }
+    '
+}
+dxe_normalise_whitespace() { tr -s '[:space:]' ' ' | sed -e 's/^ *//' -e 's/ *$//'; }
+
+wp52_probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-wp52-protocol.XXXXXX")"
+cat > "$wp52_probe_dir/render_launcher.sh" <<'PROBE'
+#!/bin/bash
+set -euo pipefail
+ROOT="$1"
+# shellcheck source=/dev/null
+source "$ROOT/bin/lib/dx-bootstrap-protocol.sh"
+# shellcheck source=/dev/null
+source "$ROOT/bin/lib/dx-ssh-common.sh"
+dx_bootstrap_launch_command
+PROBE
+cat > "$wp52_probe_dir/render_sync.sh" <<'PROBE'
+#!/bin/bash
+set -euo pipefail
+ROOT="$1"
+# shellcheck source=/dev/null
+source "$ROOT/bin/lib/dx-bootstrap-protocol.sh"
+# shellcheck source=/dev/null
+source "$ROOT/bin/lib/dx-bootstrap-sync.sh"
+# dx_sync_guest_program itself stays plain data at source time (this file's
+# own import-only contract above); dx_bootstrap_sync concatenates the
+# shared snippet in front of it at call time -- reproduce that exact
+# concatenation here rather than calling dx_bootstrap_sync itself, which
+# also needs a live container.
+printf '%s\n%s' "$(dx_guest_publication_protocol_snippet)" "$dx_sync_guest_program"
+PROBE
+launcher_rendering="$(bash "$wp52_probe_dir/render_launcher.sh" "$ROOT")"
+sync_rendering="$(bash "$wp52_probe_dir/render_sync.sh" "$ROOT")"
+launcher_protocol_block="$(printf '%s\n' "$launcher_rendering" | dxe_extract_publication_protocol_block | dxe_normalise_whitespace)"
+sync_protocol_block="$(printf '%s\n' "$sync_rendering" | dxe_extract_publication_protocol_block | dxe_normalise_whitespace)"
+if [ -z "$launcher_protocol_block" ] || [ -z "$sync_protocol_block" ]; then
+    echo "FAIL: WP5.2 byte-identical rendering guard found no protocol block to compare (launcher_len=${#launcher_protocol_block}, sync_len=${#sync_protocol_block})" >&2
+    failures=$((failures + 1))
+elif [ "$launcher_protocol_block" = "$sync_protocol_block" ]; then
+    :
+else
+    echo "FAIL: the launcher's and the sync's rendered publication-lock protocol text differ (WP5.2/Fable A3):" >&2
+    diff <(printf '%s\n' "$launcher_protocol_block") <(printf '%s\n' "$sync_protocol_block") >&2 || true
+    failures=$((failures + 1))
+fi
+rm -rf "$wp52_probe_dir"
 
 [ "$failures" -eq 0 ]

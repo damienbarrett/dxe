@@ -101,45 +101,15 @@ generations=$root/generations
 locks=$root/.locks
 lock=$locks/publication
 stage=$generations/.staging-$generation
-process_start() {
-    stat_line=$(cat "/proc/${1:-0}/stat" 2>/dev/null) || return 1
-    stat_fields=${stat_line##*) }
-    set -- $stat_fields
-    [ "$#" -ge 20 ] || return 1
-    shift 19
-    printf "%s\n" "$1"
-}
 [ -d "$root" ] && [ ! -L "$root" ] || { echo "Error: unsafe bootstrap root $root." >&2; exit 1; }
 for path in "$generations" "$locks" "$locks/leases"; do [ ! -L "$path" ] || { echo "Error: refusing symlinked bootstrap state path $path." >&2; exit 1; }; done
 mkdir -p "$generations" "$locks/leases"
 chown root:root "$root" "$generations" "$locks" "$locks/leases"
 chmod 0755 "$root" "$generations"
 chmod 0700 "$locks" "$locks/leases"
-elapsed=0
-while ! mkdir "$lock" 2>/dev/null; do
-    if [ -f "$lock/owner" ]; then
-        tab=$(printf "\t")
-        IFS="$tab" read -r owner_boot owner_pid owner_start < "$lock/owner" || true
-        boot=$(cat /proc/sys/kernel/random/boot_id)
-        live_start=$(process_start "${owner_pid:-0}" || true)
-        if [ -z "${owner_boot:-}" ] || [ -z "${owner_pid:-}" ] || [ -z "${owner_start:-}" ] \
-            || [ "$owner_boot" != "$boot" ] || [ "$owner_start" != "$live_start" ]; then
-            rm -f "$lock/owner"; rmdir "$lock" 2>/dev/null || true; continue
-        fi
-    elif [ "$elapsed" -ge 2 ] && rmdir "$lock" 2>/dev/null; then
-        elapsed=0
-        continue
-    fi
-    [ "$elapsed" -lt 30 ] || { echo "Error: timed out waiting for bootstrap publication lock." >&2; exit 1; }
-    sleep 1; elapsed=$((elapsed + 1))
-done
+publication_lock_acquire "$lock" 30 || exit 1
 boot=$(cat /proc/sys/kernel/random/boot_id)
-start=$(process_start $$) || { rmdir "$lock" 2>/dev/null || true; exit 1; }
-owner_tmp="$locks/.owner.$$.tmp"
-if ! printf "%s\t%s\t%s\n" "$boot" "$$" "$start" > "$owner_tmp" || ! mv "$owner_tmp" "$lock/owner"; then
-    rm -f "$owner_tmp"; rmdir "$lock" 2>/dev/null || true; exit 1
-fi
-cleanup() { rm -rf "$stage"; rm -f "$lock/owner"; rmdir "$lock" 2>/dev/null || true; }
+cleanup() { rm -rf "$stage"; publication_lock_release "$lock" 2>/dev/null || true; }
 trap cleanup EXIT
 trap "exit 129" HUP
 trap "exit 130" INT
@@ -208,7 +178,7 @@ for candidate in "$generations"/*; do
     fi
 done
 trap - EXIT HUP INT TERM
-rm -f "$lock/owner"; rmdir "$lock"
+publication_lock_release "$lock"
 DX_SYNC_GUEST
 
 dx_bootstrap_sync() {
@@ -280,7 +250,23 @@ dx_bootstrap_sync() {
     generation_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
     echo "Syncing bootstrap generation $generation_id from $source to $container:$path..."
 
-    if ! COPYFILE_DISABLE=1 tar "${tar_create_args[@]}" -C "$source" -cf - . | dx_runtime_exec -i "$container" sh -c "$dx_sync_guest_program" -- "$path" "$generation_id" "$content_digest"; then
+    # WP5.2 (Fable A3/B3, extends Astra R3): prepend the shared guest
+    # publication-lock protocol (bin/lib/dx-bootstrap-protocol.sh's
+    # dx_guest_publication_protocol_snippet -- process_start, boot_id,
+    # publication_lock_acquire, publication_lock_release) in front of
+    # dx_sync_guest_program's own body, at CALL time rather than at source
+    # time: dx_sync_guest_program itself stays plain data (this file's own
+    # import-only contract, tests/test_section9_host_scripts.sh, sources
+    # every bin/lib/*.sh file in complete isolation), and this is the exact
+    # same protocol text the launcher's dx_bootstrap_launch_command renders
+    # (tests/test_refactor_contracts.sh's byte-identical rendering
+    # contract). dx-bootstrap-protocol.sh is sourced before this file (see
+    # bin/dx-lib.sh), so the function exists by the time dx_bootstrap_sync
+    # is actually called.
+    local rendered_guest_program
+    rendered_guest_program="$(dx_guest_publication_protocol_snippet)
+$dx_sync_guest_program"
+    if ! COPYFILE_DISABLE=1 tar "${tar_create_args[@]}" -C "$source" -cf - . | dx_runtime_exec -i "$container" sh -c "$rendered_guest_program" -- "$path" "$generation_id" "$content_digest"; then
         return 1
     fi
     echo "Bootstrap generation $generation_id is ready."
