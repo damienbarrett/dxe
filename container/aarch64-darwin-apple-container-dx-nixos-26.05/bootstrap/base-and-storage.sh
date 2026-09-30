@@ -721,6 +721,12 @@ populate_prepared_nix_volume() {
     # set -u); they are not a production fallback.
     local owner_uid="${1:-0}"
     local owner_gid="${2:-0}"
+    # Fable B11: trailing optional parameter, positional-with-production-
+    # default -- same seam shape as setup_persist's persist_root and
+    # dx_persist_host_keys's etc_ssh/store (persistence.sh, system.sh). No
+    # production caller (bootstrap_phases, via bootstrap.sh) passes this;
+    # tests use it to redirect the append away from the real /etc/fstab.
+    local fstab="${3:-/etc/fstab}"
     local import_started identity record
     # Contract 3 (refactor-v2-final.md, Fable B6 item 3): prepare_nix_volume's
     # mode-tagged record, read through the bounded parser, never the exported
@@ -763,12 +769,12 @@ populate_prepared_nix_volume() {
     umount "$volume_root"
     mount -t "$nix_volume_fs" -o "$nix_volume_opts" "$nix_volume_device" /nix
 
-    if ! grep -q "/nix $nix_volume_fs" /etc/fstab 2>/dev/null; then
+    if ! grep -q "/nix $nix_volume_fs" "$fstab" 2>/dev/null; then
         echo "Adding /nix to /etc/fstab..."
         if blkid -L dx-nix >/dev/null 2>&1; then
-            echo "LABEL=dx-nix /nix $nix_volume_fs $nix_volume_opts 0 0" >> /etc/fstab
+            echo "LABEL=dx-nix /nix $nix_volume_fs $nix_volume_opts 0 0" >> "$fstab"
         else
-            echo "$nix_volume_device /nix $nix_volume_fs $nix_volume_opts 0 0" >> /etc/fstab
+            echo "$nix_volume_device /nix $nix_volume_fs $nix_volume_opts 0 0" >> "$fstab"
         fi
     fi
 }

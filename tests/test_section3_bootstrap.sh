@@ -2028,15 +2028,14 @@ rm -rf "$p12_fixture"
 # P13 (docs/evidence/20260930/agent-design-notes.md, "Bootstrap storage
 # coverage cases"): six kcov gaps in base-and-storage.sh, closed the same
 # way P12 above closes its own: every case below runs its whole fixture as
-# the left side of `(...) || true` (or, for (e), an `if` condition around
-# id -u), so a stub returning non-zero -- or a REAL command failing for
-# real, as (e)'s permission-denied fstab append does on this unprivileged
-# Mac -- never aborts the case's own subshell early; execution always
-# reaches the case's trailing `echo "exit=$?"` (or, for (e), falls through
-# to the function's own final return). Verified empirically on this Mac's
+# the left side of `(...) || true`, so a stub returning non-zero never
+# aborts the case's own subshell early; execution always reaches the
+# case's trailing `echo "exit=$?"`. Verified empirically on this Mac's
 # Bash 3.2: when a compound command or subshell is the left side of
 # `|| true`, or the condition of `if`, errexit is suspended for its ENTIRE
-# nested execution, not merely the one command being tested.
+# nested execution, not merely the one command being tested. (e) no longer
+# needs any of this special-casing itself -- Fable B11's fstab parameter
+# seam means it never touches a real file that could fail for real.
 p13_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p13-storage.XXXXXX")"
 
 # (a) A fully successful sparse-image prepare, through the real
@@ -2301,90 +2300,110 @@ else
     test_fail "populate_prepared_nix_volume: a bootstrap-path collision refuses immediately, never registering the import, never touching umount/mount (log: $(cat "$p13_d3_log" 2>/dev/null); output: $(cat "$p13_fixture/case-d3.out"))"
 fi
 
-# (e) the /etc/fstab tail, exercised WITHOUT the grep shadow above so the
-# REAL grep against the REAL /etc/fstab runs: DX_NIX_VOLUME_FS_TYPE=
-# dxe-cov-probe never appears in a real fstab, so the presence check always
-# misses and the append actually executes. Non-root (this dev Mac): the
-# append itself fails closed (permission denied) and /etc/fstab is
-# provably unchanged. Root (the kcov Linux image, which runs this whole
-# suite as root): the append succeeds for real; each sub-case restores a
-# snapshot afterward so the container's /etc/fstab is left exactly as this
-# test found it. Better long-term: give the fstab path a seam (Fable B11)
-# so no test touches the real file -- a separate follow-up, not done here.
+# (e) the /etc/fstab tail, exercised through the Fable B11 seam:
+# populate_prepared_nix_volume now takes a trailing optional "fstab"
+# parameter, positional-with-production-default ("${3:-/etc/fstab}"),
+# the same shape as setup_persist's persist_root and dx_persist_host_keys's
+# etc_ssh/store (persistence.sh, system.sh). No production caller
+# (bootstrap_phases, via bootstrap.sh) passes a third argument, so
+# production behavior (append to the real /etc/fstab) is unchanged; only
+# these fixtures redirect it. Both the presence check and the append use
+# "$fstab", so the real /etc/fstab is never opened by any sub-case below --
+# proved by its content being byte-for-byte unchanged afterward, not by
+# snapshot/restore or a root/non-root branch (there is no privilege
+# boundary left to cross: the fixture file is always writable, so this is
+# no longer a stub standing in for one -- the real /etc/fstab append is
+# now exercised live-only, see docs/refactor/validation-matrix.md).
 # Closes base-and-storage.sh:675-679.
 p13_e_root="$p13_fixture/dx-nix-volume-e"
 mkdir -p "$p13_e_root/store"
-p13_fstab_snapshot="$p13_fixture/fstab.snapshot"
-cp /etc/fstab "$p13_fstab_snapshot" 2>/dev/null || : > "$p13_fstab_snapshot"
+p13_etc_fstab_snapshot="$p13_fixture/etc-fstab-real.snapshot"
+cp /etc/fstab "$p13_etc_fstab_snapshot" 2>/dev/null || : > "$p13_etc_fstab_snapshot"
 
-if [ "$(id -u)" -eq 0 ]; then
-    p13_e1_out="$p13_fixture/case-e1.out"
-    (
-        export DX_BOOTSTRAP_SCRATCH_DIR="$p13_e_root/scratch-e1"
-        dx_write_nix_volume_record prepared "$p13_e_root" /dev/dxe-cov-fake dxe-cov-probe dxe-cov-opts
-        nix_image_store_import_required() { return 1; }
-        nix_install_image_essentials_root() { :; }
-        umount() { :; }
-        mount() { :; }
-        blkid() { [ "$*" = '-L dx-nix' ] && return 0 || command blkid "$@"; }
-        populate_prepared_nix_volume 0 0
-        echo "exit=$?"
-    ) >"$p13_e1_out" 2>&1 || true
-    if grep -qxF 'exit=0' "$p13_e1_out" \
-        && grep -qF 'Adding /nix to /etc/fstab...' "$p13_e1_out" \
-        && grep -qxF 'LABEL=dx-nix /nix dxe-cov-probe dxe-cov-opts 0 0' /etc/fstab; then
-        test_pass "populate_prepared_nix_volume (root): a matching blkid label appends the LABEL= fstab line"
-    else
-        test_fail "populate_prepared_nix_volume (root): a matching blkid label appends the LABEL= fstab line (output: $(cat "$p13_e1_out"); fstab tail: $(tail -n 3 /etc/fstab 2>/dev/null))"
-    fi
-    cp "$p13_fstab_snapshot" /etc/fstab
-
-    p13_e2_out="$p13_fixture/case-e2.out"
-    (
-        export DX_BOOTSTRAP_SCRATCH_DIR="$p13_e_root/scratch-e2"
-        dx_write_nix_volume_record prepared "$p13_e_root" /dev/dxe-cov-fake dxe-cov-probe dxe-cov-opts
-        nix_image_store_import_required() { return 1; }
-        nix_install_image_essentials_root() { :; }
-        umount() { :; }
-        mount() { :; }
-        blkid() { return 1; }
-        populate_prepared_nix_volume 0 0
-        echo "exit=$?"
-    ) >"$p13_e2_out" 2>&1 || true
-    if grep -qxF 'exit=0' "$p13_e2_out" \
-        && grep -qF 'Adding /nix to /etc/fstab...' "$p13_e2_out" \
-        && grep -qxF '/dev/dxe-cov-fake /nix dxe-cov-probe dxe-cov-opts 0 0' /etc/fstab; then
-        test_pass "populate_prepared_nix_volume (root): a missing blkid label appends the raw device fstab line"
-    else
-        test_fail "populate_prepared_nix_volume (root): a missing blkid label appends the raw device fstab line (output: $(cat "$p13_e2_out"); fstab tail: $(tail -n 3 /etc/fstab 2>/dev/null))"
-    fi
-    cp "$p13_fstab_snapshot" /etc/fstab
+# (e1) a matching blkid label appends the LABEL= line to the FIXTURE file.
+p13_e1_fstab="$p13_fixture/fstab-e1"
+: > "$p13_e1_fstab"
+p13_e1_out="$p13_fixture/case-e1.out"
+(
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p13_e_root/scratch-e1"
+    dx_write_nix_volume_record prepared "$p13_e_root" /dev/dxe-cov-fake dxe-cov-probe dxe-cov-opts
+    nix_image_store_import_required() { return 1; }
+    nix_install_image_essentials_root() { :; }
+    umount() { :; }
+    mount() { :; }
+    blkid() { [ "$*" = '-L dx-nix' ] && return 0 || command blkid "$@"; }
+    populate_prepared_nix_volume 0 0 "$p13_e1_fstab"
+    echo "exit=$?"
+) >"$p13_e1_out" 2>&1 || true
+if grep -qxF 'exit=0' "$p13_e1_out" \
+    && grep -qF 'Adding /nix to /etc/fstab...' "$p13_e1_out" \
+    && [ "$(cat "$p13_e1_fstab" 2>/dev/null)" = 'LABEL=dx-nix /nix dxe-cov-probe dxe-cov-opts 0 0' ]; then
+    test_pass "populate_prepared_nix_volume: a matching blkid label appends the LABEL= line to the fstab parameter"
 else
-    p13_e_out="$p13_fixture/case-e-nonroot.out"
-    (
-        export DX_BOOTSTRAP_SCRATCH_DIR="$p13_e_root/scratch-e"
-        dx_write_nix_volume_record prepared "$p13_e_root" /dev/dxe-cov-fake dxe-cov-probe dxe-cov-opts
-        nix_image_store_import_required() { return 1; }
-        nix_install_image_essentials_root() { :; }
-        umount() { :; }
-        mount() { :; }
-        blkid() { return 1; }
-        populate_prepared_nix_volume 0 0
-        echo "exit=$?"
-    ) >"$p13_e_out" 2>&1 || true
-    p13_e_fstab_unchanged=false
-    if [ -e /etc/fstab ]; then
-        if cmp -s "$p13_fstab_snapshot" /etc/fstab; then p13_e_fstab_unchanged=true; fi
-    elif [ ! -s "$p13_fstab_snapshot" ]; then
-        p13_e_fstab_unchanged=true
-    fi
-    if grep -qF 'Adding /nix to /etc/fstab...' "$p13_e_out" \
-        && grep -qiF 'permission denied' "$p13_e_out" \
-        && [ "$p13_e_fstab_unchanged" = true ]; then
-        test_pass "populate_prepared_nix_volume (non-root): the fstab append fails closed (permission denied) and /etc/fstab is left unchanged"
-    else
-        test_fail "populate_prepared_nix_volume (non-root): the fstab append fails closed (permission denied) and /etc/fstab is left unchanged (output: $(cat "$p13_e_out"))"
-    fi
+    test_fail "populate_prepared_nix_volume: a matching blkid label appends the LABEL= line to the fstab parameter (output: $(cat "$p13_e1_out"); fixture: $(cat "$p13_e1_fstab" 2>/dev/null))"
+fi
+
+# (e1-idempotent) a second run against the SAME fixture, now already
+# holding the line, must not append again -- even though blkid this time
+# would steer toward the device branch instead, proving the presence
+# check short-circuits before that branch is ever evaluated.
+p13_e1b_out="$p13_fixture/case-e1b.out"
+(
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p13_e_root/scratch-e1b"
+    dx_write_nix_volume_record prepared "$p13_e_root" /dev/dxe-cov-fake dxe-cov-probe dxe-cov-opts
+    nix_image_store_import_required() { return 1; }
+    nix_install_image_essentials_root() { :; }
+    umount() { :; }
+    mount() { :; }
+    blkid() { return 1; }
+    populate_prepared_nix_volume 0 0 "$p13_e1_fstab"
+    echo "exit=$?"
+) >"$p13_e1b_out" 2>&1 || true
+if grep -qxF 'exit=0' "$p13_e1b_out" \
+    && ! grep -qF 'Adding /nix to /etc/fstab...' "$p13_e1b_out" \
+    && [ "$(cat "$p13_e1_fstab" 2>/dev/null)" = 'LABEL=dx-nix /nix dxe-cov-probe dxe-cov-opts 0 0' ]; then
+    test_pass "populate_prepared_nix_volume: a second run against a fstab parameter that already has the line is idempotent -- no second append, no 'Adding' message"
+else
+    test_fail "populate_prepared_nix_volume: a second run against a fstab parameter that already has the line is idempotent -- no second append, no 'Adding' message (output: $(cat "$p13_e1b_out"); fixture: $(cat "$p13_e1_fstab" 2>/dev/null))"
+fi
+
+# (e2) a missing blkid label appends the raw device line to a FRESH fixture.
+p13_e2_fstab="$p13_fixture/fstab-e2"
+: > "$p13_e2_fstab"
+p13_e2_out="$p13_fixture/case-e2.out"
+(
+    export DX_BOOTSTRAP_SCRATCH_DIR="$p13_e_root/scratch-e2"
+    dx_write_nix_volume_record prepared "$p13_e_root" /dev/dxe-cov-fake dxe-cov-probe dxe-cov-opts
+    nix_image_store_import_required() { return 1; }
+    nix_install_image_essentials_root() { :; }
+    umount() { :; }
+    mount() { :; }
+    blkid() { return 1; }
+    populate_prepared_nix_volume 0 0 "$p13_e2_fstab"
+    echo "exit=$?"
+) >"$p13_e2_out" 2>&1 || true
+if grep -qxF 'exit=0' "$p13_e2_out" \
+    && grep -qF 'Adding /nix to /etc/fstab...' "$p13_e2_out" \
+    && [ "$(cat "$p13_e2_fstab" 2>/dev/null)" = '/dev/dxe-cov-fake /nix dxe-cov-probe dxe-cov-opts 0 0' ]; then
+    test_pass "populate_prepared_nix_volume: a missing blkid label appends the raw device line to the fstab parameter"
+else
+    test_fail "populate_prepared_nix_volume: a missing blkid label appends the raw device line to the fstab parameter (output: $(cat "$p13_e2_out"); fixture: $(cat "$p13_e2_fstab" 2>/dev/null))"
+fi
+
+# The real /etc/fstab was never opened by any of (e1)/(e1-idempotent)/(e2)
+# above: content unchanged, proved by comparison against the snapshot taken
+# before this case started (not restored afterward -- there is nothing to
+# restore, since none of these sub-cases ever wrote to it).
+p13_etc_fstab_unchanged=false
+if [ -e /etc/fstab ]; then
+    if cmp -s "$p13_etc_fstab_snapshot" /etc/fstab; then p13_etc_fstab_unchanged=true; fi
+elif [ ! -s "$p13_etc_fstab_snapshot" ]; then
+    p13_etc_fstab_unchanged=true
+fi
+if [ "$p13_etc_fstab_unchanged" = true ]; then
+    test_pass "populate_prepared_nix_volume: the real /etc/fstab is never opened -- content unchanged across every fstab-parameter sub-case"
+else
+    test_fail "populate_prepared_nix_volume: the real /etc/fstab is never opened -- content unchanged across every fstab-parameter sub-case (fstab tail: $(tail -n 3 /etc/fstab 2>/dev/null))"
 fi
 
 # (f) nix_image_store_identity's own enumeration-failure branch: the

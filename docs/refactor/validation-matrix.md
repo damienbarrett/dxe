@@ -43,6 +43,22 @@ Unit/static tier's `test_section3_bootstrap.sh` fixtures, since they need
 `CAP_SYS_ADMIN` this tier's runner does not have; the real commands are only
 exercised on the Live isolated tier, via an actual guest boot.
 
+`populate_prepared_nix_volume`'s `/etc/fstab` append (P13 case (e) in
+`test_section3_bootstrap.sh`) gained a Fable B11 seam: a trailing optional
+`fstab` parameter, positional-with-production-default (`"${3:-/etc/fstab}"`),
+the same shape as `setup_persist`'s `persist_root` and
+`dx_persist_host_keys`'s `etc_ssh`/`store`. The Unit/static tier now proves
+the presence check and the append (LABEL= and raw-device lines, plus
+idempotency on a second run) entirely against a fixture file, and asserts
+the real `/etc/fstab` is never opened at all; the previous version of this
+case ran against the real file directly (root: append-and-restore on the
+kcov Linux image; non-root: a permission-denied fail-closed assertion on
+this dev Mac), which is gone. The real `/etc/fstab` append itself -- no
+production caller passes the new third argument, so `bootstrap_phases`
+still writes to the real file exactly as before -- is therefore live-tier
+only now: confirmed by an actual guest boot on the Live isolated tier, the
+same as the `prepare_nix_volume_impl` calls described just above.
+
 **WP6.4 / Astra F3 (the DQ6 owned-resource check) -- live-only assertion,
 not yet confirmed.** `dx_runtime_docker_resource_owned`'s absent-vs-
 could-not-inspect distinction (`bin/lib/dx-runtime-docker-identity.sh`'s
