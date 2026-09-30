@@ -577,6 +577,20 @@ esac
 [ "$?" -eq 0 ] && test_pass "dx (docker-ssh): refuses while the lifecycle lock is held, before any child script runs" \
     || test_fail "dx (docker-ssh): refuses while the lifecycle lock is held, before any child script runs"
 
+# Direct-call battery: dx_runtime_docker_lock_path (bin/lib/dx-runtime.sh's
+# dx_runtime_lock_path dispatch target for DX_RUNTIME=docker-ssh). No
+# production caller ever reaches this: bin/lib/dx-container.sh's
+# dx_lifecycle_lock_acquire only calls dx_runtime_lock_path in its Apple
+# branch (the docker-ssh branch gets its owner token from
+# dx_runtime_lock_acquire's own stdout instead) -- this function exists
+# purely so the runtime dispatch has a docker-ssh target to resolve to at
+# all, and always fails closed. Call it directly, as the dispatch would.
+(
+    out="$(dx_runtime_docker_lock_path 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "docker-ssh's lock lives in the remote lock container, not a local directory"
+)
+[ "$?" -eq 0 ] && test_pass "dx_runtime_docker_lock_path: always fails closed (direct call, no docker-ssh caller ever reaches it)" \
+    || test_fail "dx_runtime_docker_lock_path: always fails closed (direct call, no docker-ssh caller ever reaches it)"
 
 rm -rf "$fixture" 2>/dev/null || true
 
