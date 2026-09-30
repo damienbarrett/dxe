@@ -151,6 +151,66 @@ fire-and-forget.
 | [`bin/dx-recreate`](../bin/dx-recreate) | `dx-destroy → exec dx` (preserves volumes and keys) |
 | [`bin/dx-factory-reset`](../bin/dx-factory-reset) | prompts once, then `destroy-container → destroy-image → destroy-volumes --force → destroy-keys` |
 
+### The lifecycle lock (Astra F4)
+
+`bin/lib/dx-runtime-docker-lock.sh`'s remote per-profile lock container
+existed with no production caller before WP6.5: two controllers could run
+overlapping `create`/`recreate`/`destroy` sequences against the same
+profile. `bin/lib/dx-container.sh`'s `dx_lifecycle_lock_acquire`/
+`dx_lifecycle_lock_release` are the operation-level boundary every mutating
+entrypoint (`dx-create-container`, `dx-start-container`, `dx-stop-container`,
+`dx-destroy-container`, `dx-destroy`, `dx-recreate`, `dx`) now calls before
+its first mutating runtime call, refusing (or, on Apple, waiting briefly)
+rather than issuing any mutation when the lock cannot be claimed.
+
+**Nested ownership.** An orchestrator that runs a mutating entrypoint as a
+child process — `dx` running `dx-create-container`/`dx-start-container`,
+`dx-destroy` running `dx-destroy-container`/`dx-destroy-image` — acquires
+once and exports `DXE_LIFECYCLE_LOCK_OWNER`; a nested `dx_lifecycle_lock_acquire`
+call that finds it already set returns immediately, issuing no runtime call
+and taking no release responsibility. This works across a plain fork+wait
+child (the owner token is exported, so the child inherits it) and across
+`exec` (`dx-recreate` execing into `dx`) the same way, but an `exec`'d
+program's own local release-responsibility flag does not survive the image
+change — so `dx-recreate` and `dx` each release explicitly immediately
+before their own final `exec`, rather than relying on an `EXIT` trap that
+would never fire across it. `dx-recreate` and `dx` therefore run as two
+short, sequential lock holds (one for `dx-destroy`, one for `dx`'s own
+create+start), not one continuous hold across the whole recreate.
+
+**Per runtime.** Docker (`DX_RUNTIME=docker-ssh`) dispatches to the existing
+remote lock-container protocol: one real controller-exclusion primitive
+shared by every profile on the same `DX_REMOTE_HOST`, using Docker's own
+atomic `create --name` name-conflict as the exclusion mechanism (never a
+raw label check anyone could race). Its failure can never distinguish a
+live owner from an interrupted one, so a refusal always prints the current
+owner (`dx-lock status`'s own audit) and the remedy — confirm staleness by
+other means, then `dx-lock unlock --force` — rather than guessing or
+silently stealing it. Apple (`DX_RUNTIME=apple`, the default) has no remote
+daemon to exclude at all — Apple Container is always local, one controller,
+one daemon, and `bin/dx-lock` itself already refuses outright for this
+runtime — so its own `dx_runtime_apple_lock_acquire`/`_release`
+(`bin/lib/dx-runtime-apple.sh`) is a narrower local safety net: a plain
+`mkdir`+owner-file lock (`bin/lib/dx-host-util.sh`'s `dx_lock_acquire`, the
+same primitive `bin/lib/dx-tunnel.sh` uses for its own per-key lock) under
+this profile's own state directory, guarding only against two invocations
+from the same machine against the same `DX_CONTAINER_NAME` running at once.
+
+**First-run image guard.** The lock container's own base image is
+`$DX_IMAGE` (never started, but `docker create` still requires it to
+exist), so `dx-create-container` confirms the image exists before ever
+attempting the lock — a plain first run with no image yet gets today's
+"run `dx-create-image` first" message, never a confusing lock-acquisition
+failure.
+
+**Scope per daemon.** The local Nix-volume creation claim
+(`dx_nix_volume_claim_dir`) is folded into `dx_profile_state_segment`
+(WP3.4), the same per-profile identity segment `dx-tunnel`/`dx-backup`/
+`dx-ssh-common` already use, so two `docker-ssh` profiles pointed at
+different NASs never collide on the same local claim file merely because
+they share `$HOME` and a `DX_NIX_VOLUME` name. Apple's own claim path is
+unaffected (a single local daemon has nothing to disambiguate).
+
 ### Helpers and runtime utilities
 
 These do not belong to the layer model — they observe state, transfer files,
