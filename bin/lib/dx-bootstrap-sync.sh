@@ -296,7 +296,7 @@ dx_bootstrap_sync() {
 dx_bootstrap_sync_result_write() {
     local file="$1" outcome="$2" generation="$3" tmp
     case "$outcome" in
-        published|unchanged) ;;
+        published|unchanged) : ;;
         *) return 1 ;;
     esac
     case "$generation" in ''|*/*|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
