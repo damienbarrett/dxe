@@ -67,6 +67,10 @@ dx_ai_load_library dx_ai_check_cached dx-ai-cache-policy.sh DX_AI_BOOTSTRAP_ROOT
     || { echo "Error: dx-ai's cache-policy library is unavailable." >&2; return 1 2>/dev/null || exit 1; }
 dx_ai_load_library dx_ai_setup_credentials dx-ai-post-install.sh DX_AI_BOOTSTRAP_ROOT 1 \
     || { echo "Error: dx-ai's post-install library is unavailable." >&2; return 1 2>/dev/null || exit 1; }
+# Fable B9: the shared persist-relocate primitive dx_ai_setup_credentials
+# (above) now uses for its AI-credential symlinks.
+dx_ai_load_library dx_persist_relocate_dir dx-persist-relocate.sh DX_AI_BOOTSTRAP_ROOT 1 \
+    || { echo "Error: dx-ai's persist-relocate library is unavailable." >&2; return 1 2>/dev/null || exit 1; }
 
 dx_ai_usage() {
     cat <<'EOF'

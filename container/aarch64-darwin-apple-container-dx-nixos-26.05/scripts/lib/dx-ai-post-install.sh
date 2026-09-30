@@ -40,16 +40,28 @@ dx_ai_merge_json_setting() {
     fi
 }
 
+# Fable B9: .gemini/.claude/.codex/.local/share/keyrings each go through the
+# shared dx_persist_relocate_dir (scripts/lib/dx-persist-relocate.sh, eagerly
+# loaded by dx-ai.sh alongside this file) -- a pre-existing REAL directory at
+# any of these is relocated into $persist_home (conflicts renamed aside)
+# rather than either silently nested into (the old activation.sh `ln -sfn`
+# shape) or failing loudly with no recovery (the old dx-ai.sh `ln -sfnT`
+# shape, whose failure this function's own `||` call chain never surfaced
+# anyway -- see dx_ai_main). .claude.json is a FILE, not a directory, so it
+# keeps its own simple seed-if-missing-then-link shape; nothing here ever
+# owned relocating a pre-existing real file at that exact path.
 dx_ai_setup_credentials() {
     local persist_home="${1:-/persist/home/dx}" home="${2:-$HOME}" settings
     dx_ai_load_opencode_persistence || return 1
     dx_ai_opencode_persistence "$persist_home" "$home" || return 1
-    mkdir -p "$persist_home/.gemini/antigravity-cli" "$persist_home/.claude" "$persist_home/.codex" \
-        "$persist_home/.local/share/keyrings" "$home/.config" "$home/.local/share"
+    mkdir -p "$persist_home" "$persist_home/.local/share" "$home/.config" "$home/.local/share" || return 1
+    dx_persist_relocate_dir "$home/.gemini" "$persist_home/.gemini" "$persist_home" gemini || return 1
+    mkdir -p "$persist_home/.gemini/antigravity-cli" || return 1
+    dx_persist_relocate_dir "$home/.claude" "$persist_home/.claude" "$persist_home" claude || return 1
+    dx_persist_relocate_dir "$home/.codex" "$persist_home/.codex" "$persist_home" codex || return 1
+    dx_persist_relocate_dir "$home/.local/share/keyrings" "$persist_home/.local/share/keyrings" "$persist_home/.local/share" keyrings || return 1
     [ -s "$persist_home/.claude.json" ] || printf '%s\n' '{}' > "$persist_home/.claude.json"
-    ln -sfnT "$persist_home/.gemini" "$home/.gemini"; ln -sfnT "$persist_home/.claude" "$home/.claude"
-    ln -sfnT "$persist_home/.claude.json" "$home/.claude.json"; ln -sfnT "$persist_home/.codex" "$home/.codex"
-    ln -sfnT "$persist_home/.local/share/keyrings" "$home/.local/share/keyrings"
+    ln -sfnT "$persist_home/.claude.json" "$home/.claude.json"
     settings="$persist_home/.claude/settings.json"; [ -s "$settings" ] || printf '%s\n' '{}' > "$settings"
     if ! jq -e '.statusLine' "$settings" >/dev/null 2>&1; then
         dx_ai_merge_json_setting "$settings" '. + {statusLine: {type: "command", command: "dx-claude-statusline"}}' || return 1

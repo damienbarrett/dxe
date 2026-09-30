@@ -1491,6 +1491,12 @@ done
 home_candidate="$loader_fixture/home-candidate"
 mkdir -p "$home_candidate/.local/lib/dx"
 cp "$CONTAINER_DIR/scripts/lib/dx-opencode-persistence.sh" "$home_candidate/.local/lib/dx/dx-opencode-persistence.sh"
+# dx-opencode-persistence.sh itself now eagerly loads dx-persist-relocate.sh
+# (Fable B9) via its own sibling-relative candidate 1, which resolves
+# wherever dx-opencode-persistence.sh itself was just found -- colocate it
+# alongside, the same way the outer loader_fixture_eager_lib loop above
+# colocates dx-ai.sh's own eager libraries.
+cp "$CONTAINER_DIR/scripts/lib/dx-persist-relocate.sh" "$home_candidate/.local/lib/dx/dx-persist-relocate.sh"
 if HOME="$home_candidate" DX_AI_BOOTSTRAP_ROOT="$loader_fixture/no-such-bootstrap" \
     bash -c "source '$loader_fixture/bin/dx-ai.sh'; dx_ai_load_opencode_persistence && declare -F dx_ai_opencode_persistence >/dev/null"; then
     test_pass "dx_ai_load_opencode_persistence resolves the Home-Manager-installed copy (candidate 2)"
@@ -1501,6 +1507,7 @@ fi
 bootstrap_candidate="$loader_fixture/bootstrap-candidate"
 mkdir -p "$bootstrap_candidate/scripts/lib"
 cp "$CONTAINER_DIR/scripts/lib/dx-opencode-persistence.sh" "$bootstrap_candidate/scripts/lib/dx-opencode-persistence.sh"
+cp "$CONTAINER_DIR/scripts/lib/dx-persist-relocate.sh" "$bootstrap_candidate/scripts/lib/dx-persist-relocate.sh"
 if HOME="$loader_fixture/no-such-home" DX_AI_BOOTSTRAP_ROOT="$bootstrap_candidate" \
     bash -c "source '$loader_fixture/bin/dx-ai.sh'; dx_ai_load_opencode_persistence && declare -F dx_ai_opencode_persistence >/dev/null"; then
     test_pass "dx_ai_load_opencode_persistence resolves the bootstrap-volume fallback (candidate 3)"
@@ -1608,37 +1615,36 @@ fi
 rm -rf "$unsafe_fixture"
 
 # --- ln -sfnT hardening: a pre-existing REAL directory at one of the four
-# legacy link targets must produce an error, not a nested symlink placed
-# inside it (the bug Branch 2's revert reintroduced by removing -T; see
-# checkout-consolidation-plan.md's Branch 2 section). dx_ai_setup_credentials
-# does not itself check each ln's exit status (neither did the code Branch 2
-# reverted), so its own return code stays 0 either way; the observable
-# contract this hardening buys is that the failing ln call reports an error
-# on stderr instead of nothing, and -- the actually load-bearing part --
-# leaves the real directory and its content alone rather than nesting a
-# symlink inside it. This runs deliberately unshimmed: GNU ln -T genuinely
-# refuses a real directory target on Linux, and this repository's macOS
-# bash-3.2 job proves the same observable contract for a different reason --
-# BSD ln has no -T option at all, so the call fails there too -- but either
-# way nothing is silently swallowed and nothing is nested.
+# legacy link targets must be relocated into persist rather than either
+# silently nested into (the bug Branch 2's revert reintroduced by removing
+# -T; see checkout-consolidation-plan.md's Branch 2 section -- this was
+# activation.sh's own `ln -sfn` shape) or refused with the failure never
+# surfacing (dx-ai.sh's own prior `ln -sfnT` shape, called in a `||` context
+# that never checked it -- see dx_ai_main). Fable B9: dx_persist_relocate_dir
+# now gives both entry points the same, actually-recovering behavior --
+# the pre-existing real directory's content moves into $persist_home/.claude
+# (conflicts renamed aside, none here), and ~/.claude ends up the intended
+# symlink, exactly as a repeat run from a clean state would.
 hardening_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-creds-hardening.XXXXXX")"
 hardening_fixture="$(cd "$hardening_fixture" && pwd -P)"
 hardening_persist="$hardening_fixture/persist/home/dx"
 hardening_home="$hardening_fixture/home/dx"
 mkdir -p "$hardening_persist" "$hardening_home/.claude"
 printf '%s\n' pre-existing-real-file > "$hardening_home/.claude/keep-me"
-hardening_stderr="$(dx_ai_setup_credentials "$hardening_persist" "$hardening_home" 2>&1 >/dev/null)"
-if [ -n "$hardening_stderr" ]; then
-    test_pass "a pre-existing real ~/.claude directory produces an error, not silence"
+if dx_ai_setup_credentials "$hardening_persist" "$hardening_home" >/dev/null 2>&1; then
+    test_pass "dx_ai_setup_credentials relocates a pre-existing real ~/.claude directory instead of failing"
 else
-    test_fail "a pre-existing real ~/.claude directory produces an error, not silence"
+    test_fail "dx_ai_setup_credentials relocates a pre-existing real ~/.claude directory instead of failing"
 fi
-if [ -d "$hardening_home/.claude" ] && [ ! -L "$hardening_home/.claude" ] \
-    && [ "$(cat "$hardening_home/.claude/keep-me")" = pre-existing-real-file ] \
-    && [ ! -e "$hardening_home/.claude/.claude" ]; then
-    test_pass "the pre-existing real ~/.claude directory and its content survive untouched, not nested into"
+if [ -L "$hardening_home/.claude" ] && [ "$(readlink "$hardening_home/.claude")" = "$hardening_persist/.claude" ]; then
+    test_pass "the relocated ~/.claude becomes the intended symlink"
 else
-    test_fail "the pre-existing real ~/.claude directory and its content survive untouched, not nested into"
+    test_fail "the relocated ~/.claude becomes the intended symlink"
+fi
+if [ "$(cat "$hardening_persist/.claude/keep-me")" = pre-existing-real-file ]; then
+    test_pass "the pre-existing real ~/.claude directory's content is preserved, relocated into persist"
+else
+    test_fail "the pre-existing real ~/.claude directory's content is preserved, relocated into persist"
 fi
 rm -rf "$hardening_fixture"
 
