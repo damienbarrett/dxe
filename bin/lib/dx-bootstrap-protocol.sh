@@ -60,6 +60,14 @@
 # falls through to the same wait/timeout every other contender uses. The
 # portable `[ ! -e "$aside" ] && mv "$lock" "$aside"` form is used rather
 # than GNU mv's `-T`, since the guest's own `mv` may not support it.
+#
+# boot_id's raw-UUID short circuit only trusts a
+# /proc/sys/kernel/random/boot_id whose content is a hex/dash string (`case
+# "$dxgpp_boot" in *[!0-9A-Fa-f-]*) ;; esac`), falling through to the
+# /proc/stat btime fallback otherwise -- dx-ai-lock.sh's own pre-WP5.2
+# dx_ai_boot_id had this same validation; unifying the three implementations
+# had silently dropped it, which would have let a corrupted or non-Linux
+# boot_id file be accepted verbatim as an identity instead of failing closed.
 dx_guest_publication_protocol_snippet() {
     cat <<'DX_GUEST_PUBLICATION_PROTOCOL'
 # --- BEGIN dx_guest_publication_protocol (WP5.2; bin/lib/dx-bootstrap-protocol.sh) ---
@@ -74,8 +82,10 @@ process_start() {
 boot_id() {
     dxgpp_proc_root=${DX_LOCK_PROC_ROOT:-/proc}
     if dxgpp_boot=$(cat "$dxgpp_proc_root/sys/kernel/random/boot_id" 2>/dev/null) && [ -n "$dxgpp_boot" ]; then
-        printf "%s\n" "$dxgpp_boot"
-        return 0
+        case "$dxgpp_boot" in
+            *[!0-9A-Fa-f-]*) ;;
+            *) printf "%s\n" "$dxgpp_boot"; return 0 ;;
+        esac
     fi
     [ -r "$dxgpp_proc_root/stat" ] || return 1
     while read -r dxgpp_key dxgpp_value dxgpp_extra; do
