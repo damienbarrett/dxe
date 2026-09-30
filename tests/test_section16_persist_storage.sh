@@ -107,8 +107,14 @@ assert_grep_in_file "$DX_MIGRATE" \
 
 STALE_MATCHES=$(rg -n '/workspace|DX_WORKSPACE|WORKSPACE|~/workspace|DX_PERSIST_PATH' \
     --hidden -g '!.git' -g '!workspace-persist.md' "$BASE_DIR" 2>/dev/null || true)
+# WP8.4a split tests/test_docker_runtime_adapter.sh's ~3,900 lines into
+# tests/test_docker_adapter_{transport,identity,lifecycle,lock,health}.sh;
+# the migration-helper fixture that legitimately references
+# DX_LEGACY_WORKSPACE_VOLUME moved with it (now in _lifecycle.sh), so the
+# exemption covers the whole split family, the same as every other file
+# already on this list.
 UNEXPECTED_STALE=$(printf '%s\n' "$STALE_MATCHES" | grep -vE \
-    'bin/dx-lib.sh|bin/lib/dx-config.sh|bin/dx-create-volumes|bin/dx-migrate-persist|bin/dx-mount|README.md|refactor-plan.md|docs/|tests/test_section9_host_scripts.sh|tests/test_section10_docs.sh|tests/test_section16_persist_storage.sh|tests/test_section18_mount_git.sh|tests/test_runtime_boundary_characterisation.sh|tests/test_docker_runtime_adapter.sh|tests/fixtures/config-registry-defaults.txt' || true)
+    'bin/dx-lib.sh|bin/lib/dx-config.sh|bin/dx-create-volumes|bin/dx-migrate-persist|bin/dx-mount|README.md|refactor-plan.md|docs/|tests/test_section9_host_scripts.sh|tests/test_section10_docs.sh|tests/test_section16_persist_storage.sh|tests/test_section18_mount_git.sh|tests/test_runtime_boundary_characterisation.sh|tests/test_docker_runtime_adapter.sh|tests/test_docker_adapter_.*\.sh|tests/fixtures/config-registry-defaults.txt' || true)
 if [ -z "$UNEXPECTED_STALE" ]; then
     test_pass "no stale workspace runtime references outside explicit legacy docs/tests"
 else
