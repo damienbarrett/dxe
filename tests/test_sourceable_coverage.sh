@@ -38,6 +38,9 @@ source "$ROOT/bin/lib/dx-config.sh"
 source "$ROOT/bin/lib/dx-host-util.sh"
 source "$ROOT/bin/lib/dx-runtime.sh"
 source "$ROOT/bin/lib/dx-container.sh"
+# dx-ssh-common.sh renders the guest publication protocol from
+# dx-bootstrap-protocol.sh (WP5.2), which bin/dx-lib.sh sources first.
+source "$ROOT/bin/lib/dx-bootstrap-protocol.sh"
 source "$ROOT/bin/lib/dx-ssh-common.sh"
 source "$ROOT/bin/lib/dx-mount-plan.sh"
 source "$ROOT/bin/lib/dx-tunnel.sh"
