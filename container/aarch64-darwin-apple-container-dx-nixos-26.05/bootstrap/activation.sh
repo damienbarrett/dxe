@@ -347,7 +347,9 @@ configure_guest() {
     run_home_manager_activation
 
     # Set nushell as default shell
-    NU_PATH="/home/dx/.nix-profile/bin/nu"
+    # Fable B11: was an unintended global (no `local`), leaking into any
+    # later code that reads NU_PATH for something else.
+    local NU_PATH="/home/dx/.nix-profile/bin/nu"
     if [ -f "$NU_PATH" ]; then
         echo "Setting nushell as the default shell..."
         touch /etc/shells
