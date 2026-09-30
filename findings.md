@@ -362,7 +362,7 @@ Every review ID and where it lands.
 - [x] d9a0b31 **WP9.3** CI notes: ShellCheck crash list names both files; section 0
   fails loudly with `--strict` when the binary is absent; hermetic-vs-live
   tiers stated once in `validation-matrix.md`. (Fable E1, Muse E2, E4)
-- [ ] **WP9.4** Rename the architecture-named guest tree to
+- [x] 87fa64b+e13263b **WP9.4** Rename the architecture-named guest tree to
   `container/dx-nixos-26.05/` once WP1.6's `dx_test_guest_dir` makes it a
   one-line test change; leave a git-tracked compatibility symlink at the
   old path for one release. (Muse B5)
@@ -460,3 +460,4 @@ Every review ID and where it lands.
 - **2026-09-30** CI fixes landed (314b101, a624991): section 31's reconstruction subshell now sources `dx-bootstrap-protocol.sh` before `dx-ssh-common.sh` (the facade's required order; the "golden" is rebuilt live, not a fixture); section 0's own ShellCheck cases skip with both versions named when the local binary is not the pinned 0.10.0 (strict makes that a failure). The runner's newer shellcheck flagged SC2034/SC2154 that 0.10.0 does not; confirmed not real bugs.
 - **2026-09-30** Gate run 15 stopped in the coverage driver (`dx_guest_publication_protocol_snippet` not found): it sourced `dx-ssh-common.sh` without WP5.2's `dx-bootstrap-protocol.sh`; fixed by sourcing the protocol first (the facade's order). Lesson: every host-library addition to `dx-lib.sh`'s order must be mirrored in the two suites that source libraries by hand (the coverage driver and section 31's reconstruction).
 - **2026-09-30** Gate run 16 (snapshot 8139a0a): every suite green under kcov, 99.82%; left: `dx-config.sh:365` (root-derivation fallback) and six lines of the shipped `dx-publication.sh` (an empty arm, the btime-garbage branch, a loop terminator, the owner-write failure branch). Fix in flight; WP9.4 rename in flight.
+- **2026-09-30** WP9.4 landed (87fa64b, e13263b): the guest tree is `container/dx-nixos-26.05`; the old architecture-named path is a git-tracked symlink kept for one release, and `dx_config_validate_cross_fields` warns when a configured path still names it (removed at the next base changeover). Section 10's stale-name scan holds the line with explicit exemptions. Verified after cherry-pick: sections 10 (167), 21 (165), 16, 6, 5, 3 (239), 2, 9 (164), 13, source contracts (78); Nix flake check green on the new path. Scratch helpers that mount the guest tree must use the new path.
