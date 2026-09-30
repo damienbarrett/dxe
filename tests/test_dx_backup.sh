@@ -1282,7 +1282,12 @@ printf 'legacy-content\n' > "$LEGACY_UNIT_FIXTURE/current/home/dx/f.txt"
 printf 'home/dx/f.txt\t14\t0\tdeadbeef\n' > "$LEGACY_UNIT_FIXTURE/manifest.tsv"
 touch -t 202401021200 "$LEGACY_UNIT_FIXTURE/manifest.tsv"
 legacy_unit_expected_epoch="$(stat -f '%m' "$LEGACY_UNIT_FIXTURE/manifest.tsv" 2>/dev/null || stat -c '%Y' "$LEGACY_UNIT_FIXTURE/manifest.tsv")"
+# The snapshot includes manifest.tsv too (copied alongside, matching where
+# migration will place it inside the new generation): the "byte-identical"
+# comparison below is over the WHOLE generation directory as migration
+# leaves it, not just the pre-existing file tree.
 cp -R "$LEGACY_UNIT_FIXTURE/current/" "$LEGACY_UNIT_FIXTURE/before-current/"
+cp "$LEGACY_UNIT_FIXTURE/manifest.tsv" "$LEGACY_UNIT_FIXTURE/before-current/manifest.tsv"
 
 if dx_backup_generation_migrate_legacy "$LEGACY_UNIT_FIXTURE"; then
     test_pass "dx_backup_generation_migrate_legacy: succeeds against a legacy-shaped mirror"
@@ -1460,7 +1465,12 @@ dx_backup_fetch_listing "$DX_CONTAINER_NAME" > "$E2E_LEGACY_ROOT/real-listing.ts
 LC_ALL=C sort "$E2E_LEGACY_ROOT/real-listing.tsv" > "$E2E_LEGACY_MIRROR/manifest.tsv"
 cp "$E2E_LEGACY_PERSIST/home/dx/unchanged.txt" "$E2E_LEGACY_MIRROR/current/home/dx/unchanged.txt"
 cp "$E2E_LEGACY_PERSIST/home/dx/changed.txt" "$E2E_LEGACY_MIRROR/current/home/dx/changed.txt"
+# The snapshot includes manifest.tsv too (copied alongside, matching where
+# migration will place it inside the legacy generation): the
+# "byte-identical" comparison below is over the WHOLE generation directory
+# as migration leaves it, not just the pre-existing file tree.
 cp -R "$E2E_LEGACY_MIRROR/current/" "$E2E_LEGACY_ROOT/before-legacy-current/"
+cp "$E2E_LEGACY_MIRROR/manifest.tsv" "$E2E_LEGACY_ROOT/before-legacy-current/manifest.tsv"
 e2e_legacy_manifest_before="$(cat "$E2E_LEGACY_MIRROR/manifest.tsv")"
 
 printf 'legacy-new-content\n' > "$E2E_LEGACY_PERSIST/home/dx/changed.txt"
@@ -1476,7 +1486,7 @@ else
 fi
 
 e2e_current_target="$(readlink "$E2E_LEGACY_MIRROR/current" 2>/dev/null || true)"
-e2e_gen_names="$(find "$E2E_LEGACY_MIRROR/generations" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | xargs -n1 basename 2>/dev/null | LC_ALL=C sort)"
+e2e_gen_names="$(find "$E2E_LEGACY_MIRROR/generations" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's#.*/##' | LC_ALL=C sort)"
 e2e_gen_count="$(printf '%s\n' "$e2e_gen_names" | grep -c . || true)"
 if [ "$e2e_gen_count" -eq 2 ]; then
     test_pass "Astra F5 / WP6.9: exactly two generations are retained (the legacy one plus the new one)"

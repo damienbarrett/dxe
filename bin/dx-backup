@@ -61,7 +61,6 @@ container_exists "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_
 container_is_running "$DX_CONTAINER_NAME" || { echo "Error: Container $DX_CONTAINER_NAME is not running. Run ./bin/dx-start-container first." >&2; exit 1; }
 
 BACKUP_DIR="$(dx_backup_resolve_dir)"
-MANIFEST="$(dx_backup_generation_manifest_path "$BACKUP_DIR")"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dx-backup.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
@@ -76,6 +75,32 @@ if [ "$SUMMARY" = true ]; then
     dx_backup_summarize "$LISTING_REASON"
     exit 0
 fi
+
+# Astra F5 / WP6.6: one lock, shared with dx-restore (bin/lib/dx-host-util.sh's
+# dx_lock_acquire), over the whole mirror directory -- taken only for a REAL
+# (mutating) run, never for --dry-run/--summary above (which read only the
+# guest listing and the OLD manifest, never `current` itself, and must
+# create nothing on disk -- an existing, tested contract), held until this
+# process exits (successfully, on error, or on a trapped signal), so two
+# real dx-backup runs -- or a real run and a dx-restore -- against the SAME
+# mirror can never interleave their own reads/writes of it. A run that
+# cannot get the lock within the timeout refuses with dx_lock_acquire's own
+# clear error naming the lock path, rather than waiting forever or racing
+# ahead anyway.
+if [ "$DRY_RUN" != true ]; then
+    mkdir -p "$BACKUP_DIR"
+    BACKUP_LOCK="$BACKUP_DIR/.lock"
+    dx_lock_acquire "$BACKUP_LOCK" "${DX_TUNNEL_LOCK_TIMEOUT:-5}" || exit 1
+    trap 'rm -rf "$WORK"; dx_lock_release "$BACKUP_LOCK" >/dev/null 2>&1 || true' EXIT
+    # Astra F5 / WP6.9 follow-up: a mirror created before this generation
+    # model existed (current/ a real directory, manifest.tsv beside it) is
+    # adopted in place -- once, idempotently, under this same lock -- before
+    # selection, so the diff below reads its real history instead of
+    # treating a pre-existing mirror as empty.
+    dx_backup_generation_migrate_legacy "$BACKUP_DIR" || exit 1
+fi
+
+MANIFEST="$(dx_backup_generation_manifest_path "$BACKUP_DIR")"
 
 echo "Selecting at-risk content from $DX_CONTAINER_NAME:/persist..."
 dx_backup_fetch_listing "$DX_CONTAINER_NAME" "${DENY_PATTERNS[@]+"${DENY_PATTERNS[@]}"}" > "$LISTING"
@@ -98,23 +123,6 @@ if [ "$DRY_RUN" = true ]; then
     echo "${fetch_count:-0} files, ${fetch_bytes:-0} bytes would be transferred."
     exit 0
 fi
-
-mkdir -p "$BACKUP_DIR"
-
-# Astra F5 / WP6.6: one lock, shared with dx-restore (bin/lib/dx-host-util.sh's
-# dx_lock_acquire), over the whole mirror directory -- taken only for a REAL
-# (mutating) run, never for --dry-run/--summary above (which read only the
-# guest listing and the OLD manifest, never `current` itself, and must
-# create nothing on disk -- an existing, tested contract), held until this
-# process exits (successfully, on error, or on a trapped signal), so two
-# real dx-backup runs -- or a real run and a dx-restore -- against the SAME
-# mirror can never interleave their own reads/writes of it. A run that
-# cannot get the lock within the timeout refuses with dx_lock_acquire's own
-# clear error naming the lock path, rather than waiting forever or racing
-# ahead anyway.
-BACKUP_LOCK="$BACKUP_DIR/.lock"
-dx_lock_acquire "$BACKUP_LOCK" "${DX_TUNNEL_LOCK_TIMEOUT:-5}" || exit 1
-trap 'rm -rf "$WORK"; dx_lock_release "$BACKUP_LOCK" >/dev/null 2>&1 || true' EXIT
 
 if [ "${fetch_count:-0}" -gt 0 ] || [ "${remove_count:-0}" -gt 0 ]; then
     if [ "${fetch_count:-0}" -gt 0 ]; then
