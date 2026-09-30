@@ -174,6 +174,125 @@ FAKE_EOF
     [ "$owner" = second ]
 ) && test_pass "live create reservations cannot be stolen before container creation" || test_fail "live create reservations cannot be stolen before container creation"
 
+# --- Apple lifecycle lock (Astra F4 / WP6.5) --------------------------------
+#
+# Apple Container is always local -- one controller, one daemon -- so there
+# is no remote owner to exclude (bin/dx-lock itself already refuses outright
+# for DX_RUNTIME=apple). dx_runtime_apple_lock_acquire/_release is the
+# narrower local safety net: two invocations of dx/dx-create-container/...
+# from THIS machine, against the SAME DX_CONTAINER_NAME, running at once.
+# The docker-ssh half of dx_lifecycle_lock_acquire/_release (nested
+# inheritance, the already-held refusal, first-run image guard, per-daemon
+# claim scoping) is covered in tests/test_docker_runtime_adapter.sh; this
+# covers Apple's own dispatch target and the local mkdir-lock contention it
+# actually protects against.
+(
+    lock_home="$config_fixture/apple-lock-home"
+    export XDG_STATE_HOME="$lock_home/state"
+    unset DX_RUNTIME
+    export DX_CONTAINER_NAME=dxe-p9-apple-lock
+    export DX_TUNNEL_LOCK_TIMEOUT=1
+    export DXE_SELF_PROCESS_IDENTITY="test-apple-lock-$$"
+    owner="$(dx_runtime_apple_lock_acquire)"; rc1=$?
+    [ "$rc1" -eq 0 ] && [ -n "$owner" ] && [ -d "$owner" ] || exit 1
+    dx_runtime_apple_lock_release "$owner"; rc2=$?
+    [ "$rc2" -eq 0 ] && [ ! -d "$owner" ]
+) && test_pass "dx_runtime_apple_lock_acquire/_release: acquires and releases a local, profile-scoped lock directory" \
+    || test_fail "dx_runtime_apple_lock_acquire/_release: acquires and releases a local, profile-scoped lock directory"
+
+# A genuinely different, still-live process (a real bash -c child, not this
+# same shell's own $$) holding the same profile's local lock is refused,
+# never silently stolen -- the same "PID plus process start" reclaim logic
+# bin/lib/dx-host-util.sh's own dx_lock_acquire already proves elsewhere in
+# this suite, exercised here through the Apple lifecycle-lock entry point.
+(
+    lock_home="$config_fixture/apple-lock-contend-home"
+    export XDG_STATE_HOME="$lock_home/state"
+    unset DX_RUNTIME
+    export DX_CONTAINER_NAME=dxe-p9-apple-lock-contend
+    export DX_TUNNEL_LOCK_TIMEOUT=1
+    ready="$config_fixture/apple-lock-ready"; hold="$config_fixture/apple-lock-hold"
+    rm -f "$ready" "$hold"; : > "$hold"
+    bash -c '
+        source "$1"
+        source "$2"
+        dx_runtime_apple_lock_acquire >/dev/null
+        : > "$3"
+        while [ -e "$4" ]; do sleep 1; done
+    ' _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-runtime-apple.sh" "$ready" "$hold" &
+    holder_pid=$!
+    for _ in $(seq 1 20); do [ -e "$ready" ] && break; sleep 1; done
+    [ -e "$ready" ] || { rm -f "$hold"; wait "$holder_pid" 2>/dev/null || true; exit 1; }
+    rc=0; out="$(dx_runtime_apple_lock_acquire 2>&1)" || rc=$?
+    rm -f "$hold"
+    wait "$holder_pid" 2>/dev/null || true
+    [ "$rc" -ne 0 ]
+) && test_pass "dx_runtime_apple_lock_acquire: refuses while another live process holds this profile's local lock" \
+    || test_fail "dx_runtime_apple_lock_acquire: refuses while another live process holds this profile's local lock"
+
+# dx_lifecycle_lock_acquire/_release dispatch to the Apple path by default
+# (DX_RUNTIME unset/apple), acquiring/releasing the same local lock.
+(
+    lock_home="$config_fixture/apple-lifecycle-lock-home"
+    export XDG_STATE_HOME="$lock_home/state"
+    unset DX_RUNTIME
+    export DX_CONTAINER_NAME=dxe-p9-apple-lifecycle
+    export DX_TUNNEL_LOCK_TIMEOUT=1
+    export DXE_SELF_PROCESS_IDENTITY="test-apple-lifecycle-$$"
+    [ -z "${DXE_LIFECYCLE_LOCK_OWNER:-}" ] || exit 1
+    dx_lifecycle_lock_acquire || exit 1
+    owner="$DXE_LIFECYCLE_LOCK_OWNER"
+    [ -n "$owner" ] && [ -d "$owner" ] || exit 1
+    dx_lifecycle_lock_release
+    [ -z "${DXE_LIFECYCLE_LOCK_OWNER:-}" ] && [ ! -d "$owner" ]
+) && test_pass "dx_lifecycle_lock_acquire/_release (apple): acquires and releases the local profile lock around itself" \
+    || test_fail "dx_lifecycle_lock_acquire/_release (apple): acquires and releases the local profile lock around itself"
+
+# Nested/inherited: an owner token already present in the environment means
+# neither call reaches the Apple lock functions at all.
+(
+    unset DX_RUNTIME
+    export DX_CONTAINER_NAME=dxe-p9-apple-lifecycle-nested
+    dx_runtime_apple_lock_acquire() { echo "MUST NOT BE CALLED (acquire)" >&2; return 1; }
+    dx_runtime_apple_lock_release() { echo "MUST NOT BE CALLED (release)" >&2; return 1; }
+    export DXE_LIFECYCLE_LOCK_OWNER=inherited-apple-token
+    dx_lifecycle_lock_acquire; rc1=$?
+    dx_lifecycle_lock_release; rc2=$?
+    unset -f dx_runtime_apple_lock_acquire dx_runtime_apple_lock_release
+    [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ] && [ "$DXE_LIFECYCLE_LOCK_OWNER" = inherited-apple-token ]
+) && test_pass "dx_lifecycle_lock_acquire/_release (apple): an inherited owner token is a no-op" \
+    || test_fail "dx_lifecycle_lock_acquire/_release (apple): an inherited owner token is a no-op"
+
+# Entrypoint level: bin/dx-stop-container refuses while another live process
+# holds this profile's local lock, issuing ZERO `container` calls (the
+# preflight's own `command -v container` is not an invocation).
+(
+    ep_home="$config_fixture/apple-entrypoint-lock-home"
+    ep_state="$ep_home/state"
+    ep_tools="$(fake_tool_dir_create "$config_fixture")"
+    ep_log="$config_fixture/apple-entrypoint-lock-calls.log"
+    : > "$ep_log"
+    fake_tool_write "$ep_tools" container 'printf "CALLED: %s\n" "$*" >> "$DXE_WP65_EP_LOG"; exit 1'
+    export XDG_STATE_HOME="$ep_state" DX_CONTAINER_NAME=dxe-p9-apple-entrypoint DXE_WP65_EP_LOG="$ep_log"
+    ready="$config_fixture/apple-entrypoint-lock-ready"; hold="$config_fixture/apple-entrypoint-lock-hold"
+    rm -f "$ready" "$hold"; : > "$hold"
+    bash -c '
+        source "$1"
+        source "$2"
+        dx_runtime_apple_lock_acquire >/dev/null
+        : > "$3"
+        while [ -e "$4" ]; do sleep 1; done
+    ' _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-runtime-apple.sh" "$ready" "$hold" &
+    holder_pid=$!
+    for _ in $(seq 1 20); do [ -e "$ready" ] && break; sleep 1; done
+    [ -e "$ready" ] || { rm -f "$hold"; wait "$holder_pid" 2>/dev/null || true; exit 1; }
+    rc=0; out="$(PATH="$ep_tools:/usr/bin:/bin" "$BASE_DIR/bin/dx-stop-container" 2>&1)" || rc=$?
+    rm -f "$hold"
+    wait "$holder_pid" 2>/dev/null || true
+    [ "$rc" -ne 0 ] && [ ! -s "$ep_log" ] && printf '%s\n' "$out" | stdin_matches -F -- "lifecycle lock"
+) && test_pass "dx-stop-container (apple): refuses while another live process holds the local lifecycle lock, zero container calls" \
+    || test_fail "dx-stop-container (apple): refuses while another live process holds the local lifecycle lock, zero container calls"
+
 source "$BASE_DIR/bin/dx-forward"
 if dx_tunnel_cli_collect forward 5173 8000:8001 && [ "$(printf '%s\n' "${DX_TUNNEL_CLI_MAPPINGS[@]}")" = $'5173:5173\n8001:8000' ]; then test_pass "forward wrapper parses direction-specific mappings"; else test_fail "forward wrapper parses direction-specific mappings"; fi
 if dx_tunnel_cli_collect forward 80 >/dev/null 2>&1; then test_fail "forward wrapper rejects privileged host ports"; else test_pass "forward wrapper rejects privileged host ports"; fi

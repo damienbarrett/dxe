@@ -1896,6 +1896,330 @@ esac'
 )
 [ "$?" -eq 0 ] && test_pass "bin/dx-lock unlock --force removes the lock end to end" || test_fail "bin/dx-lock unlock --force removes the lock end to end"
 
+# --- dx_lifecycle_lock_acquire/_release (Astra F4 / WP6.5) -----------------
+#
+# The operation-level boundary bin/lib/dx-container.sh exposes over the
+# lock-container protocol above: no production caller acquired it before
+# this. Apple's own local-lock dispatch is covered in
+# tests/test_section9_host_scripts.sh (Apple has no remote daemon to
+# exclude, so bin/dx-lock itself already refuses for DX_RUNTIME=apple).
+
+# Direct call, lock free: acquire then release wraps around nothing else --
+# exactly one create, then exactly one rm, and DXE_LIFECYCLE_LOCK_OWNER is
+# set only in between.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/lifecycle-lock-direct.log"
+    fake_tool_write "$dir" docker "
+case \"\$1 \$2\" in
+    \"create --name\") printf 'create\\n' >> '$argv_log'; exit 0 ;;
+    \"container inspect\") echo \"true|qnap-dxe__dx-qnap|lock|\$DXE_LIFECYCLE_LOCK_OWNER\" ;;
+    \"rm dxe-lock-qnap-dxe__dx-qnap\") printf 'rm\\n' >> '$argv_log'; exit 0 ;;
+    *) echo \"UNMATCHED: \$*\" >&2; exit 99 ;;
+esac
+"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    [ -z "${DXE_LIFECYCLE_LOCK_OWNER:-}" ] || exit 1
+    dx_lifecycle_lock_acquire || exit 1
+    owner_while_held="$DXE_LIFECYCLE_LOCK_OWNER"
+    dx_lifecycle_lock_release
+    [ -n "$owner_while_held" ] && [ -z "${DXE_LIFECYCLE_LOCK_OWNER:-}" ] && [ "$(cat "$argv_log")" = $'create\nrm' ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_lifecycle_lock_acquire/_release (docker-ssh): a direct call acquires then releases around itself" \
+    || test_fail "dx_lifecycle_lock_acquire/_release (docker-ssh): a direct call acquires then releases around itself"
+
+# Already held by another controller: refuses, reports the current owner
+# and the remedy (dx-lock status / dx-lock unlock --force), and issues NO
+# release call -- never silently stolen, whether the owner is live or its
+# process is long gone (this fixture's own token names a PID this test
+# never started).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/lifecycle-lock-held.log"
+    fake_tool_write "$dir" docker "
+case \"\$1 \$2\" in
+    \"create --name\") printf 'create-attempt\\n' >> '$argv_log'; echo 'Error: Conflict. The container name ... is already in use' >&2; exit 1 ;;
+    \"container inspect\") printf 'audit\\n' >> '$argv_log'; echo 'ghost-host:999999:1:20260101T000000Z|2026-01-01T00:00:00Z' ;;
+    \"rm dxe-lock-qnap-dxe__dx-qnap\") printf 'rm\\n' >> '$argv_log'; exit 0 ;;
+    *) echo \"UNMATCHED: \$*\" >&2; exit 99 ;;
+esac
+"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_lifecycle_lock_acquire 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && [ -z "${DXE_LIFECYCLE_LOCK_OWNER:-}" ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "ghost-host:999999:1:20260101T000000Z" \
+        && printf '%s\n' "$out" | stdin_matches -F -- "dx-lock unlock --force" \
+        && printf '%s\n' "$out" | stdin_matches -F -- "dx-lock status" \
+        && [ "$(cat "$argv_log")" = $'create-attempt\naudit' ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_lifecycle_lock_acquire (docker-ssh): an already-held (even interrupted) lock refuses, reports the owner and the remedy, and never releases it" \
+    || test_fail "dx_lifecycle_lock_acquire (docker-ssh): an already-held (even interrupted) lock refuses, reports the owner and the remedy, and never releases it"
+
+# Nested/inherited: DXE_LIFECYCLE_LOCK_OWNER already set (an orchestrator's
+# own acquisition, inherited via the environment) means this call issues NO
+# docker call at all -- neither on acquire nor on release, since local
+# release responsibility (DXE_LIFECYCLE_LOCK_HELD) belongs only to whichever
+# frame actually performed the acquire.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/lifecycle-lock-nested.log"
+    fake_tool_write "$dir" docker "printf '%s\\n' \"\$*\" >> '$argv_log'; exit 99"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    export DXE_LIFECYCLE_LOCK_OWNER=inherited-owner-token
+    dx_lifecycle_lock_acquire; acquire_rc=$?
+    dx_lifecycle_lock_release; release_rc=$?
+    [ "$acquire_rc" -eq 0 ] && [ "$release_rc" -eq 0 ] \
+        && [ "$DXE_LIFECYCLE_LOCK_OWNER" = inherited-owner-token ] && [ ! -s "$argv_log" ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_lifecycle_lock_acquire/_release (docker-ssh): an inherited owner token is a no-op, zero docker calls" \
+    || test_fail "dx_lifecycle_lock_acquire/_release (docker-ssh): an inherited owner token is a no-op, zero docker calls"
+
+# Real nested inheritance across a fork: the parent acquires (exported), a
+# genuine forked child process inherits the owner token and issues no
+# acquire/release call of its own, and only the parent's own release
+# actually reaches docker -- exactly one create and one rm across the
+# whole parent+child orchestration (bin/dx's own "acquires once, children
+# inherit" shape, exercised here through a real process boundary rather
+# than the single in-process check above).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/lifecycle-lock-fork.log"
+    fake_tool_write "$dir" docker "
+case \"\$1 \$2\" in
+    \"create --name\") printf 'create\\n' >> '$argv_log'; exit 0 ;;
+    \"container inspect\") echo \"true|qnap-dxe__dx-qnap|lock|\$DXE_LIFECYCLE_LOCK_OWNER\" ;;
+    \"rm dxe-lock-qnap-dxe__dx-qnap\") printf 'rm\\n' >> '$argv_log'; exit 0 ;;
+    *) echo \"UNMATCHED: \$*\" >&2; exit 99 ;;
+esac
+"
+    export PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_lifecycle_lock_acquire || exit 1
+    bash -c '
+        source "$1"
+        source "$2"
+        dx_lifecycle_lock_acquire || exit 1
+        dx_lifecycle_lock_release
+    ' _ "$BASE_DIR/bin/lib/dx-host-util.sh" "$BASE_DIR/bin/lib/dx-container.sh"
+    child_rc=$?
+    dx_lifecycle_lock_release
+    [ "$child_rc" -eq 0 ] && [ "$(cat "$argv_log")" = $'create\nrm' ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_lifecycle_lock_acquire/_release (docker-ssh): a forked child inherits the owner token; only the parent's release reaches docker" \
+    || test_fail "dx_lifecycle_lock_acquire/_release (docker-ssh): a forked child inherits the owner token; only the parent's release reaches docker"
+
+# --- Entrypoints refuse while another controller holds the lock ------------
+#
+# Every mutating entrypoint below (Astra F4's own list) must refuse before
+# its own first mutating runtime call once dx_lifecycle_lock_acquire cannot
+# claim the lock -- proven here by making the lock's own "create" always
+# report a conflict (a live-or-interrupted owner both look identical to
+# this atomic primitive, so this one fixture covers both), and asserting
+# the resulting argv_log -- every OTHER mutating verb this fixture's fake
+# docker accepts -- stays completely empty.
+#
+# container_exists/image_exists are plain 0/1 flags: each entrypoint's own
+# preflight questions still get a truthful answer, so the lock is
+# unambiguously the reason it refuses, never an earlier unrelated guard.
+dxe_wp65_write_lock_held_docker() {
+    local dir="$1" argv_log="$2" container_exists="$3" image_exists="$4"
+    fake_tool_write "$dir" docker "
+case \"\$1 \$2\" in
+    \"version --format\") echo 27.3.1 ;;
+    \"info --format\") echo 'abc123def|qnap-fake|x86_64|linux' ;;
+    \"container inspect\")
+        case \"\$*\" in
+            *dxe-lock-*) echo 'someone-else:1:2:20260101T000000Z|2026-01-01T00:00:00Z' ;;
+            *) [ '$container_exists' = 1 ] && echo true || exit 1 ;;
+        esac
+        ;;
+    \"image inspect\") [ '$image_exists' = 1 ] && exit 0 || exit 1 ;;
+    \"create --name\")
+        case \"\$*\" in
+            *dxe-lock-*) echo 'Error: Conflict. The container name ... is already in use' >&2; exit 1 ;;
+            *) printf 'MUTATE %s\\n' \"\$*\" >> '$argv_log'; exit 0 ;;
+        esac
+        ;;
+    *) printf 'MUTATE %s\\n' \"\$*\" >> '$argv_log'; exit 0 ;;
+esac
+"
+}
+
+# dx-create-container: image exists, container absent -- would otherwise
+# proceed straight to the real create.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/wp65-create-container-lock-held.log"
+    dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 0 1
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-create-container" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && [ ! -s "$argv_log" ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "someone-else:1:2:20260101T000000Z"
+)
+[ "$?" -eq 0 ] && test_pass "dx-create-container (docker-ssh): refuses while the lifecycle lock is held, zero mutating calls" \
+    || test_fail "dx-create-container (docker-ssh): refuses while the lifecycle lock is held, zero mutating calls"
+
+# dx-start-container: container already exists -- would otherwise proceed
+# to the nix claim and dx_runtime_container_start.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/wp65-start-container-lock-held.log"
+    dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 1 1
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-start-container" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && [ ! -s "$argv_log" ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "someone-else:1:2:20260101T000000Z"
+)
+[ "$?" -eq 0 ] && test_pass "dx-start-container (docker-ssh): refuses while the lifecycle lock is held, zero mutating calls" \
+    || test_fail "dx-start-container (docker-ssh): refuses while the lifecycle lock is held, zero mutating calls"
+
+# dx-stop-container: the lock is acquired right after preflight, before
+# container_stop_bounded ever asks whether the container exists.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/wp65-stop-container-lock-held.log"
+    dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 1 1
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-stop-container" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && [ ! -s "$argv_log" ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "someone-else:1:2:20260101T000000Z"
+)
+[ "$?" -eq 0 ] && test_pass "dx-stop-container (docker-ssh): refuses while the lifecycle lock is held, zero mutating calls" \
+    || test_fail "dx-stop-container (docker-ssh): refuses while the lifecycle lock is held, zero mutating calls"
+
+# dx-destroy-container: container exists -- would otherwise proceed to
+# container_is_running/stop/delete.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/wp65-destroy-container-lock-held.log"
+    dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 1 1
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-destroy-container" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && [ ! -s "$argv_log" ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "someone-else:1:2:20260101T000000Z"
+)
+[ "$?" -eq 0 ] && test_pass "dx-destroy-container (docker-ssh): refuses while the lifecycle lock is held, zero mutating calls" \
+    || test_fail "dx-destroy-container (docker-ssh): refuses while the lifecycle lock is held, zero mutating calls"
+
+# dx-recreate: its own preflight+lock acquire runs before it ever forks
+# bin/dx-destroy -- proven both by the empty argv_log (no docker mutation
+# at all) and by dx-destroy-container/dx-destroy-image's own "does not
+# exist"/"Removing" prose never appearing, since neither script ran.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/wp65-recreate-lock-held.log"
+    dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 0 1
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-recreate" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && [ ! -s "$argv_log" ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "someone-else:1:2:20260101T000000Z" \
+        && ! printf '%s\n' "$out" | stdin_matches -F -- "nothing to destroy" \
+        && ! printf '%s\n' "$out" | stdin_matches -F -- "Removing container"
+)
+[ "$?" -eq 0 ] && test_pass "dx-recreate (docker-ssh): refuses while the lifecycle lock is held, before bin/dx-destroy ever runs" \
+    || test_fail "dx-recreate (docker-ssh): refuses while the lifecycle lock is held, before bin/dx-destroy ever runs"
+
+# dx: the lock is acquired right after preflight, before
+# container_system_ensure_started or any of its child scripts
+# (dx-create-keys/dx-create-image/.../dx-start-container) ever run.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/wp65-dx-lock-held.log"
+    dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 0 1
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && [ ! -s "$argv_log" ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "someone-else:1:2:20260101T000000Z" \
+        && ! printf '%s\n' "$out" | stdin_matches -F -- "Starting container" \
+        && ! printf '%s\n' "$out" | stdin_matches -F -- "Generating SSH keypair"
+)
+[ "$?" -eq 0 ] && test_pass "dx (docker-ssh): refuses while the lifecycle lock is held, before any child script runs" \
+    || test_fail "dx (docker-ssh): refuses while the lifecycle lock is held, before any child script runs"
+
+# --- First-run image guard (Astra F4 item 6) --------------------------------
+#
+# The lock container's own base image is $DX_IMAGE (never started, but
+# `docker create` still requires it to exist); dx-create-container must
+# therefore confirm the image exists BEFORE ever attempting to acquire the
+# lock, or a plain first run (no image yet) would misreport a perfectly
+# ordinary "run dx-create-image first" case as a locking failure. Proven by
+# a fake docker that fails any "create --name dxe-lock-..." outright
+# (it must never be reached at all) while answering "image inspect" as
+# absent.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/wp65-create-container-no-image.log"
+    fake_tool_write "$dir" docker "
+case \"\$1 \$2\" in
+    \"version --format\") echo 27.3.1 ;;
+    \"info --format\") echo 'abc123def|qnap-fake|x86_64|linux' ;;
+    \"container inspect\") exit 1 ;;
+    \"image inspect\") exit 1 ;;
+    *) printf '%s\\n' \"\$*\" >> '$argv_log'; exit 99 ;;
+esac
+"
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-create-container" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && [ ! -s "$argv_log" ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "Image dx-qnap-nixos does not exist"
+)
+[ "$?" -eq 0 ] && test_pass "dx-create-container (docker-ssh): a missing image is refused before the lifecycle lock is ever attempted" \
+    || test_fail "dx-create-container (docker-ssh): a missing image is refused before the lifecycle lock is ever attempted"
+
+# --- Nix-volume claim scoped by daemon identity (Astra F4 item 5) ---------
+#
+# dx_nix_volume_claim_dir used to be "$HOME/.dx-cache/nix-volume-claims"
+# alone -- a bare volume name, with no daemon identity in the path at all --
+# so two docker-ssh profiles pointed at DIFFERENT NASs (different
+# DX_REMOTE_HOST/daemon id) but sharing the same $HOME and the same
+# DX_NIX_VOLUME name would collide on the SAME local claim file, even
+# though they can never actually contend for the same remote resource.
+# dx_profile_state_segment (WP3.4) is now folded into the directory so two
+# daemons stay independent; Apple's own claim path is unaffected (a plain
+# runtime with only one local daemon, dx_profile_state_segment prints
+# nothing for it -- proven separately in tests/test_section9_host_scripts.sh's
+# pre-existing claim tests, still passing byte-for-byte).
+(
+    source "$BASE_DIR/bin/lib/dx-host-util.sh"
+    export DX_TUNNEL_LOCK_TIMEOUT=1
+    export DXE_SELF_PROCESS_IDENTITY="wp65-daemon-scope-$$"
+    container_exists() { return 1; }
+    claim_home="$fixture/wp65-daemon-claim-home"
+    HOME="$claim_home"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=hostA DXE_RUNTIME_DOCKER_DAEMON_ID=daemonA
+    export DX_RUNTIME DX_REMOTE_HOST DXE_RUNTIME_DOCKER_DAEMON_ID
+    dx_nix_volume_claim_acquire shared-vol containerA
+    rc1=$?
+    dirA="$(dx_nix_volume_claim_dir)"
+    DX_REMOTE_HOST=hostB DXE_RUNTIME_DOCKER_DAEMON_ID=daemonB
+    # Same $HOME, same volume name, a DIFFERENT daemon -- must succeed
+    # independently rather than colliding with hostA's own claim above.
+    dx_nix_volume_claim_acquire shared-vol containerB
+    rc2=$?
+    dirB="$(dx_nix_volume_claim_dir)"
+    DX_REMOTE_HOST=hostA DXE_RUNTIME_DOCKER_DAEMON_ID=daemonA
+    # Back on hostA's own identity: a second, distinct container contending
+    # for the SAME volume while this same live process still holds hostA's
+    # claim is correctly refused -- proving hostA's own scope is a real
+    # exclusion, not merely a no-op that let everything through.
+    dx_nix_volume_claim_acquire shared-vol containerC
+    rc3=$?
+    [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ] && [ "$rc3" -ne 0 ] && [ -n "$dirA" ] && [ -n "$dirB" ] && [ "$dirA" != "$dirB" ]
+)
+[ "$?" -eq 0 ] && test_pass "dx_nix_volume_claim_dir (docker-ssh): scoped by daemon identity, so two daemons sharing \$HOME and a volume name never collide" \
+    || test_fail "dx_nix_volume_claim_dir (docker-ssh): scoped by daemon identity, so two daemons sharing \$HOME and a volume name never collide"
+
 # --- Identity-scoped local state (item 7) -----------------------------
 
 # dx_tunnel_key: Apple's shape is byte-for-byte unchanged.
@@ -2470,11 +2794,27 @@ echo "UNMATCHED: $*" >&2; exit 99'
 case "$1 $2" in
     "version --format") echo "27.3.1"; exit 0 ;;
     "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
-    "container inspect") echo "false|||"; exit 0 ;;
+    "container inspect")
+        case "$*" in
+            *dxe-lock-*) echo "true|qnap-dxe__dx-qnap|lock|$DXE_LIFECYCLE_LOCK_OWNER"; exit 0 ;;
+            *) echo "false|||"; exit 0 ;;
+        esac
+        ;;
+    "create --name")
+        case "$*" in
+            *dxe-lock-*) exit 0 ;;
+            *) echo "UNMATCHED CREATE: $*" >&2; exit 99 ;;
+        esac
+        ;;
 esac
 case "$1" in
     ps) echo "NAMES	IMAGE	STATUS"; echo "dx-qnap	dx-qnap-nixos	Exited"; exit 0 ;;
-    rm) echo "docker rm should never run on a label mismatch" >&2; exit 99 ;;
+    rm)
+        case "$*" in
+            *dxe-lock-*) exit 0 ;;
+            *) echo "docker rm should never run on a label mismatch" >&2; exit 99 ;;
+        esac
+        ;;
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
@@ -2506,15 +2846,28 @@ case "$1 $2" in
     "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
     "container inspect")
         case "$*" in
+            *dxe-lock-*) echo "true|qnap-dxe__dx-qnap|lock|$DXE_LIFECYCLE_LOCK_OWNER"; exit 0 ;;
             *"State.Running"*) echo "true"; exit 0 ;;
             *"Config.Labels"*) echo "false|||"; exit 0 ;;
             *) exit 0 ;;
         esac
         ;;
+    "create --name")
+        case "$*" in
+            *dxe-lock-*) exit 0 ;;
+            *) echo "UNMATCHED CREATE: $*" >&2; exit 99 ;;
+        esac
+        ;;
 esac
 case "$1" in
     ps) echo "NAMES	IMAGE	STATUS"; echo "dx-qnap	dx-qnap-nixos	Up 2 hours"; exit 0 ;;
-    stop|kill|rm) printf "%s\n" "$*" >> "'"$calls_log"'"; echo "docker $1 should never run on a foreign RUNNING container" >&2; exit 99 ;;
+    rm)
+        case "$*" in
+            *dxe-lock-*) exit 0 ;;
+            *) printf "%s\n" "$*" >> "'"$calls_log"'"; echo "docker rm should never run on a foreign RUNNING container" >&2; exit 99 ;;
+        esac
+        ;;
+    stop|kill) printf "%s\n" "$*" >> "'"$calls_log"'"; echo "docker $1 should never run on a foreign RUNNING container" >&2; exit 99 ;;
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
@@ -2542,14 +2895,27 @@ case "$1 $2" in
     "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
     "container inspect")
         case "$*" in
+            *dxe-lock-*) echo "true|qnap-dxe__dx-qnap|lock|$DXE_LIFECYCLE_LOCK_OWNER"; exit 0 ;;
             *"State.Running"*) echo "true"; exit 0 ;;
             *"Config.Labels"*) echo "false|||"; exit 0 ;;
             *) exit 0 ;;
         esac
         ;;
+    "create --name")
+        case "$*" in
+            *dxe-lock-*) exit 0 ;;
+            *) echo "UNMATCHED CREATE: $*" >&2; exit 99 ;;
+        esac
+        ;;
 esac
 case "$1" in
     ps) echo "NAMES	IMAGE	STATUS"; echo "dx-qnap	dx-qnap-nixos	Up 2 hours"; exit 0 ;;
+    rm)
+        case "$*" in
+            *dxe-lock-*) exit 0 ;;
+            *) printf "%s\n" "$*" >> "'"$calls_log"'"; echo "docker rm should never run on a foreign RUNNING container" >&2; exit 99 ;;
+        esac
+        ;;
     stop|kill) printf "%s\n" "$*" >> "'"$calls_log"'"; echo "docker $1 should never run on a foreign RUNNING container" >&2; exit 99 ;;
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
