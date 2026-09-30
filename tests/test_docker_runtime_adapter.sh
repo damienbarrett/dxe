@@ -1062,6 +1062,54 @@ exit 0
 )
 [ "$?" -eq 0 ] && test_pass "container_create fails closed on an unrecognized --volume role" || test_fail "container_create fails closed on an unrecognized --volume role"
 
+# Astra F3's "writable attachment" checkpoint: container_create itself (not
+# only container_ensure_volume's own adoption gate) refuses to mount an
+# EXISTING but foreign/unlabelled nix volume rw into a new container --
+# zero "docker create ... -v/--volume" call is ever reached, proven by the
+# fake exiting loudly if "create" is ever invoked.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "volume inspect") echo "<no value>|<no value>|<no value>|<no value>|<no value>"; exit 0 ;;
+esac
+case "$1" in
+    create) echo "docker create should never mount a foreign volume" >&2; exit 99 ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux DX_NIX_VOLUME=dx-qnap-nix
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_container_create --name dx-qnap --image dx-qnap-nixos \
+        --volume "nix:dx-qnap-nix:rw" --entrypoint-cmd 'echo hi' 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "container_create (docker-ssh): refuses to attach an EXISTING foreign nix volume, zero docker create calls reached" \
+    || test_fail "container_create (docker-ssh): refuses to attach an EXISTING foreign nix volume, zero docker create calls reached"
+
+# An ABSENT volume needs no ownership proof (nothing to adopt yet); the
+# create proceeds normally.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "volume inspect") exit 1 ;;
+esac
+case "$1" in
+    create) exit 0 ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux DX_NIX_VOLUME=dx-qnap-nix
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_container_create --name dx-qnap --image dx-qnap-nixos \
+        --volume "nix:dx-qnap-nix:rw" --entrypoint-cmd 'echo hi'
+)
+[ "$?" -eq 0 ] && test_pass "container_create (docker-ssh): an ABSENT nix volume needs no ownership proof and the create still succeeds" \
+    || test_fail "container_create (docker-ssh): an ABSENT nix volume needs no ownership proof and the create still succeeds"
+
 # container_create: --name/--image are required.
 (
     dir="$(new_tool_dir)"
@@ -1075,38 +1123,88 @@ exit 0
 )
 [ "$?" -eq 0 ] && test_pass "container_create refuses when --name is missing" || test_fail "container_create refuses when --name is missing"
 
+# Astra F3: start/stop/kill now run the owned-resource check first, so
+# even a plain passthrough scenario must fake a "container inspect
+# --format ..." call proving ownership before the real verb -- the fakes
+# below match on "$1 $2" (container/inspect), leaving the real verb
+# matched on "$1" alone, same shape as the delete tests further down.
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
-    fake_tool_write "$dir" docker '[ "$1" = start ] && [ "$2" = dx-qnap ] && exit 0; exit 1'
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "container inspect") echo "true|1|qnap-dxe__dx-qnap|container|x86_64-linux" ;;
+    *) [ "$1" = start ] && [ "$2" = dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_start dx-qnap
 )
-[ "$?" -eq 0 ] && test_pass "container_start: passthrough" || test_fail "container_start: passthrough"
+[ "$?" -eq 0 ] && test_pass "container_start: owned -> passthrough" || test_fail "container_start: owned -> passthrough"
 
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
-    fake_tool_write "$dir" docker '[ "$1" = stop ] && [ "$2" = --time ] && [ "$3" = 5 ] && [ "$4" = dx-qnap ] && exit 0; exit 1'
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "container inspect") echo "true|1|qnap-dxe__dx-qnap|container|x86_64-linux" ;;
+    *) [ "$1" = stop ] && [ "$2" = --time ] && [ "$3" = 5 ] && [ "$4" = dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_stop --time 5 dx-qnap
 )
-[ "$?" -eq 0 ] && test_pass "container_stop: --time N NAME passthrough (Docker and Apple agree)" || test_fail "container_stop: --time N NAME passthrough (Docker and Apple agree)"
+[ "$?" -eq 0 ] && test_pass "container_stop: owned -> --time N NAME passthrough (Docker and Apple agree)" || test_fail "container_stop: owned -> --time N NAME passthrough (Docker and Apple agree)"
 
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
-    fake_tool_write "$dir" docker '[ "$1" = kill ] && [ "$2" = dx-qnap ] && exit 0; exit 1'
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "container inspect") echo "true|1|qnap-dxe__dx-qnap|container|x86_64-linux" ;;
+    *) [ "$1" = kill ] && [ "$2" = dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_kill dx-qnap
 )
-[ "$?" -eq 0 ] && test_pass "container_kill: passthrough" || test_fail "container_kill: passthrough"
+[ "$?" -eq 0 ] && test_pass "container_kill: owned -> passthrough" || test_fail "container_kill: owned -> passthrough"
+
+# Astra F3 item 1: start/stop/kill against a FOREIGN or unlabelled running
+# container issue ZERO real start/stop/kill calls -- only the ownership
+# inspect is ever reached -- and each refuses non-zero, naming the
+# ownership mismatch. Proven at the fake-transcript level (call count),
+# not merely by exit status, exactly what the regression asks for.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    calls_log="$dir/mutating-calls.log"
+    : > "$calls_log"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "container inspect") echo "false|||"; exit 0 ;;
+esac
+case "$1" in
+    start|stop|kill) printf "%s\n" "$*" >> "'"$calls_log"'"; echo "docker $1 should never run on a foreign container" >&2; exit 99 ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    start_out="$(dx_runtime_container_start dx-qnap 2>&1)"; start_rc=$?
+    stop_out="$(dx_runtime_container_stop dx-qnap 2>&1)"; stop_rc=$?
+    kill_out="$(dx_runtime_container_kill dx-qnap 2>&1)"; kill_rc=$?
+    [ "$start_rc" -ne 0 ] && [ "$stop_rc" -ne 0 ] && [ "$kill_rc" -ne 0 ] \
+        && [ ! -s "$calls_log" ] \
+        && printf '%s\n' "$start_out" | stdin_matches "collision, not an adoption candidate" \
+        && printf '%s\n' "$stop_out" | stdin_matches "collision, not an adoption candidate" \
+        && printf '%s\n' "$kill_out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "container_start/stop/kill: a foreign same-named container receives ZERO real start/stop/kill calls, refusing non-zero and naming the ownership mismatch" \
+    || test_fail "container_start/stop/kill: a foreign same-named container receives ZERO real start/stop/kill calls, refusing non-zero and naming the ownership mismatch"
 
 # --- DQ6 labels + collision refusal (item 5) --------------------------
 
@@ -1117,11 +1215,11 @@ exit 0
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
-    "container inspect") echo "true|1|qnap-dxe__dx-qnap|container" ;;
+    "container inspect") echo "true|1|qnap-dxe__dx-qnap|container|x86_64-linux" ;;
     *) [ "$1" = rm ] && [ "$2" = --force ] && [ "$3" = dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_delete --force dx-qnap
 )
@@ -1228,11 +1326,11 @@ printf '%s\n' \"\$@\" > '$argv_log'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
-    "volume inspect") echo "true|1|qnap-dxe__dx-qnap|nix" ;;
+    "volume inspect") echo "true|1|qnap-dxe__dx-qnap|nix|x86_64-linux" ;;
     *) [ "$1" = volume ] && [ "$2" = rm ] && [ "$3" = dx-qnap-nix ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_volume_delete dx-qnap-nix
 )
@@ -1290,17 +1388,17 @@ esac'
 # same way the coverage docs already note elsewhere in this file).
 case "$1 $2" in
     "container inspect")
-        case "$*" in *dx-qnap*) echo "true|1|qnap-dxe__dx-qnap|container"; exit 0 ;; esac
+        case "$*" in *dx-qnap*) echo "true|1|qnap-dxe__dx-qnap|container|x86_64-linux"; exit 0 ;; esac
         exit 1
         ;;
     "volume inspect")
-        case "$*" in *dx-qnap-nix*) echo "true|1|qnap-dxe__dx-qnap|nix"; exit 0 ;; esac
+        case "$*" in *dx-qnap-nix*) echo "true|1|qnap-dxe__dx-qnap|nix|x86_64-linux"; exit 0 ;; esac
         exit 1
         ;;
 esac
 echo "UNMATCHED: $*" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_docker_destructive_plan_and_verify "container:dx-qnap:container" "volume:dx-qnap-nix:nix" 2>&1)"; rc=$?
     [ "$rc" -eq 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "container dx-qnap: labels=true|1|qnap-dxe__dx-qnap|container" \
@@ -2038,8 +2136,32 @@ esac'
 )
 [ "$?" -eq 0 ] && test_pass "discover_daemon_id: a failed info round trip is reported distinctly" || test_fail "discover_daemon_id: a failed info round trip is reported distinctly"
 
-# verify_labels (via container_delete): the target does not exist at all
-# (inspect itself fails), distinct from "exists but wrong labels".
+# Astra F3 item 5: resource_owned (via container_delete) must keep "does
+# not exist" (Docker's own "No such container" text) genuinely distinct
+# from "could not be read" (any other inspect failure -- a connection
+# drop, a daemon restart, ...) -- an inspect error must be reported as an
+# error, never silently folded into "absent".
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "Error: No such container: dx-qnap" >&2; exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_container_delete dx-qnap 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] \
+        && printf '%s\n' "$out" | stdin_matches "does not exist" \
+        && ! printf '%s\n' "$out" | stdin_matches "could not be read"
+)
+[ "$?" -eq 0 ] && test_pass "container_delete: a genuinely absent target is reported as 'does not exist'" || test_fail "container_delete: a genuinely absent target is reported as 'does not exist'"
+
+# The SAME non-zero exit, but the inspect failed for a reason OTHER than
+# Docker's own "No such container" text (a bare, uninformative failure
+# here -- as ambiguous as a real connection drop) -- must NOT be reported
+# as "does not exist": that would silently treat "we could not tell" as
+# "safe, nothing there", which is exactly the conflation Astra F3 item 5
+# flags. This also upgrades what was previously a single combined-wording
+# case (pre-Astra-F3: "does not exist or its labels could not be read").
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
@@ -2048,9 +2170,29 @@ esac'
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_container_delete dx-qnap 2>&1)"; rc=$?
-    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "does not exist or its labels could not be read"
+    [ "$rc" -ne 0 ] \
+        && printf '%s\n' "$out" | stdin_matches "could not be read" \
+        && ! printf '%s\n' "$out" | stdin_matches "does not exist"
 )
-[ "$?" -eq 0 ] && test_pass "container_delete: a nonexistent target is distinct from a mislabelled one" || test_fail "container_delete: a nonexistent target is distinct from a mislabelled one"
+[ "$?" -eq 0 ] && test_pass "container_delete: an uninformative inspect failure is reported as 'could not be read', never mistaken for absence" || test_fail "container_delete: an uninformative inspect failure is reported as 'could not be read', never mistaken for absence"
+
+# The same distinction for a volume, and for a more realistic connection-
+# style failure (never Docker's own "No such volume" wording).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker 'echo "Error: Cannot connect to the Docker daemon at unix:///var/run/docker.sock" >&2; exit 1'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_volume_delete dx-qnap-nix 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] \
+        && printf '%s\n' "$out" | stdin_matches "could not be read" \
+        && printf '%s\n' "$out" | stdin_matches -F -- "Cannot connect to the Docker daemon" \
+        && ! printf '%s\n' "$out" | stdin_matches "does not exist"
+)
+[ "$?" -eq 0 ] && test_pass "volume_delete: a connection-style inspect failure is reported as 'could not be read', quoting the real failure, never mistaken for absence" \
+    || test_fail "volume_delete: a connection-style inspect failure is reported as 'could not be read', quoting the real failure, never mistaken for absence"
 
 # base_image_ref: a FROM line with no reference, and with more than one
 # whitespace-separated token, both refuse.
@@ -2344,6 +2486,246 @@ esac'
 )
 [ "$?" -eq 0 ] && test_pass "dx-destroy-container (docker-ssh): label check runs before delete, refusing a collision rather than deleting" || test_fail "dx-destroy-container (docker-ssh): label check runs before delete, refusing a collision rather than deleting"
 
+# Astra F3 item 1: a foreign or unlabelled container that is RUNNING used
+# to receive a real "docker stop" (and, on that failing, a real "docker
+# kill") from container_stop_bounded's own fallback ladder BEFORE
+# dx-destroy-container's delete step ever got a chance to refuse -- the
+# adapter's own container_owned check (now run inside
+# dx_runtime_docker_container_stop/kill/delete) closes this: every one of
+# stop/kill/rm is refused before it ever reaches the fake, proven by call
+# count (the fake exits 99 loudly if any of them is ever invoked), and the
+# whole command exits non-zero naming the ownership mismatch.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "container inspect")
+        case "$*" in
+            *"State.Running"*) echo "true"; exit 0 ;;
+            *"Config.Labels"*) echo "false|||"; exit 0 ;;
+            *) exit 0 ;;
+        esac
+        ;;
+esac
+case "$1" in
+    ps) echo "NAMES	IMAGE	STATUS"; echo "dx-qnap	dx-qnap-nixos	Up 2 hours"; exit 0 ;;
+    stop) echo "docker stop should never run on a foreign RUNNING container" >&2; exit 99 ;;
+    kill) echo "docker kill should never run on a foreign RUNNING container" >&2; exit 99 ;;
+    rm) echo "docker rm should never run on a foreign RUNNING container" >&2; exit 99 ;;
+    *) echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
+        DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dxe-p3-nix \
+        DX_STOP_COMMAND_TIMEOUT=2 DX_STOP_GRACE_SECONDS=1 DX_STOP_WAIT_TIMEOUT=1 \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-destroy-container" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "dx-destroy-container (docker-ssh): a foreign RUNNING container receives ZERO stop/kill/rm calls, exiting non-zero and naming the ownership mismatch" \
+    || test_fail "dx-destroy-container (docker-ssh): a foreign RUNNING container receives ZERO stop/kill/rm calls, exiting non-zero and naming the ownership mismatch"
+
+# The same regression through bin/dx-stop-container's own path
+# (container_stop_bounded, shared with dx-destroy-container above): zero
+# stop/kill calls reach the fake, and the command exits non-zero.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "container inspect")
+        case "$*" in
+            *"State.Running"*) echo "true"; exit 0 ;;
+            *"Config.Labels"*) echo "false|||"; exit 0 ;;
+            *) exit 0 ;;
+        esac
+        ;;
+esac
+case "$1" in
+    ps) echo "NAMES	IMAGE	STATUS"; echo "dx-qnap	dx-qnap-nixos	Up 2 hours"; exit 0 ;;
+    stop) echo "docker stop should never run on a foreign RUNNING container" >&2; exit 99 ;;
+    kill) echo "docker kill should never run on a foreign RUNNING container" >&2; exit 99 ;;
+    *) echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
+        DX_CONTAINER_NAME=dx-qnap \
+        DX_STOP_COMMAND_TIMEOUT=2 DX_STOP_GRACE_SECONDS=1 DX_STOP_WAIT_TIMEOUT=1 \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-stop-container" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "dx-stop-container (docker-ssh): a foreign RUNNING container receives ZERO stop/kill calls, exiting non-zero and naming the ownership mismatch" \
+    || test_fail "dx-stop-container (docker-ssh): a foreign RUNNING container receives ZERO stop/kill calls, exiting non-zero and naming the ownership mismatch"
+
+# Astra F3 item 2: an EXISTING container with foreign labels used to make
+# dx-create-container return success unconditionally ("already exists;
+# skipping create") without ever checking whether it was this profile's
+# own. It must now fail instead.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "container inspect")
+        case "$*" in
+            *"--format"*) echo "true|1|qnap-OTHER__dx-qnap|container|x86_64-linux"; exit 0 ;;
+            *) exit 0 ;;
+        esac
+        ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
+        DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_NIX_VOLUME=dxe-p3-nix \
+        DX_PERSIST_VOLUME=dxe-p3-persist DX_BOOTSTRAP_VOLUME=dxe-p3-bootstrap \
+        DX_SSH_KEY_PUB=/nonexistent-pubkey \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-create-container" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] \
+        && ! printf '%s\n' "$out" | stdin_matches -F -- "already exists; skipping create" \
+        && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "dx-create-container (docker-ssh): an existing FOREIGN container fails rather than returning success" \
+    || test_fail "dx-create-container (docker-ssh): an existing FOREIGN container fails rather than returning success"
+
+# The correctly-labelled case is unaffected: still a plain, successful
+# no-op ("already exists; skipping create").
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "container inspect")
+        case "$*" in
+            *"--format"*) echo "true|1|qnap-dxe__dx-qnap|container|x86_64-linux"; exit 0 ;;
+            *) exit 0 ;;
+        esac
+        ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
+        DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_NIX_VOLUME=dxe-p3-nix \
+        DX_PERSIST_VOLUME=dxe-p3-persist DX_BOOTSTRAP_VOLUME=dxe-p3-bootstrap \
+        DX_SSH_KEY_PUB=/nonexistent-pubkey \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-create-container" 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "already exists; skipping create"
+)
+[ "$?" -eq 0 ] && test_pass "dx-create-container (docker-ssh): an existing OWNED container still succeeds as a no-op" \
+    || test_fail "dx-create-container (docker-ssh): an existing OWNED container still succeeds as a no-op"
+
+# Astra F3 item 3: an EXISTING volume with foreign or missing labels used
+# to be accepted on existence alone (container_ensure_volume). It must now
+# refuse to adopt it, naming the volume -- and since dx-create-volumes
+# refuses before returning, no later "docker create ... -v/--mount" with
+# that volume is ever reached (zero writable attachment).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "version --format") echo "27.3.1"; exit 0 ;;
+    "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
+    "volume inspect")
+        case "$*" in
+            *"--format"*) echo "<no value>|<no value>|<no value>|<no value>|<no value>"; exit 0 ;;
+            *) exit 0 ;;
+        esac
+        ;;
+esac
+case "$1" in
+    create) echo "docker create should never run for an un-adopted volume" >&2; exit 99 ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume \
+        DX_CONTAINER_NAME=dx-qnap \
+        DX_NIX_VOLUME=dxe-p6-foreign-nix DX_PERSIST_VOLUME=dxe-p6-foreign-persist DX_BOOTSTRAP_VOLUME=dxe-p6-foreign-bootstrap \
+        PATH="$dir:/usr/bin:/bin" \
+        "$BASE_DIR/bin/dx-create-volumes" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] \
+        && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate" \
+        && printf '%s\n' "$out" | stdin_matches -F -- "dxe-p6-foreign-nix"
+)
+[ "$?" -eq 0 ] && test_pass "dx-create-volumes (docker-ssh): an existing volume with missing/foreign labels refuses to adopt it, naming the volume, with zero writable attachment" \
+    || test_fail "dx-create-volumes (docker-ssh): an existing volume with missing/foreign labels refuses to adopt it, naming the volume, with zero writable attachment"
+
+# Direct unit coverage of the same refusal at the function level
+# (bin/lib/dx-container.sh's container_ensure_volume), independent of the
+# entrypoint: an existing but foreign-labelled volume is never treated as
+# "already there and fine."
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "volume inspect")
+        case "$*" in
+            *"--format"*) echo "true|1|qnap-OTHER__dx-qnap|nix|x86_64-linux"; exit 0 ;;
+            *) exit 0 ;;
+        esac
+        ;;
+esac
+echo "UNMATCHED: $*" >&2; exit 99'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux DX_NIX_VOLUME=dxe-p6-foreign-nix
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(container_ensure_volume dxe-p6-foreign-nix 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "container_ensure_volume: a foreign-labelled existing volume is refused, never silently adopted" \
+    || test_fail "container_ensure_volume: a foreign-labelled existing volume is refused, never silently adopted"
+
+# Astra F3 item 4: dx_runtime_docker_labels_owned (verify_labels' fixed
+# successor) reads schema but must actually VALIDATE it -- an unknown
+# future schema (999) is refused even though managed/profile/role all
+# match, and an incompatible io.dxe.system is refused even though
+# managed/schema/profile/role all match.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "container inspect") echo "true|999|qnap-dxe__dx-qnap|container|x86_64-linux" ;;
+    *) echo "docker rm should never run on an unsupported schema" >&2; exit 99 ;;
+esac'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_container_delete dx-qnap 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "labels_owned: refuses an unknown/unsupported schema (999) even when managed/profile/role all match" \
+    || test_fail "labels_owned: refuses an unknown/unsupported schema (999) even when managed/profile/role all match"
+
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "container inspect") echo "true|1|qnap-dxe__dx-qnap|container|aarch64-linux" ;;
+    *) echo "docker rm should never run on an incompatible system" >&2; exit 99 ;;
+esac'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_container_delete dx-qnap 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
+)
+[ "$?" -eq 0 ] && test_pass "labels_owned: refuses an incompatible io.dxe.system even when managed/schema/profile/role all match" \
+    || test_fail "labels_owned: refuses an incompatible io.dxe.system even when managed/schema/profile/role all match"
+
 # dx-reset-nix-volume (Branch 12, store-trust-plan.md): the same DQ6 label
 # check dx-destroy-container/dx-destroy-volumes already go through
 # (dx_runtime_volume_delete -> dx_runtime_docker_volume_delete's own
@@ -2388,7 +2770,7 @@ case "$1 $2" in
     "version --format") echo "27.3.1"; exit 0 ;;
     "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
     "container inspect") exit 1 ;;
-    "volume inspect") echo "true|1|qnap-dxe__dx-qnap|nix"; exit 0 ;;
+    "volume inspect") echo "true|1|qnap-dxe__dx-qnap|nix|x86_64-linux"; exit 0 ;;
 esac
 case "$1" in
     volume)
@@ -2462,9 +2844,9 @@ case "$1 $2" in
     "info --format") echo "abc123def|qnap-fake|x86_64|linux"; exit 0 ;;
     "volume inspect")
         case "$*" in
-            *dxe-p6-nix*) echo "true|1|qnap-dxe__dx-qnap|nix"; exit 0 ;;
-            *dxe-p6-persist*) echo "true|1|qnap-dxe__dx-qnap|persist"; exit 0 ;;
-            *dxe-p6-bootstrap*) echo "true|1|qnap-dxe__dx-qnap|bootstrap"; exit 0 ;;
+            *dxe-p6-nix*) echo "true|1|qnap-dxe__dx-qnap|nix|x86_64-linux"; exit 0 ;;
+            *dxe-p6-persist*) echo "true|1|qnap-dxe__dx-qnap|persist|x86_64-linux"; exit 0 ;;
+            *dxe-p6-bootstrap*) echo "true|1|qnap-dxe__dx-qnap|bootstrap|x86_64-linux"; exit 0 ;;
         esac
         exit 1
         ;;
@@ -3014,11 +3396,19 @@ exit 0'
     fake_respond ssh "$(dxe_s33t_remote_key "$dxe_s33t_bin" version --format '{{.Server.Version}}')" "27.3.1"
     fake_respond ssh "$(dxe_s33t_remote_key "$dxe_s33t_bin" info --format '{{.ID}}|{{.Name}}|{{.Architecture}}|{{.OperatingSystem}}')" "dxe-transcript-daemon|dxe-transcript|x86_64|linux"
     fake_respond ssh "$(dxe_s33t_remote_key "$dxe_s33t_bin" container inspect --format '{{.State.Running}}' "$dxe_s33t_container")" "true"
+    # WP6.4 / Astra F3: start/stop/kill now run the owned-resource check
+    # (bin/lib/dx-runtime-docker-identity.sh's dx_runtime_docker_container_owned)
+    # BEFORE the real command -- one more "container inspect --format ..."
+    # round trip per call, all three sharing this SAME key (identical
+    # container name and format every time), proving this profile owns
+    # dxe-transcript-demo so start/stop/kill each still reach the real verb.
+    fake_respond ssh "$(dxe_s33t_remote_key "$dxe_s33t_bin" container inspect --format '{{index .Config.Labels "io.dxe.managed"}}|{{index .Config.Labels "io.dxe.schema"}}|{{index .Config.Labels "io.dxe.profile"}}|{{index .Config.Labels "io.dxe.role"}}|{{index .Config.Labels "io.dxe.system"}}' "$dxe_s33t_container")" "true|1|dxe-transcript-host__dxe-transcript-container|container|x86_64-linux"
     fake_respond ssh "$(dxe_s33t_remote_key "$dxe_s33t_bin" container inspect --format '{{index .Config.Labels "io.dxe.owner"}}|{{.Created}}' "$(dx_runtime_docker_lock_name)")" "owner-token|2026-09-30T00:00:00Z"
 
     # Drive: discover the docker binary, run the full daemon-discovery
-    # preflight, then container exists/is_running/start/stop/kill, volume
-    # exists, exec, and the read-only lock status.
+    # preflight, then container exists/is_running/start/stop/kill (each of
+    # the latter three now preceded by its own ownership-check inspect),
+    # volume exists, exec, and the read-only lock status.
     dx_runtime_docker_discover_bin >/dev/null 2>&1
     dx_runtime_docker_available >/dev/null 2>&1
     dx_runtime_docker_container_exists "$dxe_s33t_container" >/dev/null 2>&1

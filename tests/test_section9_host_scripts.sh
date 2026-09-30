@@ -53,6 +53,52 @@ ps() { printf '%s\n' '101 container-runtime-linux start --uuid dx-host-other' '1
 if [ "$(container_runtime_pids dx-host)" = 102 ]; then test_pass "runtime discovery matches exact --uuid argument/value pairs"; else test_fail "runtime discovery matches exact --uuid argument/value pairs"; fi
 unset -f ps
 
+# Astra F3 / DQ6 (WP6.4): the owned-resource check's Apple counterpart.
+# Apple Container attaches no per-object labels to anything it creates, so
+# there is no foreign-resource concept for it to check -- unconditional
+# success, not a placeholder for a future check (bin/lib/dx-runtime-apple.sh's
+# own comment on dx_runtime_apple_container_owned/volume_owned spells out
+# why). Exercised directly (the docker-ssh side of the same dispatch is
+# already exhaustively covered, adapter and entrypoint level, in
+# tests/test_docker_runtime_adapter.sh).
+(
+    unset DX_RUNTIME
+    dx_runtime_apple_container_owned some-container some-verb \
+        && dx_runtime_apple_volume_owned some-volume some-verb
+) && test_pass "dx_runtime_apple_container_owned/volume_owned: unconditional success (Apple has no per-object labels)" \
+    || test_fail "dx_runtime_apple_container_owned/volume_owned: unconditional success (Apple has no per-object labels)"
+(
+    unset DX_RUNTIME
+    dx_runtime_container_owned dx-host create \
+        && dx_runtime_volume_owned dx-nix adopt \
+        && container_owned dx-host create
+) && test_pass "dx_runtime_container_owned/volume_owned dispatch (and dx-container.sh's container_owned wrapper) reach Apple's unconditional-success implementation when DX_RUNTIME=apple (the default)" \
+    || test_fail "dx_runtime_container_owned/volume_owned dispatch (and dx-container.sh's container_owned wrapper) reach Apple's unconditional-success implementation when DX_RUNTIME=apple (the default)"
+
+# container_ensure_volume's ABSENT-volume branch (create, no ownership
+# proof needed -- there is nothing to adopt) is unaffected under Apple: a
+# fake `container` binary that only answers "volume inspect" (not found)
+# and "volume create" proves the create path still runs exactly once, with
+# no ownership check in front of it.
+(
+    dxe_p9_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p9-apple-volume.XXXXXX")"
+    trap 'rm -rf "$dxe_p9_dir"' EXIT
+    cat > "$dxe_p9_dir/container" <<'FAKE_EOF'
+#!/bin/bash
+case "$1 $2" in
+    "volume inspect") exit 1 ;;
+    "volume create") exit 0 ;;
+esac
+echo "UNMATCHED: $*" >&2
+exit 99
+FAKE_EOF
+    chmod 0755 "$dxe_p9_dir/container"
+    unset DX_RUNTIME
+    PATH="$dxe_p9_dir:/usr/bin:/bin" container_ensure_volume dxe-p9-apple-nix
+)
+[ "$?" -eq 0 ] && test_pass "container_ensure_volume (apple): an ABSENT volume still creates, unaffected by the new ownership check" \
+    || test_fail "container_ensure_volume (apple): an ABSENT volume still creates, unaffected by the new ownership check"
+
 # Host lifecycle claims live outside the mounted Nix filesystem and serialize
 # ownership by volume name, even when profiles use separate identity dirs.
 (
