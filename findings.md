@@ -160,7 +160,7 @@ Every review ID and where it lands.
   `DXE_CONFIG_RESOLVED`, `finish` diffs the known-hosts snapshot; `skip
   --class live|linux-root|destructive` recorded; a suite that records only
   skips fails unless `# skip-ok:`. (Fable D9, D11)
-- [ ] **WP1.4** Test registration: `# tier:` and `# bash32:` headers on every
+- [x] e2a4d12..4adbb6f **WP1.4** Test registration: `# tier:` and `# bash32:` headers on every
   `tests/test_*.sh`; `tests/run.sh --tier X` selects by header; the four
   runners become wrappers; `--help` fixed; contract test fails on a file with
   zero or two tiers. *Red:* header contract fails today. (Fable D2, Muse D1,
@@ -444,3 +444,4 @@ Every review ID and where it lands.
 - **2026-09-30** Section 16 exempts the adapter part files (a3c4d5f); the six structurally unmarkable lines now carry real commands (e863292: `: ;;` arms, `dx_nix_volume_record_lines`, an `if !` instead of a continued call) and are hit in the image.
 - **2026-09-30** Host coverage gaps closed (5a99187..3f494fa): the sync library's four guest programs are quoted heredocs read with `IFS= read -r -d ''` (the 116-line program byte-identical; three short ones gain one inert trailing newline); direct-call cases for the lock path, the unknown-kind arm, the persist/bootstrap volume refusal, the Apple contended lock, tunnel CLI dispatch and restore ship failures; three `KCOV_LOOP_TERMINATOR` markers in `dx-backup.sh`; the result writer's accepted-outcome arm now `: ;;`. Adapter aggregate 208 -> 212, restore 64 -> 66, section 19 -> 23. Lesson recorded in memory: kcov must exec the suite file itself (shebang); `kcov ... bash file` reports zero lines, which produced the earlier wrong "no line data on this VM" diagnosis.
 - **2026-09-30** Eleventh gate run (snapshot 8bc0d65): every suite green under kcov, line coverage 99.90%; the one file left is `scripts/lib/dx-persist-relocate.sh` (4 lines) whose cases sit in section 23, which the coverage runner's hand list never ran. WP1.4's `# coverage:` header will include it (and the other container-free suites the list omitted).
+- **2026-09-30** WP1.4 landed (e2a4d12, a568fe2, 4adbb6f): every `tests/test_*.sh` carries `# tier:`/`# bash32:` (and `# coverage:`/`# skip-ok:` where relevant) headers enforced by a self-proven contract; `tests/run.sh --tier|--section|--file [--bash32]` selects by header; the four runners are wrappers; the coverage list is derived from `# coverage: yes` (20 suites, now including 16, 23, 24, 31, 10, 20) with five suites forced `SKIP_INTEGRATION=true`. A bare unit sweep runs 42 suites (the registry's 35 plus the contracts, helpers and five adapter parts). `KNOWN_SECTIONS` stays as `--section` data. Sections 9/18 are `unit`.
