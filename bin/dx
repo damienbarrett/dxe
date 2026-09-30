@@ -14,6 +14,19 @@ dx_require_container_cli
 
 echo "Bringing up DX environment..."
 
+# Astra F4 / WP6.5: acquired once, here, before the first mutating step
+# (container_system_ensure_started can start the runtime's own system
+# service). bin/dx-create-keys through bin/dx-start-container below are
+# forked children that inherit DXE_LIFECYCLE_LOCK_OWNER and skip their own
+# acquire, so this shows exactly one acquire and one release for the whole
+# create+start orchestration. Released explicitly before the final `exec`
+# into bin/dx-ssh, rather than left to the EXIT trap: `exec` replaces this
+# process image without ever running it, so a trap here would otherwise
+# leak the lock held for the rest of an interactive SSH session (which
+# does not need it, and can run for hours).
+dx_lifecycle_lock_acquire || exit 1
+trap dx_lifecycle_lock_release EXIT HUP INT TERM
+
 container_system_ensure_started
 
 "$SCRIPT_DIR/dx-create-keys"
@@ -23,6 +36,8 @@ container_system_ensure_started
 "$SCRIPT_DIR/dx-start-container"
 "$SCRIPT_DIR/dx-wait-ssh"
 
+dx_lifecycle_lock_release
+trap - EXIT HUP INT TERM
 exec "$SCRIPT_DIR/dx-ssh" "$@"
 }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then dx_main "$@"; fi

@@ -12,6 +12,11 @@ if ! container_exists "$DX_CONTAINER_NAME"; then
     exit 0
 fi
 
+# Astra F4 / WP6.5: acquired before the first mutating call (stop/kill/
+# delete below); released on any exit.
+dx_lifecycle_lock_acquire || exit 1
+trap dx_lifecycle_lock_release EXIT HUP INT TERM
+
 if container_is_running "$DX_CONTAINER_NAME"; then
     if ! container_stop_bounded "$DX_CONTAINER_NAME"; then
         echo "Container $DX_CONTAINER_NAME did not stop cleanly; force-deleting..." >&2

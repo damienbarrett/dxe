@@ -193,7 +193,15 @@ FAKE_EOF
     export DX_CONTAINER_NAME=dxe-p9-apple-lock
     export DX_TUNNEL_LOCK_TIMEOUT=1
     export DXE_SELF_PROCESS_IDENTITY="test-apple-lock-$$"
-    owner="$(dx_runtime_apple_lock_acquire)"; rc1=$?
+    # Not "owner=$(dx_runtime_apple_lock_acquire)": bin/lib/dx-host-util.sh's
+    # own dx_lock_acquire sets DXE_HELD_LOCK as a plain (never exported)
+    # shell variable, so capturing acquire's stdout through a command
+    # substitution would fork it into existence only inside that
+    # subshell -- gone before dx_runtime_apple_lock_release runs below in
+    # THIS shell. A plain call keeps it here; the token itself is
+    # deterministic (the lock path), fetched separately right after.
+    dx_runtime_apple_lock_acquire >/dev/null; rc1=$?
+    owner="$(dx_runtime_apple_lock_path)"
     [ "$rc1" -eq 0 ] && [ -n "$owner" ] && [ -d "$owner" ] || exit 1
     dx_runtime_apple_lock_release "$owner"; rc2=$?
     [ "$rc2" -eq 0 ] && [ ! -d "$owner" ]

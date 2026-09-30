@@ -11,7 +11,22 @@ source "$SCRIPT_DIR/dx-lib.sh"
 recreate_main() {
 echo "Recreating DX environment (preserves /nix and /persist)..."
 
+# Astra F4 / WP6.5: acquired once, here, so bin/dx-destroy below (a forked
+# child; it inherits DXE_LIFECYCLE_LOCK_OWNER and skips its own acquire)
+# cannot race a second controller mid-teardown. Released explicitly before
+# the final `exec` into bin/dx, rather than left to the EXIT trap: `exec`
+# replaces this process image without ever running it, so a trap here
+# would otherwise leak the lock held across the exec boundary. bin/dx then
+# performs its own fresh acquire for the create+start phase that follows --
+# two short-lived acquisitions in sequence, never nested across the exec.
+dx_require_container_cli
+dx_lifecycle_lock_acquire || exit 1
+trap dx_lifecycle_lock_release EXIT HUP INT TERM
+
 "$SCRIPT_DIR/dx-destroy"
+
+dx_lifecycle_lock_release
+trap - EXIT HUP INT TERM
 exec "$SCRIPT_DIR/dx" "$@"
 }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then recreate_main "$@"; fi

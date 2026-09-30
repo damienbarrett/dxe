@@ -281,3 +281,51 @@ dx_runtime_apple_capability() {
         *) echo "Error: unknown runtime capability '$1'." >&2; return 2 ;;
     esac
 }
+
+# --- Local lifecycle lock (Astra F4, WP6.5) --------------------------------
+#
+# Apple Container is always local -- one controller, one daemon -- so there
+# is no remote owner to exclude the way bin/lib/dx-runtime-docker-lock.sh's
+# lock container does (and bin/dx-lock refuses outright for DX_RUNTIME=apple
+# for exactly that reason). This is a narrower safety net for the one real
+# local hazard: two invocations of dx/dx-create-container/... from THIS
+# machine, against the SAME DX_CONTAINER_NAME, running at once. Reuses
+# bin/lib/dx-host-util.sh's own dx_lock_acquire/_release (the same
+# mkdir+owner-file primitive, identifying an owner by PID plus process
+# start rather than PID alone, that bin/lib/dx-tunnel.sh already uses for
+# its own per-key lock), scoped under this profile's own state directory
+# (the same "${XDG_STATE_HOME:-$HOME/.local/state}/dxe/<container>/..."
+# shape bin/lib/dx-runtime-docker-identity.sh's own daemon-id cache uses) so
+# two DIFFERENT container names never contend with each other.
+#
+# dx_runtime_apple_lock_acquire prints the lock directory path itself as
+# its "owner token" (there is no separate remote label to mint one from);
+# bin/lib/dx-container.sh's dx_lifecycle_lock_release passes that same path
+# straight back to dx_runtime_apple_lock_release, which is a thin
+# dx_lock_release passthrough.
+dx_runtime_apple_lock_path() {
+    printf '%s/dxe/%s/lifecycle.lock\n' "${XDG_STATE_HOME:-$HOME/.local/state}" "${DX_CONTAINER_NAME:?}"
+}
+
+dx_runtime_apple_lock_acquire() {
+    local lock_path parent
+    lock_path="$(dx_runtime_apple_lock_path)" || return 1
+    parent="${lock_path%/*}"
+    # dx_lock_acquire's own mkdir is a plain (non -p) mkdir of the lock
+    # directory itself -- it requires this parent to already exist (the
+    # same reason dx_nix_volume_claim_acquire's own directory is created
+    # with mkdir -p before it ever calls dx_lock_acquire). Symlink-refused
+    # and 0700 like every other bin/lib/*.sh state directory this codebase
+    # creates (dx_runtime_docker_daemon_id_cache_write's own comment
+    # explains the same discipline).
+    [ ! -L "$parent" ] || { echo "Error: refusing symlinked lock parent directory $parent." >&2; return 1; }
+    mkdir -p "$parent" 2>/dev/null || [ -d "$parent" ] || return 1
+    [ ! -L "$parent" ] && [ -d "$parent" ] || return 1
+    chmod 0700 "$parent" || return 1
+    dx_lock_acquire "$lock_path" "${DX_TUNNEL_LOCK_TIMEOUT:-5}" || return 1
+    printf '%s' "$lock_path"
+}
+
+dx_runtime_apple_lock_release() {
+    dx_lock_release "$1"
+}

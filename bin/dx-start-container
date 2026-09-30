@@ -12,6 +12,12 @@ if ! container_exists "$DX_CONTAINER_NAME"; then
     exit 1
 fi
 
+# Astra F4 / WP6.5: one lifecycle-lock acquisition covers this whole start
+# (container start plus the bootstrap sync/confirm below), released on any
+# exit -- normal completion, an early failure, or a signal.
+dx_lifecycle_lock_acquire || exit 1
+trap dx_lifecycle_lock_release EXIT HUP INT TERM
+
 dx_nix_volume_claim_acquire "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME"
 
 if container_is_running "$DX_CONTAINER_NAME"; then
@@ -32,7 +38,7 @@ dx_sync_result_file="$(mktemp "${TMPDIR:-/tmp}/dxe-bootstrap-sync-result.XXXXXX"
     echo "Error: could not create a temporary file for the bootstrap sync result." >&2
     exit 1
 }
-trap 'rm -f "$dx_sync_result_file"' EXIT
+trap 'rm -f "$dx_sync_result_file"; dx_lifecycle_lock_release' EXIT HUP INT TERM
 
 "$SCRIPT_DIR/dx-sync-bootstrap" --result-file "$dx_sync_result_file"
 

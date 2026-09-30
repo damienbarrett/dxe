@@ -12,6 +12,15 @@ source "$SCRIPT_DIR/dx-lib.sh"
 destroy_main() {
 echo "Destroying DX container and image (volumes and keys preserved)..."
 
+# Astra F4 / WP6.5: acquired once, here, for the whole destroy sequence --
+# bin/dx-destroy-container and bin/dx-destroy-image below are forked
+# children that inherit DXE_LIFECYCLE_LOCK_OWNER (exported) and skip their
+# own acquire, so this shows exactly one acquire and one release for the
+# whole orchestration, not one pair per child.
+dx_require_container_cli
+dx_lifecycle_lock_acquire || exit 1
+trap dx_lifecycle_lock_release EXIT HUP INT TERM
+
 "$SCRIPT_DIR/dx-destroy-container"
 "$SCRIPT_DIR/dx-destroy-image"
 }
