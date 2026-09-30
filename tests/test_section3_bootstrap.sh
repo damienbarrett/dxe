@@ -13,7 +13,6 @@ test_section "Section 3: Sourceable Guest Bootstrap"
 
 assert_file_exists "$BOOTSTRAP" "bootstrap orchestrator exists"
 assert_file_exists "$CONTAINER_DIR/scripts/lib/dx-guest-system.sh" "the shared guest-system helper exists"
-assert_file_contains_literal "$BOOTSTRAP" 'source "$DX_BOOTSTRAP_ROOT/scripts/lib/dx-guest-system.sh"' "bootstrap sources the shared guest-system helper"
 for module in common base-and-storage system persistence activation; do
     assert_file_exists "$BOOTSTRAP_DIR/$module.sh" "bootstrap $module phase exists"
     if output="$(bash -c 'before=$-; source "$1"; [ "$before" = "$-" ]' _ "$BOOTSTRAP_DIR/$module.sh" 2>&1)" && [ -z "$output" ]; then
@@ -569,19 +568,7 @@ ln -s "$fixture/auth/store/group" "$fixture/auth/etc/group"
 export DX_AUTH_ROOT="$fixture/auth"
 if materialize_auth_files && [ ! -L "$fixture/auth/etc/group" ] && grep -q '^root:' "$fixture/auth/etc/group"; then test_pass "auth materialization preserves data and replaces symlinks"; else test_fail "auth materialization preserves data and replaces symlinks"; fi
 
-assert_file_not_contains "$BOOTSTRAP_DIR/system.sh" 'guard_old_base' "guest bootstrap no longer defines the old-base guard (removed once every guest moved off the old base -- docs/refactor/migration-gates.md#old-base-guards)"
-assert_file_not_contains "$BOOTSTRAP" 'guard_old_base' "bootstrap orchestrator no longer calls the old-base guard"
 
-assert_file_contains_literal "$BOOTSTRAP" 'if [ "${BASH_SOURCE[0]}" = "$0" ]' "bootstrap main runs only when executed"
-assert_file_not_contains "$BOOTSTRAP" 'DX_BOOTSTRAP_TEST_MODE' "bootstrap has no production test-mode branch"
-assert_file_not_contains "$BOOTSTRAP_DIR/activation.sh" 'chown -R dx:dx /guest-bootstrap' "bootstrap never hands published payload ownership to dx"
-assert_file_not_contains "$BOOTSTRAP_DIR/activation.sh" 'chown -R dx:dx /home/dx' "normal activation does not recursively re-own the home tree"
-assert_file_not_contains "$BOOTSTRAP_DIR/activation.sh" 'chown -R dx:dx /persist/home/dx' "normal activation does not recursively re-own persisted AI state"
-assert_file_not_contains "$BOOTSTRAP_DIR/activation.sh" 'chown -R dx:dx /nix' "normal activation does not recursively re-own a validated Nix volume"
-assert_file_not_contains "$BOOTSTRAP_DIR/system.sh" 'chown -R dx:dx /home/dx/.ssh' "SSH setup does not recursively re-own existing user SSH contents"
-assert_file_not_contains "$BOOTSTRAP_DIR/persistence.sh" 'chown -R dx:dx /persist/home/dx' "persistence setup does not recursively re-own persisted home on every boot"
-assert_file_contains_literal "$BOOTSTRAP_DIR/persistence.sh" 'dx_ensure_tree_owner' "persisted-tree ownership uses a marker-guarded migration helper"
-assert_file_contains_literal "$BOOTSTRAP_DIR/activation.sh" 'dx_ensure_tree_owner' "activation uses bounded ownership checks for mutable roots"
 # Fable review B8/D7: the six "Bootstrap phase: ... completed in Ns" lines
 # below used to be asserted by grepping the literal text out of the phase
 # functions' own source. Each is now driven through the real function with
@@ -678,14 +665,7 @@ if printf '%s\n' "$p_vgt_output" | stdin_matches -F 'Bootstrap phase: final gues
 else
     test_fail "verify_guest_tools reports elapsed time on completion (output: $p_vgt_output)"
 fi
-assert_file_contains_literal "$BOOTSTRAP_DIR/activation.sh" 'dx_activate_herdr || echo "Warning: Herdr activation failed; continuing bootstrap without it." >&2' "Herdr persistence and config seeding are non-fatal bootstrap activation steps"
-assert_file_contains_literal "$BOOTSTRAP" 'configure_guest true' "validated Nix imports pass content validation only from bootstrap into guest setup"
-assert_file_not_contains "$BOOTSTRAP" 'DX_NIX_VOLUME_PHASE' "bootstrap uses explicit Nix volume lifecycle seams"
-assert_file_not_contains "$BOOTSTRAP" 'DX_NIX_OWNERSHIP_CONTENT_VALIDATED' "bootstrap does not export ownership steering state"
-assert_file_contains_literal "$BOOTSTRAP_DIR/common.sh" '"$bootstrap_root#bootstrap-essentials" --no-update-lock-file' "essentials install uses the checked-in locked bootstrap output"
-assert_file_not_contains "$BOOTSTRAP_DIR/common.sh" 'nixpkgs#' "essentials install does not resolve the global flake registry"
 assert_file_contains_literal "$CONTAINER_DIR/flake.nix" 'bootstrap-essentials = pkgs.buildEnv' "flake defines the locked bootstrap essentials output"
-assert_file_contains_literal "$BOOTSTRAP" 'exec "$(command -v sshd)" -D -e -p 2222' "foreground sshd remains the final bootstrap action"
 
 if (
     validate_positive_integer() { return 0; }

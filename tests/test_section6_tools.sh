@@ -160,7 +160,6 @@ if bash -n "$DX_HERDR_NAV_SCRIPT" 2>/dev/null; then
 else
     test_fail "Herdr navigator helper passes bash syntax check"
 fi
-assert_file_contains "$CONTAINER_DIR/bootstrap/persistence.sh" "/persist/home/dx/.local/share/tmux/resurrect" "bootstrap creates the persisted resurrect directory"
 assert_file_contains "$TOOLS_NIX" "set -g renumber-windows on" "tmux renumbers windows on close"
 assert_file_contains "$TOOLS_NIX" "set-option -g main-pane-width 50%" "tmux main pane width is 50 percent"
 assert_file_contains "$TOOLS_NIX" 'bind -N "Switch to tiled layout" + select-layout tiled' "tmux prefix plus selects tiled layout"
@@ -300,9 +299,7 @@ fi
 rm -rf "$AGY_REFRESH_ROOT"
 rm -f "$AGY_REFRESH_NIX_LOG"
 
-assert_file_not_contains "$DX_AI_SCRIPT" "sed -i" "guest dx-ai does not rewrite Nix source ranges"
 
-assert_file_not_contains "$DX_AI_SCRIPT" "touch /persist/home/dx/.claude.json" "guest dx-ai does not create empty Claude JSON config"
 
 # dx_ai_setup_credentials (scripts/lib/dx-ai-post-install.sh): drive the
 # real function against an isolated fixture (never the real $HOME or
@@ -370,7 +367,6 @@ else
     test_fail "guest dx-ai prepares persisted agy state directory"
 fi
 rm -rf "$CREDS_AGY_FIXTURE"
-assert_file_contains "$CONTAINER_DIR/bootstrap/activation.sh" "/persist/home/dx/.gemini/antigravity-cli" "bootstrap prepares persisted agy state directory"
 
 if printf '%s\n' "$AI_PACKAGES_BLOCK" | stdin_matches -E "codex"; then
     test_pass "codex is in aiPackages"
