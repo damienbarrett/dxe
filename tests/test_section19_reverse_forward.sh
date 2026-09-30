@@ -6,6 +6,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
+# shellcheck source=../bin/lib/dx-host-util.sh
+source "$BASE_DIR/bin/lib/dx-host-util.sh"
 
 DX_REVERSE="${DX_REVERSE_OVERRIDE:-$BASE_DIR/bin/dx-reverse}"
 CALLER_TMPDIR="${TMPDIR:-/tmp}"

@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
+# shellcheck source=../bin/lib/dx-host-util.sh
+source "$BASE_DIR/bin/lib/dx-host-util.sh"
 BOOTSTRAP_DIR="$CONTAINER_DIR/bootstrap"
 test_section "Section 3: Sourceable Guest Bootstrap"
 
