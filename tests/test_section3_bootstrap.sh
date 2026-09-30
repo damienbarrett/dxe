@@ -327,6 +327,33 @@ else
 fi
 rm -rf "$argv_capture_fixture"
 
+# Fable B11: NU_PATH (configure_guest's own "set nushell as default shell"
+# step) was assigned without `local`, an unintended global that would leak
+# into any later code reading a variable of that name. Drive configure_guest
+# end to end with every heavier dependency stubbed, and assert NU_PATH is
+# gone (declare -p fails) the moment the function returns -- true only if
+# it was actually scoped to the function, regardless of whether the local
+# nu binary this assigns from exists (it does not, on this host, so the
+# `[ -f "$NU_PATH" ]` guard's own body never runs either way).
+if (
+    ensure_nix_ownership() { :; }
+    dx_ensure_tree_owner() { :; }
+    dx_prepare_owned_directory() { :; }
+    run_as_dx() { :; }
+    run_as_dx_argv() { :; }
+    setup_gh_persistence() { :; }
+    setup_tmux_persistence() { :; }
+    ai_tools_opted_in() { return 1; }
+    dx_activate_herdr() { :; }
+    run_home_manager_activation() { :; }
+    configure_guest >/dev/null
+    ! declare -p NU_PATH >/dev/null 2>&1
+); then
+    test_pass "configure_guest's NU_PATH does not leak as a global"
+else
+    test_fail "configure_guest's NU_PATH does not leak as a global"
+fi
+
 # A factory-reset persist volume has no pre-existing XDG tree.  The bootstrap
 # must establish the shared ~/.local parent and its state/share children as dx
 # before later services create their own XDG children; otherwise the first

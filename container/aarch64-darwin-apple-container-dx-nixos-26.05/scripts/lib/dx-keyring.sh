@@ -186,8 +186,15 @@ dx_keyring_start() {
         return 0
     fi
     if keyring_bin="$(command -v gnome-keyring-daemon 2>/dev/null)"; then
-        printf '' | DBUS_SESSION_BUS_ADDRESS="$address" "$keyring_bin" --unlock --start --components=secrets >/dev/null 2>&1 || true
-        echo "gnome-keyring Secret Service started."
+        # Fable B11: a failure here used to be swallowed by `|| true`, and
+        # "started" was printed unconditionally right after -- a genuinely
+        # failed launch (as opposed to gnome-keyring-daemon being merely
+        # unavailable, handled below) was reported as a success.
+        if printf '' | DBUS_SESSION_BUS_ADDRESS="$address" "$keyring_bin" --unlock --start --components=secrets >/dev/null 2>&1; then
+            echo "gnome-keyring Secret Service started."
+        else
+            echo "Warning: gnome-keyring-daemon failed to start; secrets will not be unlocked." >&2
+        fi
     else
         echo "Warning: gnome-keyring-daemon is unavailable; secrets will not be unlocked." >&2
     fi

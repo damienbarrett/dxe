@@ -1730,6 +1730,54 @@ else
 fi
 rm -rf "$statusline_fixture"
 
+# Fable B11: dx_keyring_start (scripts/lib/dx-keyring.sh) used to swallow a
+# genuine gnome-keyring-daemon launch failure with `|| true` and then print
+# "started" unconditionally right after. Fake dbus-daemon/dbus-send (real
+# enough to satisfy dx_keyring_probe's `[ -S ... ]` check against a real
+# AF_UNIX socket, matching tests/test_sourceable_coverage.sh's own
+# established fixture shape for this library) plus a gnome-keyring-daemon
+# that always fails, and assert dx-keyring no longer claims success.
+keyring_fail_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-keyring-fail.XXXXXX")"
+mkdir -p "$keyring_fail_fixture/fakebin/bin" "$keyring_fail_fixture/fakebin/share/dbus-1"
+: > "$keyring_fail_fixture/fakebin/share/dbus-1/session.conf"
+keyring_fail_socket="$keyring_fail_fixture/fake.sock"
+python3 - "$keyring_fail_socket" <<'PY'
+import os, socket, sys
+path = sys.argv[1]
+if os.path.exists(path):
+    os.remove(path)
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(path)
+s.close()
+PY
+keyring_fail_addr_file="$keyring_fail_fixture/.fake-addr"
+printf 'unix:path=%s,guid=deadbeefdeadbeefdeadbeefdeadbeef\n' "$keyring_fail_socket" > "$keyring_fail_addr_file"
+cat > "$keyring_fail_fixture/fakebin/bin/dbus-daemon" <<FAKE
+#!/bin/sh
+cat "$keyring_fail_addr_file"
+FAKE
+cat > "$keyring_fail_fixture/fakebin/bin/dbus-send" <<'FAKE'
+#!/bin/sh
+printf '   array [\n      string "org.freedesktop.DBus"\n   ]\n'
+FAKE
+cat > "$keyring_fail_fixture/fakebin/bin/gnome-keyring-daemon" <<'FAKE'
+#!/bin/sh
+exit 1
+FAKE
+chmod +x "$keyring_fail_fixture/fakebin/bin/dbus-daemon" "$keyring_fail_fixture/fakebin/bin/dbus-send" "$keyring_fail_fixture/fakebin/bin/gnome-keyring-daemon"
+keyring_fail_out="$(PATH="$keyring_fail_fixture/fakebin/bin:$PATH" bash -c "source '$CONTAINER_DIR/scripts/lib/dx-keyring.sh'; dx_keyring_start '$keyring_fail_fixture/address'" 2>&1)"
+if printf '%s\n' "$keyring_fail_out" | stdin_matches -F 'gnome-keyring Secret Service started.'; then
+    test_fail "dx_keyring_start does not claim the keyring started when gnome-keyring-daemon fails"
+else
+    test_pass "dx_keyring_start does not claim the keyring started when gnome-keyring-daemon fails"
+fi
+if printf '%s\n' "$keyring_fail_out" | stdin_matches -F 'Warning: gnome-keyring-daemon failed to start'; then
+    test_pass "dx_keyring_start warns when gnome-keyring-daemon fails to start"
+else
+    test_fail "dx_keyring_start warns when gnome-keyring-daemon fails to start (output: $keyring_fail_out)"
+fi
+rm -rf "$keyring_fail_fixture"
+
 # Reinstall the fixture-cleanup trap the blocks above replaced.
 trap 'chmod -R u+w "$ai_fixture" 2>/dev/null || true; rm -rf "$ai_fixture"' EXIT
 
