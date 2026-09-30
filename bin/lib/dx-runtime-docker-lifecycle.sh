@@ -138,7 +138,24 @@ dx_runtime_docker_container_create() {
             --volume)
                 dx_runtime_container_create_parse_volume_spec "$2" || return 1
                 case "$DXE_VOLSPEC_ROLE" in
-                    nix) flags+=(--volume "$DXE_VOLSPEC_NAME:/nix:$DXE_VOLSPEC_MODE") ;;
+                    nix)
+                        # Astra F3's "writable attachment" checkpoint: an
+                        # EXISTING nix/persist/bootstrap volume is proven
+                        # owned before this create ever mounts it rw into a
+                        # new container -- container_ensure_volume already
+                        # gates the common path (bin/dx-create-volumes
+                        # running before bin/dx-create-container), but a
+                        # caller that reaches this function directly, or
+                        # whose profile drifted between the two steps,
+                        # still gets the same proof here. An ABSENT volume
+                        # needs no such proof (dx_runtime_docker_volume_create
+                        # is what would label it, and that already refuses
+                        # an unrecognized name on its own).
+                        if dx_runtime_docker_volume_exists "$DXE_VOLSPEC_NAME"; then
+                            dx_runtime_docker_volume_owned "$DXE_VOLSPEC_NAME" attach || return 1
+                        fi
+                        flags+=(--volume "$DXE_VOLSPEC_NAME:/nix:$DXE_VOLSPEC_MODE")
+                        ;;
                     git)
                         # (qnap-dxe-plan.md DQ8; see D8 for the "git:
                         # volumes are Apple-only" decision this refuses
@@ -159,7 +176,15 @@ dx_runtime_docker_container_create() {
                         }
                         flags+=(--volume "$DXE_VOLSPEC_NAME:$DXE_VOLSPEC_TARGET:$DXE_VOLSPEC_MODE")
                         ;;
-                    *) flags+=(--volume "$DXE_VOLSPEC_NAME:$DXE_VOLSPEC_TARGET:$DXE_VOLSPEC_MODE") ;;
+                    # persist/bootstrap: the same "writable attachment"
+                    # ownership proof as the nix branch above, for the
+                    # other two configured named volumes.
+                    *)
+                        if dx_runtime_docker_volume_exists "$DXE_VOLSPEC_NAME"; then
+                            dx_runtime_docker_volume_owned "$DXE_VOLSPEC_NAME" attach || return 1
+                        fi
+                        flags+=(--volume "$DXE_VOLSPEC_NAME:$DXE_VOLSPEC_TARGET:$DXE_VOLSPEC_MODE")
+                        ;;
                 esac
                 shift 2
                 ;;
@@ -204,32 +229,53 @@ dx_runtime_docker_container_create() {
         "$image" -c "$entrypoint_cmd" -- "${entrypoint_args[@]+"${entrypoint_args[@]}"}"
 }
 
+# Astra F3: start/stop/kill used to address the configured name directly,
+# issuing the real docker command with no ownership check at all -- a
+# foreign or unlabelled same-named container was started, stopped, or
+# killed exactly like this profile's own. The container's name is always
+# the LAST positional argument (the same "for name in "$@"; do :; done"
+# idiom dx_runtime_docker_container_delete below already used, since a
+# caller may prepend flags -- "--time N NAME" for stop). The ownership
+# check runs BEFORE the real docker command is ever issued: on refusal,
+# the fake/real docker command is never reached at all (proven at the
+# transcript level in tests/test_docker_runtime_adapter.sh), not merely
+# attempted and then failing.
 dx_runtime_docker_container_start() {
+    local name
+    for name in "$@"; do :; done
+    dx_runtime_docker_container_owned "$name" start || return 1
     dx_runtime_docker_cli start "$@"
 }
 
 dx_runtime_docker_container_stop() {
+    local name
+    for name in "$@"; do :; done
+    dx_runtime_docker_container_owned "$name" stop || return 1
     dx_runtime_docker_cli stop "$@"
 }
 
 dx_runtime_docker_container_kill() {
+    local name
+    for name in "$@"; do :; done
+    dx_runtime_docker_container_owned "$name" kill || return 1
     dx_runtime_docker_cli kill "$@"
 }
 
-# --- DQ6 label verification before deletion (item 5) -----------------------
+# --- DQ6 label verification before mutation (item 5; Astra F3) ------------
 #
 # "An existing same-named unlabelled or differently labelled object is a
-# collision, not an adoption candidate" (DQ6). Checked here, not at create
-# time: dx_runtime_volume_create/dx_runtime_container_create are only ever
-# reached after an existing caller's own dx_runtime_*_exists check already
-# returned false (bin/lib/dx-container.sh's container_ensure_volume:
-# "dx_runtime_volume_exists ... || dx_runtime_volume_create ..."), so a
-# collision at CREATE time is a create-then-immediately-delete question the
-# existing entrypoints do not raise; DESTRUCTIVE commands always run
-# unconditionally against a name the caller already resolved to exist, so
-# this is where "prove ownership before mutation" actually bites, matching
-# the plan's own item-5 wording: "Add DQ6 labels and collision refusal
-# before enabling deletion."
+# collision, not an adoption candidate" (DQ6). container_start/stop/kill
+# above and container_delete below all run
+# dx_runtime_docker_container_owned/dx_runtime_docker_volume_owned
+# (bin/lib/dx-runtime-docker-identity.sh) BEFORE the real docker command --
+# Astra F3 found start/stop/kill addressed the configured name directly
+# with no check at all, and that dx-destroy-container's own stop attempt
+# could reach a foreign container before delete's (then only) check ever
+# ran. bin/lib/dx-container.sh's container_ensure_volume (adoption of an
+# EXISTING volume) and bin/dx-create-container's own "already exists"
+# gate (adoption of an EXISTING container) run the identical check too, so
+# there is now exactly one place -- dx_runtime_docker_resource_owned -- that
+# decides ownership for every one of adopt/create/start/stop/kill/delete.
 #
 # Images are the one exception: qnap-dxe-plan.md Phase 0 found the NAS
 # refuses a remote `docker build`, so image_build (above) never builds --
@@ -245,11 +291,9 @@ dx_runtime_docker_container_kill() {
 # "dx_runtime_container_delete NAME" or
 # "dx_runtime_container_delete --force NAME").
 dx_runtime_docker_container_delete() {
-    local bin name fields
-    bin="$(dx_runtime_docker_require_bin)" || return 1
+    local name
     for name in "$@"; do :; done
-    fields="$(dx_runtime_docker_container_labels "$bin" "$name")" || true
-    dx_runtime_docker_verify_labels container "$name" container "$fields" || return 1
+    dx_runtime_docker_container_owned "$name" delete || return 1
     dx_runtime_docker_cli rm "$@"
 }
 
@@ -352,16 +396,25 @@ dx_runtime_docker_volume_create() {
     dx_runtime_docker_cli volume create "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}" "$@"
 }
 
-dx_runtime_docker_volume_delete() {
-    local bin name role fields
-    bin="$(dx_runtime_docker_require_bin)" || return 1
-    for name in "$@"; do :; done
+# dx_runtime_volume_owned's docker-ssh implementation (bin/lib/
+# dx-runtime.sh's dispatch; also this file's own shared entry point for
+# volume_delete below): derives the DQ6 role from the configured volume
+# name (nix/persist/bootstrap) and, if that resolves, checks ownership
+# through dx_runtime_docker_resource_owned. Fails closed on an
+# unrecognized name -- never guesses a role for an unconfigured volume.
+dx_runtime_docker_volume_owned() {
+    local name="$1" verb="$2" role
     role="$(dx_runtime_docker_volume_role "$name")" || {
-        echo "Error: refusing to delete volume '$name': not one of the configured DXE volumes (DX_NIX_VOLUME/DX_PERSIST_VOLUME/DX_BOOTSTRAP_VOLUME)." >&2
+        echo "Error: refusing to $verb volume '$name': not one of the configured DXE volumes (DX_NIX_VOLUME/DX_PERSIST_VOLUME/DX_BOOTSTRAP_VOLUME); refusing rather than guessing its role." >&2
         return 1
     }
-    fields="$(dx_runtime_docker_volume_labels "$bin" "$name")" || true
-    dx_runtime_docker_verify_labels volume "$name" "$role" "$fields" || return 1
+    dx_runtime_docker_resource_owned volume "$name" "$role" "$verb"
+}
+
+dx_runtime_docker_volume_delete() {
+    local name
+    for name in "$@"; do :; done
+    dx_runtime_docker_volume_owned "$name" delete || return 1
     dx_runtime_docker_cli volume rm "$@"
 }
 
@@ -425,7 +478,10 @@ dx_runtime_docker_destructive_plan_and_verify() {
                 ;;
         esac
         echo "  $kind $name: labels=${fields:-<unreadable>}"
-        dx_runtime_docker_verify_labels "$kind" "$name" "$role" "$fields" || ok=1
+        if ! dx_runtime_docker_labels_owned "$role" "$fields"; then
+            echo "Error: refusing to delete $kind '$name': it exists but is unlabelled or labelled for a different profile/role/schema/system (qnap-dxe-plan.md DQ6 -- this is a collision, not an adoption candidate)." >&2
+            ok=1
+        fi
     done
     return "$ok"
 }

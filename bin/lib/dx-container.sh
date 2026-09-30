@@ -62,7 +62,27 @@ dx_container_list_names() {
 container_exists() { dx_runtime_container_exists "$1"; }
 container_is_running() { dx_runtime_container_running "$1"; }
 container_image_exists() { dx_runtime_image_exists "$1"; }
-container_ensure_volume() { dx_runtime_volume_exists "$1" || dx_runtime_volume_create "$1"; }
+
+# Astra F3 / DQ6: bin/dx-create-container's own "already exists" gate calls
+# this before treating an existing same-named container as already
+# provisioned -- see bin/lib/dx-runtime.sh's own comment on
+# dx_runtime_container_owned for what each runtime does with it.
+container_owned() { dx_runtime_container_owned "$@"; }
+
+# Astra F3 / DQ6: an EXISTING volume used to be accepted on existence
+# alone, so a mistaken profile could reuse -- and later have guest
+# bootstrap write into -- another resource's volume, even though deleting
+# it would have been refused. Adopting one now proves ownership first
+# (dx_runtime_volume_owned, verb "adopt"); creating an ABSENT one needs no
+# such proof (there is nothing to adopt yet -- dx_runtime_volume_create
+# itself attaches this profile's own DQ6 labels).
+container_ensure_volume() {
+    if dx_runtime_volume_exists "$1"; then
+        dx_runtime_volume_owned "$1" adopt
+    else
+        dx_runtime_volume_create "$1"
+    fi
+}
 
 # Branch 11 / Phase 6 (qnap-dxe-plan.md Phase 6 item 7): the whole-operation
 # ownership proof bin/dx-factory-reset and bin/dx-destroy-volumes both need

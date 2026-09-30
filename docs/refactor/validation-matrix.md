@@ -43,6 +43,28 @@ Unit/static tier's `test_section3_bootstrap.sh` fixtures, since they need
 `CAP_SYS_ADMIN` this tier's runner does not have; the real commands are only
 exercised on the Live isolated tier, via an actual guest boot.
 
+**WP6.4 / Astra F3 (the DQ6 owned-resource check) -- live-only assertion,
+not yet confirmed.** `dx_runtime_docker_resource_owned`'s absent-vs-
+could-not-inspect distinction (`bin/lib/dx-runtime-docker-identity.sh`'s
+`dx_runtime_docker_inspect_labels`) depends on Docker's own stderr wording:
+`*"No such $noun"*` (`"No such container: NAME"` / `"No such volume:
+NAME"`) means genuinely absent; anything else means "could not tell."
+Every assertion of this in `tests/test_docker_runtime_adapter.sh` (the
+absent/could-not-be-read/connection-style cases, and the schema-999/
+incompatible-`io.dxe.system` collision cases) drives a FAKE `docker`
+that is scripted to print exactly that text -- none of it has been run
+against a real Docker Engine's actual CLI output. This is consistent with
+D8's own spike scope (the QNAP NAS is production infrastructure, off-limits
+to any later test, per `qnap-dxe-plan.md` Phase 0), so it is not a gap this
+WP can close itself; it is recorded here as the stub-only assertion the
+Runtime compatibility tier (or a future live gate against a real, non-
+production Docker host) should confirm before this specific string match
+is trusted operationally. The failure mode if Docker's real wording ever
+differs is fail-closed, not fail-open: an unrecognized stderr text falls
+to "could not be read" (refuses), never silently to "absent" (which would
+adopt/create over it) -- so a wording drift would show up as an operator-
+visible refusal, not a silent DQ6 bypass.
+
 ## Useful final commands
 
 ```sh
