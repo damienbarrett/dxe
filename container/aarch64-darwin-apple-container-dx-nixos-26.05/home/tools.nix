@@ -2,6 +2,37 @@
 
 let
   dxScript = import ./dx-scripts.nix { inherit pkgs; };
+
+  # WP8.3 (flake.nix's checks.<system>.guest-libs-installed is the
+  # behavioural proof): every source-only library under scripts/lib/ --
+  # sourced by dx-ai.sh's/dx-keyring.sh's three-candidate loader
+  # (scripts/lib/dx-ai-loader.sh's dx_ai_load_library), never executed
+  # directly -- is installed below from this one builtins.readDir-driven
+  # table, so a library added to scripts/lib/ can never again be silently
+  # left uninstalled the way dx-ai-generation.sh, dx-ai-pin.sh,
+  # dx-ai-cache-policy.sh, dx-ai-post-install.sh, dx-ai-lock.sh,
+  # dx-ai-loader.sh and dx-persist-relocate.sh were (WP8.2/WP3.5 added them,
+  # but only dx-opencode-persistence.sh, dx-guest-system.sh and
+  # dx-keyring.sh ever got a hand-written `home.file` entry).
+  #
+  # dx-persist-backup-select.sh is the one deliberate exclusion: nothing
+  # under scripts/*.sh ever sources it through the three-candidate loader --
+  # it reaches the guest through the existing bootstrap-volume context sync
+  # instead (dx-sync-bootstrap publishes the whole container/.../ tree
+  # as-is) and runs directly from there, as
+  # $DX_BOOTSTRAP_PATH/current/scripts/lib/dx-persist-backup-select.sh, over
+  # `container exec`, invoked by bin/dx-backup and bin/dx-restore (see that
+  # file's own header). Installing it under .local/lib/dx/ too would be
+  # harmless but pointless; flake.nix's guest-libs-installed check excludes
+  # it the same way -- keep both exclusions in sync if this ever changes.
+  guestLibDir = ../scripts/lib;
+  guestLibExcludes = [ "dx-persist-backup-select.sh" ];
+  guestLibs = lib.filterAttrs
+    (name: type:
+      type == "regular"
+      && lib.hasSuffix ".sh" name
+      && !(lib.elem name guestLibExcludes))
+    (builtins.readDir guestLibDir);
 in
 {
   # WP2.2 (docs/reviews/2026-09-29-fable.md finding C2): userName, userEmail
@@ -151,21 +182,37 @@ in
   # list being exactly what that script calls -- see dx-scripts.nix. dx-ai
   # stays a plain `home.file` copy: it must keep working loaded straight off
   # the bootstrap volume before any generation (hence any wrapped profile)
-  # exists. The three `.local/lib/dx/*.sh` entries are source-only libraries
-  # (sourced, never executed directly), so they stay plain `home.file`
-  # copies too.
+  # exists. The `.local/lib/dx/*.sh` entries (guestLibs above) are
+  # source-only libraries (sourced, never executed directly), so they stay
+  # plain `home.file` copies too.
   home.file = lib.mapAttrs'
     (name: spec: lib.nameValuePair ".local/bin/${name}" {
-      source = "${dxScript name spec.file spec.deps { }}/bin/${name}";
+      source = "${dxScript name spec.file spec.deps { excludeShellChecks = spec.excludeShellChecks or [ ]; } }/bin/${name}";
     })
     {
       dx-keyring = {
         file = ../scripts/dx-keyring.sh;
         deps = [ pkgs.coreutils ]; # dirname, in the bootstrap-volume/HOME library-candidate search
+        # dx_keyring_bootstrap_load's `source "$candidate"` (dx-keyring.sh)
+        # resolves one of three candidates at runtime -- its own `#
+        # shellcheck source=lib/dx-ai-loader.sh` directive names the first
+        # (colocated) one, but writeShellApplication's checkPhase only ever
+        # sees this script's own text, never a surrounding lib/ directory,
+        # so shellcheck can never actually follow it: a permanent, discovered-
+        # while-validating-guest-libs-installed false positive, not a real
+        # issue with the script.
+        excludeShellChecks = [ "SC1091" ];
       };
       dx-verify-inventory = {
         file = ../scripts/dx-verify-inventory.sh;
         deps = [ ]; # command -v/printf only
+        # Deliberate word-splitting: DX_REQUIRED_INVENTORY is a
+        # space-separated list (Bash-3.2-compatible style, no arrays), and
+        # `printf '%s\n' $DX_REQUIRED_INVENTORY` relies on it to print one
+        # tool per line -- quoting it would print the whole list as a
+        # single line instead. Another permanent, discovered-while-
+        # validating-guest-libs-installed false positive.
+        excludeShellChecks = [ "SC2086" ];
       };
       dx-claude-statusline = {
         file = ../scripts/dx-claude-statusline.sh;
@@ -176,34 +223,16 @@ in
         deps = [ pkgs.jq ]; # herdr itself stays ambient (optional, via HERDR_BIN_PATH/command -v)
       };
     }
+  // lib.mapAttrs'
+    (name: _: lib.nameValuePair ".local/lib/dx/${name}" {
+      source = guestLibDir + "/${name}";
+    })
+    guestLibs
   // {
     ".local/bin/dx-ai" = {
       executable = true;
       source = ../scripts/dx-ai.sh;
     };
-
-    # dx-ai loads this at runtime (it is a source-only library, not a
-    # command); see scripts/dx-ai.sh's dx_ai_load_opencode_persistence for
-    # why it also looks for a copy on the bootstrap volume.
-    ".local/lib/dx/dx-opencode-persistence.sh".source =
-      ../scripts/lib/dx-opencode-persistence.sh;
-
-    # Shared guest-system detection (Branch 11 / Phase 4, DQ7), used by both
-    # dx-ai (dx_ai_load_guest_system, same three-candidate shape as
-    # dx-opencode-persistence.sh above) and bootstrap.sh (which sources it
-    # directly from the bootstrap volume, since it never runs
-    # post-activation).
-    ".local/lib/dx/dx-guest-system.sh".source =
-      ../scripts/lib/dx-guest-system.sh;
-
-    # Guest keyring ownership lives entirely in the AI-tools layer
-    # (Branch 16): dx-ai's dx_ai_ensure_keyring and the dx-keyring command
-    # above are both thin wrappers over this shared library (source-only,
-    # like dx-opencode-persistence.sh above), and home/shell.nix's
-    # profileExtra reads the recorded bus address through it too. Bootstrap
-    # keeps none of this.
-    ".local/lib/dx/dx-keyring.sh".source =
-      ../scripts/lib/dx-keyring.sh;
 
     ".local/share/nvim/site/after/plugin/dx-herdr-navigator.lua".source =
       ../nvim/extra_plugins/herdr-navigator.lua;
