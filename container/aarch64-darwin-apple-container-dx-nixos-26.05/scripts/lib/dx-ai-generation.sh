@@ -29,7 +29,7 @@ dx_ai_stage_generation() {
     fi
     if [ -L "$state/current" ]; then predecessor="$(readlink "$state/current")"; predecessor=${predecessor##*/}; fi
     case "$predecessor" in
-        '') ;;
+        '') : ;;
         [.-]*|*[!A-Za-z0-9_.-]*)
             chmod -R u+w "$stage"; rm -rf "$stage"
             dx_ai_fail "invalid AI predecessor generation name: $predecessor"
@@ -145,7 +145,7 @@ dx_ai_collect_generations() {
         candidate_id=${candidate##*/}
         if [ -L "$candidate" ]; then rm -f "$candidate"; continue; fi
         case "$candidate_id" in
-            .staging-*) ;;
+            .staging-*) : ;;
             *)
                 [ "$candidate_id" = "$current" ] && continue
                 [ -n "$predecessor" ] && [ "$candidate_id" = "$predecessor" ] && continue

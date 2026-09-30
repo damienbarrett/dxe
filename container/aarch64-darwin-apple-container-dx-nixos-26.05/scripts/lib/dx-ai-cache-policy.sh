@@ -69,7 +69,7 @@ dx_ai_check_cached() {
         esac
         [ "$in_build" = true ] || continue
         case "$line" in
-            "  /nix/store/"*.drv) ;;
+            "  /nix/store/"*.drv) : ;;
             *) continue ;;
         esac
         path="${line#  }"
