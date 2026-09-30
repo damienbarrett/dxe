@@ -1,4 +1,9 @@
 #!/bin/bash
+# WP1.4 (Fable D2): each case is now a one-line wrapper over tests/run.sh,
+# which selects suites by their own `# tier:` header instead of the
+# `for section in 1 2 3 5 ...` hand list this file used to carry directly
+# -- the exact list Muse D1 / Astra R2 found already silently omitting
+# sections 0, 4, 19, 24 and 33 (all container-free, all run by CI).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tier="${1:-}"
@@ -7,15 +12,19 @@ case "$tier" in
         if [ "$(uname -s)" != Linux ]; then
             echo "NOTE: Section 25 Nix-store importer behavior requires the isolated Linux runner; run tests/run-coverage-linux.sh for that gate."
         fi
-        "$SCRIPT_DIR/test_refactor_contracts.sh"
-        for section in 1 2 3 5 6 7 8 10 13 14 15 16 17 20 21 22 23 25 26 27 28 29 30 31 32 34 35 36; do "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section="$section"; done
+        "$SCRIPT_DIR/run.sh" --tier unit
         ;;
     host-contract)
-        "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=9
-        "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=18
+        # Sections 9 and 18 need no running guest (both already pass in
+        # CI's container-free job unconditionally) -- WP1.4 tags them
+        # `# tier: unit` rather than adding a tier value only these two
+        # suites would ever use, and keeps this case name working by
+        # naming them directly instead of by tier.
+        "$SCRIPT_DIR/run.sh" --tier unit --section 9
+        "$SCRIPT_DIR/run.sh" --tier unit --section 18
         ;;
     live)
-        "$SCRIPT_DIR/run_all_tests.sh"
+        "$SCRIPT_DIR/run.sh" --tier live
         ;;
     destructive)
         [ "${DX_TEST_DESTRUCTIVE:-}" = 1 ] || { echo "Error: destructive tier requires DX_TEST_DESTRUCTIVE=1." >&2; exit 1; }
