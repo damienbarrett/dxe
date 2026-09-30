@@ -801,6 +801,14 @@ env PATH="$cc_fixture/bin:/usr/bin:/bin" \
 # alongside the four other deliberate additions), memory, cpus, publish,
 # [no git volume, no pub-key env: neither was configured above].
 (
+    # dx_bootstrap_launch_command now calls
+    # dx_guest_publication_protocol_snippet (WP5.2,
+    # bin/lib/dx-bootstrap-protocol.sh) before its own heredoc -- sourced
+    # first here, the same fixed order bin/dx-lib.sh's facade requires
+    # (dx-bootstrap-protocol.sh precedes dx-ssh-common.sh there too), so
+    # this reconstruction calls the exact same real function
+    # bin/dx-create-container does, not a stale copy missing its prefix.
+    source "$BASE_DIR/bin/lib/dx-bootstrap-protocol.sh"
     source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
     entrypoint_cmd="$(dx_bootstrap_launch_command)"
     # HOST_TZ is host-detected (dx_get_host_timezone), not pinned above, so
