@@ -24,7 +24,7 @@ case "$tier" in
         "$SCRIPT_DIR/run.sh" --tier unit --section 18
         ;;
     live)
-        "$SCRIPT_DIR/run.sh" --tier live
+        "$SCRIPT_DIR/run.sh" --live --tier live
         ;;
     destructive)
         [ "${DX_TEST_DESTRUCTIVE:-}" = 1 ] || { echo "Error: destructive tier requires DX_TEST_DESTRUCTIVE=1." >&2; exit 1; }

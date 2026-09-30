@@ -307,5 +307,106 @@ else
     test_fail "a dispatchable --section still runs"
 fi
 
+# --- The tests/run.sh --section/--file incident: --section/--file used to
+# inherit SKIP_INTEGRATION from the CALLER's shell (WP1.4's own
+# `${SKIP_INTEGRATION:-false}` design, section 20's own header above), so a
+# bare `bash tests/run.sh --section 17` on a developer machine -- with
+# SKIP_INTEGRATION simply unset, the ordinary state of an interactive shell --
+# ran section 17's live dx-ai-in-guest case for real. The fix: --section,
+# --file, --tier unit and --tier host-contract now force SKIP_INTEGRATION=true
+# regardless of the environment unless a new --live flag is given; --tier
+# live/destructive imply --live; and an environment SKIP_INTEGRATION=false
+# given without --live is refused rather than silently honoured, so the old
+# inherited path cannot be reached by accident either way. These cases drive
+# the real runner (tests/run.sh) rather than a section file directly, reusing
+# this file's own stub PATH/FAKE_CONTAINER_NAME from above so that even a
+# still-broken runner cannot reach a real container here.
+
+# Case 1: `--section 17` with SKIP_INTEGRATION unset in the environment (the
+# incident's exact shape) must still make section 17 report its integration
+# skip line, never reach requires_container/wait_for_ssh/guest work.
+runsh_unset_marker="$(mktemp -t dxe-stub-marker-runsh-unset.XXXXXX)"
+rm -f "$runsh_unset_marker"
+runsh_unset_out="$(DXE_TEST_RESULTS="" DXE_STUB_MARKER="$runsh_unset_marker" DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" PATH="$STUB_DIR:$PATH" env -u SKIP_INTEGRATION bash "$SCRIPT_DIR/run.sh" --section 17 2>&1)"
+if printf '%s' "$runsh_unset_out" | stdin_matches -F 'dx-ai guest runtime checks'; then
+    test_pass "tests/run.sh --section 17 with SKIP_INTEGRATION unset in the environment reports its integration skip line"
+else
+    test_fail "tests/run.sh --section 17 with SKIP_INTEGRATION unset in the environment reports its integration skip line (output: $runsh_unset_out)"
+fi
+if [ ! -s "$runsh_unset_marker" ]; then
+    test_pass "tests/run.sh --section 17 with SKIP_INTEGRATION unset invokes no container/ssh/scp/dx-ai command"
+else
+    test_fail "tests/run.sh --section 17 with SKIP_INTEGRATION unset invokes no container/ssh/scp/dx-ai command (recorded: $(tr '\n' ';' < "$runsh_unset_marker"))"
+fi
+rm -f "$runsh_unset_marker"
+
+# Case 2: --live is the explicit opt-in that must actually flip
+# SKIP_INTEGRATION to false for the child suite. Asserted with a tiny fixture
+# suite that just echoes the variable it was handed -- not by running a real
+# live suite -- but the fixture still needs the `# tier:`/`# bash32:` header
+# tests/run.sh's own suite_has_valid_tier check requires of every selected
+# file, --file included.
+probe_dir="$(mktemp -d -t dxe-run-sh-live-probe.XXXXXX)"
+probe_file="$probe_dir/test_skip_integration_probe.sh"
+# Built with printf rather than a literal heredoc so this suite's OWN source
+# text never contains a contiguous `# tier: `/`# bash32: ` line: those two
+# header lines are exactly what tests/test_refactor_contracts.sh's WP1.4
+# contract greps for, over the WHOLE file, to prove every real tests/test_*.sh
+# carries exactly one of each -- a literal fixture header here would be
+# double-counted against THIS file's own real header the same way that
+# contract's own self-reference comment already documents for its own
+# fixtures (it excludes only itself from that scan).
+{
+    printf '#!/bin/bash\n'
+    printf '%s tier: unit\n' '#'
+    printf '%s bash32: no\n' '#'
+    printf 'echo "SKIP_INTEGRATION=${SKIP_INTEGRATION:-unset}"\n'
+    printf 'exit 0\n'
+} > "$probe_file"
+chmod +x "$probe_file"
+
+probe_live_out="$(DXE_TEST_RESULTS="" bash "$SCRIPT_DIR/run.sh" --live --file "$probe_file" 2>&1)"
+if printf '%s' "$probe_live_out" | stdin_matches -F -x 'SKIP_INTEGRATION=false'; then
+    test_pass "tests/run.sh --live --file sets SKIP_INTEGRATION=false for the child suite"
+else
+    test_fail "tests/run.sh --live --file sets SKIP_INTEGRATION=false for the child suite (output: $probe_live_out)"
+fi
+
+probe_no_live_out="$(DXE_TEST_RESULTS="" env -u SKIP_INTEGRATION bash "$SCRIPT_DIR/run.sh" --file "$probe_file" 2>&1)"
+if printf '%s' "$probe_no_live_out" | stdin_matches -F -x 'SKIP_INTEGRATION=true'; then
+    test_pass "tests/run.sh --file with no --live forces SKIP_INTEGRATION=true for the child suite"
+else
+    test_fail "tests/run.sh --file with no --live forces SKIP_INTEGRATION=true for the child suite (output: $probe_no_live_out)"
+fi
+rm -rf "$probe_dir"
+
+# Case 3: an explicit SKIP_INTEGRATION=false in the environment WITHOUT --live
+# must be refused loudly (exit 2, naming --live) rather than silently
+# honoured, so a caller who sets the variable on purpose but forgets the new
+# flag cannot reach the old inherited path either. Still driven through the
+# stub PATH/FAKE_CONTAINER_NAME: a still-broken runner would otherwise run
+# section 17's live case for real with SKIP_INTEGRATION=false exactly as
+# case 1 above demonstrates.
+refuse_marker="$(mktemp -t dxe-stub-marker-runsh-refuse.XXXXXX)"
+rm -f "$refuse_marker"
+refuse_out="$(DXE_TEST_RESULTS="" DXE_STUB_MARKER="$refuse_marker" DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" PATH="$STUB_DIR:$PATH" SKIP_INTEGRATION=false bash "$SCRIPT_DIR/run.sh" --section 17 2>&1)"
+refuse_status=$?
+if [ "$refuse_status" -eq 2 ]; then
+    test_pass "SKIP_INTEGRATION=false without --live exits 2"
+else
+    test_fail "SKIP_INTEGRATION=false without --live exits 2 (got $refuse_status)"
+fi
+if printf '%s' "$refuse_out" | stdin_matches -F -- '--live'; then
+    test_pass "SKIP_INTEGRATION=false without --live names --live in its error"
+else
+    test_fail "SKIP_INTEGRATION=false without --live names --live in its error (output: $refuse_out)"
+fi
+if [ ! -s "$refuse_marker" ]; then
+    test_pass "SKIP_INTEGRATION=false without --live invokes no container/ssh/scp/dx-ai command"
+else
+    test_fail "SKIP_INTEGRATION=false without --live invokes no container/ssh/scp/dx-ai command (recorded: $(tr '\n' ';' < "$refuse_marker"))"
+fi
+rm -f "$refuse_marker"
+
 print_summary
 exit_with_code

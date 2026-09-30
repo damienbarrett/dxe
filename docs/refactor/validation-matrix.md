@@ -154,8 +154,20 @@ tests/release-check.sh
 # mac-only tiers (see the table above), before promotion
 nix build --no-write-lock-file \
   ./container/aarch64-darwin-apple-container-dx-nixos-26.05#<output>
-./bin/dx-profile dx-test tests/run_all_tests.sh
+./bin/dx-profile dx-test tests/run_all_tests.sh --live
 ```
+
+**`--live` is required to reach a live guest at all (the tests/run.sh
+--section/--file incident's fix).** tests/run.sh now forces
+`SKIP_INTEGRATION=true` for every selection (`--section`, `--file`, `--tier
+unit`, `--tier host-contract`) unless `--live` is given; `--tier live` and
+`--tier destructive` imply it. tests/run_all_tests.sh's own bare invocation
+(no `--section`, no `--skip-integration`) used to run both tiers -- unit and
+live -- unconditionally; it now runs only the unit tier and notes the live
+tier was skipped, so the "run everything" command above is
+`tests/run_all_tests.sh --live`, not the bare form. An environment
+`SKIP_INTEGRATION=false` given without `--live` is refused (exit 2) rather
+than silently honoured.
 
 Two mechanical notes for the runner: adjust glob handling so an absent optional
 directory does not become a literal ShellCheck argument, and prefer
