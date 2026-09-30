@@ -29,67 +29,49 @@
 # directly, not inside a `$(...)` capture, so its own progress/result prose
 # (the "Syncing bootstrap generation ..." line in particular) still prints in
 # real time as it runs, exactly as it did as the top-level script body.
-dx_bootstrap_sync() {
-    local container="$1" source="$2" path="$3"
-    local tar_create_args=() content_digest published published_generation published_digest generation_id
-    container_exists "$container" || { echo "Error: Container $container does not exist. Run ./bin/dx-create-container first." >&2; return 1; }
-    # WP4.2 / Fable A6: honours DX_BOOTSTRAP_WAIT_TIMEOUT (default 30, matching
-    # the magic 30 this used to hard-code) with an injectable clock instead of a
-    # bare `sleep 1`, so a test can drive this bound without a real 30s wait.
-    dx_wait_until "$DX_BOOTSTRAP_WAIT_TIMEOUT" 1 container_is_running "$container" || true
-    container_is_running "$container" || { echo "Error: Container $container is not running. Run ./bin/dx-start-container first." >&2; return 1; }
-    case "$path" in ''|/) echo "Error: Unsafe DX_BOOTSTRAP_PATH: $path" >&2; return 1 ;; esac
 
-    # WP4.2 / Fable A6: same injectable-clock migration as the container-running
-    # wait above; DX_BOOTSTRAP_WAIT_TIMEOUT's bound is unchanged, only the
-    # hand-rolled `for`/`sleep 1` counting is replaced.
-    dx_wait_until "$DX_BOOTSTRAP_WAIT_TIMEOUT" 1 dx_runtime_exec "$container" sh -c 'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready" || test -L "$1/current"' -- "$path" >/dev/null 2>&1 || true
-    dx_runtime_exec "$container" sh -c 'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready" || test -L "$1/current"' -- "$path" >/dev/null 2>&1 || {
-        echo "Error: Container $container entrypoint never became ready after ${DX_BOOTSTRAP_WAIT_TIMEOUT}s." >&2; return 1;
-    }
-    [ -f "$source/bootstrap.sh" ] || { echo "Error: Bootstrap source $source/bootstrap.sh does not exist." >&2; return 1; }
+# WP8.4a (Fable A2 continuation): these four guest-side programs used to be
+# multi-line single-quoted arguments to `dx_runtime_exec ... sh -c '...'`,
+# inline in the calls below. kcov's bash line instrumentation has no way to
+# know those physical lines sit inside one quoted argument -- it marks each
+# one as an independently executable source line, and bash only ever traces
+# a hit for the line where the (single, compound) command starts, so every
+# one of those interior lines reports permanently uncovered no matter how
+# many cases exercise the call. A heredoc body, unlike that multi-line
+# quoted-argument form, is never traced by kcov's bash line instrumentation
+# past its opening line -- see the `read -r -d ''` launcher for
+# DXE_CONFIG_REGISTRY (bin/lib/dx-config.sh) and the `cat <<'EOF'` launcher
+# in dx_bootstrap_launch_command (bin/lib/dx-ssh-common.sh), which kcov
+# reports at 100% for the same reason. Rendering each program into a
+# variable here, once, at source time, and passing "$var" where the literal
+# string used to sit puts every one of these host-side call lines inside a
+# single instrumentable statement instead.
+#
+# `IFS= read -r -d ''` (not bare `read -r -d ''`): with the shell's default
+# IFS, `read` strips leading/trailing IFS whitespace from the whole record,
+# including a leading blank line and a run of trailing whitespace -- exactly
+# the two things every one of these four programs' original single-quoted
+# form had at its edges (a blank line right after the opening quote, and a
+# whitespace-only partial line right before the closing one). `IFS=` turns
+# that stripping off, so both edges survive byte-for-byte. `read -d ''`
+# reads until a NUL byte, which none of these heredocs contain, so it always
+# hits EOF and returns 1 -- this file is sourced under `set -e` entrypoints,
+# so `|| true` is required, same as DXE_CONFIG_REGISTRY. Verified
+# byte-for-byte against the pre-refactor literal strings: dump each variable
+# with `printf '%s' "$var"` and diff against the same dump taken of the
+# pre-refactor single-quoted argument (see the WP8.4a commit message).
+IFS= read -r -d '' dx_sync_published_check_program <<'DX_SYNC_PUBLISHED_CHECK' || true
 
-    tar_create_args=()
-    tar --no-xattrs -C "$source" -cf /dev/null . >/dev/null 2>&1 && tar_create_args+=(--no-xattrs)
-    tar --no-mac-metadata -C "$source" -cf /dev/null . >/dev/null 2>&1 && tar_create_args+=(--no-mac-metadata)
-    # Publish only when the payload actually differs from what is already current.
-    # A generation id is minted from the clock, so republishing identical content
-    # moves `current` for no reason and leaves the running guest looking stale
-    # forever -- see dx_bootstrap_content_digest.
-    #
-    # A guest published before this existed has no digest to compare, so it reports
-    # nothing and we publish, which re-establishes the digest for next time.
-    #
-    # The completeness test is `current/bootstrap.sh`, deliberately not
-    # `.dx-bootstrap-ready`: the guest launcher clears that marker on every boot, so
-    # on a restart it is always absent at the moment this runs. Gating the skip on
-    # it would mean never skipping on the one path that matters.
-    #
-    # The marker is the launcher's go-ahead, not a completeness record: the launcher
-    # waits for it before resolving `current`, so both outcomes here must set it --
-    # the publication below, and the skip above. The flat compatibility symlinks
-    # point at `current/...` rather than a generation, so they need no republication
-    # either.
-    content_digest="$(dx_bootstrap_content_digest "$source" || true)"
-    if [ -n "$content_digest" ]; then
-        published="$(dx_runtime_exec "$container" sh -c '
         root=$1
         [ -L "$root/current" ] || exit 0
         [ -f "$root/current/bootstrap.sh" ] || exit 0
         readlink "$root/current"
         cat "$root/current/.dx-content-digest" 2>/dev/null || true
-    ' -- "$path" 2>/dev/null || true)"
-        published_generation="$(printf '%s\n' "$published" | sed -n '1s#^generations/##p')"
-        published_digest="$(printf '%s\n' "$published" | sed -n '2p')"
-        if [ -n "$published_digest" ] && [ "$published_digest" = "$content_digest" ]; then
-            # Publishing is also what prunes execution leases from earlier boots.
-            # Skipping it leaves the previous boot's PID 1 lease beside the live
-            # one, and dx_bootstrap_lease_generation returns whichever it sees
-            # first -- so the drift check would report the guest as running a
-            # generation it booted two restarts ago. Prune by boot id, which is the
-            # part that makes a lease stale across a restart; publication still owns
-            # the fuller process-identity retention pass.
-            dx_runtime_exec "$container" sh -c '
+    
+DX_SYNC_PUBLISHED_CHECK
+
+IFS= read -r -d '' dx_sync_prune_stale_leases_program <<'DX_SYNC_PRUNE_STALE_LEASES' || true
+
             root=$1
             boot=$(cat /proc/sys/kernel/random/boot_id) || exit 0
             for lease in "$root/.locks/leases"/*; do
@@ -98,26 +80,19 @@ dx_bootstrap_sync() {
                 IFS="$tab" read -r lease_generation lease_boot lease_rest < "$lease" || continue
                 [ "$lease_boot" = "$boot" ] || rm -f "$lease"
             done
-        ' -- "$path" >/dev/null 2>&1 || true
-            # Signal boot readiness here too. The guest launcher waits for this
-            # marker before resolving `current`, so a skip that stayed silent would
-            # stall every restart with unchanged content for the launcher's full
-            # grace period.
-            dx_runtime_exec "$container" sh -c '
+        
+DX_SYNC_PRUNE_STALE_LEASES
+
+IFS= read -r -d '' dx_sync_mark_ready_program <<'DX_SYNC_MARK_READY' || true
+
             root=$1
             touch "$root/.dx-bootstrap-ready"
             rm -f "$root/.dx-bootstrap-waiting"
-        ' -- "$path" >/dev/null 2>&1 || true
-            echo "Bootstrap content is unchanged; generation $published_generation stays current."
-            generation="$published_generation"
-            return 3
-        fi
-    fi
+        
+DX_SYNC_MARK_READY
 
-    generation_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-    echo "Syncing bootstrap generation $generation_id from $source to $container:$path..."
+IFS= read -r -d '' dx_sync_guest_program <<'DX_SYNC_GUEST' || true
 
-    if ! COPYFILE_DISABLE=1 tar "${tar_create_args[@]}" -C "$source" -cf - . | dx_runtime_exec -i "$container" sh -c '
 set -eu
 root=$1
 generation=$2
@@ -234,7 +209,78 @@ for candidate in "$generations"/*; do
 done
 trap - EXIT HUP INT TERM
 rm -f "$lock/owner"; rmdir "$lock"
-' -- "$path" "$generation_id" "$content_digest"; then
+DX_SYNC_GUEST
+
+dx_bootstrap_sync() {
+    local container="$1" source="$2" path="$3"
+    local tar_create_args=() content_digest published published_generation published_digest generation_id
+    container_exists "$container" || { echo "Error: Container $container does not exist. Run ./bin/dx-create-container first." >&2; return 1; }
+    # WP4.2 / Fable A6: honours DX_BOOTSTRAP_WAIT_TIMEOUT (default 30, matching
+    # the magic 30 this used to hard-code) with an injectable clock instead of a
+    # bare `sleep 1`, so a test can drive this bound without a real 30s wait.
+    dx_wait_until "$DX_BOOTSTRAP_WAIT_TIMEOUT" 1 container_is_running "$container" || true
+    container_is_running "$container" || { echo "Error: Container $container is not running. Run ./bin/dx-start-container first." >&2; return 1; }
+    case "$path" in ''|/) echo "Error: Unsafe DX_BOOTSTRAP_PATH: $path" >&2; return 1 ;; esac
+
+    # WP4.2 / Fable A6: same injectable-clock migration as the container-running
+    # wait above; DX_BOOTSTRAP_WAIT_TIMEOUT's bound is unchanged, only the
+    # hand-rolled `for`/`sleep 1` counting is replaced.
+    dx_wait_until "$DX_BOOTSTRAP_WAIT_TIMEOUT" 1 dx_runtime_exec "$container" sh -c 'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready" || test -L "$1/current"' -- "$path" >/dev/null 2>&1 || true
+    dx_runtime_exec "$container" sh -c 'test -f "$1/.dx-bootstrap-waiting" || test -f "$1/.dx-bootstrap-ready" || test -L "$1/current"' -- "$path" >/dev/null 2>&1 || {
+        echo "Error: Container $container entrypoint never became ready after ${DX_BOOTSTRAP_WAIT_TIMEOUT}s." >&2; return 1;
+    }
+    [ -f "$source/bootstrap.sh" ] || { echo "Error: Bootstrap source $source/bootstrap.sh does not exist." >&2; return 1; }
+
+    tar_create_args=()
+    tar --no-xattrs -C "$source" -cf /dev/null . >/dev/null 2>&1 && tar_create_args+=(--no-xattrs)
+    tar --no-mac-metadata -C "$source" -cf /dev/null . >/dev/null 2>&1 && tar_create_args+=(--no-mac-metadata)
+    # Publish only when the payload actually differs from what is already current.
+    # A generation id is minted from the clock, so republishing identical content
+    # moves `current` for no reason and leaves the running guest looking stale
+    # forever -- see dx_bootstrap_content_digest.
+    #
+    # A guest published before this existed has no digest to compare, so it reports
+    # nothing and we publish, which re-establishes the digest for next time.
+    #
+    # The completeness test is `current/bootstrap.sh`, deliberately not
+    # `.dx-bootstrap-ready`: the guest launcher clears that marker on every boot, so
+    # on a restart it is always absent at the moment this runs. Gating the skip on
+    # it would mean never skipping on the one path that matters.
+    #
+    # The marker is the launcher's go-ahead, not a completeness record: the launcher
+    # waits for it before resolving `current`, so both outcomes here must set it --
+    # the publication below, and the skip above. The flat compatibility symlinks
+    # point at `current/...` rather than a generation, so they need no republication
+    # either.
+    content_digest="$(dx_bootstrap_content_digest "$source" || true)"
+    if [ -n "$content_digest" ]; then
+        published="$(dx_runtime_exec "$container" sh -c "$dx_sync_published_check_program" -- "$path" 2>/dev/null || true)"
+        published_generation="$(printf '%s\n' "$published" | sed -n '1s#^generations/##p')"
+        published_digest="$(printf '%s\n' "$published" | sed -n '2p')"
+        if [ -n "$published_digest" ] && [ "$published_digest" = "$content_digest" ]; then
+            # Publishing is also what prunes execution leases from earlier boots.
+            # Skipping it leaves the previous boot's PID 1 lease beside the live
+            # one, and dx_bootstrap_lease_generation returns whichever it sees
+            # first -- so the drift check would report the guest as running a
+            # generation it booted two restarts ago. Prune by boot id, which is the
+            # part that makes a lease stale across a restart; publication still owns
+            # the fuller process-identity retention pass.
+            dx_runtime_exec "$container" sh -c "$dx_sync_prune_stale_leases_program" -- "$path" >/dev/null 2>&1 || true
+            # Signal boot readiness here too. The guest launcher waits for this
+            # marker before resolving `current`, so a skip that stayed silent would
+            # stall every restart with unchanged content for the launcher's full
+            # grace period.
+            dx_runtime_exec "$container" sh -c "$dx_sync_mark_ready_program" -- "$path" >/dev/null 2>&1 || true
+            echo "Bootstrap content is unchanged; generation $published_generation stays current."
+            generation="$published_generation"
+            return 3
+        fi
+    fi
+
+    generation_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    echo "Syncing bootstrap generation $generation_id from $source to $container:$path..."
+
+    if ! COPYFILE_DISABLE=1 tar "${tar_create_args[@]}" -C "$source" -cf - . | dx_runtime_exec -i "$container" sh -c "$dx_sync_guest_program" -- "$path" "$generation_id" "$content_digest"; then
         return 1
     fi
     echo "Bootstrap generation $generation_id is ready."
