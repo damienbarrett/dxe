@@ -25,7 +25,7 @@ stdin_matches() { grep "$@" >/dev/null; }
 
 [ "${DXE_COVERAGE_ISOLATED:-}" = 1 ] || { echo "Error: sourceable coverage probes require the isolated coverage environment." >&2; exit 1; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GUEST="$ROOT/container/aarch64-darwin-apple-container-dx-nixos-26.05"
+GUEST="$ROOT/container/dx-nixos-26.05"
 fixture="$(mktemp -d /tmp/dxe-sourceable-coverage.XXXXXX)"
 cleanup() {
     chmod -R u+w "$fixture" 2>/dev/null || true

@@ -120,7 +120,7 @@ which is why per-system `packages` alone makes both call sites correct on
 either architecture without editing them.
 
 **Validation (G3, required):** `nix flake check --no-build
---no-write-lock-file ./container/aarch64-darwin-apple-container-dx-nixos-26.05`
+--no-write-lock-file ./container/dx-nixos-26.05`
 in the throwaway `nixos/nix:2.34.8` container (`-m 6g`, brief's G3 recipe),
 confirming both systems evaluate and `flake.lock` is byte-identical
 afterward. If evaluating any `x86_64-linux` output needs a package that does
@@ -258,7 +258,7 @@ is not mistaken for scope creep when Increment 2's diff is reviewed.
 
 ## 4. The guest selects by its NATIVE system (design point C, item 1/3)
 
-New sourceable helper, `container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib/dx-guest-system.sh`,
+New sourceable helper, `container/dx-nixos-26.05/scripts/lib/dx-guest-system.sh`,
 matching the existing `scripts/lib/dx-*.sh` naming and shape
 (`dx-keyring.sh`, `dx-opencode-persistence.sh`,
 `dx-persist-backup-select.sh`):
@@ -519,15 +519,16 @@ needed the fix.
 - **The context-directory rename** (DQ7: "The existing
   architecture/runtime-encoded context directory can be renamed only in a
   standalone mechanical commit... do not mix the move with runtime behavior
-  changes"). This phase leaves
-  `container/aarch64-darwin-apple-container-dx-nixos-26.05/` named exactly
-  as it is, even though its name will read oddly once it also holds native
-  x86_64-linux outputs. Increment 6 records in `qnap-dxe-plan.md` that this
-  rename is still pending and, for the record, what it would touch: every
-  `DX_CONTEXT_DIR`/`DX_BOOTSTRAP_SOURCE` default in `bin/lib/dx-config.sh`,
-  every hardcoded path reference across `bin/`, `tests/`, and `docs/`, and
-  the directory move itself -- a wide, purely mechanical diff that must not
-  be entangled with anything this phase changes.
+  changes"). This phase leaves the architecture-encoded context directory
+  named exactly as it was, even though its name would read oddly once it
+  also holds native x86_64-linux outputs. Increment 6 records in
+  `qnap-dxe-plan.md` that this rename is still pending and, for the record,
+  what it would touch: every `DX_CONTEXT_DIR`/`DX_BOOTSTRAP_SOURCE` default
+  in `bin/lib/dx-config.sh`, every hardcoded path reference across `bin/`,
+  `tests/`, and `docs/`, and the directory move itself -- a wide, purely
+  mechanical diff that must not be entangled with anything this phase
+  changes. **Landed in WP9.4 (Muse B5):** renamed to
+  `container/dx-nixos-26.05/`.
 - Remote-aware SSH/publish (Phase 5's job entirely).
 - Any change to Apple behavior beyond the one new env token in section 4.1.
 - Any live build anywhere (subagent constraint; the native x86_64 build only

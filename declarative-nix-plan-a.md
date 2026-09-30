@@ -21,7 +21,7 @@ either adopted (Tier 0 + Tier 1) or archived, not left in a third state.
 
 ## The shape of the problem
 
-`container/aarch64-darwin-apple-container-dx-nixos-26.05/` is 1,130 lines of
+`container/dx-nixos-26.05/` is 1,130 lines of
 Nix — 689 of them outside the `nvim/` tree — against 2,387 lines of bash
 bootstrap, or 3,765 counting the guest `scripts/`. The Nix that exists is
 genuinely idiomatic: `home/theme.nix:49` builds the Tinty config with

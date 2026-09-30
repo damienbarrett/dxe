@@ -27,6 +27,49 @@ while IFS= read -r markdown_file; do
 done < <(find "$BASE_DIR" -maxdepth 4 -type f -name '*.md' -not -path '*/.git/*' | sort)
 if [ -z "$broken_links" ]; then test_pass "local Markdown links resolve"; else test_fail "local Markdown links resolve:$broken_links"; fi
 
+# --- no tracked file names the old, renamed guest directory (WP9.4, Muse
+# B5) ---
+#
+# The guest tree used to live at
+# container/aarch64-darwin-apple-container-dx-nixos-26.05/ even though the
+# flake is architecture-neutral (`supportedSystems = [ "aarch64-linux"
+# "x86_64-linux" ]`) and the QNAP guest that boots it is x86_64 -- the old
+# name actively misled. It is now container/dx-nixos-26.05/, with a
+# git-tracked symlink left at the old path for one release so an external
+# profile that still sets DX_CONTEXT_DIR/DX_BOOTSTRAP_SOURCE to the old
+# name keeps working (dx_config_validate_cross_fields warns on stderr when
+# it sees one, section 21). A symlink's own tracked path name is not file
+# CONTENT, so it needs no exemption from this content scan. docs/evidence/
+# and docs/reviews/ are historical records of what the repository looked
+# like on the day they were written -- exempted so their prose can keep
+# naming the directory that existed then; every other tracked file must
+# not. Scoped to `git ls-files` (tracked files only, current tree) rather
+# than a raw filesystem walk, so this never reads git HISTORY -- a past
+# commit's diff naming the old directory is not this file's concern.
+OLD_GUEST_DIR_NAME="aarch64-darwin-apple-container-dx-nixos-26.05"
+stale_old_name_hits=""
+while IFS= read -r tracked_rel; do
+    [ -n "$tracked_rel" ] || continue
+    case "$tracked_rel" in
+        docs/evidence/*|docs/reviews/*) continue ;;
+        # This file's own OLD_GUEST_DIR_NAME literal, above, is the pattern
+        # being searched for, not a stale reference to fix.
+        tests/test_section10_docs.sh) continue ;;
+    esac
+    tracked_file="$BASE_DIR/$tracked_rel"
+    [ -f "$tracked_file" ] || continue
+    if grep -qF -- "$OLD_GUEST_DIR_NAME" "$tracked_file" 2>/dev/null; then
+        stale_old_name_hits="$stale_old_name_hits$tracked_rel
+"
+    fi
+done < <(cd "$BASE_DIR" && git ls-files)
+if [ -z "$stale_old_name_hits" ]; then
+    test_pass "no tracked file outside docs/evidence/ and docs/reviews/ names the old guest directory"
+else
+    test_fail "no tracked file outside docs/evidence/ and docs/reviews/ names the old guest directory:
+$stale_old_name_hits"
+fi
+
 # --- plans.md indexes every root plan document under exactly one status ---
 #
 # plans.md is prose: a plan document can be added, removed, or reassigned

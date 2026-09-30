@@ -362,9 +362,10 @@ Every review ID and where it lands.
 - [x] d9a0b31 **WP9.3** CI notes: ShellCheck crash list names both files; section 0
   fails loudly with `--strict` when the binary is absent; hermetic-vs-live
   tiers stated once in `validation-matrix.md`. (Fable E1, Muse E2, E4)
-- [ ] **WP9.4** Rename `container/aarch64-darwin-apple-container-dx-nixos-26.05/`
-  to `container/dx-nixos-26.05/` once WP1.6's `dx_test_guest_dir` makes it a
-  one-line test change. (Muse B5)
+- [ ] **WP9.4** Rename the architecture-named guest tree to
+  `container/dx-nixos-26.05/` once WP1.6's `dx_test_guest_dir` makes it a
+  one-line test change; leave a git-tracked compatibility symlink at the
+  old path for one release. (Muse B5)
 - [x] eab62eb **WP9.5** Stale text: `dx-lib.sh:2`, `dx-nix-disk:21–24`. (Fable A7,
   Muse A6)
 - [x] 59dbb4a **WP9.6** Promote or defer the four backlog probes from

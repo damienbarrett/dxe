@@ -101,7 +101,7 @@ BASE_DIR="$(cd "$DXE_TESTS_DIR/.." && pwd)"
 # function, not a hardcoded path repeated at every call site, so a future
 # rename of the architecture-named directory is a one-line change here.
 dx_test_guest_dir() {
-    printf '%s' "$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
+    printf '%s' "$BASE_DIR/container/dx-nixos-26.05"
 }
 
 CONTAINER_DIR="$(dx_test_guest_dir)"

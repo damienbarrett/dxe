@@ -141,19 +141,19 @@ tests/run_all_tests.sh --skip-integration
 tests/run-bash32-tests.sh
 tests/run-coverage-linux.sh
 shellcheck --severity=warning bin/dx* bin/lib/*.sh tests/*.sh \
-  container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap.sh \
-  container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/*.sh \
-  container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/*.sh \
-  container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib/*.sh
+  container/dx-nixos-26.05/bootstrap.sh \
+  container/dx-nixos-26.05/bootstrap/*.sh \
+  container/dx-nixos-26.05/scripts/*.sh \
+  container/dx-nixos-26.05/scripts/lib/*.sh
 nix flake check --no-build --no-write-lock-file --all-systems \
-  container/aarch64-darwin-apple-container-dx-nixos-26.05
+  container/dx-nixos-26.05
 
 # After committing a release candidate, before promotion
 tests/release-check.sh
 
 # mac-only tiers (see the table above), before promotion
 nix build --no-write-lock-file \
-  ./container/aarch64-darwin-apple-container-dx-nixos-26.05#<output>
+  ./container/dx-nixos-26.05#<output>
 ./bin/dx-profile dx-test tests/run_all_tests.sh --live
 ```
 
@@ -188,7 +188,7 @@ the flake the host cannot:
   \( -name \"*.sh\" -o -path \"bin/dx*\" \) -print0 \
   | xargs -0 shellcheck --severity=warning"'
 ./bin/dx-ssh 'cd /persist/inbox/<dir> && nix flake check --no-build \
-  --no-write-lock-file --all-systems ./container/aarch64-darwin-apple-container-dx-nixos-26.05'
+  --no-write-lock-file --all-systems ./container/dx-nixos-26.05'
 ```
 
 Stage the source rather than copying the working tree: the repository root holds

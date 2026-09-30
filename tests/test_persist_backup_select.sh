@@ -10,9 +10,9 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
-GUEST="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
+GUEST="$BASE_DIR/container/dx-nixos-26.05"
 SELECTOR="$GUEST/scripts/lib/dx-persist-backup-select.sh"
-# shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/scripts/lib/dx-persist-backup-select.sh
+# shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-persist-backup-select.sh
 source "$SELECTOR"
 test_section "Persist backup: selection rules (fixture trees, no container)"
 
