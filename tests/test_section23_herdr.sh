@@ -895,6 +895,61 @@ else
     test_fail "configure_guest survives a failing Herdr activation"
 fi
 
+# --- scripts/lib/dx-persist-relocate.sh's own defensive corners, flagged as
+# uncovered by the coverage report, exercised here (rather than in
+# test_sourceable_coverage.sh) because setup_herdr_persistence is this
+# section's own established, real, unstubbed driver for it. ---
+if (
+    persist_home="$fixture_root/g/persist/home/dx"
+    home="$fixture_root/g/home/dx"
+    mkdir -p "$persist_home/.config" "$persist_home/.local/state" "$home/.config" "$home/.local/state"
+    : > "$persist_home/.config/herdr"
+
+    # dx_persist_secure_backup's own `chown -h dx:dx` branch only runs when a
+    # `dx` account resolves at all (id -u dx / id -g dx); fake `id` the same
+    # way the section3 host-context persistence probe does, so this exact
+    # branch -- not merely the chmod 0700 that follows it regardless -- runs
+    # here.
+    id() { [ "${1:-}" = -u ] && command id -u || command id -g; }
+    chown() { herdr_persist_chown "$@"; }
+    run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    run_as_dx_argv() { herdr_persist_run_as_dx_argv "$@"; }
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
+    source "$PERSISTENCE"
+    setup_herdr_persistence "$persist_home" "$home" >/dev/null 2>&1
+    backup="$(ls "$persist_home"/.config/.dxe-conflict-herdr-config-target.* 2>/dev/null | head -n1)"
+    [ -n "$backup" ] || exit 1
+    owner="$(stat -c '%u:%g' "$backup" 2>/dev/null || stat -f '%u:%g' "$backup" 2>/dev/null)"
+    [ "$owner" = "$(id -u):$(id -g)" ]
+); then
+    test_pass "a conflict backup gets an explicit dx:dx chown when a dx account resolves (dx_persist_secure_backup)"
+else
+    test_fail "a conflict backup gets an explicit dx:dx chown when a dx account resolves (dx_persist_secure_backup)"
+fi
+
+if (
+    persist_home="$fixture_root/h/persist/home/dx"
+    home="$fixture_root/h/home/dx"
+    mkdir -p "$persist_home/.config" "$persist_home/.local/state" "$home/.config" "$home/.local/state"
+    printf '%s\n' 'stray session data' > "$home/.local/state/herdr"
+
+    chown() { herdr_persist_chown "$@"; }
+    run_as_dx() { herdr_persist_run_as_dx "$@"; }
+    run_as_dx_argv() { herdr_persist_run_as_dx_argv "$@"; }
+    # shellcheck source=../container/aarch64-darwin-apple-container-dx-nixos-26.05/bootstrap/persistence.sh
+    source "$PERSISTENCE"
+    setup_herdr_persistence "$persist_home" "$home" >/dev/null 2>&1
+
+    backup="$(ls "$persist_home"/.local/state/.dxe-conflict-herdr-state-live.* 2>/dev/null | head -n1)"
+    [ -n "$backup" ] \
+        && [ "$(cat "$backup")" = "stray session data" ] \
+        && [ -L "$home/.local/state/herdr" ] \
+        && [ "$(readlink "$home/.local/state/herdr")" = "$persist_home/.local/state/herdr" ]
+); then
+    test_pass "a pre-existing non-directory state file is backed up wholesale before relocating (dx_persist_migrate_live_path)"
+else
+    test_fail "a pre-existing non-directory state file is backed up wholesale before relocating (dx_persist_migrate_live_path)"
+fi
 
 # --- Live integration tests ---
 if [ "${SKIP_INTEGRATION:-false}" = true ]; then
@@ -1208,5 +1263,8 @@ else
     test_skip "Live: Herdr history-cleanup test skipped, Herdr not installed in guest"
 fi
 
+# --- scripts/lib/dx-persist-relocate.sh's own defensive corners, flagged as
+# uncovered by the coverage report, exercised here (rather than in
+# test_sourceable_coverage.sh) because setup_herdr_persistence is this
 print_summary
 exit_with_code
