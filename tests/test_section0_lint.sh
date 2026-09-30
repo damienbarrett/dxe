@@ -5,6 +5,28 @@
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# CI pins ShellCheck to 0.10.0 (cross-ref: .github/workflows/ci.yml's
+# "ShellCheck" step, NIXPKGS_PIN=nixos-25.05 -- see that step's own comment
+# for why 0.10.0 and not 0.11.x). This suite's own ShellCheck cases below run
+# whatever `shellcheck` happens to already be on the LOCAL/runner PATH
+# instead: there is no nix-pinned shellcheck available inside this
+# container-free tier, so a stock CI runner image or a developer's own
+# machine can easily have a different binary. A version other than the pin
+# can disagree with it in either direction -- flag something 0.10.0 does
+# not, or miss something it does -- so a mismatch is reported below as a
+# skip (not a failure) naming both versions, unless the caller asked for
+# --strict/DXE_LINT_STRICT=1, where any deviation from the pin is itself an
+# error.
+DXE_LINT_PINNED_SHELLCHECK_VERSION="0.10.0"
+
+# Prints the installed `shellcheck`'s version (e.g. "0.10.0"), or nothing if
+# it is missing or its `--version` output does not match the expected
+# `version: X.Y.Z` line. Safe to call whether or not shellcheck is on PATH.
+_dxe_lint_installed_shellcheck_version() {
+    command -v shellcheck >/dev/null 2>&1 || return 0
+    shellcheck --version 2>/dev/null | awk -F': ' '/^version:/ { print $2 }'
+}
+
 # Fable E1 / Muse E2 (WP9.3): DXE_LINT_STRICT_SELFTEST is set only by this
 # file's own Red/Green case below (search "DXE_LINT_STRICT_SELFTEST"), to
 # probe the --strict/DXE_LINT_STRICT=1 shellcheck-missing branch under a
@@ -20,6 +42,33 @@ if [ "${DXE_LINT_STRICT_SELFTEST:-0}" = "1" ]; then
     fi
     echo "Error: shellcheck is not installed on PATH, and --strict (or DXE_LINT_STRICT=1) requires it" >&2
     exit 1
+fi
+
+# DXE_LINT_VERSION_SELFTEST probes the version-mismatch branches below (skip
+# when not --strict, error when --strict) against a real, if fake,
+# `shellcheck` on PATH that deliberately reports a version other than the
+# pin -- so the comparison is exercised end to end, not only unit-tested in
+# isolation. Guarded and short-circuited exactly like the
+# DXE_LINT_STRICT_SELFTEST probe above, before test_helpers.sh is sourced,
+# for the same reason: this process's own exit status and stdout/stderr are
+# the only signal the outer case reads, and it must never share the outer
+# run's results-file bookkeeping.
+if [ "${DXE_LINT_VERSION_SELFTEST:-0}" = "1" ]; then
+    selftest_version="$(_dxe_lint_installed_shellcheck_version)"
+    if [ -z "$selftest_version" ]; then
+        echo "Error: version selftest expects a fake shellcheck on PATH reporting a version" >&2
+        exit 2
+    fi
+    if [ "$selftest_version" = "$DXE_LINT_PINNED_SHELLCHECK_VERSION" ]; then
+        echo "Error: version selftest fake must report a version other than the pin ($DXE_LINT_PINNED_SHELLCHECK_VERSION)" >&2
+        exit 2
+    fi
+    if [ "${DXE_LINT_STRICT:-0}" = "1" ]; then
+        echo "Error: local shellcheck ($selftest_version) does not match CI's pinned $DXE_LINT_PINNED_SHELLCHECK_VERSION (.github/workflows/ci.yml), and --strict/DXE_LINT_STRICT=1 treats a version mismatch as an error" >&2
+        exit 1
+    fi
+    echo "SKIP: local shellcheck ($selftest_version) does not match CI's pinned $DXE_LINT_PINNED_SHELLCHECK_VERSION (.github/workflows/ci.yml); findings may differ by version, so this is not treated as a failure"
+    exit 0
 fi
 
 source "$SCRIPT_DIR/test_helpers.sh"
@@ -62,6 +111,56 @@ else
 fi
 rm -f "$strict_probe_out"
 
+# Prove the version-mismatch branches (this WP) against a real, if fake,
+# binary named `shellcheck` on PATH -- not by removing it (the --strict
+# selftest above already covers "absent"), but by making it report a
+# version other than the CI pin. version_probe_dir is prepended to PATH
+# only for the nested invocations below, never for this outer run's own
+# ShellCheck cases further down.
+version_probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-section0-version.XXXXXX")"
+cat > "$version_probe_dir/shellcheck" <<'FAKE_SHELLCHECK'
+#!/usr/bin/env bash
+case "${1:-}" in
+    --version)
+        printf 'ShellCheck - shell script analysis tool\nversion: 9.9.9\nlicense: GNU General Public License, version 3\nwebsite: https://www.shellcheck.net\n'
+        exit 0
+        ;;
+esac
+echo "fake shellcheck: unexpected invocation: $*" >&2
+exit 1
+FAKE_SHELLCHECK
+chmod 0755 "$version_probe_dir/shellcheck"
+
+version_probe_out="$(mktemp "${TMPDIR:-/tmp}/dxe-section0-version.XXXXXX")"
+version_probe_status=0
+# DXE_LINT_STRICT=0 is set explicitly (not merely left unset), so this
+# case's own claim -- "non-strict skips" -- holds regardless of whatever
+# DXE_LINT_STRICT the caller of this whole suite already had in its
+# ambient environment (env inheritance would otherwise let that leak into
+# the nested run and flip its branch).
+DXE_LINT_VERSION_SELFTEST=1 DXE_LINT_STRICT=0 PATH="$version_probe_dir:$PATH" \
+    "$strict_probe_bash" "$SCRIPT_DIR/test_section0_lint.sh" >"$version_probe_out" 2>&1 || version_probe_status=$?
+if [ "$version_probe_status" -eq 0 ] && grep -Fq 'SKIP' "$version_probe_out" \
+    && grep -Fq '9.9.9' "$version_probe_out" && grep -Fq "$DXE_LINT_PINNED_SHELLCHECK_VERSION" "$version_probe_out"; then
+    test_pass "a shellcheck whose --version differs from the CI pin ($DXE_LINT_PINNED_SHELLCHECK_VERSION) is skipped, naming both versions, rather than failed"
+else
+    test_fail "a shellcheck whose --version differs from the CI pin is skipped, naming both versions (status=$version_probe_status: $(cat "$version_probe_out"))"
+fi
+rm -f "$version_probe_out"
+
+version_probe_strict_out="$(mktemp "${TMPDIR:-/tmp}/dxe-section0-version.XXXXXX")"
+version_probe_strict_status=0
+DXE_LINT_VERSION_SELFTEST=1 DXE_LINT_STRICT=1 PATH="$version_probe_dir:$PATH" \
+    "$strict_probe_bash" "$SCRIPT_DIR/test_section0_lint.sh" >"$version_probe_strict_out" 2>&1 || version_probe_strict_status=$?
+if [ "$version_probe_strict_status" -eq 1 ] && grep -Fq 'Error' "$version_probe_strict_out" \
+    && grep -Fq '9.9.9' "$version_probe_strict_out" && grep -Fq "$DXE_LINT_PINNED_SHELLCHECK_VERSION" "$version_probe_strict_out"; then
+    test_pass "--strict / DXE_LINT_STRICT=1 treats a shellcheck version mismatch as an error, naming both versions"
+else
+    test_fail "--strict / DXE_LINT_STRICT=1 treats a shellcheck version mismatch as an error (status=$version_probe_strict_status: $(cat "$version_probe_strict_out"))"
+fi
+rm -f "$version_probe_strict_out"
+rm -rf "$version_probe_dir"
+
 if ! command -v shellcheck >/dev/null 2>&1; then
     if [ "$DXE_LINT_STRICT" = "1" ]; then
         echo "Error: shellcheck is not installed on PATH, and --strict (or DXE_LINT_STRICT=1) requires it" >&2
@@ -70,6 +169,25 @@ if ! command -v shellcheck >/dev/null 2>&1; then
         exit_with_code
     fi
     test_skip "ShellCheck not installed"
+    print_summary
+    exit_with_code
+fi
+
+# Version-aware gate (this WP): the runner's own `shellcheck` binary is not
+# necessarily CI's pinned 0.10.0 (see DXE_LINT_PINNED_SHELLCHECK_VERSION's
+# own comment near the top of this file), and a different version can
+# disagree with the pin's findings in either direction. Treat a mismatch as
+# a skip -- not a failure -- unless --strict/DXE_LINT_STRICT=1 asked for the
+# pin to be enforced exactly.
+installed_shellcheck_version="$(_dxe_lint_installed_shellcheck_version)"
+if [ -n "$installed_shellcheck_version" ] && [ "$installed_shellcheck_version" != "$DXE_LINT_PINNED_SHELLCHECK_VERSION" ]; then
+    if [ "$DXE_LINT_STRICT" = "1" ]; then
+        echo "Error: local shellcheck ($installed_shellcheck_version) does not match CI's pinned $DXE_LINT_PINNED_SHELLCHECK_VERSION (.github/workflows/ci.yml), and --strict/DXE_LINT_STRICT=1 treats a version mismatch as an error" >&2
+        test_fail "ShellCheck version must match the CI pin ($DXE_LINT_PINNED_SHELLCHECK_VERSION) under --strict/DXE_LINT_STRICT=1, found $installed_shellcheck_version"
+        print_summary
+        exit_with_code
+    fi
+    test_skip "ShellCheck version mismatch: local $installed_shellcheck_version vs CI's pinned $DXE_LINT_PINNED_SHELLCHECK_VERSION (.github/workflows/ci.yml) -- findings may differ by version, so this is not treated as a failure"
     print_summary
     exit_with_code
 fi
