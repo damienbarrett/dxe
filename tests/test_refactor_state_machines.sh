@@ -364,6 +364,47 @@ mkdir -p "$volume_collision_root"
 ) && test_fail "duplicate DX_NIX_VOLUME/DX_PERSIST_VOLUME names refuse to resolve" \
     || test_pass "duplicate DX_NIX_VOLUME/DX_PERSIST_VOLUME names refuse to resolve"
 
+# WP9.4 (Muse B5) compatibility: dx_config_validate_cross_fields warns
+# (stderr, not an error -- the git-tracked symlink shim still makes the
+# path resolve) when DX_CONTEXT_DIR or DX_BOOTSTRAP_SOURCE names the guest
+# tree's old, renamed directory
+# (container/aarch64-darwin-apple-container-dx-nixos-26.05, now
+# container/dx-nixos-26.05), so a real external profile still pointing at
+# the old name is not silently trusted forever.
+old_guest_dir_stderr="$(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    DX_RUNTIME=apple DX_NIX_STORAGE_MODE=apple-image
+    DX_NIX_VOLUME=dx-nix DX_PERSIST_VOLUME=dx-persist DX_BOOTSTRAP_VOLUME=dx-bootstrap
+    DX_CONTEXT_DIR="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
+    DX_BOOTSTRAP_SOURCE="$DX_CONTEXT_DIR"
+    dx_config_validate_cross_fields 2>&1 1>/dev/null
+    echo "exit:$?"
+)"
+if printf '%s\n' "$old_guest_dir_stderr" | stdin_matches -F -- "exit:0" \
+    && printf '%s\n' "$old_guest_dir_stderr" | stdin_matches -F -- "Warning:" \
+    && printf '%s\n' "$old_guest_dir_stderr" | stdin_matches -F -- "aarch64-darwin-apple-container-dx-nixos-26.05"; then
+    test_pass "dx_config_validate_cross_fields warns (not errors) when a configured path names the old guest directory"
+else
+    test_fail "dx_config_validate_cross_fields warns (not errors) when a configured path names the old guest directory (got: $old_guest_dir_stderr)"
+fi
+
+no_old_guest_dir_stderr="$(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    DX_RUNTIME=apple DX_NIX_STORAGE_MODE=apple-image
+    DX_NIX_VOLUME=dx-nix DX_PERSIST_VOLUME=dx-persist DX_BOOTSTRAP_VOLUME=dx-bootstrap
+    DX_CONTEXT_DIR="$BASE_DIR/container/dx-nixos-26.05"
+    DX_BOOTSTRAP_SOURCE="$DX_CONTEXT_DIR"
+    dx_config_validate_cross_fields 2>&1 1>/dev/null
+    echo "exit:$?"
+)"
+if [ "$no_old_guest_dir_stderr" = "exit:0" ]; then
+    test_pass "dx_config_validate_cross_fields is silent for the current (non-deprecated) guest directory"
+else
+    test_fail "dx_config_validate_cross_fields is silent for the current (non-deprecated) guest directory (got: $no_old_guest_dir_stderr)"
+fi
+
 # The checked-in example profile (qnap-dxe-plan.md DQ3) parses cleanly under
 # the same strict data grammar as any other profile -- placeholder values
 # only, no real hostname/user/path, proven separately by

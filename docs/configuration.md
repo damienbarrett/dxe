@@ -17,7 +17,7 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_SSH_KEY` | `$DX_PROJECT_ROOT/dx_key` | Host private key used for SSH into the guest. |
 | `DX_SSH_KEY_PUB` | `$DX_PROJECT_ROOT/dx_key.pub` | Host public key provisioned into the guest on create. |
 | `DX_SSH_CONNECT_TIMEOUT` | `15` | Host-side SSH connection timeout in seconds for `dx-ssh`. |
-| `DX_CONTEXT_DIR` | `container/dx-nixos-26.05` | Directory used as the image build context and default bootstrap source. |
+| `DX_CONTEXT_DIR` | `container/dx-nixos-26.05` | Directory used as the image build context and default bootstrap source. Renamed from `container/aarch64-darwin-apple-container-dx-nixos-26.05` in WP9.4 (the flake is architecture-neutral; the QNAP guest is x86_64). A git-tracked symlink at the old path keeps a profile that still names it working for one release; `dx_config_validate_cross_fields` prints a one-line deprecation warning to stderr when it sees the old name. The old path is removed at the next base changeover (see `docs/release-maintenance.md`). |
 | `DX_BOOTSTRAP_SOURCE` | `$DX_CONTEXT_DIR` | Host directory pushed into the clean guest bootstrap volume. Override this to test a different bootstrap checkout without rebuilding the image. |
 | `DX_BOOTSTRAP_VOLUME` | `dx-bootstrap` | Named volume mounted at `/guest-bootstrap` by default. It stores the pushed bootstrap payload outside the image layer. |
 | `DX_BOOTSTRAP_PATH` | `/guest-bootstrap` | Guest path where the bootstrap payload is mounted and executed. |

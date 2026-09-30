@@ -227,6 +227,24 @@ dx_config_validate_value() {
 # which only ever sees one NAME/value pair and cannot see DX_RUNTIME while
 # validating DX_REMOTE_HOST or vice versa.
 dx_config_validate_cross_fields() {
+    # WP9.4 (Muse B5) compatibility: the guest tree was renamed from
+    # container/aarch64-darwin-apple-container-dx-nixos-26.05 to
+    # container/dx-nixos-26.05 (the flake is architecture-neutral; the QNAP
+    # guest that boots it is x86_64, not the darwin/apple/aarch64 name the
+    # old directory carried). A git-tracked symlink at the old path keeps a
+    # real profile that still sets DX_CONTEXT_DIR/DX_BOOTSTRAP_SOURCE to the
+    # old name working for one release -- this is a warning, not an error,
+    # because the path still resolves; it only tells a developer to update
+    # their profile before the symlink is removed at the next base
+    # changeover (docs/release-maintenance.md). Checked first, unconditional
+    # on every other check below (including the ones that `return 1`), so it
+    # always fires whenever either field still names the old directory.
+    case "${DX_CONTEXT_DIR:-}:${DX_BOOTSTRAP_SOURCE:-}" in
+        *aarch64-darwin-apple-container-dx-nixos-26.05*)
+            echo "Warning: a configured path names the old 'aarch64-darwin-apple-container-dx-nixos-26.05' guest directory -- this is a deprecated alias for 'container/dx-nixos-26.05', kept as a compatibility symlink for one release and removed at the next base changeover." >&2
+            ;;
+    esac
+
     case "${DX_RUNTIME:-}" in
         docker-ssh)
             [ -n "${DX_REMOTE_HOST:-}" ] || {
