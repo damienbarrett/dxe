@@ -21,6 +21,13 @@ source "$DX_LIB_DIR/lib/dx-host-util.sh"
 source "$DX_LIB_DIR/lib/dx-runtime.sh"
 # shellcheck source=lib/dx-container.sh
 source "$DX_LIB_DIR/lib/dx-container.sh"
+# shellcheck source=lib/dx-bootstrap-protocol.sh
+#
+# Sourced before dx-bootstrap-sync.sh (and before dx-ssh-common.sh, which it
+# must also precede): dx-bootstrap-sync.sh calls
+# dx_guest_publication_protocol_snippet at SOURCE time, to build its
+# dx_sync_guest_program variable, so the function has to exist already.
+source "$DX_LIB_DIR/lib/dx-bootstrap-protocol.sh"
 # shellcheck source=lib/dx-bootstrap-sync.sh
 source "$DX_LIB_DIR/lib/dx-bootstrap-sync.sh"
 # shellcheck source=lib/dx-ssh-common.sh
