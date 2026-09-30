@@ -216,6 +216,16 @@ if declare -F setup_herdr_persistence >/dev/null; then
         # Recording the calls asserts the privilege contract instead.
         chown() { printf '%s\n' "$*" >> "$chown_log"; }
         run_as_dx() { bash -c "$1"; }
+        # WP8.2/Fable B10: the symlink publish step now goes through
+        # run_as_dx_argv, not run_as_dx. Left unshimmed, the real
+        # bootstrap/common.sh definition (already sourced above) runs, which
+        # shells out to the real setpriv(8) -- present on Linux CI but with
+        # no "dx" system user to switch to, so it fails and the publish never
+        # happens. Same discipline as tests/test_section23_herdr.sh's
+        # herdr_persist_run_as_dx_argv: run the argv for real, as this
+        # process's own user, so the intended relocation/publish branch
+        # actually executes.
+        run_as_dx_argv() { "$@"; }
         setup_herdr_persistence "$persist_home" "$home"
     ); then
         test_pass "Herdr persistence activates against a disposable home"
@@ -268,6 +278,10 @@ printf '%s\n' session > "$migrate_home/.local/state/herdr/session-marker"
 if (
     chown() { :; }
     run_as_dx() { bash -c "$1"; }
+    # See the disposable-home case above: run_as_dx_argv (not run_as_dx)
+    # carries the symlink publish step, so it needs the same real-execution
+    # shim or the real setpriv(8) call fails with no "dx" user on Linux CI.
+    run_as_dx_argv() { "$@"; }
     setup_herdr_persistence "$migrate_persist" "$migrate_home"
 ); then
     if [ -f "$migrate_persist/.config/herdr/user-marker" ] \
@@ -288,6 +302,8 @@ printf '%s\n' legacy-state-target > "$repair_persist/.local/state/herdr"
 if (
     chown() { :; }
     run_as_dx() { bash -c "$1"; }
+    # Same run_as_dx_argv real-execution shim as above.
+    run_as_dx_argv() { "$@"; }
     setup_herdr_persistence "$repair_persist" "$repair_home"
 ); then
     shopt -s nullglob
@@ -350,6 +366,8 @@ if declare -F dx_activate_herdr >/dev/null; then
     if (
         chown() { :; }
         run_as_dx() { bash -c "$1"; }
+        # Same run_as_dx_argv real-execution shim as above.
+        run_as_dx_argv() { "$@"; }
         dx_activate_herdr "$persist_home" "$home" "$TEMPLATE"
     ); then
         test_pass "Herdr activation composes persistence and config seeding"
