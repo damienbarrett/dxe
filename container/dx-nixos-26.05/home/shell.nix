@@ -140,6 +140,11 @@
   # with `nix eval`.
   home.sessionPath = [
     "/persist/home/dx/.local/state/dx-ai/current/profile/bin"
+    # ~/.nix-profile/bin must be listed: a bare login shell (raw `ssh dx@guest
+    # "bash -lc ..."`) starts from sshd's default PATH, which has no Nix
+    # directory, and this guest has no /etc/profile.d/nix.sh to add one.
+    # Dropped once during WP7.4 and caught by the dx-test live gate.
+    "$HOME/.nix-profile/bin"
     "$HOME/.local/bin"
   ];
 

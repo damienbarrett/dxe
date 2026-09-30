@@ -45,13 +45,27 @@ fi
 # guard: the hand-rolled line must not come back.
 assert_file_not_contains "$SHELL_NIX" '$env.PATH = ($env.PATH | split row' "nushell envFile no longer hand-builds \$env.PATH (home.sessionPath replaces it)"
 
+# Live-gate regression (dx-test, 2026-10-01): the WP7.4 consolidation dropped
+# ~/.nix-profile/bin from the list the three per-shell prepends all carried.
+# Nothing else puts it on PATH for a bare login shell (sshd's default PATH
+# has no Nix directory and this guest has no /etc/profile.d/nix.sh), so a
+# plain `ssh dx@guest "bash -lc nu"` -- the form sections 6, 15 and 16 use --
+# found no `nu`, `tmux`, `id` or `rm`. dx-ssh masked it by exporting PATH
+# itself. Static guard first (runs without nix), the evaluation below second.
+if awk '/home\.sessionPath = \[/{f=1} f&&/\];/{exit} f' "$SHELL_NIX" | stdin_matches -F '"$HOME/.nix-profile/bin"'; then
+    test_pass "home.sessionPath lists \$HOME/.nix-profile/bin (a bare login shell over raw ssh has no other Nix PATH)"
+else
+    test_fail "home.sessionPath lists \$HOME/.nix-profile/bin (a bare login shell over raw ssh has no other Nix PATH)"
+fi
+
 if command -v nix >/dev/null 2>&1; then
     if sessionpath_json="$(nix eval --json --no-write-lock-file "$CONTAINER_DIR#homeConfigurations.dx.config.home.sessionPath" 2>&1)"; then
         if printf '%s\n' "$sessionpath_json" | stdin_matches -F '.local/state/dx-ai/current/profile/bin' \
+            && printf '%s\n' "$sessionpath_json" | stdin_matches -F '.nix-profile/bin' \
             && printf '%s\n' "$sessionpath_json" | stdin_matches -F '.local/bin'; then
-            test_pass "home.sessionPath carries the dx-ai profile and ~/.local/bin (adds ~/.local/bin to every shell's PATH, nushell included)"
+            test_pass "home.sessionPath carries the dx-ai profile, ~/.nix-profile/bin and ~/.local/bin (every shell's PATH, nushell included)"
         else
-            test_fail "home.sessionPath carries the dx-ai profile and ~/.local/bin (got: ${sessionpath_json})"
+            test_fail "home.sessionPath carries the dx-ai profile, ~/.nix-profile/bin and ~/.local/bin (got: ${sessionpath_json})"
         fi
     else
         test_fail "home.sessionPath evaluates (${sessionpath_json})"
