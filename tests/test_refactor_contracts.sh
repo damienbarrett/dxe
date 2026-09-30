@@ -33,6 +33,67 @@ for library in "${libraries[@]}"; do
 done
 rm -f "$purity_stderr"
 
+# --- RED (WP1.6 / Fable D4): the state-diff checks above have never been
+# able to observe a real violation. `output="$(source "$library" ...)"`
+# sources the library inside the command substitution's OWN forked
+# subshell: that subshell inherits this process's $-/IFS/PWD/umask/traps/
+# SCRIPT_DIR at fork time (so a "before" snapshot taken out here is always
+# correct), but anything the sourced library does to ITS OWN $-/IFS/PWD/
+# umask/traps/SCRIPT_DIR dies with the subshell the instant the
+# substitution finishes -- it can never reach an "after" comparison read
+# from THIS process's still-untouched values. Only output/stderr/status
+# (which genuinely cross stdout/stderr/$?) ever made it back.
+#
+# Proven with two fixtures below: an impure library (`set -u` plus a
+# SCRIPT_DIR clobber) that this mechanism WRONGLY reports as clean, and a
+# genuinely pure library it correctly reports as clean. The predicate here
+# is a verbatim copy of the loop's own idiom above, wrapped so it can be
+# asserted against directly; the next commit replaces the loop's mechanism
+# (and this predicate) with a real-subprocess probe that can actually see a
+# violation -- until then, the first assertion below is expected to fail.
+purity_probe_subshell_clean() {
+    local library="$1"
+    local before_flags before_ifs before_pwd before_umask before_traps before_script_dir
+    before_flags=$-; before_ifs=$IFS; before_pwd=$PWD
+    before_umask="$(umask)"
+    before_traps="$(trap -p)"
+    before_script_dir="dxe-purity-canary"
+    SCRIPT_DIR="$before_script_dir"
+    local stderr_file
+    stderr_file="$(mktemp "${TMPDIR:-/tmp}/dxe-purity-subshell-stderr.XXXXXX")"
+    local output status
+    # shellcheck source=/dev/null
+    output="$(source "$library" 2>"$stderr_file")" && status=0 || status=$?
+    local stderr_output
+    stderr_output="$(cat "$stderr_file")"
+    rm -f "$stderr_file"
+    [ -z "$output" ] &&
+        [ -z "$stderr_output" ] &&
+        [ "$status" -eq 0 ] &&
+        [ "$before_flags" = "$-" ] &&
+        [ "$before_ifs" = "$IFS" ] &&
+        [ "$before_pwd" = "$PWD" ] &&
+        [ "$before_umask" = "$(umask)" ] &&
+        [ "$before_traps" = "$(trap -p)" ] &&
+        [ "$before_script_dir" = "$SCRIPT_DIR" ]
+}
+
+purity_fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-purity-fixture.XXXXXX")"
+cat > "$purity_fixture_dir/impure.sh" <<'EOF'
+#!/bin/bash
+set -u
+SCRIPT_DIR="clobbered-by-fixture"
+EOF
+cat > "$purity_fixture_dir/pure.sh" <<'EOF'
+#!/bin/bash
+# A pure fixture: only a function definition, no side effects at source time.
+dxe_purity_fixture_pure_noop() { :; }
+EOF
+check reject purity_probe_subshell_clean "$purity_fixture_dir/impure.sh"
+check purity_probe_subshell_clean "$purity_fixture_dir/pure.sh"
+rm -rf "$purity_fixture_dir"
+unset SCRIPT_DIR
+
 source "$ROOT/bin/lib/dx-config.sh"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-config-test.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
