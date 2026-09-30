@@ -528,7 +528,8 @@ needed the fix.
   `tests/`, and `docs/`, and the directory move itself -- a wide, purely
   mechanical diff that must not be entangled with anything this phase
   changes. **Landed in WP9.4 (Muse B5):** renamed to
-  `container/dx-nixos-26.05/`.
+  `container/dx-nixos-26.05/`, with a git-tracked compatibility symlink
+  left at the old path for one release (`docs/release-maintenance.md`).
 - Remote-aware SSH/publish (Phase 5's job entirely).
 - Any change to Apple behavior beyond the one new env token in section 4.1.
 - Any live build anywhere (subagent constraint; the native x86_64 build only

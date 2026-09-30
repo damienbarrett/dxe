@@ -53,8 +53,17 @@ while IFS= read -r tracked_rel; do
     case "$tracked_rel" in
         docs/evidence/*|docs/reviews/*) continue ;;
         # This file's own OLD_GUEST_DIR_NAME literal, above, is the pattern
-        # being searched for, not a stale reference to fix.
-        tests/test_section10_docs.sh) continue ;;
+        # being searched for, not a stale reference to fix. bin/lib/
+        # dx-config.sh's dx_config_validate_cross_fields deliberately keeps
+        # the same literal, permanently, as the pattern its section 21
+        # deprecation warning matches against; test_refactor_state_machines.sh
+        # deliberately sets a DX_CONTEXT_DIR fixture value naming the old
+        # directory to exercise that same warning. docs/configuration.md and
+        # docs/release-maintenance.md name the old directory in their own
+        # deprecation notices (WP9.4) -- intentional documentation of the
+        # alias, due to be removed together with the symlink shim at the
+        # next base changeover, not a stale reference to fix now.
+        tests/test_section10_docs.sh|bin/lib/dx-config.sh|tests/test_refactor_state_machines.sh|docs/configuration.md|docs/release-maintenance.md) continue ;;
     esac
     tracked_file="$BASE_DIR/$tracked_rel"
     [ -f "$tracked_file" ] || continue

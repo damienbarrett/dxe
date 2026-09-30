@@ -49,6 +49,17 @@ bootstrap essentials follow the checked-in
 flake lock through the `bootstrap-essentials` output, so this document does not
 rely on the global flake registry for their provenance.
 
+**Deprecated directory alias.** The context directory was renamed in WP9.4
+from `container/aarch64-darwin-apple-container-dx-nixos-26.05` (the flake
+is architecture-neutral, and the QNAP guest it also boots is x86_64, not
+darwin/apple/aarch64) to `container/dx-nixos-26.05`. A git-tracked symlink
+at the old path keeps a real profile that still sets
+`DX_CONTEXT_DIR`/`DX_BOOTSTRAP_SOURCE` to the old name working for one
+release (`dx_config_validate_cross_fields` prints a one-line deprecation
+warning to stderr, not an error, when it sees one). The old-path symlink is
+a deprecated alias, removed at the next base changeover — update any
+external profile still naming it before then.
+
 A release bump is therefore:
 
 ```bash
