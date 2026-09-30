@@ -84,6 +84,23 @@ dx_read_image_default_profile_target() {
 # interruption, not that it is always deleted: the reader validates mode,
 # and field completeness/shape for that mode, and rejects anything else,
 # rather than trusting the writer's own cleanup.
+
+# The five record lines dx_write_nix_volume_record writes, in order. A
+# plain function body (rather than the `{ ...; } > file` group it replaces)
+# so the caller's `if ! dx_nix_volume_record_lines ... > file; then` is one
+# traceable simple command. Exit status is whatever the last printf
+# returns, same as the group it replaces -- an earlier printf failing while
+# a later one still succeeds is not treated as a write failure, matching
+# the original brace group's behaviour exactly.
+dx_nix_volume_record_lines() {
+    local mode="$1" root="$2" device="$3" fs="$4" opts="$5"
+    printf 'mode=%s\n' "$mode"
+    printf 'root=%s\n' "$root"
+    printf 'device=%s\n' "$device"
+    printf 'fs=%s\n' "$fs"
+    printf 'opts=%s\n' "$opts"
+}
+
 dx_write_nix_volume_record() {
     local mode="$1" root="$2" device="${3:-}" fs="${4:-}" opts="${5:-}"
     if [ -z "$root" ]; then
@@ -110,13 +127,7 @@ dx_write_nix_volume_record() {
     file="$dir/nix-volume-record"
     dx_validate_atomic_marker_path "$file" "Nix volume record" || return 1
     temporary="$(mktemp "$dir/.nix-volume-record.XXXXXX")" || return 1
-    if ! {
-        printf 'mode=%s\n' "$mode"
-        printf 'root=%s\n' "$root"
-        printf 'device=%s\n' "$device"
-        printf 'fs=%s\n' "$fs"
-        printf 'opts=%s\n' "$opts"
-    } > "$temporary"; then
+    if ! dx_nix_volume_record_lines "$mode" "$root" "$device" "$fs" "$opts" > "$temporary"; then
         rm -f "$temporary"
         return 1
     fi

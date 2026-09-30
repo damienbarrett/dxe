@@ -24,8 +24,10 @@ dx_opencode_bootstrap_load_persist_relocate() {
     echo "Error: persist-relocate library is unavailable." >&2
     return 1
 }
-dx_opencode_bootstrap_load_persist_relocate \
-    || { echo "Error: OpenCode persistence could not load the shared persist-relocate library." >&2; return 1 2>/dev/null || exit 1; }
+if ! dx_opencode_bootstrap_load_persist_relocate; then
+    echo "Error: OpenCode persistence could not load the shared persist-relocate library." >&2
+    return 1 2>/dev/null || exit 1
+fi
 
 dx_opencode_validate_directory_path() {
     local path="$1" description="$2" remainder component current=""
