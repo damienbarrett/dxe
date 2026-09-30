@@ -22,6 +22,21 @@ libraries=("$ROOT"/bin/lib/*.sh)
 if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
     libraries+=("$container_dir"/bootstrap/*.sh "$container_dir"/scripts/lib/*.sh)
 fi
+# WP1.6 (Fable D4): the same import-purity bar applies to the test
+# harness's own sourceable libraries, not only to production -- a helper
+# that fails the check it enforces on bin/lib/*.sh is exactly the gap D4
+# found. tests/lib/*.sh is NOT globbed wholesale: tests/lib/audit-flake-
+# lock.sh is a standalone CLI tool (`set -euo pipefail`, three required
+# positional arguments, `exit 2` on a bad invocation) that is always
+# exec'd -- never sourced -- anywhere in this repository, so sourcing it
+# here would fail for a reason that has nothing to do with import purity.
+libraries+=(
+    "$ROOT/tests/lib/harness.sh"
+    "$ROOT/tests/lib/fake-tools.sh"
+    "$ROOT/tests/lib/tmux-probes.sh"
+    "$ROOT/tests/lib/coverage-metric.sh"
+    "$ROOT/tests/test_helpers.sh"
+)
 
 # --- GREEN (WP1.6 / Fable D4): a real-subprocess probe -------------------
 #
@@ -169,6 +184,12 @@ for library in "${libraries[@]}"; do
     rm -f "$purity_out" "$purity_err" "$purity_result"
 done
 rm -rf "$purity_probe_dir"
+
+# WP1.6 (Fable D4): the helper may not source production code. It used to
+# source bin/lib/dx-host-util.sh before any assertion helper existed to
+# prove the import was otherwise inert; a suite that needs one of its
+# functions now sources it directly instead.
+check reject grep -q 'bin/lib' "$ROOT/tests/test_helpers.sh"
 
 source "$ROOT/bin/lib/dx-config.sh"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-config-test.XXXXXX")"
