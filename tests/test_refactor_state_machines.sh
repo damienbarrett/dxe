@@ -56,7 +56,8 @@ for hostile in \
     'DX_SSH_KEY=/tmp/key|touch' \
     'DX_SSH_KEY=/tmp/key>file' \
     'DX_SSH_KEY=/tmp/key<file' \
-    'UNKNOWN=value'; do
+    'UNKNOWN=value' \
+    'bad-line'; do
     printf '%b\n' "$hostile" > "$config_root/hostile.env"
     expect_reject "data parser rejects unsupported syntax: $hostile" dx_parse_config_file "$config_root/hostile.env"
 done
@@ -68,8 +69,105 @@ printf '%s\n' 'export DX_SSH_KEY=${DX_PROJECT_ROOT}/key' > "$config_root/export.
 export DX_PROJECT_ROOT=$config_root
 expect_ok "migration export prefix and project-root path placeholder are accepted" dx_parse_config_file "$config_root/export.env"
 [ "$DXE_PARSED_DX_SSH_KEY" = "$config_root/key" ] && test_pass "project-root placeholder resolves as data" || test_fail "project-root placeholder resolves as data"
+printf '%s\n' 'DX_SSH_KEY=${DX_PROJECT_ROOT}' > "$config_root/root-only.env"
+expect_ok "a bare \${DX_PROJECT_ROOT} placeholder (no suffix) is accepted" dx_parse_config_file "$config_root/root-only.env"
+[ "$DXE_PARSED_DX_SSH_KEY" = "$config_root" ] && test_pass "a bare \${DX_PROJECT_ROOT} placeholder resolves to the project root alone" || test_fail "a bare \${DX_PROJECT_ROOT} placeholder resolves to the project root alone (got '$DXE_PARSED_DX_SSH_KEY')"
 dx_parse_config_file "$config_root/absent.env"
 [ "${DXE_PARSED_DX_SSH_KEY+x}" != x ] && test_pass "an absent data file clears prior parser output" || test_fail "an absent data file clears prior parser output"
+
+# WP8.4 (Fable D8): migrated from tests/test_sourceable_coverage.sh's
+# `f >/dev/null 2>&1 || true` config-parser probes -- those executed these
+# lines (for the coverage percentage) while discarding every outcome; here
+# each has an asserted outcome instead, beside the parser/registry cases
+# just above.
+it "an unregistered field name has no default"
+expect_exit 1 dx_config_default UNKNOWN
+
+for pair in \
+    'DX_CONTAINER_NAME: :empty container name' \
+    'DX_IMAGE:.bad:leading dot is not a valid image reference' \
+    'DX_SSH_PORT:0:port 0 is below the valid range' \
+    'DX_SSH_PORT:65536:port 65536 is above the valid range' \
+    'DX_SSH_CONNECT_TIMEOUT:0:a bounded wait rejects zero' \
+    'DX_NIX_DISK_SIZE:0G:a zero-sized disk is rejected' \
+    'DX_BOOTSTRAP_PATH:relative:a relative path is rejected for an abspath field' \
+    'DX_SSH_KEY:relative:a relative path is rejected for an abspath field' \
+    'DX_GIT_MOUNT_SOURCE:relative:a relative path is rejected for an optpath field'; do
+    pair_field="${pair%%:*}"
+    pair_rest="${pair#*:}"
+    pair_value="${pair_rest%%:*}"
+    pair_why="${pair_rest#*:}"
+    expect_reject "$pair_field rejects '$pair_value' ($pair_why)" dx_config_validate_value "$pair_field" "$pair_value"
+done
+expect_ok "DX_NIX_DISK_SIZE accepts a bare integer with no unit suffix" dx_config_validate_value DX_NIX_DISK_SIZE 12
+
+it "dx_config_parse_error reports the file, line, and reason, and always fails"
+expect_exit 1 dx_config_parse_error fixture 7 expected
+expect_stderr 'fixture:7: expected' dx_config_parse_error fixture 7 expected
+
+# DXE_CONFIG_RESOLVED/DXE_CONFIG_SNAPSHOT_VERSION edge cases: an isolated,
+# no-.env fixture root (every field resolves to its own default), matching
+# the sourceable-coverage probes' own all-defaults fixture rather than
+# $config_root's custom DX_CONTAINER_NAME/DX_IMAGE .env -- the property
+# under test is the snapshot machinery, not the data grammar, and an
+# explicit root argument throughout (never dx_init_config's no-argument,
+# auto-detect-from-BASH_SOURCE path) keeps this suite from ever resolving
+# THIS checkout's own real configuration into itself (Fable D9/D4).
+snapshot_root="$fixture/snapshot"
+mkdir -p "$snapshot_root"
+(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    dx_init_config "$snapshot_root" >/dev/null 2>&1
+    DXE_CONFIG_SNAPSHOT_VERSION=99
+    dx_validate_config_snapshot "$snapshot_root" >/dev/null 2>&1
+) && test_fail "a stale DXE_CONFIG_SNAPSHOT_VERSION refuses re-validation" \
+    || test_pass "a stale DXE_CONFIG_SNAPSHOT_VERSION refuses re-validation"
+(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    dx_init_config "$snapshot_root" >/dev/null 2>&1
+    DXE_CONFIG_ORIGIN_DX_IMAGE=invalid
+    dx_validate_config_snapshot "$snapshot_root" >/dev/null 2>&1
+) && test_fail "an invalid origin tag refuses re-validation" \
+    || test_pass "an invalid origin tag refuses re-validation"
+(
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    DXE_CONFIG_RESOLVED='' DXE_CONFIG_SNAPSHOT_VERSION=1
+    dx_init_config "$snapshot_root" >/dev/null 2>&1
+) && test_fail "a partial snapshot marker (RESOLVED unset/empty, VERSION set) is refused rather than silently re-resolved" \
+    || test_pass "a partial snapshot marker (RESOLVED unset/empty, VERSION set) is refused rather than silently re-resolved"
+(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    dx_init_config "$snapshot_root" >/dev/null 2>&1
+    DX_PROJECT_ROOT=/wrong
+    dx_validate_config_snapshot /expected >/dev/null 2>&1
+) && test_fail "a snapshot whose DX_PROJECT_ROOT does not match the expected root is refused" \
+    || test_pass "a snapshot whose DX_PROJECT_ROOT does not match the expected root is refused"
+(
+    unset DXE_CONFIG_SNAPSHOT_VERSION
+    DXE_CONFIG_RESOLVED=1
+    dx_init_config "$snapshot_root" >/dev/null 2>&1
+) && test_fail "DXE_CONFIG_RESOLVED=1 with no snapshot version still re-validates and refuses" \
+    || test_pass "DXE_CONFIG_RESOLVED=1 with no snapshot version still re-validates and refuses"
+(
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    # A pinned canary rather than the literal legacy name: WP8.4a's stale-
+    # workspace-reference scan (tests/test_section16_persist_storage.sh)
+    # greps every file under $BASE_DIR for it, and this suite is not on
+    # that scan's exemption list. Same construction test_sourceable_
+    # coverage.sh used before this case moved here.
+    legacy_volume="$(printf 'DX_\127\117\122\113\123\120\101\103\105_VOLUME')"
+    printf -v "$legacy_volume" '%s' old
+    dx_init_config "$snapshot_root" >/dev/null 2>&1
+) && test_fail "a renamed legacy workspace-persistence variable refuses to resolve" \
+    || test_pass "a renamed legacy workspace-persistence variable refuses to resolve"
+
+it "dx_config_set_resolved rejects an unregistered field name"
+expect_exit 1 dx_config_set_resolved UNKNOWN value default
+it "dx_config_set_resolved rejects an invalid value for a registered field"
+expect_exit 1 dx_config_set_resolved DX_SSH_PORT bad default
 
 # D7 option 3's host-side confirmation bound (bin/dx-start-container) follows
 # the config registry pattern exactly, like every other bounded wait: a

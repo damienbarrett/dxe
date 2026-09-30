@@ -51,58 +51,13 @@ source "$GUEST/bootstrap/persistence.sh"
 source "$GUEST/bootstrap/herdr-config.sh"
 source "$GUEST/bootstrap/activation.sh"
 
-# Configuration registry, validators, diagnostics, and snapshot failures.
-DX_PROJECT_ROOT="$fixture/project"; mkdir -p "$DX_PROJECT_ROOT"
-for field in $DXE_CONFIG_FIELDS; do dx_config_default "$field" >/dev/null; done
-dx_config_default UNKNOWN >/dev/null 2>&1 || true
-for pair in \
-    'DX_CONTAINER_NAME:' 'DX_IMAGE:.bad' 'DX_SSH_PORT:0' 'DX_SSH_PORT:65536' \
-    'DX_SSH_CONNECT_TIMEOUT:0' 'DX_NIX_DISK_SIZE:0G' 'DX_BOOTSTRAP_PATH:relative' \
-    'DX_SSH_KEY:relative' 'DX_GIT_MOUNT_SOURCE:relative'; do
-    dx_config_validate_value "${pair%%:*}" "${pair#*:}" >/dev/null 2>&1 || true
-done
-dx_config_validate_value DX_NIX_DISK_SIZE 12
-dx_config_parse_error fixture 7 expected >/dev/null 2>&1 || true
-printf '%s\n' bad-line > "$fixture/bad.env"; dx_parse_config_file "$fixture/bad.env" >/dev/null 2>&1 || true
-printf '%s\n' 'DX_SSH_KEY=${DX_PROJECT_ROOT}' > "$fixture/root-only.env"; dx_parse_config_file "$fixture/root-only.env"
-(
-    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
-    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
-    dx_init_config "$DX_PROJECT_ROOT"
-    DXE_CONFIG_SNAPSHOT_VERSION=99; dx_validate_config_snapshot "$DX_PROJECT_ROOT" >/dev/null 2>&1 || true
-)
-(
-    legacy_base="$(printf 'DX_\127\117\122\113\123\120\101\103\105_')"
-    legacy_volume="${legacy_base}VOLUME" legacy_path="${legacy_base}PATH"
-    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION "$legacy_volume" "$legacy_path"
-    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
-    cd "$DX_PROJECT_ROOT"
-    dx_init_config
-    DXE_CONFIG_ORIGIN_DX_IMAGE=invalid
-    dx_validate_config_snapshot "$DX_PROJECT_ROOT" >/dev/null 2>&1 || true
-)
-(
-    DXE_CONFIG_RESOLVED='' DXE_CONFIG_SNAPSHOT_VERSION=1
-    dx_init_config "$DX_PROJECT_ROOT" >/dev/null 2>&1 || true
-)
-(
-    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
-    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
-    dx_init_config "$DX_PROJECT_ROOT"
-    DX_PROJECT_ROOT=/wrong; dx_validate_config_snapshot /expected >/dev/null 2>&1 || true
-)
-(
-    DXE_CONFIG_RESOLVED=1; unset DXE_CONFIG_SNAPSHOT_VERSION
-    dx_init_config "$DX_PROJECT_ROOT" >/dev/null 2>&1 || true
-)
-(
-    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
-    legacy_volume="$(printf 'DX_\127\117\122\113\123\120\101\103\105_VOLUME')"
-    printf -v "$legacy_volume" '%s' old
-    dx_init_config "$DX_PROJECT_ROOT" >/dev/null 2>&1 || true
-)
-dx_config_set_resolved UNKNOWN value default >/dev/null 2>&1 || true
-dx_config_set_resolved DX_SSH_PORT bad default >/dev/null 2>&1 || true
+# WP8.4 (Fable D8): the config-parser/registry/snapshot probes that used to
+# run here (all `|| true`-guarded, discarding their outcome) moved to
+# tests/test_refactor_state_machines.sh, beside its existing config
+# registry cases, with an asserted outcome for each -- that file already
+# sources bin/lib/dx-config.sh and is itself `# tier: unit` + `# coverage:
+# yes`, so kcov still sees every one of these lines run, now with a real
+# assertion behind each.
 
 # Pure host helpers and lock error paths.
 dx_require_non_reserved_container_name dx-host >/dev/null 2>&1 || true
