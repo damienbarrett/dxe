@@ -1207,18 +1207,21 @@ fi
 rm -rf "$CARRY_FIXTURE1"
 
 # dx_backup_generation_carry_forward: a directory-precreation failure (the
-# destination's parent is read-only) is reported, not silently ignored.
+# destination's own parent is not a directory at all) is reported, not
+# silently ignored. Deliberately a REGULAR FILE standing where a directory
+# is needed, not a read-only mode bit: root (as this suite also runs under,
+# in the coverage container) ignores mode bits entirely, so a mode-based
+# fixture never fails for root -- ENOTDIR from mkdir-under-a-file is a real
+# filesystem constraint no uid can bypass.
 CARRY_FIXTURE2="$(mktemp -d "${TMPDIR:-/tmp}/dxe-carry2-test.XXXXXX")"
 mkdir -p "$CARRY_FIXTURE2/prev/sub"
 printf 'x\n' > "$CARRY_FIXTURE2/prev/sub/f.txt"
-mkdir -p "$CARRY_FIXTURE2/new2"
+: > "$CARRY_FIXTURE2/new2"
 : > "$CARRY_FIXTURE2/empty-skip.txt"
-chmod 0500 "$CARRY_FIXTURE2/new2"
 set +e
 dx_backup_generation_carry_forward "$CARRY_FIXTURE2/prev" "$CARRY_FIXTURE2/new2/nested" "$CARRY_FIXTURE2/empty-skip.txt" 2>/dev/null
 carry_mkdir_fail_rc=$?
 set -e
-chmod 0700 "$CARRY_FIXTURE2/new2"
 if [ "$carry_mkdir_fail_rc" -ne 0 ]; then
     test_pass "dx_backup_generation_carry_forward: a directory precreation failure is reported, not silently ignored"
 else
@@ -1281,7 +1284,18 @@ mkdir -p "$LEGACY_UNIT_FIXTURE/current/home/dx"
 printf 'legacy-content\n' > "$LEGACY_UNIT_FIXTURE/current/home/dx/f.txt"
 printf 'home/dx/f.txt\t14\t0\tdeadbeef\n' > "$LEGACY_UNIT_FIXTURE/manifest.tsv"
 touch -t 202401021200 "$LEGACY_UNIT_FIXTURE/manifest.tsv"
-legacy_unit_expected_epoch="$(stat -f '%m' "$LEGACY_UNIT_FIXTURE/manifest.tsv" 2>/dev/null || stat -c '%Y' "$LEGACY_UNIT_FIXTURE/manifest.tsv")"
+# Reuse dx_pbs_stat_mtime (sourced transitively via bin/lib/dx-backup.sh,
+# which is what dx_backup_generation_legacy_id itself calls) rather than a
+# second, independently-ordered GNU/BSD `stat` fallback: a bare `stat -f
+# '%m' ... || stat -c '%Y' ...` tries BSD's custom-format `-f` first, but on
+# GNU coreutils `-f` means "report on the FILESYSTEM", not "use this
+# format" -- it still exits nonzero (the stray "%m" is parsed as a second,
+# nonexistent file operand), but only after printing multi-line filesystem
+# info to STDOUT (never suppressed by `2>/dev/null`), which the `||`
+# fallback's real epoch then gets appended after inside the same command
+# substitution. One shared helper, in the same order the library uses,
+# avoids that trap entirely.
+legacy_unit_expected_epoch="$(dx_pbs_stat_mtime "$LEGACY_UNIT_FIXTURE/manifest.tsv")"
 # The snapshot includes manifest.tsv too (copied alongside, matching where
 # migration will place it inside the new generation): the "byte-identical"
 # comparison below is over the WHOLE generation directory as migration
@@ -1377,7 +1391,8 @@ mkdir -p "$COLLIDE_LEGACY_FIXTURE/current"
 printf 'x\n' > "$COLLIDE_LEGACY_FIXTURE/current/f.txt"
 : > "$COLLIDE_LEGACY_FIXTURE/manifest.tsv"
 touch -t 202401031200 "$COLLIDE_LEGACY_FIXTURE/manifest.tsv"
-collide_epoch="$(stat -f '%m' "$COLLIDE_LEGACY_FIXTURE/manifest.tsv" 2>/dev/null || stat -c '%Y' "$COLLIDE_LEGACY_FIXTURE/manifest.tsv")"
+# Same dx_pbs_stat_mtime reuse as the direct-unit-coverage case above.
+collide_epoch="$(dx_pbs_stat_mtime "$COLLIDE_LEGACY_FIXTURE/manifest.tsv")"
 mkdir -p "$COLLIDE_LEGACY_FIXTURE/generations/legacy-$collide_epoch"
 set +e
 dx_backup_generation_migrate_legacy "$COLLIDE_LEGACY_FIXTURE" 2>/dev/null
