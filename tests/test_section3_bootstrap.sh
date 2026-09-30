@@ -2765,5 +2765,159 @@ fi
 unset DX_BOOTSTRAP_SCRATCH_DIR
 rm -rf "$p18_fixture"
 
+# --- P19: common.sh's dx_write_nix_volume_record field-validation guards
+# and its own printf-group failure; persistence.sh's setup_herdr_persistence
+# post-migration recheck; activation.sh's configure_guest lazy-loading
+# dx-persist-relocate.sh the same way it already lazy-loads
+# dx-opencode-persistence.sh; and base-and-storage.sh's
+# publish_nix_image_store_identity rejecting a malformed pending identity --
+# all flagged as uncovered by the coverage report. --------------------
+p19_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-section3-p19.XXXXXX")"
+
+if dx_write_nix_volume_record already-mounted "" >/dev/null 2>&1; then
+    test_fail "P19: dx_write_nix_volume_record refuses an empty root"
+else
+    test_pass "P19: dx_write_nix_volume_record refuses an empty root"
+fi
+
+if dx_write_nix_volume_record already-mounted /nix /dev/should-not-be-set >/dev/null 2>&1; then
+    test_fail "P19: dx_write_nix_volume_record rejects mode=already-mounted with a device/fs/opts field set"
+else
+    test_pass "P19: dx_write_nix_volume_record rejects mode=already-mounted with a device/fs/opts field set"
+fi
+
+# The merge-record printf group failing outright (distinct from mkdir -p
+# failing, already covered above) must discard the temp file and fail,
+# leaving no partial record behind.
+p19_printf_fail_out="$p19_fixture/printf-fail.out"
+(
+    DX_BOOTSTRAP_SCRATCH_DIR="$p19_fixture/printf-fail-scratch"
+    # Fail only the record's own field-writing printfs, not dx_bootstrap_
+    # scratch_dir's unrelated `printf '%s\n' ...` (its own single-argument
+    # form never matches one of these five two-argument field calls), or
+    # dx_write_nix_volume_record would instead fail several lines earlier,
+    # at `mkdir -p "$dir"`, on the empty $dir a fully-blocked printf leaves
+    # it computing.
+    printf() {
+        case "$1" in
+            'mode=%s\n'|'root=%s\n'|'device=%s\n'|'fs=%s\n'|'opts=%s\n') return 1 ;;
+            *) command printf "$@" ;;
+        esac
+    }
+    if dx_write_nix_volume_record already-mounted /nix >/dev/null 2>&1; then
+        echo "rc=0"
+    else
+        echo "rc=$?"
+    fi
+) >"$p19_printf_fail_out" 2>&1
+if grep -qxF 'rc=1' "$p19_printf_fail_out" \
+    && [ -z "$(find "$p19_fixture/printf-fail-scratch" -maxdepth 1 -name '.nix-volume-record.*' 2>/dev/null)" ]; then
+    test_pass "P19: dx_write_nix_volume_record discards its temp file when the printf group itself fails"
+else
+    test_fail "P19: dx_write_nix_volume_record discards its temp file when the printf group itself fails ($(cat "$p19_printf_fail_out"))"
+fi
+
+# setup_herdr_persistence's post-migration recheck: dx_persist_migrate_live_path
+# reporting success is not trusted blindly -- the migrated target must
+# actually be a real, non-symlinked directory afterward, or this is refused
+# before any readiness marker is published.
+p19_herdr_persist="$p19_fixture/herdr-recheck/persist/home/dx"
+p19_herdr_home="$p19_fixture/herdr-recheck/home/dx"
+mkdir -p "$p19_herdr_persist/.config" "$p19_herdr_persist/.local/state" "$p19_herdr_home/.config" "$p19_herdr_home/.local/state"
+p19_herdr_out="$p19_fixture/herdr-recheck.out"
+(
+    dx_persist_prepare_relocate_target() { :; }
+    dx_persist_migrate_live_path() { :; }
+    dx_ensure_tree_owner() { :; }
+    chown() { :; }
+    if setup_herdr_persistence "$p19_herdr_persist" "$p19_herdr_home"; then
+        echo "rc=0"
+    else
+        echo "rc=$?"
+    fi
+) >"$p19_herdr_out" 2>&1
+if grep -qxF 'rc=1' "$p19_herdr_out" \
+    && grep -qF "did not become a real directory" "$p19_herdr_out"; then
+    test_pass "P19: setup_herdr_persistence's post-migration recheck refuses when the migrated target is not a real directory"
+else
+    test_fail "P19: setup_herdr_persistence's post-migration recheck refuses when the migrated target is not a real directory ($(cat "$p19_herdr_out"))"
+fi
+
+# configure_guest's AI-credential phase lazy-loads dx-persist-relocate.sh the
+# same way it already lazy-loads dx-opencode-persistence.sh just above it:
+# missing entirely -> loud refusal; present -> sourced and used. Every
+# heavier dependency past the point each case is decided is stubbed so
+# nothing here ever touches a real /persist or /home/dx path.
+p19_persistrelocate_missing_out="$p19_fixture/persist-relocate-missing.out"
+(
+    ai_tools_opted_in() { return 0; }
+    dx_ensure_tree_owner() { :; }
+    dx_ai_opencode_persistence() { :; }
+    DX_BOOTSTRAP_ROOT="$p19_fixture/persist-relocate-missing-root"
+    mkdir -p "$DX_BOOTSTRAP_ROOT"
+    unset -f dx_persist_relocate_dir 2>/dev/null || true
+    if configure_guest >/dev/null; then
+        echo "rc=0"
+    else
+        echo "rc=$?"
+    fi
+) >"$p19_persistrelocate_missing_out" 2>&1
+if grep -qxF 'rc=1' "$p19_persistrelocate_missing_out" \
+    && grep -qF "persist-relocate library is missing" "$p19_persistrelocate_missing_out"; then
+    test_pass "P19: configure_guest refuses when dx-persist-relocate.sh is missing from DX_BOOTSTRAP_ROOT"
+else
+    test_fail "P19: configure_guest refuses when dx-persist-relocate.sh is missing from DX_BOOTSTRAP_ROOT ($(cat "$p19_persistrelocate_missing_out"))"
+fi
+
+p19_persistrelocate_present_root="$p19_fixture/persist-relocate-present-root"
+mkdir -p "$p19_persistrelocate_present_root/scripts/lib"
+cat > "$p19_persistrelocate_present_root/scripts/lib/dx-persist-relocate.sh" <<'EOF'
+dx_persist_relocate_dir() { return 1; }
+EOF
+p19_persistrelocate_present_out="$p19_fixture/persist-relocate-present.out"
+(
+    ai_tools_opted_in() { return 0; }
+    dx_ensure_tree_owner() { :; }
+    dx_ai_opencode_persistence() { :; }
+    dx_ai_opencode_prepare_activation_ancestors() { :; }
+    DX_BOOTSTRAP_ROOT="$p19_persistrelocate_present_root"
+    unset -f dx_persist_relocate_dir 2>/dev/null || true
+    if configure_guest >/dev/null 2>&1; then
+        echo "rc=0"
+    else
+        echo "rc=$?"
+    fi
+    if declare -F dx_persist_relocate_dir >/dev/null; then
+        echo "loaded=1"
+    else
+        echo "loaded=0"
+    fi
+) >"$p19_persistrelocate_present_out" 2>&1
+if grep -qxF 'rc=1' "$p19_persistrelocate_present_out" && grep -qxF 'loaded=1' "$p19_persistrelocate_present_out"; then
+    test_pass "P19: configure_guest sources dx-persist-relocate.sh from DX_BOOTSTRAP_ROOT when not already loaded"
+else
+    test_fail "P19: configure_guest sources dx-persist-relocate.sh from DX_BOOTSTRAP_ROOT when not already loaded ($(cat "$p19_persistrelocate_present_out"))"
+fi
+
+# publish_nix_image_store_identity: a pending record whose content parses as
+# non-empty text but is not a well-formed 64-hex-digit identity must be
+# refused, leaving the pending record in place (so a future correct run can
+# still retry) and never publishing a marker from it.
+p19_malformed_identity_root="$p19_fixture/malformed-identity"
+mkdir -p "$p19_malformed_identity_root"
+printf '%s\n' "not-a-valid-hex-identity" > "$p19_malformed_identity_root/.dx-image-store-identity.pending"
+p19_malformed_identity_out="$p19_fixture/malformed-identity.out"
+if publish_nix_image_store_identity "$p19_malformed_identity_root" >"$p19_malformed_identity_out" 2>&1; then
+    test_fail "P19: publish_nix_image_store_identity refuses a malformed pending image identity"
+elif grep -qF "refusing to publish an invalid image identity" "$p19_malformed_identity_out" \
+    && [ -e "$p19_malformed_identity_root/.dx-image-store-identity.pending" ] \
+    && [ ! -e "$p19_malformed_identity_root/.dx-image-store-identity" ]; then
+    test_pass "P19: publish_nix_image_store_identity refuses a malformed pending image identity"
+else
+    test_fail "P19: publish_nix_image_store_identity refuses a malformed pending image identity"
+fi
+
+rm -rf "$p19_fixture"
+
 print_summary
 exit_with_code
