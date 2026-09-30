@@ -22,62 +22,117 @@ libraries=("$ROOT"/bin/lib/*.sh)
 if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
     libraries+=("$container_dir"/bootstrap/*.sh "$container_dir"/scripts/lib/*.sh)
 fi
-purity_stderr="$(mktemp "${TMPDIR:-/tmp}/dxe-purity-stderr.XXXXXX")"
-for library in "${libraries[@]}"; do
-    before_flags=$-; before_ifs=$IFS; before_pwd=$PWD; before_umask="$(umask)"; before_traps="$(trap -p)"
-    # shellcheck source=/dev/null
-    output="$(source "$library" 2>"$purity_stderr")" && status=0 || status=$?
-    stderr_output="$(cat "$purity_stderr")"
-    check test -z "$output"; check test -z "$stderr_output"; check test "$status" -eq 0
-    check test "$before_flags" = "$-"; check test "$before_ifs" = "$IFS"; check test "$before_pwd" = "$PWD"; check test "$before_umask" = "$(umask)"; check test "$before_traps" = "$(trap -p)"
-done
-rm -f "$purity_stderr"
 
-# --- RED (WP1.6 / Fable D4): the state-diff checks above have never been
-# able to observe a real violation. `output="$(source "$library" ...)"`
-# sources the library inside the command substitution's OWN forked
-# subshell: that subshell inherits this process's $-/IFS/PWD/umask/traps/
-# SCRIPT_DIR at fork time (so a "before" snapshot taken out here is always
-# correct), but anything the sourced library does to ITS OWN $-/IFS/PWD/
-# umask/traps/SCRIPT_DIR dies with the subshell the instant the
-# substitution finishes -- it can never reach an "after" comparison read
-# from THIS process's still-untouched values. Only output/stderr/status
-# (which genuinely cross stdout/stderr/$?) ever made it back.
+# --- GREEN (WP1.6 / Fable D4): a real-subprocess probe -------------------
 #
-# Proven with two fixtures below: an impure library (`set -u` plus a
-# SCRIPT_DIR clobber) that this mechanism WRONGLY reports as clean, and a
-# genuinely pure library it correctly reports as clean. The predicate here
-# is a verbatim copy of the loop's own idiom above, wrapped so it can be
-# asserted against directly; the next commit replaces the loop's mechanism
-# (and this predicate) with a real-subprocess probe that can actually see a
-# violation -- until then, the first assertion below is expected to fail.
-purity_probe_subshell_clean() {
-    local library="$1"
-    local before_flags before_ifs before_pwd before_umask before_traps before_script_dir
-    before_flags=$-; before_ifs=$IFS; before_pwd=$PWD
-    before_umask="$(umask)"
-    before_traps="$(trap -p)"
-    before_script_dir="dxe-purity-canary"
-    SCRIPT_DIR="$before_script_dir"
-    local stderr_file
-    stderr_file="$(mktemp "${TMPDIR:-/tmp}/dxe-purity-subshell-stderr.XXXXXX")"
-    local output status
-    # shellcheck source=/dev/null
-    output="$(source "$library" 2>"$stderr_file")" && status=0 || status=$?
-    local stderr_output
-    stderr_output="$(cat "$stderr_file")"
-    rm -f "$stderr_file"
-    [ -z "$output" ] &&
-        [ -z "$stderr_output" ] &&
-        [ "$status" -eq 0 ] &&
-        [ "$before_flags" = "$-" ] &&
-        [ "$before_ifs" = "$IFS" ] &&
-        [ "$before_pwd" = "$PWD" ] &&
-        [ "$before_umask" = "$(umask)" ] &&
-        [ "$before_traps" = "$(trap -p)" ] &&
-        [ "$before_script_dir" = "$SCRIPT_DIR" ]
+# The previous idiom, `output="$(source "$library" ...)"`, sources the
+# library inside the command substitution's OWN forked subshell: that
+# subshell inherits this process's $-/IFS/PWD/umask/traps/SCRIPT_DIR at
+# fork time, but anything the sourced library does to ITS OWN copies of
+# those dies with the subshell the instant the substitution finishes -- it
+# can never reach an "after" comparison read from this process's own,
+# still-untouched values. Verified empirically by the two fixtures below.
+#
+# The fix sources the library inside a REAL, SEPARATE PROCESS instead: a
+# probe FILE run via `bash "$probe" ...`, never an inline `bash -c '...'`.
+# This file runs under kcov in CI, and kcov's bash instrumentation sets PS4
+# to a trace string that expands ${BASH_SOURCE}, which is unset inside a
+# `bash -c` program, so under `set -u` the probe would die on
+# "BASH_SOURCE: unbound variable" before ever reaching `source` -- a real
+# file gives bash a real BASH_SOURCE and sidesteps that entirely (the same
+# reasoning entrypoint_conforms and the F6 self-test below already apply).
+# Before/after state is captured INSIDE that one process, on either side of
+# the `source` call, and written to a result file -- which, unlike the old
+# subshell's exit-time state, survives the probe process's own exit for
+# THIS file to read back and compare, one property at a time.
+#
+# The probe process's own exit status is the library's `source` exit
+# status (an explicit `exit "$source_status"` as its last line), not
+# whatever the trailing `printf`s would otherwise leave behind -- so a
+# library that fails without calling `exit` is still caught by the
+# `status -eq 0` check below exactly as it was under the old idiom. A
+# library that DOES call `exit` terminates the probe process before the
+# "after" block ever runs, leaving those fields absent from the result
+# file -- read back as empty strings, which correctly fail every affected
+# before/after comparison rather than silently reusing a stale value.
+purity_probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-purity-probe.XXXXXX")"
+purity_probe_script="$purity_probe_dir/probe.sh"
+cat > "$purity_probe_script" <<'PROBE'
+#!/bin/bash
+library="$1"
+result_file="$2"
+# A pinned canary, not the caller's ambient value: every real caller in
+# this repository already sets SCRIPT_DIR to the same directory a library
+# like tests/test_helpers.sh then reassigns it to, so a before/after diff
+# of the ambient value would coincide even when the library clobbers it.
+# A sentinel makes the clobber visible regardless of what a caller had.
+SCRIPT_DIR="dxe-purity-canary"
+{
+    printf 'flags_before=%s\n' "$-"
+    printf 'ifs_before=%s\n' "$IFS"
+    printf 'pwd_before=%s\n' "$PWD"
+    printf 'umask_before=%s\n' "$(umask)"
+    printf 'traps_before=%s\n' "$(trap -p)"
+    printf 'script_dir_before=%s\n' "$SCRIPT_DIR"
+} > "$result_file"
+# shellcheck source=/dev/null
+source "$library"
+source_status=$?
+{
+    printf 'flags_after=%s\n' "$-"
+    printf 'ifs_after=%s\n' "$IFS"
+    printf 'pwd_after=%s\n' "$PWD"
+    printf 'umask_after=%s\n' "$(umask)"
+    printf 'traps_after=%s\n' "$(trap -p)"
+    printf 'script_dir_after=%s\n' "$SCRIPT_DIR"
+} >> "$result_file"
+exit "$source_status"
+PROBE
+
+# purity_field NAME RESULT_FILE -- NAME's recorded value, or an empty
+# string if the probe process never reached the line that would have
+# written it.
+purity_field() { sed -n "s/^$1=//p" "$2" | tail -n1; }
+
+# purity_probe_run LIBRARY OUT ERR RESULT -- runs the probe above against
+# LIBRARY in a fresh process, stdin from /dev/null (an interactive `read`
+# in a library that should be import-only fails closed instead of
+# blocking), stdout/stderr captured to OUT/ERR, before/after state written
+# to RESULT. Returns the probe's own exit status (the library's `source`
+# status) via $?; callers use the `&& status=0 || status=$?` idiom so a
+# non-zero status here never trips this file's own `set -e`.
+purity_probe_run() {
+    local library="$1" out="$2" err="$3" result="$4"
+    bash "$purity_probe_script" "$library" "$result" </dev/null >"$out" 2>"$err"
 }
 
+# purity_clean LIBRARY -- true if LIBRARY passes the full eight-way
+# import-only contract (no stdout, no stderr, a zero exit status, and
+# $-/IFS/PWD/umask/traps/SCRIPT_DIR unchanged across the source).
+purity_clean() {
+    local library="$1"
+    local out err result status ok
+    out="$(mktemp "${TMPDIR:-/tmp}/dxe-purity-out.XXXXXX")"
+    err="$(mktemp "${TMPDIR:-/tmp}/dxe-purity-err.XXXXXX")"
+    result="$(mktemp "${TMPDIR:-/tmp}/dxe-purity-result.XXXXXX")"
+    purity_probe_run "$library" "$out" "$err" "$result" && status=0 || status=$?
+    ok=1
+    [ -s "$out" ] && ok=0
+    [ -s "$err" ] && ok=0
+    [ "$status" -eq 0 ] || ok=0
+    [ "$(purity_field flags_before "$result")" = "$(purity_field flags_after "$result")" ] || ok=0
+    [ "$(purity_field ifs_before "$result")" = "$(purity_field ifs_after "$result")" ] || ok=0
+    [ "$(purity_field pwd_before "$result")" = "$(purity_field pwd_after "$result")" ] || ok=0
+    [ "$(purity_field umask_before "$result")" = "$(purity_field umask_after "$result")" ] || ok=0
+    [ "$(purity_field traps_before "$result")" = "$(purity_field traps_after "$result")" ] || ok=0
+    [ "$(purity_field script_dir_before "$result")" = "$(purity_field script_dir_after "$result")" ] || ok=0
+    rm -f "$out" "$err" "$result"
+    [ "$ok" -eq 1 ]
+}
+
+# Self-proof before the real scan is trusted (the same discipline the leak
+# and bare-sleep scans below apply to themselves): a real violation must be
+# caught, and a genuinely pure library must not be flagged.
 purity_fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-purity-fixture.XXXXXX")"
 cat > "$purity_fixture_dir/impure.sh" <<'EOF'
 #!/bin/bash
@@ -89,10 +144,31 @@ cat > "$purity_fixture_dir/pure.sh" <<'EOF'
 # A pure fixture: only a function definition, no side effects at source time.
 dxe_purity_fixture_pure_noop() { :; }
 EOF
-check reject purity_probe_subshell_clean "$purity_fixture_dir/impure.sh"
-check purity_probe_subshell_clean "$purity_fixture_dir/pure.sh"
+check reject purity_clean "$purity_fixture_dir/impure.sh"
+check purity_clean "$purity_fixture_dir/pure.sh"
 rm -rf "$purity_fixture_dir"
-unset SCRIPT_DIR
+
+# The real gate: every library above must be import-only. One `check` per
+# property (not a single aggregate condition), so a violation is
+# attributable to a specific property instead of collapsing into one
+# opaque failure.
+for library in "${libraries[@]}"; do
+    purity_out="$(mktemp "${TMPDIR:-/tmp}/dxe-purity-out.XXXXXX")"
+    purity_err="$(mktemp "${TMPDIR:-/tmp}/dxe-purity-err.XXXXXX")"
+    purity_result="$(mktemp "${TMPDIR:-/tmp}/dxe-purity-result.XXXXXX")"
+    purity_probe_run "$library" "$purity_out" "$purity_err" "$purity_result" && purity_status=0 || purity_status=$?
+    purity_output="$(cat "$purity_out")"
+    purity_stderr_output="$(cat "$purity_err")"
+    check test -z "$purity_output"; check test -z "$purity_stderr_output"; check test "$purity_status" -eq 0
+    check test "$(purity_field flags_before "$purity_result")" = "$(purity_field flags_after "$purity_result")"
+    check test "$(purity_field ifs_before "$purity_result")" = "$(purity_field ifs_after "$purity_result")"
+    check test "$(purity_field pwd_before "$purity_result")" = "$(purity_field pwd_after "$purity_result")"
+    check test "$(purity_field umask_before "$purity_result")" = "$(purity_field umask_after "$purity_result")"
+    check test "$(purity_field traps_before "$purity_result")" = "$(purity_field traps_after "$purity_result")"
+    check test "$(purity_field script_dir_before "$purity_result")" = "$(purity_field script_dir_after "$purity_result")"
+    rm -f "$purity_out" "$purity_err" "$purity_result"
+done
+rm -rf "$purity_probe_dir"
 
 source "$ROOT/bin/lib/dx-config.sh"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-config-test.XXXXXX")"
