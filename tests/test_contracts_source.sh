@@ -269,5 +269,81 @@ assert_file_not_contains "$DX_AI_SCRIPT" "sed -i" "guest dx-ai does not rewrite 
 assert_file_not_contains "$DX_AI_SCRIPT" "touch /persist/home/dx/.claude.json" "guest dx-ai does not create empty Claude JSON config"
 assert_file_contains "$CONTAINER_DIR/bootstrap/activation.sh" "/persist/home/dx/.gemini/antigravity-cli" "bootstrap prepares persisted agy state directory"
 
+# ===========================================================================
+# Fable D8: tests/test_sourceable_coverage.sh runs on `|| true`-guarded
+# lines that execute production code (for kcov's percentage) while
+# discarding the outcome -- constitution.md's "line coverage proves a line
+# ran, not that it ran correctly". Not every `|| true` there is that
+# problem: some guard a coreutils/builtin (chmod, kill, wait, unset), a
+# local helper the file defines for itself (run_gh_case, run_herdr_case),
+# or a command substitution assigned to a variable the file goes on to
+# inspect. The ones actually worth ratcheting down are calls to a SCOPE
+# function (bin/lib, bootstrap, scripts/lib) whose own outcome is thrown
+# away. WP8.4 migrated the config-parser/registry/snapshot cluster of
+# these into tests/test_refactor_state_machines.sh with an asserted
+# outcome for each (129 -> 117 scope-function `|| true` guards); this
+# ratchet keeps that count from silently climbing back up as new probes
+# are added, the same "ceiling, not a floor" shape Fable D3 recommends for
+# the coverage metric.
+#
+# The scope-function name set is derived fresh each run, never hand-
+# maintained: every column-0 `name() {` definition across the three
+# scopes. `^[a-z_]+\(\)` intentionally excludes a name with a digit
+# (dx_mount_base64_decode, mkfs.btrfs's own helpers) -- a narrower,
+# cheaper net that still catches the large majority and needs no upkeep
+# as the scope grows.
+dx_wp84_scope_functions() {
+    grep -hoE '^[a-z_]+\(\)' \
+        "$BASE_DIR"/bin/lib/*.sh \
+        "$CONTAINER_DIR"/bootstrap/*.sh \
+        "$CONTAINER_DIR"/scripts/lib/*.sh 2>/dev/null \
+        | sed 's/()$//' | sort -u
+}
+
+# dx_wp84_scope_or_true_count FILE SCOPE_LIST_FILE -- the count of `|| true`
+# lines in FILE whose immediate left-hand command (the last ';'-separated
+# segment before the trailing `|| true`, stripped of a leading `(`/`{` and
+# any `VAR=value` environment-prefix assignments) names a function listed
+# in SCOPE_LIST_FILE.
+dx_wp84_scope_or_true_count() {
+    awk -v scope_file="$2" '
+        BEGIN {
+            while ((getline fname < scope_file) > 0) { if (fname != "") scope[fname] = 1 }
+            close(scope_file)
+            matches = 0
+        }
+        /\|\| true/ {
+            line = $0
+            tmp = line
+            lastidx = 0
+            while ((p = index(tmp, "|| true")) > 0) { lastidx += p; tmp = substr(tmp, p + 7) }
+            left = substr(line, 1, lastidx - 1)
+            n = split(left, segs, ";")
+            last = segs[n]
+            sub(/^[ \t]+/, "", last)
+            while (last ~ /^[({]/) { sub(/^[({]/, "", last); sub(/^[ \t]+/, "", last) }
+            while (last ~ /^[A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+/) {
+                sub(/^[A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+/, "", last)
+            }
+            tok = last
+            sub(/[ \t(].*$/, "", tok)
+            if (tok in scope) matches++
+        }
+        END { print matches }
+    ' "$1"
+}
+
+dx_wp84_scope_list="$(mktemp "${TMPDIR:-/tmp}/dxe-wp84-scope.XXXXXX")"
+dx_wp84_scope_functions > "$dx_wp84_scope_list"
+DX_WP84_SOURCEABLE_COVERAGE="$BASE_DIR/tests/test_sourceable_coverage.sh"
+dx_wp84_scope_or_true_ceiling=117
+dx_wp84_scope_or_true_actual="$(dx_wp84_scope_or_true_count "$DX_WP84_SOURCEABLE_COVERAGE" "$dx_wp84_scope_list")"
+rm -f "$dx_wp84_scope_list"
+if [ "$dx_wp84_scope_or_true_actual" -le "$dx_wp84_scope_or_true_ceiling" ]; then
+    test_pass "test_sourceable_coverage.sh's scope-function \`|| true\` count ($dx_wp84_scope_or_true_actual) is at or below the ceiling ($dx_wp84_scope_or_true_ceiling)"
+else
+    test_fail "test_sourceable_coverage.sh's scope-function \`|| true\` count ($dx_wp84_scope_or_true_actual) exceeds the ceiling ($dx_wp84_scope_or_true_ceiling) -- migrate the new probe(s) to a behavioural suite with an asserted outcome instead of raising this number"
+fi
+
 print_summary
 exit_with_code
