@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: yes
 # Test helper functions for DX Experience tests
 
 # No `set -uo pipefail` here (Fable D4 / WP1.6): this file is SOURCED, not

@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: unit
+# bash32: yes
+# coverage: yes
 set -uo pipefail
 # Increment 1 (Branch 10, feat/persist-backup): the /persist backup selection
 # rules, exercised as a pure, sourceable function set against fixture trees.

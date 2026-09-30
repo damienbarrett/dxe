@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
 # Section 2: Make The Containerfile Lightweight
 # Tests for: lightweight Containerfile, no tool installation in Containerfile
 

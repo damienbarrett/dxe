@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: unit
+# bash32: yes
+# coverage: yes
 # The DX_* plan values below are read by dx_mount_manifest_load_plan_values from
 # the sourced planner, which ShellCheck cannot follow through "$BASE_DIR".
 # shellcheck disable=SC2034

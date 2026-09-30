@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: host-contract
+# bash32: no
+# coverage: yes
 # shellcheck disable=SC2034
 # Additional isolated behavior probes for the D1 sourceable coverage scope.
 # This script may create guest-shaped paths and therefore runs only inside the

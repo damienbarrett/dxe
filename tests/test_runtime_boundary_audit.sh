@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
 set -uo pipefail
 
 # Branch 11 / Phase 1-2 (qnap-dxe-plan.md DQ2, Phase 1 item 6): automated

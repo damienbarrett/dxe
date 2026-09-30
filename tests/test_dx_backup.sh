@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: unit
+# bash32: yes
+# coverage: yes
 set -uo pipefail
 # Increment 2 (Branch 10, feat/persist-backup): dx-backup capture, driven
 # through the fake-container boundary (tests/lib/fake-tools.sh's approach,

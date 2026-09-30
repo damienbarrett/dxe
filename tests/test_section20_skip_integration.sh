@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
+# coverage: yes
 # Section 20: --skip-integration Truthfulness
 #
 # Sections 15, 16, and 17 each self-gate their live guest work behind

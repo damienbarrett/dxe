@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: unit
+# bash32: yes
+# coverage: yes
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -646,12 +649,35 @@ check reject bare_sleep_detected "$sleep_fixture/green/test_sleep_example.sh"
 rm -rf "$sleep_fixture"
 
 # The files this gate actually enforces today: every tests/test_*.sh that
-# already carries `# tier: unit`, plus the container-free suites WP1.7
-# itself brought to zero bare sleeps.
+# carries `# tier: unit`, now that WP1.4 has added that header repo-wide,
+# EXCEPT two documented exclusions:
+#
+#   - test_refactor_contracts.sh itself: its own WP1.7 self-proof above
+#     writes a fixture file's literal `sleep 2` line into ITS OWN source
+#     text (between the `cat > ... <<'EOF'` / `EOF` markers a few hundred
+#     lines up) to prove scan_bare_sleep can catch a real one -- that text
+#     is fixture data one indirection away from this file's own control
+#     flow, not a real wall-clock wait in it, so scanning this file's own
+#     source for the pattern it exists to detect is definitionally a false
+#     positive. (Every OTHER fixture heredoc in this file already avoids
+#     this by not embedding a bare `sleep N` inside itself.)
+#   - the six suites WP1.4 newly tagged `# tier: unit` that still carry
+#     real, pre-existing bare sleeps WP1.7 evidenced but did not reach:
+#     test_section14_tinty_theming.sh, test_section16_persist_storage.sh,
+#     test_section17_dx_ai_runtime.sh, test_section19_reverse_forward.sh,
+#     test_section23_herdr.sh, test_section27_qnap_scripts.sh. WP1.4's own
+#     mandate is a header-only change (nothing else in a suite's body may
+#     move, so concurrent edits from other in-flight work keep merging
+#     cleanly); de-flaking these six is real body-editing work for a
+#     follow-up D10 pass, not silently dropped -- named here instead of
+#     just quietly passing.
 unit_tier_sleep_files="test_bootstrap_publication.sh"
+unit_tier_sleep_debt="test_refactor_contracts.sh test_section14_tinty_theming.sh test_section16_persist_storage.sh test_section17_dx_ai_runtime.sh test_section19_reverse_forward.sh test_section23_herdr.sh test_section27_qnap_scripts.sh"
+sleep_debt_excluded() { contains_word "$1" "$unit_tier_sleep_debt"; }
 for candidate in "$ROOT"/tests/test_*.sh; do
-    if grep -q '^# tier: unit' "$candidate" 2>/dev/null; then
-        unit_tier_sleep_files="$unit_tier_sleep_files $(basename "$candidate")"
+    candidate_name="$(basename "$candidate")"
+    if grep -q '^# tier: unit' "$candidate" 2>/dev/null && ! sleep_debt_excluded "$candidate_name"; then
+        unit_tier_sleep_files="$unit_tier_sleep_files $candidate_name"
     fi
 done
 
@@ -665,5 +691,184 @@ for enforced_name in $unit_tier_sleep_files; do
         failures=$((failures + 1))
     fi
 done
+
+# --- WP1.4 (Fable D2, corrects Muse D1 / Astra R2): registering one test
+# used to touch up to seven places (KNOWN_SECTIONS, run_test in
+# run_all_tests.sh, run-tier.sh's own hand list, run-bash32-tests.sh's file
+# list, run-coverage-contracts.sh's file list, this file's B2 literal list,
+# and the paragraph a new test forces into ratchet.env) and the local
+# `unit/static` tier had already silently drifted from what CI actually
+# runs (it omitted sections 0, 4, 19, 24 and 33 -- all container-free, all
+# dispatched by run_all_tests.sh unconditionally). The fix: every
+# tests/test_*.sh declares its own `# tier: unit|host-contract|live|
+# destructive` and `# bash32: yes|no` header; tests/run.sh selects suites by
+# reading them instead of any hand list. This contract is what makes that
+# trustworthy -- a suite with no header, or two, would otherwise make
+# tests/run.sh's sweep silently run one fewer (or an ambiguous) suite,
+# exactly the "tier shrinks and CI still goes green" failure class B2 above
+# already exists to catch for the OLD registry.
+tier_header_count() { grep -c '^# tier: ' "$1" 2>/dev/null; }
+bash32_header_count() { grep -c '^# bash32: ' "$1" 2>/dev/null; }
+
+# suite_header_ok FILE -- true if FILE carries exactly one `# tier:` header
+# with a recognised value, AND exactly one `# bash32:` header with a
+# recognised value. Four separate checks (not one aggregate condition) so a
+# violation is attributable: "no tier header" reads differently from "tier
+# header present twice" or "tier header present once but spelled wrong".
+suite_header_ok() {
+    local file="$1"
+    [ "$(tier_header_count "$file")" -eq 1 ] || return 1
+    case "$(sed -n 's/^# tier: //p' "$file" | head -n1)" in
+        unit|host-contract|live|destructive) ;;
+        *) return 1 ;;
+    esac
+    [ "$(bash32_header_count "$file")" -eq 1 ] || return 1
+    case "$(sed -n 's/^# bash32: //p' "$file" | head -n1)" in
+        yes|no) ;;
+        *) return 1 ;;
+    esac
+    return 0
+}
+
+# Self-proof before the real scan is trusted (this file's own established
+# discipline: the WP1.8 leak scan and the WP1.7 bare-sleep scan both prove
+# themselves on fixtures before the real gate below relies on them). Four
+# fixtures: no header at all (red), a header repeated twice (red), a header
+# present once but with an unrecognised value (red), and exactly one valid
+# `# tier:` plus one valid `# bash32:` (green).
+header_fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-header-contract.XXXXXX")"
+cat > "$header_fixture_dir/test_none.sh" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+echo hi
+EOF
+cat > "$header_fixture_dir/test_twice.sh" <<'EOF'
+#!/bin/bash
+# tier: unit
+# tier: live
+# bash32: yes
+set -euo pipefail
+EOF
+cat > "$header_fixture_dir/test_bad_value.sh" <<'EOF'
+#!/bin/bash
+# tier: sometimes
+# bash32: yes
+set -euo pipefail
+EOF
+cat > "$header_fixture_dir/test_valid.sh" <<'EOF'
+#!/bin/bash
+# tier: unit
+# bash32: no
+set -euo pipefail
+EOF
+check reject suite_header_ok "$header_fixture_dir/test_none.sh"
+check reject suite_header_ok "$header_fixture_dir/test_twice.sh"
+check reject suite_header_ok "$header_fixture_dir/test_bad_value.sh"
+check suite_header_ok "$header_fixture_dir/test_valid.sh"
+rm -rf "$header_fixture_dir"
+
+# The real gate: every tests/test_*.sh in this repository (the exact glob
+# tests/run.sh sweeps for a --tier run) must pass the same check --
+# EXCEPT this file itself: its own fixtures above (test_none.sh/test_twice.sh/
+# test_bad_value.sh/test_valid.sh, and the manifest-consistency fixtures
+# further down) write several literal `# tier: ...`/`# bash32: ...` lines
+# into ITS OWN source text on purpose, to prove suite_header_ok can tell a
+# missing/duplicate/invalid header from a valid one -- so a whole-file
+# `grep -c` of this file's own text always finds more than one of each,
+# regardless of what this file's REAL header (line 2-4, checked directly
+# below) says. Scanning this file for the exact pattern it exists to detect
+# is the same self-reference the WP1.7 bare-sleep exclusion above already
+# documents.
+header_failures=""
+for header_target in "$ROOT"/tests/test_*.sh; do
+    case "$(basename "$header_target")" in
+        test_refactor_contracts.sh) continue ;;
+    esac
+    suite_header_ok "$header_target" || header_failures="$header_failures$header_target"$'\n'
+done
+if [ -n "$header_failures" ]; then
+    echo "FAIL: missing/duplicate/unrecognised tier or bash32 header (WP1.4 / Fable D2):" >&2
+    printf '%s' "$header_failures" >&2
+    failures=$((failures + 1))
+fi
+# This file's own real header, checked directly by line position instead of
+# the whole-file scan the exclusion above skips for it.
+check test "$(sed -n '2p' "$ROOT/tests/test_refactor_contracts.sh")" = '# tier: unit'
+check test "$(sed -n '3p' "$ROOT/tests/test_refactor_contracts.sh")" = '# bash32: yes'
+
+# --- WP1.4 manifest consistency: every section run_all_tests.sh dispatches
+# must carry a `# tier:` header consistent with WHERE it dispatches from. A
+# run_test call nested inside "if [ "$SKIP_INTEGRATION" = false ]; then
+# ... fi" only ever runs against a running guest (tier: live, today
+# sections 11 and 12); every OTHER dispatched section already proves it
+# does no live work under SKIP_INTEGRATION=true (that is what
+# `run_all_tests.sh --skip-integration` running it unconditionally means,
+# and tests/test_section20_skip_integration.sh polices exactly that
+# property for three of them directly), so it must be tier: unit. Sections
+# 9 and 18 are deliberately included in that "must be unit" set: run-tier.sh
+# separately calls them "host-contract" today, but nothing about either
+# suite needs a running guest (both already pass in CI's container-free
+# "Container-free contracts" job, unconditionally) -- WP1.4 picks `unit` for
+# them per Fable D2's own Green step and keeps run-tier.sh's `host-contract`
+# case working by naming those two sections directly instead of by tier.
+#
+# expected_tier_for_dispatch RUNNER DISPATCH_LINENO -- 'live' if the line
+# immediately above DISPATCH_LINENO in RUNNER opens the
+# SKIP_INTEGRATION-false conditional, else 'unit'. Reused (not
+# reimplemented) by tests/run.sh's own --section resolution below, so the
+# two never see a different answer for the same file.
+expected_tier_for_dispatch() {
+    local runner="$1" dispatch_lineno="$2" prev_lineno prev_text
+    prev_lineno=$((dispatch_lineno - 1))
+    prev_text="$(sed -n "${prev_lineno}p" "$runner")"
+    case "$prev_text" in
+        *'if [ "$SKIP_INTEGRATION" = false ]; then'*) printf 'live\n' ;;
+        *) printf 'unit\n' ;;
+    esac
+}
+
+# Self-proof on a small fixture runner before trusting it against the real
+# run_all_tests.sh: a dispatch line right after the conditional's `if`
+# expects live, one outside it expects unit, and a file whose OWN header
+# disagrees with that expectation must be reported.
+manifest_fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-manifest-tier-contract.XXXXXX")"
+mkdir -p "$manifest_fixture_dir/tests"
+cat > "$manifest_fixture_dir/runner.sh" <<'EOF'
+run_test "$SCRIPT_DIR/test_a.sh" "1"
+if [ "$SKIP_INTEGRATION" = false ]; then
+    run_test "$SCRIPT_DIR/test_b.sh" "2"
+fi
+EOF
+cat > "$manifest_fixture_dir/tests/test_a.sh" <<'EOF'
+# tier: unit
+EOF
+cat > "$manifest_fixture_dir/tests/test_b.sh" <<'EOF'
+# tier: live
+EOF
+cat > "$manifest_fixture_dir/tests/test_b_wrong.sh" <<'EOF'
+# tier: unit
+EOF
+manifest_tier_matches() {
+    local runner="$1" dispatch_lineno="$2" tests_dir="$3" filename="$4"
+    local expected actual
+    expected="$(expected_tier_for_dispatch "$runner" "$dispatch_lineno")"
+    actual="$(sed -n 's/^# tier: //p' "$tests_dir/$filename" | head -n1)"
+    [ "$actual" = "$expected" ]
+}
+check manifest_tier_matches "$manifest_fixture_dir/runner.sh" 1 "$manifest_fixture_dir/tests" test_a.sh
+check manifest_tier_matches "$manifest_fixture_dir/runner.sh" 3 "$manifest_fixture_dir/tests" test_b.sh
+check reject manifest_tier_matches "$manifest_fixture_dir/runner.sh" 3 "$manifest_fixture_dir/tests" test_b_wrong.sh
+rm -rf "$manifest_fixture_dir"
+
+# The real gate: parse run_all_tests.sh's own dispatch table (the same
+# run_test regex B2 above already uses) and check every dispatched file's
+# real header against expected_tier_for_dispatch.
+manifest_runner="$ROOT/tests/run_all_tests.sh"
+while IFS=: read -r manifest_lineno manifest_dispatch_text; do
+    manifest_file="$(printf '%s' "$manifest_dispatch_text" | sed -E 's/.*\$SCRIPT_DIR\/([^"]+)".*/\1/')"
+    manifest_expected="$(expected_tier_for_dispatch "$manifest_runner" "$manifest_lineno")"
+    manifest_actual="$(sed -n 's/^# tier: //p' "$ROOT/tests/$manifest_file" | head -n1)"
+    check test "$manifest_actual" = "$manifest_expected"
+done < <(grep -nE 'run_test[[:space:]]+"\$SCRIPT_DIR/[^"]+"[[:space:]]+"[0-9]+"' "$manifest_runner")
 
 [ "$failures" -eq 0 ]

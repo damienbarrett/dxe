@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
+# coverage: yes
 # No `-e`: this file deliberately captures the exit status of entrypoints
 # that are expected to fail in some scenarios (bare `out="$(...)"; rc=$?`,
 # the same convention tests/test_section16_persist_storage.sh uses for the

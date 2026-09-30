@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
 # Section 15: Nushell Environment Configuration
 # Verifies the nushell envFile (home/shell.nix) uses proper string
 # interpolation rather than single-quoted literals like '($home)/...'.

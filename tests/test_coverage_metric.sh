@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: yes
 # WP1.5 (Fable D3, Muse D2, Astra R1): the coverage ratchet used to divide
 # sourceable-scope TEXT lines by all shell text lines including tests, so
 # adding tests lowered the number and adding comments inside a covered

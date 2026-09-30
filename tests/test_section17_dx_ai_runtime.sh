@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
+# coverage: yes
 # Section 17: dx-ai Runtime
 # Verifies the optional AI tool installer works from inside the running guest.
 

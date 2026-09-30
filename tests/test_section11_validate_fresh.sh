@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: live
+# bash32: no
 # Section 11: Validate From Fresh Apple Container
 # Tests for: fresh container build, creation, start, bootstrap, basic functionality
 # These tests REQUIRE a running container and will modify state

@@ -1,4 +1,7 @@
 #!/bin/bash
+# tier: unit
+# bash32: yes
+# coverage: yes
 # Section 33: Docker-ssh runtime adapter (Branch 11 / Phase 2, qnap-dxe-plan.md
 # Phase 2) -- bin/lib/dx-runtime-docker.sh, developed and tested entirely
 # against a fake `ssh` (tests/lib/fake-tools.sh's fake_qnap_ssh_write) and fake

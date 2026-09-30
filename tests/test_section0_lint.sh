@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
 # Section 0: Linting tests
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

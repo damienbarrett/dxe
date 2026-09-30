@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
 # Section 5: Pin Nix Inputs
 # Tests for: flake.lock exists, inputs pinned
 

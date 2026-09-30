@@ -1,4 +1,6 @@
 #!/bin/bash
+# tier: unit
+# bash32: no
 # Section 6: Improve Guest Tooling
 # Tests for: diagnostic tools, basic utilities in flake.nix
 
