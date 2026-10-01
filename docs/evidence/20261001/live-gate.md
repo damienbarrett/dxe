@@ -97,3 +97,20 @@ instrumented.
 - QNAP canary: not started. `dx-test` is green except finding 4, and a
   backup that fails on every real guest is exactly what the canary week
   would depend on, so the canary waits for that decision.
+
+## Selector fix, WP6.6 migration and restore check (branch tip `9d7c2ee`)
+
+All from a clean snapshot worktree of the branch; `dx-test` started and
+stopped, never recreated. The legacy-shaped mirror was produced first with
+main's own `dx-backup` (worktree of `origin/main`, `DX_BACKUP_DIR` under the
+scratch area): `current/` a real directory with `manifest.tsv` beside it.
+
+| Step | Result |
+| --- | --- |
+| `dx-backup --dry-run --summary` (f99168c) | two `Warning:` lines naming `/persist/lost+found` and `/persist/etc` (owned by uid 0, not readable by uid 30033), a `Selector summary: 2 root-owned top-level director(y/ies) skipped` line, then the normal totals (203 files) |
+| first real `dx-backup` into the legacy mirror | WP6.6 migration: `current -> generations/legacy-<epoch>`, the old content renamed in place, 0 files transferred |
+| second `dx-backup` after adding one file in the guest | `generations/<id>` created, `current` switched, 1 file transferred |
+| `dx-restore --dry-run` (before 9d7c2ee) | listed `would create: manifest.tsv`: the generation's own manifest enumerated as content (finding, fixed in 9d7c2ee) |
+| `dx-restore --dry-run` (9d7c2ee) | every target `already identical`, no `manifest.tsv`; `dx-restore --dry-run manifest.tsv` refused with `Error: manifest.tsv is the generation's own bookkeeping, not restorable content.` |
+| kcov gate 20 (snapshot 9d7c2ee) | 100%, scope 3980 / floor 3935, unscoped 2635 / ceiling 2635 |
+
