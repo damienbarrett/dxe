@@ -197,3 +197,80 @@ the spike's own name deliberately, since a profile that reused the
 canary's container name would resolve to the canary's own labels and is
 exactly what "never run any destructive command against the canary"
 forbids.
+
+### Step 4 — restore drill into `dx-qnap-drill` (2026-10-01, day 3)
+
+Runbook section 9.4, run by the coordinating session from a clean clone of
+`main` `74f6427`, stdin from `/dev/null`; the user gave an explicit go
+before the drill's creation and another before its destruction. The drill
+profile was disposable (own names, own key pair, port 2224, policy `no`,
+8 GB / 2 CPU) and ran alongside the live canary.
+
+| Step | Result |
+| --- | --- |
+| fresh `dx-backup` of the canary | 2 changed files since the morning's backup, 69 bytes |
+| `dx-create-keys`, `dx` for the drill | ready in 144 s; `SSH_OK`, user `dx` |
+| plain `dx-restore --dry-run` under the drill (no flag) | refused: no backup mirror for a fresh profile, as designed |
+| `dx-restore --source-container=dx-qnap-canary --dry-run` | banner printed ("Restoring dx-qnap-canary's backup into dx-qnap-drill (cross-profile restore).") |
+| `dx-restore --source-container=dx-qnap-canary` (no `--force`) | **refused**: one target already existed and differed, `home/dx/.config/herdr/config.toml`, seeded by the fresh guest's own bootstrap |
+| the same with `--force` (disposable target only) | 93 s; the restore's `chown` warned once about a dangling symlink (`…/dx-ai/generations/<id>/profile-1-link`) |
+| dry-run after the restore | banner; 1,450 targets "already identical"; 0 would create or update |
+| ownership | no entry under `/persist` (outside the root-owned `/persist/etc`) that is not `dx:dx` |
+| mode spot checks against the canary | `/persist/home/dx`, `/persist/git`, `.config` 755; `keyring-address` and `herdr/config.toml` 600 — all equal; **`.local/state/dx` 755 on the drill, 700 on the canary** |
+| content | 1,205 of the drill's 1,441 regular files under `/persist/home` byte-identical with the live canary; the rest are tool state the canary changed after the backup (gh, codex and herdr configuration), and the canary's own cache trees the selector never backs up |
+| teardown (second go) | `dx-factory-reset --force` under the drill profile: immutable plan, container, image, three volumes and key pair removed; final inventory = the canary and its three volumes, canary `running/healthy/restarts=0` |
+
+Findings, none blocking, carried as follow-ups: (1) a restore into a
+fresh guest needs `--force` for the bootstrap-seeded herdr configuration,
+which section 9.4 should say; (2) `dx-restore` recreates a missing
+directory with the default mode (755) rather than the mirror's (700 for
+`.local/state/dx`) — file modes are preserved, directory modes are not;
+(3) the restore's ownership pass should use `chown -h` so a dangling
+symlink does not warn; (4) macOS `tar` adds `LIBARCHIVE.xattr` extended
+headers the guest's tar ignores noisily (cosmetic). With this drill the
+canary's `/persist` backup counts as **verified** (section 9.5's
+qualifying event).
+
+### Incident and correction — a non-`main` bootstrap published into the canary (2026-10-01)
+
+At 13:55:58 NZDT, while the drill was being created, a bring-up under
+the canary profile ran from the shared development checkout, which was on
+a work-in-progress branch, not `main`. It wrote the branch's own
+volume-claim cache entry for the canary's nix volume and published the
+branch's bootstrap tree into the canary as generation
+`20261001T005602Z-31314` (70 files, byte-identical to that branch's
+guest tree; `main`'s is 60 files). The canary kept running its original
+generation, SSH and the keyring were unaffected, but Docker reported it
+`unhealthy` (the health check requires an execution lease for the
+*published* generation) and its next restart would have booted unvetted
+content. The coordinating session's own drill ran from a clean clone of
+`main`; the drill guest's generation carries the canary's original
+digest. The other Claude session working in that checkout confirmed it
+ran nothing against the NAS; the remaining candidate is an agent session
+the user had started in that checkout two minutes earlier.
+
+Correction, each step after the user's go: `dx-sync-bootstrap` from the
+clean clone re-published `main`'s content (generation
+`20261001T045637Z-17556`, the original digest); `dx-start-container`
+**skipped** the running container ("already running; skipping start"),
+so `dx-stop-container` then `dx-start-container` were run: 37 s to
+"Guest is ready", Docker health `healthy` again within 60 s, restart
+count still 0, keyring started and live. The branch generation remains
+on the volume, unreferenced.
+
+Findings: (5) `dx-status`'s drift advice ("Run dx-start-container again
+to pick it up") is wrong for a running container, which that command
+deliberately skips — it should say stop then start, or the command
+should restart; (6) **docker-ssh lease pruning**: after the restart
+`dx-status` still reports the old running generation because the
+previous incarnation's PID-1 lease survives — the unchanged-content
+prune keys on `/proc/sys/kernel/random/boot_id`, which inside a Docker
+container is the NAS kernel's boot id and does not change across a
+container restart (it does on an Apple VM), and
+`dx_bootstrap_lease_generation` returns the first `.1` lease it sees;
+the Docker health check, which looks for the *current* generation's
+lease, is right and the drift warning is false; (7) operationally, the
+real profile and key pair of a production guest must not live in a
+checkout that moves between branches — a `main`-only checkout for live
+QNAP work is now the rule for the coordinating session, and the same is
+recommended for the operator's own daily use.

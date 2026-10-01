@@ -1016,6 +1016,23 @@ unconditional constraint throughout, not a step to complete.
 7. Keep the Apple DXE intact until the QNAP instance has passed the acceptance
    period and irreplaceable data has a verified backup.
 
+**Status update (2026-10-01, canary week day 3):** live steps 1, 2
+(rebuild + `dx-recreate`, 34 s, volumes and host identity preserved), 3
+(the restore drill, `--force` needed once for a bootstrap-seeded file,
+1,450 targets identical afterwards, drill destroyed) and 4 (the spike2
+destructive lifecycle beside the live canary, zero deletes on the
+mislabelled case) are done and recorded in
+`docs/evidence/20260928/qnap-promotion.md`; the canary's `/persist`
+backup is thereby **verified** (item 7's precondition). Remaining: the
+rest of the week's real use including the relay-fallback observation,
+and the day-7 production-profile decision. One incident the same day
+(a work-in-progress branch's bootstrap published into the canary from
+the shared checkout; corrected by re-publishing `main` and a
+stop/start) and seven follow-up findings are in the evidence record;
+the two that are code defects — directory modes on restore, and
+docker-ssh execution-lease pruning keyed on the host kernel's boot id —
+go to a follow-up branch, not into the acceptance week.
+
 ### Exit gate
 
 All definition-of-done items below are satisfied and no temporary compatibility
