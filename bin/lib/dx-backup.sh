@@ -680,8 +680,13 @@ dx_backup_restore_list_prefixed() {
 dx_backup_restore_targets() {
     local backup_dir="$1"
     shift
+    # The generation's own manifest.tsv sits beside the content inside
+    # generations/<id>/ (WP6.6); it is bookkeeping, never something to
+    # restore into /persist (a live dx-restore --dry-run on dx-test listed
+    # it as "would create", 2026-10-01). Only the top-level one is special:
+    # a nested file that merely shares the name is ordinary content.
     if [ "$#" -eq 0 ]; then
-        dx_backup_restore_list_prefixed "$backup_dir/current" ""
+        dx_backup_restore_list_prefixed "$backup_dir/current" "" | awk '$0 != "manifest.tsv"'
         return
     fi
     local path scratch rc=0
@@ -695,6 +700,11 @@ dx_backup_restore_targets() {
                 ;;
         esac
         dx_backup_restore_path_safe "$path" || { echo "Error: refusing unsafe restore path '$path'." >&2; rc=1; break; }
+        if [ "$path" = manifest.tsv ]; then
+            echo "Error: manifest.tsv is the generation's own bookkeeping, not restorable content." >&2
+            rc=1
+            break
+        fi
         if [ -L "$backup_dir/current/$path" ] || [ -f "$backup_dir/current/$path" ]; then
             printf '%s\n' "$path" >> "$scratch"
         elif [ -d "$backup_dir/current/$path" ]; then

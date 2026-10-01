@@ -1243,5 +1243,39 @@ else
 fi
 rm -rf "$RESTORE_LOCK_ROOT"
 
+# ---------------------------------------------------------------------------
+# WP6.6 live finding (dx-test, 2026-10-01): each generation keeps its own
+# manifest.tsv INSIDE generations/<id>/, next to the content, so the
+# no-argument restore enumeration of current/ listed it as "would create:
+# manifest.tsv" and a real restore would have written /persist/manifest.tsv.
+# The generation's top-level manifest.tsv is bookkeeping, never content:
+# excluded from the listing, refused when named. A nested file that merely
+# shares the name is ordinary content and stays listed.
+# ---------------------------------------------------------------------------
+GEN_MANIFEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-gen-manifest-test.XXXXXX")"
+GEN_MANIFEST_MIRROR="$GEN_MANIFEST_ROOT/test-container"
+mkdir -p "$GEN_MANIFEST_MIRROR/generations/g1/home/dx/notes"
+printf 'content\n' > "$GEN_MANIFEST_MIRROR/generations/g1/home/dx/f.txt"
+printf 'nested, ordinary content\n' > "$GEN_MANIFEST_MIRROR/generations/g1/home/dx/notes/manifest.tsv"
+printf 'home/dx/f.txt\t8\t0\tdeadbeef\n' > "$GEN_MANIFEST_MIRROR/generations/g1/manifest.tsv"
+ln -s generations/g1 "$GEN_MANIFEST_MIRROR/current"
+gen_manifest_listing="$(dx_backup_restore_targets "$GEN_MANIFEST_MIRROR" 2>/dev/null | LC_ALL=C sort)"
+if [ "$gen_manifest_listing" = "$(printf 'home/dx/f.txt\nhome/dx/notes/manifest.tsv')" ]; then
+    test_pass "WP6.6: the no-argument restore listing excludes the generation's own manifest.tsv and keeps a nested file of the same name"
+else
+    test_fail "WP6.6: the no-argument restore listing excludes the generation's own manifest.tsv and keeps a nested file of the same name (got: $(printf '%s' "$gen_manifest_listing" | tr '\n' ' '))"
+fi
+gen_manifest_err="$GEN_MANIFEST_ROOT/named.err"
+if dx_backup_restore_targets "$GEN_MANIFEST_MIRROR" manifest.tsv >/dev/null 2>"$gen_manifest_err"; then
+    test_fail "WP6.6: naming manifest.tsv as a restore path is refused (it was accepted)"
+else
+    if grep -q 'manifest.tsv' "$gen_manifest_err" && grep -q '^Error:' "$gen_manifest_err"; then
+        test_pass "WP6.6: naming manifest.tsv as a restore path is refused with an Error: line that names it"
+    else
+        test_fail "WP6.6: naming manifest.tsv as a restore path is refused with an Error: line that names it (stderr: $(cat "$gen_manifest_err"))"
+    fi
+fi
+rm -rf "$GEN_MANIFEST_ROOT"
+
 print_summary
 exit_with_code
