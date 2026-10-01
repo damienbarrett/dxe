@@ -170,6 +170,52 @@ dx_pbs_fail() {
 }
 
 # ---------------------------------------------------------------------------
+# Root-owned top-level entries (live finding, dx-test 2026-10-01)
+# ---------------------------------------------------------------------------
+
+# The selector runs as the unprivileged user dx against root /persist, which
+# holds two root-owned directories dx can never enter by design:
+# /persist/lost+found (filesystem plumbing) and /persist/etc (bootstrap
+# persists the sshd host keys under /persist/etc/ssh). Under the WP6.1
+# completeness contract the very first `find` failed on them, so no backup
+# could ever run. Decided rule: at the TOP LEVEL of the root only, a
+# directory entry that (a) is not owned by the current uid AND (b) the
+# current user cannot both read and traverse is skipped with a Warning and
+# a Selector summary line. It is stat-based on purpose (not `find -readable`):
+# the rule is "root-owned by design", not "whatever find cannot read". A
+# nested unreadable subtree, or a top-level directory the user OWNS but
+# cannot read, keeps the WP6.1 contract exactly (Error, non-zero exit). A
+# skipped entry never appears in any listing, so nothing of it is ever in
+# the host's mirror and the host-side diff has nothing to remove.
+DX_PBS_SKIPPED_PATHS=()
+# The same skip list rendered ONCE as a `find` prune predicate
+# ( -path a -o -path b ): -path on the absolute path, exactly as the
+# repository prune in dx_pbs_list_outside_repos does.
+DX_PBS_SKIP_PRUNE=()
+
+dx_pbs_stat_uid() {
+    stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1" 2>/dev/null
+}
+
+# dx_pbs_compute_skips ROOT: (re)build DX_PBS_SKIPPED_PATHS and
+# DX_PBS_SKIP_PRUNE for ROOT and print one Warning per skipped entry.
+dx_pbs_compute_skips() {
+    local root="$1" entry owner me
+    DX_PBS_SKIPPED_PATHS=()
+    DX_PBS_SKIP_PRUNE=()
+    me="$(id -u)"
+    while IFS= read -r -d '' entry; do
+        owner="$(dx_pbs_stat_uid "$entry")"
+        [ "$owner" = "$me" ] && continue
+        if [ -r "$entry" ] && [ -x "$entry" ]; then continue; fi
+        DX_PBS_SKIPPED_PATHS+=("$entry")
+        if [ "${#DX_PBS_SKIP_PRUNE[@]}" -gt 0 ]; then DX_PBS_SKIP_PRUNE+=(-o); fi
+        DX_PBS_SKIP_PRUNE+=(-path "$entry")
+        echo "Warning: $entry is owned by uid $owner and not readable by uid $me; skipped (root-owned by design, e.g. lost+found or etc)." >&2
+    done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null) # KCOV_LOOP_TERMINATOR
+}
+
+# ---------------------------------------------------------------------------
 # Repository discovery and at-risk-whole determination
 # ---------------------------------------------------------------------------
 
@@ -191,7 +237,11 @@ dx_pbs_find_repos() {
     local root="$1" entry out err rc
     out="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-findrepos-out.XXXXXX")" || return 1
     err="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-findrepos-err.XXXXXX")" || { rm -f "$out"; return 1; }
-    find "$root" -name .git -print0 > "$out" 2> "$err"
+    if [ "${#DX_PBS_SKIP_PRUNE[@]}" -gt 0 ]; then
+        find "$root" \( "${DX_PBS_SKIP_PRUNE[@]}" \) -prune -o -name .git -print0 > "$out" 2> "$err"
+    else
+        find "$root" -name .git -print0 > "$out" 2> "$err"
+    fi
     rc=$?
     if [ "$rc" -ne 0 ]; then
         dx_pbs_fail "$root" "repository discovery failed: $(cat "$err")"
@@ -607,6 +657,7 @@ dx_pbs_list_driver() {
     root="${root%/}"
     [ -d "$root" ] || { dx_pbs_fail "$root" "backup root does not exist or is not a directory"; return 1; }
 
+    dx_pbs_compute_skips "$root"
     repos_file="$(mktemp "${TMPDIR:-/tmp}/dxe-pbs-repos.XXXXXX")" || return 1
     dx_pbs_find_repos "$root" > "$repos_file" || had_error=1
 
@@ -614,7 +665,11 @@ dx_pbs_list_driver() {
     # never part of the at-risk selection itself -- so it stays permissive
     # (2>/dev/null, no exit-status check) rather than folding into the
     # completeness contract above.
-    special_count="$(find "$root" \( -type s -o -type p -o -type b -o -type c \) 2>/dev/null | wc -l | tr -d '[:space:]')"
+    if [ "${#DX_PBS_SKIP_PRUNE[@]}" -gt 0 ]; then
+        special_count="$(find "$root" \( "${DX_PBS_SKIP_PRUNE[@]}" \) -prune -o \( -type s -o -type p -o -type b -o -type c \) -print 2>/dev/null | wc -l | tr -d '[:space:]')"
+    else
+        special_count="$(find "$root" \( -type s -o -type p -o -type b -o -type c \) 2>/dev/null | wc -l | tr -d '[:space:]')"
+    fi
 
     # Outside-any-repository files: walk the whole tree, pruning at every
     # discovered repository root (each is handled by its own pass below) and
@@ -630,6 +685,9 @@ dx_pbs_list_driver() {
 
     rm -f "$repos_file"
     echo "Selector summary: ${special_count:-0} special file(s) (socket/fifo/device) skipped." >&2
+    if [ "${#DX_PBS_SKIPPED_PATHS[@]}" -gt 0 ]; then
+        echo "Selector summary: ${#DX_PBS_SKIPPED_PATHS[@]} root-owned top-level director(y/ies) skipped: ${DX_PBS_SKIPPED_PATHS[*]}" >&2
+    fi
     if [ "$had_error" -ne 0 ]; then
         echo "Error: the /persist selection did not complete successfully; see the Error line(s) above. This listing must not be treated as complete." >&2
         return 1
@@ -666,6 +724,7 @@ dx_pbs_list_with_reason() {
 dx_pbs_list_outside_repos() {
     local root="$1" repos_file="$2" reason_mode="${3:-}" prune_expr=() repo found relpath hashed
     local out err rc
+    if [ "${#DX_PBS_SKIP_PRUNE[@]}" -gt 0 ]; then prune_expr=("${DX_PBS_SKIP_PRUNE[@]}"); fi
     # find's -path must match the exact string find itself will produce for
     # that entry, so this walk operates on absolute paths throughout (no
     # `cd`+relative form, unlike the per-repo walks below, which have no repo

@@ -558,6 +558,11 @@ if [ "$(id -u)" -eq 0 ]; then
         # traversable either. The denied subtree itself is the thing
         # under test and stays 0000.
         chmod 0755 "$FIXTURE" "$denied_root"
+        # Owned by the uid the selector drops to: a root-owned unreadable
+        # TOP-LEVEL directory is now skipped by design (see the root-owned
+        # cases below), so this fixture must be the dx-owned shape, which
+        # keeps the F1 contract.
+        chown 65534:65534 "$denied_root/private"
         chmod 0000 "$denied_root/private"
         if setpriv --reuid=65534 --regid=65534 --clear-groups env HOME=/tmp bash "$SELECTOR" "$denied_root" > /dev/null 2> "$second_denied_stderr"; then
             test_fail "WP6.1: a permission-denied subtree makes the second listing exit non-zero (it exited 0)"
@@ -587,6 +592,124 @@ else
     else
         test_fail "WP6.1: the permission-denied path is named in an Error: line on stderr (stderr: $(cat "$second_denied_stderr"))"
     fi
+fi
+
+# --- Live finding (dx-test, 2026-10-01): /persist holds root-owned entries
+# the unprivileged guest user can never enter (lost+found, and etc -- the
+# sshd host keys bootstrap persists under /persist/etc/ssh), so the WP6.1
+# contract above made the very first `find` fail and no backup could run.
+# Decided rule: a TOP-LEVEL directory that is not owned by the current uid
+# AND is not both readable and traversable is skipped with one Warning and a
+# Selector summary line; everything else (nested denials, an OWNED unreadable
+# top-level directory) still aborts. Same mechanism as the F1 case: as root
+# (the kcov image) the selector runs dropped to uid 65534 via setpriv, since
+# root ignores mode bits; the root-owned fixture is created as root. A
+# foreign-owned directory cannot be created without root, so a workstation
+# skips the foreign-owner cases (an owned-unreadable case runs everywhere).
+pbs_run_unprivileged() {
+    local root="$1" out="$2" err="$3"
+    if [ "$(id -u)" -eq 0 ]; then
+        setpriv --reuid=65534 --regid=65534 --clear-groups env HOME=/tmp bash "$SELECTOR" "$root" > "$out" 2> "$err"
+    else
+        dx_pbs_list "$root" > "$out" 2> "$err"
+    fi
+}
+pbs_can_drop() { [ "$(id -u)" -ne 0 ] || command -v setpriv > /dev/null 2>&1; }
+
+foreign_root="$FIXTURE/foreign-root"
+mkdir -p "$foreign_root/keep/deep" "$foreign_root/etc/ssh" "$foreign_root/lost+found"
+printf 'one\n' > "$foreign_root/keep/a.txt"
+printf 'two\n' > "$foreign_root/keep/deep/b.txt"
+printf 'top\n' > "$foreign_root/top.txt"
+printf 'hostkey\n' > "$foreign_root/etc/ssh/ssh_host_key"
+printf 'plumbing\n' > "$foreign_root/lost+found/f"
+twin_root="$FIXTURE/foreign-twin"
+mkdir -p "$twin_root/keep/deep"
+printf 'one\n' > "$twin_root/keep/a.txt"
+printf 'two\n' > "$twin_root/keep/deep/b.txt"
+printf 'top\n' > "$twin_root/top.txt"
+dx_pbs_list "$twin_root" 2> /dev/null | cut -f1 | sort > "$FIXTURE/foreign-twin.paths"
+
+if [ "$(id -u)" -eq 0 ] && pbs_can_drop; then
+    chmod 0755 "$FIXTURE" "$foreign_root" "$foreign_root/keep" "$foreign_root/keep/deep"
+    chmod 0644 "$foreign_root/keep/a.txt" "$foreign_root/keep/deep/b.txt" "$foreign_root/top.txt"
+    chmod 0000 "$foreign_root/etc" "$foreign_root/lost+found"
+    foreign_out="$FIXTURE/foreign.out"; foreign_err="$FIXTURE/foreign.err"
+    if pbs_run_unprivileged "$foreign_root" "$foreign_out" "$foreign_err"; then
+        test_pass "Root-owned top level: unreadable foreign-owned directories do not abort the listing"
+    else
+        test_fail "Root-owned top level: unreadable foreign-owned directories do not abort the listing (stderr: $(cat "$foreign_err"))"
+    fi
+    if [ -s "$FIXTURE/foreign-twin.paths" ] && [ "$(cut -f1 "$foreign_out" | sort)" = "$(cat "$FIXTURE/foreign-twin.paths")" ]; then
+        test_pass "Root-owned top level: the listing equals that of the same tree without the foreign directories"
+    else
+        test_fail "Root-owned top level: the listing equals that of the same tree without the foreign directories (got: $(cut -f1 "$foreign_out" | sort | tr '\n' ' '))"
+    fi
+    if [ "$(grep -c '^Warning:' "$foreign_err")" -eq 2 ] \
+        && grep -F "$foreign_root/etc" "$foreign_err" | grep '^Warning:' | grep -q 'owned by uid 0' \
+        && grep -F "$foreign_root/lost+found" "$foreign_err" | grep '^Warning:' | grep -q 'owned by uid 0'; then
+        test_pass "Root-owned top level: one Warning per skipped entry names its path and owner uid"
+    else
+        test_fail "Root-owned top level: one Warning per skipped entry names its path and owner uid (stderr: $(cat "$foreign_err"))"
+    fi
+    if grep '^Selector summary:' "$foreign_err" | grep -F "$foreign_root/etc" | grep -qF "$foreign_root/lost+found"; then
+        test_pass "Root-owned top level: the Selector summary names the skipped entries"
+    else
+        test_fail "Root-owned top level: the Selector summary names the skipped entries (stderr: $(cat "$foreign_err"))"
+    fi
+    # A nested denial under a readable foreign-owned top-level directory
+    # is NOT covered by the rule: it still aborts (the F1 contract).
+    chmod 0000 "$foreign_root/keep/deep"
+    if pbs_run_unprivileged "$foreign_root" "$foreign_out" "$foreign_err"; then
+        test_fail "Root-owned top level: a nested unreadable subtree still aborts (it exited 0)"
+    else
+        test_pass "Root-owned top level: a nested unreadable subtree still aborts"
+    fi
+    chmod 0755 "$foreign_root/keep/deep"
+    chmod 0755 "$foreign_root/etc" "$foreign_root/lost+found"
+else
+    test_skip "Root-owned top level: needs root to create foreign-owned directories plus setpriv to drop privileges (a workstation cannot make a foreign-owned directory)"
+    test_skip "Root-owned top level: listing equality (needs root plus setpriv)"
+    test_skip "Root-owned top level: Warning per entry (needs root plus setpriv)"
+    test_skip "Root-owned top level: Selector summary (needs root plus setpriv)"
+    test_skip "Root-owned top level: nested denial still aborts (needs root plus setpriv)"
+fi
+
+# A top-level directory the current user OWNS but cannot read still aborts.
+owned_root="$FIXTURE/owned-denied-root"
+mkdir -p "$owned_root/mine" "$owned_root/ok"
+printf 'x\n' > "$owned_root/mine/f"
+printf 'y\n' > "$owned_root/ok/g"
+owned_out="$FIXTURE/owned.out"; owned_err="$FIXTURE/owned.err"
+if pbs_can_drop; then
+    if [ "$(id -u)" -eq 0 ]; then
+        chmod 0755 "$FIXTURE" "$owned_root" "$owned_root/ok"; chmod 0644 "$owned_root/ok/g"
+        chown 65534:65534 "$owned_root/mine"
+    fi
+    chmod 0000 "$owned_root/mine"
+    if pbs_run_unprivileged "$owned_root" "$owned_out" "$owned_err"; then
+        test_fail "Owned unreadable top-level directory still aborts (it exited 0)"
+    else
+        test_pass "Owned unreadable top-level directory still aborts"
+    fi
+    if grep -q '^Error:' "$owned_err" && grep -Fq "$owned_root/mine" "$owned_err" && ! grep -q '^Warning:.*skipped (root-owned' "$owned_err"; then
+        test_pass "Owned unreadable top-level directory: Error names it and it is not skipped"
+    else
+        test_fail "Owned unreadable top-level directory: Error names it and it is not skipped (stderr: $(cat "$owned_err"))"
+    fi
+    chmod 0755 "$owned_root/mine"
+else
+    test_skip "Owned unreadable top-level directory still aborts (running as root without setpriv; Astra F1)"
+    test_skip "Owned unreadable top-level directory: Error names it and it is not skipped (running as root without setpriv; Astra F1)"
+fi
+
+# The common path (no foreign entries) is quiet.
+quiet_err="$FIXTURE/quiet.err"
+dx_pbs_list "$twin_root" > /dev/null 2> "$quiet_err"
+if ! grep -q '^Warning:' "$quiet_err" && ! grep -q 'root-owned top-level' "$quiet_err" && grep -q '^Selector summary: 0 special' "$quiet_err"; then
+    test_pass "No foreign entries: no Warning and no root-owned Selector summary line"
+else
+    test_fail "No foreign entries: no Warning and no root-owned Selector summary line (stderr: $(cat "$quiet_err"))"
 fi
 
 # --- Equivalence property (Fable B5 / Astra F6 / Muse B3, WP3.3 defect C):
