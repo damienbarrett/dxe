@@ -26,6 +26,13 @@ Every plan document below is listed under exactly one of these.
 
 ## Partially complete
 
+- [`2-oct-plan.md`](2-oct-plan.md) — Unified execution plan consolidating the
+  October session plans and the user's eight agreed policies. Findings landed;
+  remaining work is the transferred connection/profile safeguards, directory-mode
+  and Docker-lease fixes, final gates, named guest-maintenance windows, and QNAP
+  acceptance/production cutover. Agent A coordinates; original notes are
+  privately archived. Revisit trigger: a candidate/gate changes or an execution
+  milestone completes.
 - [`checkout-consolidation-plan.md`](checkout-consolidation-plan.md) —
   Sequencing plan for the remaining consolidation work. Priority 1 (a
   complete, green, buildable `main`, proven on a guest) and almost all of

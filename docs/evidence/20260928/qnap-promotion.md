@@ -274,3 +274,28 @@ real profile and key pair of a production guest must not live in a
 checkout that moves between branches — a `main`-only checkout for live
 QNAP work is now the rule for the coordinating session, and the same is
 recommended for the operator's own daily use.
+
+### Week step 2 — off-home network observation (2026-10-02, day 4)
+
+Read-only, no lifecycle command, from the coordinating session's clean
+clone of `main` `1f287f8` on the user's work Wi-Fi (a network outside the
+home LAN; the user had reported it as restrictive). Runbook section 9.1's
+relay-fallback observation requires the before/after pair; the "before"
+is the home-LAN direct path recorded the previous evening.
+
+| Check | Result |
+| --- | --- |
+| `tailscale status` (NAS peer line) | peer listed, no active direct-connection annotation before traffic |
+| `tailscale ping` (4 requested) | one pong, **direct**, via a public endpoint (not a LAN address), 12 ms; the ping stops at the first direct response |
+| `tailscale netcheck` | UDP reachable, IPv4 yes, IPv6 no, port mapping varies by destination, nearest DERP Sydney |
+| `dx-status` under the canary profile over that path | container `healthy`, up 19 h, SSH port open on the tailnet address, `keyring: live`, remote lock not held; 9.9 s wall clock |
+| `dx-ssh 'uname -m; uptime'` | `SSH_OK`, `x86_64`, guest up 3 days 19 h, 0 users, load 0.08; 2.2 s wall clock |
+
+Conclusion, recorded as observed: **off-home reachability through
+Tailscale is proven** (the canary is reached from a foreign network with
+the profile's unchanged tailnet-address bind, nothing published or
+changed); the **DERP-relay fallback is not yet exercised** — this network
+allowed UDP hole-punching, so the path stayed direct. Per the user's
+decision D4 (2026-10-02) no artificial UDP block is used; the relay proof
+stays open until a network that forces the relay turns up, and is flagged
+for owner review at the production decision.
