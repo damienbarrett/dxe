@@ -258,10 +258,29 @@ test_section() {
 # this first, so a file that forgets its own top-level check still cannot
 # reach a guest.
 live_tail_enabled() {
-    [ "${SKIP_INTEGRATION-}" = false ]
+    [ "${SKIP_INTEGRATION-}" = false ] || return 1
+    # Enabled: never let it be the user's default guest. The defaults come
+    # from the config registry (via lib/registry-defaults.sh), so no
+    # second copy of them exists here and no production code is sourced into
+    # the suite. A profile (tests/profiles/dx-test.env) moves both off the
+    # defaults. The refusal is a test_fail, recorded once per process.
+    local default_name default_port
+    # shellcheck source=lib/registry-defaults.sh
+    source "$DXE_TESTS_DIR/lib/registry-defaults.sh"
+    default_name="$(registry_default DX_CONTAINER_NAME)"
+    default_port="$(registry_default DX_SSH_PORT)"
+    if [ "$DX_CONTAINER_NAME" = "$default_name" ] || [ "$DX_SSH_PORT" = "$default_port" ]; then
+        if [ -z "${DXE_LIVE_TAIL_REFUSED-}" ]; then
+            DXE_LIVE_TAIL_REFUSED=1
+            test_fail "Refusing live guest work against the default guest ($DX_CONTAINER_NAME, port $DX_SSH_PORT); use the disposable fixture: ./bin/dx-profile dx-test tests/run.sh --live ..."
+        fi
+        return 1
+    fi
+    return 0
 }
 
 # The invocation that legitimately runs live tails, for skip messages.
+DXE_LIVE_TAIL_REFUSED=""
 LIVE_TAIL_HINT="live tails run only via: ./bin/dx-profile dx-test tests/run.sh --live ..."
 
 # Requires running container
@@ -279,7 +298,8 @@ LIVE_TAIL_HINT="live tails run only via: ./bin/dx-profile dx-test tests/run.sh -
 # SKIP_INTEGRATION=false around the call.
 requires_container() {
     if ! live_tail_enabled; then
-        test_skip "Live guest checks skipped (SKIP_INTEGRATION is not false; $LIVE_TAIL_HINT)"
+        # A refusal of the default guest already recorded its own test_fail.
+        [ -n "$DXE_LIVE_TAIL_REFUSED" ] || test_skip "Live guest checks skipped (SKIP_INTEGRATION is not false; $LIVE_TAIL_HINT)"
         return 1
     fi
     if ! command -v container >/dev/null 2>&1 || ! container list --quiet 2>/dev/null | stdin_matches -F -x -- "$DX_CONTAINER_NAME"; then
@@ -296,7 +316,7 @@ GLOBAL_FAILED=0
 wait_for_ssh() {
     local timeout="${1:-180}"
     if ! live_tail_enabled; then
-        echo "  Not waiting for the guest: SKIP_INTEGRATION is not false ($LIVE_TAIL_HINT)."
+        echo "  Not waiting for the guest: live tail not enabled for this target ($LIVE_TAIL_HINT)."
         return 1
     fi
     echo "  Waiting for guest bootstrap on localhost:$DX_SSH_PORT (up to ${timeout}s)..."

@@ -208,7 +208,7 @@ requires_container_reports_running() (
     # (matching this file's own sanity_out/sanity_out_a calls above) keeps
     # the assignment and its one consumer on the same statement instead of a
     # separate one SC2034 would flag as unused.
-    SKIP_INTEGRATION=false DX_CONTAINER_NAME="$BIGLIST_TARGET" requires_container >/dev/null 2>&1
+    SKIP_INTEGRATION=false DX_SSH_PORT=2399 DX_CONTAINER_NAME="$BIGLIST_TARGET" requires_container >/dev/null 2>&1
 )
 requires_container_reports_absent() (
     set -o pipefail
@@ -423,11 +423,11 @@ live_probe() {
     # live_probe <marker> <skip-integration-setting: unset|true|false|other> <probe body>
     local marker="$1" setting="$2" body="$3"
     if [ "$setting" = unset ]; then
-        DXE_TEST_RESULTS="" DXE_STUB_MARKER="$marker" DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" \
+        DXE_TEST_RESULTS="" DXE_STUB_MARKER="$marker" DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" DX_SSH_PORT=2399 \
             PATH="$STUB_DIR:$PATH" env -u SKIP_INTEGRATION \
             bash -c 'source "$1/test_helpers.sh" >/dev/null 2>&1; '"$body" _ "$SCRIPT_DIR" 2>&1
     else
-        DXE_TEST_RESULTS="" DXE_STUB_MARKER="$marker" DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" \
+        DXE_TEST_RESULTS="" DXE_STUB_MARKER="$marker" DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" DX_SSH_PORT=2399 \
             PATH="$STUB_DIR:$PATH" SKIP_INTEGRATION="$setting" \
             bash -c 'source "$1/test_helpers.sh" >/dev/null 2>&1; '"$body" _ "$SCRIPT_DIR" 2>&1
     fi
@@ -475,6 +475,76 @@ for lt_file in test_section17_dx_ai_runtime.sh test_section7_lazyvim.sh test_sec
     fi
     rm -f "$lt_marker"
 done
+
+# --- Live-tail guard (increment 2): even when enabled, never the default
+# guest. The registry default name (read from bin/lib/dx-config.sh, not a
+# second copy) or the registry default port is refused with a test_fail that
+# names the disposable fixture, and no container/ssh/scp/dx-ai call happens.
+default_name="$(DX_PROJECT_ROOT="$SCRIPT_DIR/.." bash -c 'source "$1/bin/lib/dx-config.sh"; dx_config_default DX_CONTAINER_NAME' _ "$SCRIPT_DIR/..")"
+default_port="$(DX_PROJECT_ROOT="$SCRIPT_DIR/.." bash -c 'source "$1/bin/lib/dx-config.sh"; dx_config_default DX_SSH_PORT' _ "$SCRIPT_DIR/..")"
+for lt_case in "name:DX_CONTAINER_NAME=$default_name" "port:DX_SSH_PORT=$default_port"; do
+    lt_label="${lt_case%%:*}"
+    lt_assign="${lt_case#*:}"
+    lt_marker="$(mktemp -t dxe-stub-marker-lt.XXXXXX)"
+    rm -f "$lt_marker"
+    lt_out="$(live_probe "$lt_marker" false "$lt_assign; live_tail_enabled; echo \"enabled=\$?\"; requires_container; echo \"rc=\$?\"; wait_for_ssh 1; echo \"wait=\$?\"")"
+    if printf '%s' "$lt_out" | stdin_matches -F -x 'enabled=1' \
+        && printf '%s' "$lt_out" | stdin_matches -F -x 'rc=1' \
+        && printf '%s' "$lt_out" | stdin_matches -F -x 'wait=1' \
+        && printf '%s' "$lt_out" | stdin_matches -F 'FAIL' \
+        && printf '%s' "$lt_out" | stdin_matches -F './bin/dx-profile dx-test tests/run.sh --live' \
+        && [ ! -s "$lt_marker" ]; then
+        test_pass "an enabled live tail refuses the registry default $lt_label and calls nothing"
+    else
+        test_fail "an enabled live tail refuses the registry default $lt_label and calls nothing (output: $lt_out; recorded: $(tr '\n' ';' < "$lt_marker" 2>/dev/null))"
+    fi
+    rm -f "$lt_marker"
+done
+
+# The dx-test fixture profile (profiles dir = tests/profiles) proceeds, both
+# directly and through the real runner exactly as the coordinator invokes the
+# Apple live tier: ./bin/dx-profile dx-test tests/run.sh --live ...
+lt_marker="$(mktemp -t dxe-stub-marker-lt.XXXXXX)"
+rm -f "$lt_marker"
+lt_out="$(DXE_TEST_RESULTS="" DXE_STUB_MARKER="$lt_marker" PATH="$STUB_DIR:$PATH" SKIP_INTEGRATION=false \
+    DX_PROFILES_DIR="$SCRIPT_DIR/profiles" "$SCRIPT_DIR/../bin/dx-profile" dx-test \
+    bash -c 'source "$1/test_helpers.sh" >/dev/null 2>&1; live_tail_enabled; echo "enabled=$?"; requires_container; echo "rc=$?"' _ "$SCRIPT_DIR" 2>&1)"
+if printf '%s' "$lt_out" | stdin_matches -F -x 'enabled=0' && printf '%s' "$lt_out" | stdin_matches -F -x 'rc=0' && stdin_matches -F 'container list' < "$lt_marker"; then
+    test_pass "the dx-test fixture profile passes the default-guest guard"
+else
+    test_fail "the dx-test fixture profile passes the default-guest guard (output: $lt_out)"
+fi
+rm -f "$lt_marker"
+
+lt_probe_dir="$(mktemp -d -t dxe-run-sh-live-guard.XXXXXX)"
+lt_probe="$lt_probe_dir/test_live_guard_probe.sh"
+{
+    printf '#!/bin/bash\n'
+    printf '%s tier: unit\n' '#'
+    printf '%s bash32: no\n' '#'
+    printf 'source "%s/test_helpers.sh" >/dev/null 2>&1\n' "$SCRIPT_DIR"
+    printf 'requires_container; echo "probe-rc=$?"\n'
+    printf 'exit 0\n'
+} > "$lt_probe"
+chmod +x "$lt_probe"
+lt_marker="$(mktemp -t dxe-stub-marker-lt.XXXXXX)"
+rm -f "$lt_marker"
+lt_out="$(DXE_TEST_RESULTS="" DXE_STUB_MARKER="$lt_marker" PATH="$STUB_DIR:$PATH" env -u SKIP_INTEGRATION \
+    DX_PROFILES_DIR="$SCRIPT_DIR/profiles" "$SCRIPT_DIR/../bin/dx-profile" dx-test \
+    bash "$SCRIPT_DIR/run.sh" --live --file "$lt_probe" 2>&1)"
+if printf '%s' "$lt_out" | stdin_matches -F -x 'probe-rc=0'; then
+    test_pass "./bin/dx-profile dx-test tests/run.sh --live reaches the live tail"
+else
+    test_fail "./bin/dx-profile dx-test tests/run.sh --live reaches the live tail (output: $lt_out)"
+fi
+lt_out="$(DXE_TEST_RESULTS="" DXE_STUB_MARKER="$lt_marker" PATH="$STUB_DIR:$PATH" env -u SKIP_INTEGRATION \
+    bash "$SCRIPT_DIR/run.sh" --live --file "$lt_probe" 2>&1)"
+if printf '%s' "$lt_out" | stdin_matches -F -x 'probe-rc=1' && printf '%s' "$lt_out" | stdin_matches -F 'FAIL'; then
+    test_pass "tests/run.sh --live without a profile (default guest) is refused"
+else
+    test_fail "tests/run.sh --live without a profile (default guest) is refused (output: $lt_out)"
+fi
+rm -rf "$lt_probe_dir" "$lt_marker"
 
 print_summary
 exit_with_code
