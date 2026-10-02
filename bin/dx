@@ -9,55 +9,5 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
-dx_main() {
-dx_require_container_cli
-local lifecycle_locked=false
-
-# Check the service before querying guest state. A successful start command
-# can return before the service is ready, so ensure_started polls readiness.
-if ! container_system_is_running; then
-    dx_lifecycle_lock_acquire || exit 1
-    lifecycle_locked=true
-    trap dx_lifecycle_lock_release EXIT HUP INT TERM
-    container_system_ensure_started
-fi
-
-# Reconnecting is read-only: bootstrap publication belongs to an explicit
-# start, and a running guest cannot activate newly published code itself.
-if container_is_running "$DX_CONTAINER_NAME"; then
-    # The lock is held only around the ownership decision (nothing is
-    # created or synced) so a reconnect still refuses, printing the holder,
-    # while another controller owns the lifecycle.
-    if [ "$lifecycle_locked" = false ]; then
-        dx_lifecycle_lock_acquire || exit 1
-        trap dx_lifecycle_lock_release EXIT HUP INT TERM
-    fi
-    container_owned "$DX_CONTAINER_NAME" connect
-    dx_lifecycle_lock_release
-    trap - EXIT HUP INT TERM
-    exec "$SCRIPT_DIR/dx-ssh" "$@"
-fi
-
-echo "Bringing up DX environment..."
-
-# Keep a service-start lock through bring-up; otherwise acquire before the
-# first mutation. Children inherit ownership and the final SSH exec must
-# never hold the lifecycle lock.
-if [ "$lifecycle_locked" = false ]; then
-    dx_lifecycle_lock_acquire || exit 1
-    trap dx_lifecycle_lock_release EXIT HUP INT TERM
-    container_system_ensure_started
-fi
-
-"$SCRIPT_DIR/dx-create-keys"
-"$SCRIPT_DIR/dx-create-image"
-"$SCRIPT_DIR/dx-create-volumes"
-"$SCRIPT_DIR/dx-create-container"
-"$SCRIPT_DIR/dx-start-container"
-"$SCRIPT_DIR/dx-wait-ssh"
-
-dx_lifecycle_lock_release
-trap - EXIT HUP INT TERM
-exec "$SCRIPT_DIR/dx-ssh" "$@"
-}
+dx_main() { dx_connect_or_bring_up "$SCRIPT_DIR" "$@"; }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then dx_main "$@"; fi

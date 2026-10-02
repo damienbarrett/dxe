@@ -8,14 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/dx-config.sh"
 
 qx_main() {
-    local profile="${QX_PROFILE:-qnap-canary}"
-    # Profile names follow the registry's name rule (the same class
-    # DX_CONTAINER_NAME uses and bin/dx-profile enforces); reuse it rather
-    # than copying the pattern a third time.
-    dx_config_validate_value DX_CONTAINER_NAME "$profile" || {
-        echo "Error: invalid QX_PROFILE '$profile'." >&2
-        exit 2
-    }
+    local profile
+    profile="$(dx_qx_profile)" || exit $?
     exec "$SCRIPT_DIR/dx-profile" "$profile" "$SCRIPT_DIR/dx" "$@"
 }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then qx_main "$@"; fi

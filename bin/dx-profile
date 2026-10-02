@@ -6,64 +6,13 @@ DX_PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/dx-config.sh
 source "$SCRIPT_DIR/lib/dx-config.sh"
 
-usage() {
-    echo "Usage: $(basename "$0") <profile> <command...>" >&2
-    echo "Available profiles:" >&2
-    for directory in "$PROFILES_DIR" ${BUNDLED_PROFILES_DIR:+"$BUNDLED_PROFILES_DIR"}; do
-        [ -d "$directory" ] || continue
-        for file in "$directory"/*.env; do
-            [ -f "$file" ] && echo "  $(basename "$file" .env) ($directory)" >&2
-        done
-    done
-}
-
 profile_main() {
-PROFILES_DIR="${DX_PROFILES_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/dxe/profiles}"
-BUNDLED_PROFILES_DIR=""
-if [ -z "${DX_PROFILES_DIR:-}" ]; then
-    BUNDLED_PROFILES_DIR="$DX_PROJECT_ROOT/tests/profiles"
-fi
-[ "$#" -ge 2 ] || { usage; exit 2; }
-profile=$1
-shift
-case "$profile" in
-    ''|[.-]*|*[!A-Za-z0-9_.-]*) echo "Error: invalid profile name '$profile'." >&2; exit 2 ;;
-esac
-profile_file="$PROFILES_DIR/$profile.env"
-if [ ! -f "$profile_file" ] && [ -n "$BUNDLED_PROFILES_DIR" ]; then
-    profile_file="$BUNDLED_PROFILES_DIR/$profile.env"
-fi
-[ -f "$profile_file" ] || {
-    echo "Error: Profile not found: $PROFILES_DIR/$profile.env${BUNDLED_PROFILES_DIR:+ (also checked $BUNDLED_PROFILES_DIR/$profile.env)}" >&2
-    exit 1
-}
-
-export DX_PROJECT_ROOT
-dx_parse_config_file "$profile_file"
-for name in $DXE_CONFIG_FIELDS; do
-    parsed_name="DXE_PARSED_$name"
-    if [ "${!parsed_name+x}" = x ]; then
-        printf -v "$name" '%s' "${!parsed_name}"
-        origin_name="DXE_CONFIG_ORIGIN_$name"
-        printf -v "$origin_name" '%s' "profile:$profile"
-        export "${name?}" "${origin_name?}"
-    fi
-    unset "$parsed_name"
-done
-# A profile may pin itself to one checkout (DX_PROFILE_ROOT, kept private in the
-# profile): refuse before anything runs unless this checkout is that one. Both
-# sides are canonicalised so symlinked paths compare equal; an unresolvable pin
-# canonicalises to nothing and therefore refuses.
-if [ -n "${DX_PROFILE_ROOT:-}" ] && [ "${DXE_CONFIG_ORIGIN_DX_PROFILE_ROOT:-}" = "profile:$profile" ]; then
-    pin_canonical="$(cd "$DX_PROFILE_ROOT" 2>/dev/null && pwd -P)" || pin_canonical=""
-    root_canonical="$(cd "$DX_PROJECT_ROOT" && pwd -P)"
-    if [ -z "$pin_canonical" ] || [ "$pin_canonical" != "$root_canonical" ]; then
-        echo "Error: profile '$profile' is pinned to $DX_PROFILE_ROOT; run it from that checkout." >&2
-        exit 2
-    fi
-fi
-unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
-dx_init_config "$DX_PROJECT_ROOT"
-exec "$@"
+    [ "$#" -ge 2 ] || { dx_profile_usage "$(basename "$0")"; exit 2; }
+    local profile=$1 profile_file
+    shift
+    profile_file="$(dx_profile_resolve_file "$profile")" || exit $?
+    export DX_PROJECT_ROOT
+    dx_profile_apply "$profile" "$profile_file" || exit $?
+    exec "$@"
 }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then profile_main "$@"; fi

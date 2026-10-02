@@ -524,3 +524,52 @@ dx_lifecycle_lock_release() {
     DXE_LIFECYCLE_LOCK_HELD=false
     unset DXE_LIFECYCLE_LOCK_OWNER
 }
+
+# Hold the lifecycle lock, releasing it on any exit until dx_lifecycle_lock_drop.
+dx_lifecycle_lock_hold() {
+    dx_lifecycle_lock_acquire || return 1
+    trap dx_lifecycle_lock_release EXIT HUP INT TERM
+}
+
+# Release explicitly: `exec` never runs an EXIT trap, so a lock still held at
+# the final exec into dx-ssh would leak for the whole interactive session.
+dx_lifecycle_lock_drop() {
+    dx_lifecycle_lock_release
+    trap - EXIT HUP INT TERM
+}
+
+# bin/dx's whole decision (script_dir holds the lifecycle children and
+# dx-ssh; the remaining arguments go to dx-ssh): connect when the guest is
+# running and owned, else bring it up first. Check the service before the
+# guest: a successful start command can return before the service is ready,
+# so container_system_ensure_started polls readiness, under the lock.
+# Reconnecting is read-only (bootstrap publication belongs to an explicit
+# start; a running guest cannot activate newly published code), so the lock
+# brackets only the ownership decision. A lock taken for a service start is
+# kept through bring-up; children inherit its ownership.
+dx_connect_or_bring_up() {
+    local script_dir="$1" locked=false child
+    shift
+    dx_require_container_cli || return $?
+    if ! container_system_is_running; then
+        dx_lifecycle_lock_hold || return 1
+        locked=true
+        container_system_ensure_started || return $?
+    fi
+    if container_is_running "$DX_CONTAINER_NAME"; then
+        [ "$locked" = true ] || dx_lifecycle_lock_hold || return 1
+        container_owned "$DX_CONTAINER_NAME" connect || return $?
+        dx_lifecycle_lock_drop
+        exec "$script_dir/dx-ssh" "$@"
+    fi
+    echo "Bringing up DX environment..."
+    if [ "$locked" = false ]; then
+        dx_lifecycle_lock_hold || return 1
+        container_system_ensure_started || return $?
+    fi
+    for child in dx-create-keys dx-create-image dx-create-volumes dx-create-container dx-start-container dx-wait-ssh; do
+        "$script_dir/$child" || return $?
+    done
+    dx_lifecycle_lock_drop
+    exec "$script_dir/dx-ssh" "$@"
+}

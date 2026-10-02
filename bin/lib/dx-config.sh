@@ -427,3 +427,89 @@ dx_init_config() {
     DXE_CONFIG_RESOLVED=1
     export DXE_CONFIG_SNAPSHOT_VERSION DXE_CONFIG_RESOLVED
 }
+
+# --- Profile helpers (bin/dx-profile and bin/qx stay thin over these) --------
+
+# Profile names follow the registry's own name rule (DX_CONTAINER_NAME's class).
+dx_profile_name_valid() {
+    dx_config_validate_value DX_CONTAINER_NAME "$1" 2>/dev/null
+}
+
+# The directories searched for profiles, one per line, in precedence order:
+# the explicit DX_PROFILES_DIR alone, else the user config directory and then
+# the checkout's bundled tests/profiles.
+dx_profile_search_dirs() {
+    if [ -n "${DX_PROFILES_DIR:-}" ]; then
+        printf '%s\n' "$DX_PROFILES_DIR"
+    else
+        printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/dxe/profiles" "$DX_PROJECT_ROOT/tests/profiles"
+    fi
+}
+
+dx_profile_usage() {
+    local directory file
+    echo "Usage: $1 <profile> <command...>" >&2
+    echo "Available profiles:" >&2
+    while IFS= read -r directory; do
+        [ -d "$directory" ] || continue
+        for file in "$directory"/*.env; do
+            [ -f "$file" ] && echo "  $(basename "$file" .env) ($directory)" >&2
+        done
+    done < <(dx_profile_search_dirs)
+}
+
+# Prints the profile file for NAME. Status 2: invalid name; 1: not found.
+dx_profile_resolve_file() {
+    local profile="$1" first="" second="" directory
+    dx_profile_name_valid "$profile" || { echo "Error: invalid profile name '$profile'." >&2; return 2; }
+    while IFS= read -r directory; do
+        if [ -z "$first" ]; then first="$directory"; else second="$directory"; fi
+        if [ -f "$directory/$profile.env" ]; then
+            printf '%s\n' "$directory/$profile.env"
+            return 0
+        fi
+    done < <(dx_profile_search_dirs)
+    echo "Error: Profile not found: $first/$profile.env${second:+ (also checked $second/$profile.env)}" >&2
+    return 1
+}
+
+# A profile may pin itself to one checkout (DX_PROFILE_ROOT, kept private in
+# the profile): refuse unless this checkout is that one. Both sides are
+# canonicalised so symlinked paths compare equal; an unresolvable pin
+# canonicalises to nothing and therefore refuses. Only a pin the profile
+# itself set counts; an environment-set one is not a profile pin.
+dx_profile_enforce_pin() {
+    local profile="$1" pin_canonical
+    [ -n "${DX_PROFILE_ROOT:-}" ] && [ "${DXE_CONFIG_ORIGIN_DX_PROFILE_ROOT:-}" = "profile:$profile" ] || return 0
+    pin_canonical="$(cd "$DX_PROFILE_ROOT" 2>/dev/null && pwd -P)" || pin_canonical=""
+    [ -n "$pin_canonical" ] && [ "$pin_canonical" = "$(cd "$DX_PROJECT_ROOT" && pwd -P)" ] && return 0
+    echo "Error: profile '$profile' is pinned to $DX_PROFILE_ROOT; run it from that checkout." >&2
+    return 2
+}
+
+# Load PROFILE's data file into the exported configuration (each field with
+# its profile origin), enforce the checkout pin, then resolve the snapshot.
+dx_profile_apply() {
+    local profile="$1" name parsed_name origin_name
+    dx_parse_config_file "$2" || return 1
+    for name in $DXE_CONFIG_FIELDS; do
+        parsed_name="DXE_PARSED_$name"
+        if [ "${!parsed_name+x}" = x ]; then
+            printf -v "$name" '%s' "${!parsed_name}"
+            origin_name="DXE_CONFIG_ORIGIN_$name"
+            printf -v "$origin_name" '%s' "profile:$profile"
+            export "${name?}" "${origin_name?}"
+        fi
+        unset "$parsed_name"
+    done
+    dx_profile_enforce_pin "$profile" || return $?
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    dx_init_config "$DX_PROJECT_ROOT"
+}
+
+# bin/qx's profile: QX_PROFILE, defaulting (also when empty) to qnap-canary.
+dx_qx_profile() {
+    local profile="${QX_PROFILE:-qnap-canary}"
+    dx_profile_name_valid "$profile" || { echo "Error: invalid QX_PROFILE '$profile'." >&2; return 2; }
+    printf '%s\n' "$profile"
+}
