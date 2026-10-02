@@ -114,6 +114,16 @@ Preserve unrelated launchers and all three source plans.
 
 ### Step 2: connection/profile safeguards
 
+**Done (2026-10-02, `feat/dx-reconnect-readonly`, evidence
+`docs/evidence/20261002/dx-reconnect.md`):** pin (`DX_PROFILE_ROOT`),
+fixture isolation in the runner, `QX_PROFILE`, `qx` in every inventory,
+the lifecycle-lock contract restored on reconnect, logic moved into covered
+libraries (unscoped 2,603 ≤ 2,635), all gates and the Apple live tier
+green. Remaining for D1: set the private pin value in the real profile and
+repoint the daily PATH `dx`/`qx` to the designated main-only checkout
+(operator setup, not repository work).
+
+
 Implement D1's selected **unconditional main-only source pin** as a small
 reviewed follow-up. Optional `DX_PROFILE_ROOT` is a registered absolute-path
 constraint with an empty fixture/default value, parsed as data, enforced before
