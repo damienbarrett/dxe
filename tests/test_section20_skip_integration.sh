@@ -551,5 +551,69 @@ else
 fi
 rm -rf "$lt_probe_dir" "$lt_marker"
 
+# --- The "everything" run (`run_all_tests.sh --live`) must run the unit-tier
+# suites' own live tails too. It used to run `run.sh --tier unit` (which
+# forces SKIP_INTEGRATION=true) and then `run.sh --live --tier live`, so every
+# unit file's live tail (sections 4-8, 14-17, 19, 23) was skipped on every
+# live gate. Driven through COPIES of the real wrapper and runner in a
+# scratch directory holding one unit-tier and one live-tier probe suite, so
+# nothing real can be reached; the probe reports the SKIP_INTEGRATION it was
+# handed and what the default-guest guard says.
+ev_dir="$(mktemp -d -t dxe-run-all-live.XXXXXX)"
+cp "$SCRIPT_DIR/run.sh" "$SCRIPT_DIR/run_all_tests.sh" "$ev_dir/"
+ln -s "$SCRIPT_DIR/profiles" "$ev_dir/profiles"
+for ev_tier in unit live; do
+    {
+        printf '#!/bin/bash\n'
+        printf '%s tier: %s\n' '#' "$ev_tier"
+        printf '%s bash32: no\n' '#'
+        printf 'echo "probe-%s skip=$SKIP_INTEGRATION"\n' "$ev_tier"
+        printf 'source "%s/test_helpers.sh" >/dev/null 2>&1\n' "$SCRIPT_DIR"
+        printf 'requires_container; echo "probe-%s guard-rc=$?"\n' "$ev_tier"
+        printf 'exit 0\n'
+    } > "$ev_dir/test_probe_$ev_tier.sh"
+done
+ev_marker="$(mktemp -t dxe-stub-marker-ev.XXXXXX)"
+rm -f "$ev_marker"
+
+# Under the dx-test fixture profile, --live reaches BOTH tiers' live tails.
+ev_out="$(DXE_TEST_RESULTS="" DXE_STUB_MARKER="$ev_marker" PATH="$STUB_DIR:$PATH" env -u SKIP_INTEGRATION \
+    DX_PROFILES_DIR="$SCRIPT_DIR/profiles" "$SCRIPT_DIR/../bin/dx-profile" dx-test \
+    bash "$ev_dir/run_all_tests.sh" --live 2>&1)"
+if printf '%s' "$ev_out" | stdin_matches -F -x 'probe-unit skip=false' \
+    && printf '%s' "$ev_out" | stdin_matches -F -x 'probe-unit guard-rc=0' \
+    && printf '%s' "$ev_out" | stdin_matches -F -x 'probe-live skip=false'; then
+    test_pass "run_all_tests.sh --live runs the unit tier's live tails (not only the live tier's)"
+else
+    test_fail "run_all_tests.sh --live runs the unit tier's live tails (output: $ev_out)"
+fi
+
+# The bare run and --skip-integration still skip them and never run the live tier.
+for ev_args in "" "--skip-integration"; do
+    # shellcheck disable=SC2086  # ev_args is deliberately empty or one flag
+    ev_out="$(DXE_TEST_RESULTS="" DXE_STUB_MARKER="$ev_marker" PATH="$STUB_DIR:$PATH" env -u SKIP_INTEGRATION \
+        bash "$ev_dir/run_all_tests.sh" $ev_args 2>&1)"
+    if printf '%s' "$ev_out" | stdin_matches -F -x 'probe-unit skip=true' \
+        && ! printf '%s' "$ev_out" | stdin_matches -F 'probe-live'; then
+        test_pass "run_all_tests.sh ${ev_args:-(bare)} still skips the live tails"
+    else
+        test_fail "run_all_tests.sh ${ev_args:-(bare)} still skips the live tails (output: $ev_out)"
+    fi
+done
+
+# No profile: --live is refused by the default-guest guard before any stub runs.
+rm -f "$ev_marker"
+ev_out="$(env -i PATH="$STUB_DIR:$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" \
+    DXE_TEST_RESULTS="" DXE_STUB_MARKER="$ev_marker" \
+    bash "$ev_dir/run_all_tests.sh" --live 2>&1)"
+if printf '%s' "$ev_out" | stdin_matches -F -x 'probe-unit guard-rc=1' \
+    && printf '%s' "$ev_out" | stdin_matches -F -x 'probe-live guard-rc=1' \
+    && [ ! -s "$ev_marker" ]; then
+    test_pass "run_all_tests.sh --live without a profile is refused by the default-guest guard before any call"
+else
+    test_fail "run_all_tests.sh --live without a profile is refused by the default-guest guard (output: $ev_out; recorded: $(tr '\n' ';' < "$ev_marker" 2>/dev/null))"
+fi
+rm -rf "$ev_dir" "$ev_marker"
+
 print_summary
 exit_with_code

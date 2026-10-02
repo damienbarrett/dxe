@@ -22,7 +22,9 @@
 # --skip-integration, no --live) used to run BOTH tiers -- unit and live --
 # unconditionally; it now runs only the unit tier and prints a one-line
 # notice instead of silently reaching a live guest, so the documented
-# "run everything" command is now `tests/run_all_tests.sh --live`.
+# "run everything" command is now `tests/run_all_tests.sh --live`, which
+# runs BOTH tiers with --live: the unit tier (so the unit files' live tails
+# execute against the profile-selected guest) and then the live tier.
 
 set -euo pipefail
 
@@ -102,9 +104,14 @@ fi
 # container-free and live suites (WP1.4 splits that exactly along the
 # SKIP_INTEGRATION-gated sections 11/12 the table below always singled out:
 # "unit" for everything else, "live" for those two), so this runs both
-# tiers in turn and reports failure if either did.
+# tiers in turn and reports failure if either did. The unit tier runs WITH
+# --live so the unit files' own live tails (sections 4-8, 14-17, 19, 23) run
+# against the selected guest; a bare `--tier unit` forces
+# SKIP_INTEGRATION=true and skipped all of them on every live gate. This is
+# safe because live_tail_enabled (tests/test_helpers.sh) refuses the
+# default guest, so only a profile-selected guest (dx-test) can be reached.
 unit_status=0
-"$SCRIPT_DIR/run.sh" --tier unit || unit_status=$?
+"$SCRIPT_DIR/run.sh" --live --tier unit || unit_status=$?
 live_status=0
 "$SCRIPT_DIR/run.sh" --live --tier live || live_status=$?
 if [ "$unit_status" -eq 0 ] && [ "$live_status" -eq 0 ]; then

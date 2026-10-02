@@ -165,7 +165,11 @@ unit`, `--tier host-contract`) unless `--live` is given; `--tier live` and
 (no `--section`, no `--skip-integration`) used to run both tiers -- unit and
 live -- unconditionally; it now runs only the unit tier and notes the live
 tier was skipped, so the "run everything" command above is
-`tests/run_all_tests.sh --live`, not the bare form. An environment
+`tests/run_all_tests.sh --live`, not the bare form. `--live` runs the unit
+tier with `--live` too (`run.sh --live --tier unit`, then `--live --tier
+live`), so the unit suites' own live tails (sections 4-8, 14-17, 19, 23) run
+against the selected guest; the default-guest guard still refuses them
+without a profile. An environment
 `SKIP_INTEGRATION=false` given without `--live` is refused (exit 2) rather
 than silently honoured.
 
