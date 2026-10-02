@@ -92,7 +92,8 @@ container is already running, it connects directly without publishing
 bootstrap changes. If it is stopped or absent, it runs the full `dx`
 bring-up flow first. With `bin/` on your PATH,
 run `qx` to connect or `qx 'uname -a'` to run a guest command. Arguments
-pass through unchanged. The profile must exist; `qx` fails if it
+pass through unchanged. Set `QX_PROFILE=<name>` to use another profile
+(letters, digits, `.`, `_`, `-`; it must not start with `.` or `-`). The profile must exist; `qx` fails if it
 is missing. `dx-profile` also supports `DX_PROFILES_DIR` for an explicit
 directory and bundled profiles under `tests/profiles/`; user profiles take
 precedence when no explicit directory is supplied.

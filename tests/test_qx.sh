@@ -129,6 +129,24 @@ if [ "$qx_status" -ne 0 ] && expect_log available system-status running:dx-qnap-
 else
     test_fail "a held lifecycle lock refuses a reconnect before the ownership check, SSH or any lifecycle child (status $qx_status)"
 fi
+# QX_PROFILE selects another profile for the same entrypoint; it is data
+# validated with the registry's own name rule before anything runs.
+printf '%s\n' 'DX_CONTAINER_NAME=dx-other-contract' > "$fixture/tests/profiles/other.env"
+QX_PROFILE=other run_qx 'uname -a'
+if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-other-contract lock owned:dx-other-contract:connect unlock dx-ssh; then
+    test_pass "QX_PROFILE reaches dx-profile with the selected profile"
+else
+    test_fail "QX_PROFILE reaches dx-profile with the selected profile (status $qx_status)"
+fi
+for bad_profile in 'bad;name' '.hidden' '-x' 'a b'; do
+    qx_err="$(QX_PROFILE="$bad_profile" "$fixture/bin/qx" 'uname -a' 2>&1 >/dev/null)" && qx_bad_status=0 || qx_bad_status=$?
+    : > "$QX_TEST_LOG"
+    if [ "$qx_bad_status" -eq 2 ] && printf '%s\n' "$qx_err" | stdin_matches -F "invalid QX_PROFILE" && [ ! -s "$QX_TEST_LOG" ]; then
+        test_pass "invalid QX_PROFILE '$bad_profile' is refused before any command runs"
+    else
+        test_fail "invalid QX_PROFILE '$bad_profile' is refused before any command runs (status $qx_bad_status, got '$qx_err')"
+    fi
+done
 QX_TEST_COMMAND_STATUS=23 run_qx 'uname -a'
 if [ "$qx_status" -eq 23 ] && expect_log available system-status running:dx-qnap-contract lock owned:dx-qnap-contract:connect unlock dx-ssh; then
     test_pass "SSH failure propagates without trying a lifecycle update"
