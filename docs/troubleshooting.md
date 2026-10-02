@@ -146,7 +146,15 @@ the same container. For the QNAP canary:
 ```
 
 To connect to the running guest while postponing that restart, use
-`qx` or `./bin/dx-profile qnap-canary ./bin/dx-ssh`.
+`qx` or `./bin/dx-profile qnap-canary ./bin/dx-ssh`. `qx` reads `QX_PROFILE`
+to use another profile.
+
+### "profile '<name>' is pinned to <path>; run it from that checkout"
+
+The profile sets `DX_PROFILE_ROOT`, so only that checkout may run it (a second
+checkout must not drive the same target). Run `dx-profile <name> ...` from the
+pinned checkout, or correct the pin in your private profile if the checkout
+moved. The pin is compared after resolving symlinks.
 
 ### A healthy boot reported as a failure
 

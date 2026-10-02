@@ -31,7 +31,7 @@ operations.
 7. **The bootstrap payload is part of every start.** `dx-start-container`
    always runs `dx-sync-bootstrap` after ensuring the container is running, so edits to
    `home/*.nix` or `bootstrap.sh` land on the next container start without
-   an image rebuild. `dx` connects directly when the container is already running;
+   an image rebuild. `dx` connects directly when the container is already running and owned by this project (holding the lifecycle lock only around that check);
    applying bootstrap edits then requires an explicit publish and restart.
    When that sync actually publishes a new generation (not the
    unchanged-content skip), `dx-start-container` also confirms, bounded by

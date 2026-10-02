@@ -233,6 +233,18 @@ for command in "$BASE_DIR"/bin/dx* "$BASE_DIR/bin/qx"; do
     if grep -Fq -- "$name" $all_docs; then test_pass "$name is discoverable"; else test_fail "$name is discoverable"; fi
 done
 
+for example in qnap-example qnap-canary-example; do
+    example_file="$BASE_DIR/tests/profiles/$example.env"
+    if grep -q '^export DX_SSH_KEY=/absolute/path/to/.ssh/dxe/' "$example_file" \
+        && grep -q '^export DX_SSH_KEY_PUB=/absolute/path/to/.ssh/dxe/' "$example_file" \
+        && ! grep -q 'DX_SSH_KEY.*DX_PROJECT_ROOT' "$example_file" \
+        && grep -q 'DX_PROFILE_ROOT' "$example_file"; then
+        test_pass "$example shows absolute key-path placeholders and mentions DX_PROFILE_ROOT"
+    else
+        test_fail "$example shows absolute key-path placeholders and mentions DX_PROFILE_ROOT"
+    fi
+done
+
 source "$BASE_DIR/bin/lib/dx-config.sh"
 for name in $DXE_CONFIG_FIELDS; do
     if grep -Fq -- "$name" "$CONFIG_DOC"; then test_pass "$name is generated/validated from the config registry"; else test_fail "$name is generated/validated from the config registry"; fi

@@ -547,6 +547,11 @@ dx_lifecycle_lock_drop() {
 # start; a running guest cannot activate newly published code), so the lock
 # brackets only the ownership decision. A lock taken for a service start is
 # kept through bring-up; children inherit its ownership.
+#
+# Cost note: under docker-ssh a reconnect makes three remote round trips
+# (service reachable, guest running, guest owned). The ownership check stays
+# even though the guest is already running: a same-named container this
+# project did not create must never be connected to or driven.
 dx_connect_or_bring_up() {
     local script_dir="$1" locked=false child
     shift

@@ -25,8 +25,10 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
    It first checks the container service, starts the local Apple service if
    needed, and waits up to `DX_SYSTEM_WAIT_TIMEOUT` (default 30 seconds) for
    readiness before checking the container.
-   When the container is running, it connects directly without publishing
-   bootstrap changes. When stopped or absent, it runs the bring-up flow,
+   When the container is running and owned by this project, it connects
+   directly without publishing bootstrap changes; the lifecycle lock is held
+   only around that ownership check, so a reconnect refuses (naming the
+   holder) while another controller holds it. When stopped or absent, it runs the bring-up flow,
    skipping whatever already exists. Each underlying lifecycle script is
    idempotent toward its end state, so `dx`
    is safe to run from any starting state.
