@@ -673,5 +673,75 @@ else
 fi
 rm -rf "$hn_dir"
 
+# --- The live helpers are runtime-neutral. requires_container used to call the
+# Apple `container` CLI directly, so under a docker-ssh profile every live
+# tail skipped with "Container ... is not running" even with the guest up;
+# container_exec_dx, the SSH endpoint and the skip/fail wording had the same
+# Apple-only assumptions (`container exec`, dx@127.0.0.1, localhost:PORT).
+# Here a throwaway docker-ssh fixture profile runs under the fake management
+# ssh (fake_qnap_ssh_write) and a fake `docker`; no `container` binary exists
+# on PATH at all, and the guest address comes from the adapter's own cache
+# variable (assembled from parts, as the adapter suites do, so no dotted quad
+# sits in this file's source).
+rn_dir="$(mktemp -d -t dxe-runtime-neutral.XXXXXX)"
+source "$SCRIPT_DIR/lib/fake-tools.sh"
+mkdir "$rn_dir/profiles" "$rn_dir/bin"
+: > "$rn_dir/key"
+{
+    printf 'export DX_RUNTIME=docker-ssh\n'
+    printf 'export DX_REMOTE_HOST=dxe-fixture-remote\n'
+    printf 'export DX_GUEST_SYSTEM=x86_64-linux\n'
+    printf 'export DX_NIX_STORAGE_MODE=direct-volume\n'
+    printf 'export DX_CONTAINER_NAME=dxe-runtime-fixture\n'
+    printf 'export DX_IMAGE=dxe-runtime-fixture-image\n'
+    printf 'export DX_SSH_PORT=2397\n'
+    printf 'export DX_NIX_VOLUME=dxe-runtime-fixture-nix\n'
+    printf 'export DX_PERSIST_VOLUME=dxe-runtime-fixture-persist\n'
+    printf 'export DX_BOOTSTRAP_VOLUME=dxe-runtime-fixture-bootstrap\n'
+    printf 'export DX_SSH_KEY=%s/key\n' "$rn_dir"
+    printf 'export DX_SSH_KEY_PUB=%s/key.pub\n' "$rn_dir"
+} > "$rn_dir/profiles/dxe-runtime-fixture.env"
+fake_qnap_ssh_write "$rn_dir/bin"
+rn_addr="$(printf '%s.%s.%s.%s' 100 100 1 2)"
+rn_run() {
+    # $1 = what the fake docker answers for State.Running ("true"/"false")
+    fake_tool_write "$rn_dir/bin" docker 'case "$*" in
+    *"container inspect"*) echo "'"$1"'" ;;
+    *" exec "*|"exec "*) printf "%s\n" "$*" >> "'"$rn_dir"'/exec.log" ;;
+esac'
+    rm -f "$rn_dir/exec.log"
+    env -i PATH="$rn_dir/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" DXE_TEST_RESULTS="" \
+        DXE_RUNTIME_DOCKER_BIN=docker DXE_RUNTIME_GUEST_SSH_ADDRESS="$rn_addr" \
+        SKIP_INTEGRATION=false DX_PROFILES_DIR="$rn_dir/profiles" \
+        "$SCRIPT_DIR/../bin/dx-profile" dxe-runtime-fixture \
+        bash -c 'source "$1/test_helpers.sh" >/dev/null 2>&1
+            requires_container; echo "rc=$?"
+            container_exec_dx echo hi >/dev/null 2>&1; echo "exec-rc=$?"
+            echo "endpoint=$(guest_ssh_endpoint)"' _ "$SCRIPT_DIR" 2>&1
+}
+rn_out="$(rn_run true)"
+if printf '%s' "$rn_out" | stdin_matches -F -x 'rc=0' && ! printf '%s' "$rn_out" | stdin_matches -F 'is not running'; then
+    test_pass "requires_container succeeds under a docker-ssh profile when the fake daemon reports the container running"
+else
+    test_fail "requires_container succeeds under a docker-ssh profile when the fake daemon reports the container running (output: $rn_out)"
+fi
+if printf '%s' "$rn_out" | stdin_matches -F -x 'exec-rc=0' && stdin_matches -F 'dxe-runtime-fixture' < "$rn_dir/exec.log"; then
+    test_pass "container_exec_dx goes through the runtime adapter (docker exec) under a docker-ssh profile"
+else
+    test_fail "container_exec_dx goes through the runtime adapter (docker exec) under a docker-ssh profile (output: $rn_out; log: $(cat "$rn_dir/exec.log" 2>/dev/null))"
+fi
+if printf '%s' "$rn_out" | stdin_matches -F -x "endpoint=dx@$rn_addr"; then
+    test_pass "guest_ssh_endpoint resolves the runtime's guest address, not dx@127.0.0.1"
+else
+    test_fail "guest_ssh_endpoint resolves the runtime's guest address, not dx@127.0.0.1 (output: $rn_out)"
+fi
+rn_out="$(rn_run false)"
+if printf '%s' "$rn_out" | stdin_matches -F -x 'rc=1' && printf '%s' "$rn_out" | stdin_matches -F "Container 'dxe-runtime-fixture' is not running"; then
+    test_pass "requires_container skips under a docker-ssh profile when the container is not running"
+else
+    test_fail "requires_container skips under a docker-ssh profile when the container is not running (output: $rn_out)"
+fi
+rm -rf "$rn_dir"
+
 print_summary
 exit_with_code

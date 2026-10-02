@@ -302,11 +302,34 @@ requires_container() {
         [ -n "$DXE_LIVE_TAIL_REFUSED" ] || test_skip "Live guest checks skipped (SKIP_INTEGRATION is not false; $LIVE_TAIL_HINT)"
         return 1
     fi
-    if ! command -v container >/dev/null 2>&1 || ! container list --quiet 2>/dev/null | stdin_matches -F -x -- "$DX_CONTAINER_NAME"; then
+    if ! dxe_runtime_call dx_runtime_container_running "$DX_CONTAINER_NAME" 2>/dev/null; then
         test_skip "Container '$DX_CONTAINER_NAME' is not running"
         return 1
     fi
     return 0
+}
+
+# dxe_runtime_call FUNCTION [ARGS...] -- run one production, runtime-neutral
+# function (the bin/dx-lib.sh facade: dx_runtime_container_running,
+# dx_runtime_exec, dx_ssh_endpoint, ...) in a SUBSHELL, so the suite itself
+# still sources no production code (WP1.6) yet asks the same adapter dispatch
+# (DX_RUNTIME: apple or docker-ssh) that dx-status and every entrypoint use,
+# rather than the Apple `container` CLI directly. A library that fails to
+# load, or an unresolvable configuration, is a failure of the call (exit 2),
+# never a pass.
+dxe_runtime_call() {
+    (
+        # shellcheck source=/dev/null
+        source "$BASE_DIR/bin/dx-lib.sh" >/dev/null 2>&1 || exit 2
+        "$@"
+    )
+}
+
+# guest_ssh_endpoint -- dx@<address> the guest's SSH server is reached at,
+# resolved by the active runtime (Apple: loopback; docker-ssh: the NAS's
+# discovered address), for suites that call ssh/scp themselves.
+guest_ssh_endpoint() {
+    dxe_runtime_call dx_ssh_endpoint
 }
 
 # Global failure tracker
@@ -319,7 +342,7 @@ wait_for_ssh() {
         echo "  Not waiting for the guest: live tail not enabled for this target ($LIVE_TAIL_HINT)."
         return 1
     fi
-    echo "  Waiting for guest bootstrap on localhost:$DX_SSH_PORT (up to ${timeout}s)..."
+    echo "  Waiting for guest bootstrap (${DX_RUNTIME:-apple} runtime, SSH port $DX_SSH_PORT, up to ${timeout}s)..."
     if DX_SSH_WAIT_TIMEOUT="$timeout" "$BASE_DIR/bin/dx-wait-ssh"; then
         echo "  Guest bootstrap complete (authenticated SSH is responsive)."
         return 0
@@ -337,7 +360,7 @@ guest_bash() {
 }
 
 container_exec_dx() {
-    container exec -u dx "$DX_CONTAINER_NAME" "$@"
+    dxe_runtime_call dx_runtime_exec -u dx "$DX_CONTAINER_NAME" "$@"
 }
 
 container_exec_dx_bash() {

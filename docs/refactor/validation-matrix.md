@@ -169,7 +169,13 @@ tier was skipped, so the "run everything" command above is
 tier with `--live` too (`run.sh --live --tier unit`, then `--live --tier
 live`), so the unit suites' own live tails (sections 4-8, 14-17, 19, 23) run
 against the selected guest; the default-guest guard still refuses them
-without a profile. An environment
+without a profile. The live helpers are
+runtime-neutral: `requires_container`, `container_exec_dx` and
+`guest_ssh_endpoint` (tests/test_helpers.sh) go through the runtime adapter
+(`dxe_runtime_call`, a subshell over `bin/dx-lib.sh`) instead of the Apple
+`container` CLI and `dx@127.0.0.1`, so the same live tier runs against a
+docker-ssh profile; the Apple-only probes (Section 5's image enumeration,
+Section 16's migration helper) skip with a message under any other runtime. An environment
 `SKIP_INTEGRATION=false` given without `--live` is refused (exit 2) rather
 than silently honoured.
 

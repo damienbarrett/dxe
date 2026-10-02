@@ -669,7 +669,7 @@ shades-of-purple=base16-shades-of-purple'
     # Any guest state this mutates (the active Tinty scheme) is restored by
     # the cleanup_section14 EXIT trap declared near the top of this file.
     if ! wait_for_ssh 60; then
-        test_skip "Tinted/project.nvim live runtime probes (SSH not reachable on localhost:$DX_SSH_PORT)"
+        test_skip "Tinted/project.nvim live runtime probes (SSH not reachable on the guest (SSH port $DX_SSH_PORT))"
     else
         ORIGINAL_THEME_SCHEME="$(container_exec_dx_bash 'tinty current' 2>/dev/null | tr -d '\r\n')"
 
@@ -688,6 +688,7 @@ shades-of-purple=base16-shades-of-purple'
             # is needed here too to keep that noise off the captured output.
             "-o" "LogLevel=ERROR"
         )
+        GUEST_ENDPOINT="$(guest_ssh_endpoint)"
         SSH_OPTS=("${SSH_COMMON_OPTS[@]}" "-p" "$DX_SSH_PORT")
         SCP_OPTS=("${SSH_COMMON_OPTS[@]}" "-P" "$DX_SSH_PORT")
 
@@ -698,7 +699,7 @@ shades-of-purple=base16-shades-of-purple'
         # section 15/16's run_nu scp-then-ssh pattern.
         push_file() {
             local local_file="$1" remote_path="$2"
-            scp "${SCP_OPTS[@]}" "$local_file" "dx@127.0.0.1:$remote_path" >/dev/null 2>&1
+            scp "${SCP_OPTS[@]}" "$local_file" "$GUEST_ENDPOINT:$remote_path" >/dev/null 2>&1
         }
 
         # --- Tinted: no deprecation message + colors_name matches Tinty ----
@@ -714,7 +715,7 @@ io.write("COLORS_NAME=" .. tostring(vim.g.colors_name) .. "\n")
 LUA_EOF
         remote_tinted_probe="/tmp/$(basename "$TINTED_STARTUP_PROBE_LOCAL").lua"
         if push_file "$TINTED_STARTUP_PROBE_LOCAL" "$remote_tinted_probe"; then
-            TINTED_PROBE_OUT="$(ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "bash -lc 'nvim --headless -c \"luafile $remote_tinted_probe\" -c \"qa\" 2>&1; rc=\$?; rm -f $remote_tinted_probe; exit \$rc'" 2>&1)"
+            TINTED_PROBE_OUT="$(ssh "${SSH_OPTS[@]}" "$GUEST_ENDPOINT" "bash -lc 'nvim --headless -c \"luafile $remote_tinted_probe\" -c \"qa\" 2>&1; rc=\$?; rm -f $remote_tinted_probe; exit \$rc'" 2>&1)"
         else
             TINTED_PROBE_OUT=""
         fi
@@ -821,7 +822,7 @@ DRIVER_EOF
         remote_empty_driver="/tmp/$(basename "$PROJECT_EMPTY_DRIVER_LOCAL").sh"
         if push_file "$PROJECT_EMPTY_PROBE_LOCAL" "$remote_empty_probe" \
             && push_file "$PROJECT_EMPTY_DRIVER_LOCAL" "$remote_empty_driver"; then
-            PROJECT_EMPTY_OUT="$(ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "bash -lc 'bash $remote_empty_driver $remote_empty_probe; rc=\$?; rm -f $remote_empty_driver; exit \$rc'" 2>&1)"
+            PROJECT_EMPTY_OUT="$(ssh "${SSH_OPTS[@]}" "$GUEST_ENDPOINT" "bash -lc 'bash $remote_empty_driver $remote_empty_probe; rc=\$?; rm -f $remote_empty_driver; exit \$rc'" 2>&1)"
         else
             PROJECT_EMPTY_OUT=""
         fi
@@ -879,7 +880,7 @@ DRIVER_EOF
         remote_real_driver="/tmp/$(basename "$PROJECT_REAL_DRIVER_LOCAL").sh"
         if push_file "$PROJECT_REAL_PROBE_LOCAL" "$remote_real_probe" \
             && push_file "$PROJECT_REAL_DRIVER_LOCAL" "$remote_real_driver"; then
-            PROJECT_REAL_OUT="$(ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "bash -lc 'bash $remote_real_driver $remote_real_probe; rc=\$?; rm -f $remote_real_driver; exit \$rc'" 2>&1)"
+            PROJECT_REAL_OUT="$(ssh "${SSH_OPTS[@]}" "$GUEST_ENDPOINT" "bash -lc 'bash $remote_real_driver $remote_real_probe; rc=\$?; rm -f $remote_real_driver; exit \$rc'" 2>&1)"
         else
             PROJECT_REAL_OUT=""
         fi

@@ -65,7 +65,7 @@ if ! live_tail_enabled; then
 elif ! requires_container; then
     :
 elif ! wait_for_ssh 60; then
-    test_fail "SSH not reachable on localhost:$DX_SSH_PORT"
+    test_fail "SSH not reachable on the guest (SSH port $DX_SSH_PORT)"
 elif guest_bash "nvim --headless +q >/dev/null"; then
     test_pass "built NixVim starts headlessly in the live guest"
 else

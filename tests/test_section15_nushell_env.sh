@@ -137,7 +137,7 @@ if ! requires_container; then
 fi
 
 if ! wait_for_ssh 60; then
-    test_fail "SSH not reachable on localhost:$DX_SSH_PORT"
+    test_fail "SSH not reachable on the guest (SSH port $DX_SSH_PORT)"
     print_summary
     exit_with_code
 fi
@@ -151,6 +151,7 @@ SSH_COMMON_OPTS=(
     "-o" "ConnectTimeout=5"
 )
 # ssh uses -p for port; scp uses -P. Keep them separate.
+GUEST_ENDPOINT="$(guest_ssh_endpoint)"
 SSH_OPTS=("${SSH_COMMON_OPTS[@]}" "-p" "$DX_SSH_PORT")
 SCP_OPTS=("${SSH_COMMON_OPTS[@]}" "-P" "$DX_SSH_PORT")
 
@@ -163,11 +164,11 @@ run_nu() {
     local_tmp=$(mktemp -t dx_nu_probe.XXXXXX)
     remote_path="/tmp/$(basename "$local_tmp").nu"
     printf '%s\n' "$script" > "$local_tmp"
-    scp "${SCP_OPTS[@]}" "$local_tmp" "dx@127.0.0.1:$remote_path" >/dev/null 2>&1
+    scp "${SCP_OPTS[@]}" "$local_tmp" "$GUEST_ENDPOINT:$remote_path" >/dev/null 2>&1
     local rc=$?
     rm -f "$local_tmp"
     [ $rc -eq 0 ] || return $rc
-    ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "bash -lc 'nu $remote_path; rc=\$?; rm -f $remote_path; exit \$rc'"
+    ssh "${SSH_OPTS[@]}" "$GUEST_ENDPOINT" "bash -lc 'nu $remote_path; rc=\$?; rm -f $remote_path; exit \$rc'"
 }
 
 # Probe: source env.nu (this is what an interactive nushell session does on

@@ -195,6 +195,8 @@ run_migration_helper_tests() {
 
 if ! live_tail_enabled; then
     test_skip "migration helper integration checks (--skip-integration)"
+elif [ "${DX_RUNTIME:-apple}" != apple ]; then
+    test_skip "migration helper integration checks are Apple-only (throwaway container + local volumes); DX_RUNTIME=${DX_RUNTIME}"
 else
     run_migration_helper_tests
 fi
@@ -357,13 +359,13 @@ if ! requires_container; then
 fi
 
 if ! wait_for_ssh 60; then
-    test_fail "SSH not reachable on localhost:$DX_SSH_PORT"
+    test_fail "SSH not reachable on the guest (SSH port $DX_SSH_PORT)"
     print_summary
     exit_with_code
 fi
 
 # Volume exists on host
-if container volume inspect "$DX_PERSIST_VOLUME" >/dev/null 2>&1; then
+if dxe_runtime_call dx_runtime_volume_exists "$DX_PERSIST_VOLUME" >/dev/null 2>&1; then
     test_pass "host has $DX_PERSIST_VOLUME volume"
 else
     test_fail "host has $DX_PERSIST_VOLUME volume"
@@ -377,10 +379,11 @@ SSH_BASE_OPTS=(
     "-o" "BatchMode=yes"
     "-o" "ConnectTimeout=5"
 )
+GUEST_ENDPOINT="$(guest_ssh_endpoint)"
 SSH_OPTS=("${SSH_BASE_OPTS[@]}" "-p" "$DX_SSH_PORT")
 
 guest() {
-    ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "$@"
+    ssh "${SSH_OPTS[@]}" "$GUEST_ENDPOINT" "$@"
 }
 
 # /persist is a separate mount from /
@@ -422,9 +425,9 @@ local_tmp=$(mktemp -t dx_persist_probe.XXXXXX)
 remote_path="/tmp/$(basename "$local_tmp").nu"
 printf '%s\n' "$NU_PROBE" > "$local_tmp"
 SCP_OPTS=("${SSH_BASE_OPTS[@]}" "-P" "$DX_SSH_PORT")
-scp "${SCP_OPTS[@]}" "$local_tmp" "dx@127.0.0.1:$remote_path" >/dev/null 2>&1
+scp "${SCP_OPTS[@]}" "$local_tmp" "$GUEST_ENDPOINT:$remote_path" >/dev/null 2>&1
 rm -f "$local_tmp"
-NU_OUT=$(ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "bash -lc 'nu $remote_path; rc=\$?; rm -f $remote_path; exit \$rc'" 2>&1 || true)
+NU_OUT=$(ssh "${SSH_OPTS[@]}" "$GUEST_ENDPOINT" "bash -lc 'nu $remote_path; rc=\$?; rm -f $remote_path; exit \$rc'" 2>&1 || true)
 if echo "$NU_OUT" | stdin_matches -x "PERSIST=/persist"; then
     test_pass "nushell exposes \$env.PERSIST=/persist"
 else
@@ -451,7 +454,7 @@ echo "  Running dx-start-container..."
 "$BASE_DIR/bin/dx-start-container" >/dev/null 2>&1
 wait_for_ssh 180 >/dev/null
 for _ in $(seq 1 30); do
-    if ssh "${SSH_OPTS[@]}" dx@127.0.0.1 "true" 2>/dev/null; then
+    if ssh "${SSH_OPTS[@]}" "$GUEST_ENDPOINT" "true" 2>/dev/null; then
         break
     fi
     sleep 2

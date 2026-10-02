@@ -968,7 +968,7 @@ if ! requires_container; then
 fi
 
 if ! wait_for_ssh 60; then
-    test_fail "SSH not reachable on localhost:$DX_SSH_PORT"
+    test_fail "SSH not reachable on the guest (SSH port $DX_SSH_PORT)"
     print_summary
     exit_with_code
 fi

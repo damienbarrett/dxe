@@ -151,7 +151,7 @@ if ! live_tail_enabled; then
 elif ! requires_container; then
     :
 elif ! wait_for_ssh 60; then
-    test_fail "SSH not reachable on localhost:$DX_SSH_PORT"
+    test_fail "SSH not reachable on the guest (SSH port $DX_SSH_PORT)"
 else
     if guest_bash "grep -q '^VERSION_ID=\"$DX_EXPECTED_NIXOS_RELEASE\"' /etc/os-release"; then
         test_pass "live guest publishes NixOS $DX_EXPECTED_NIXOS_RELEASE as its release identity in /etc/os-release"
@@ -202,6 +202,8 @@ fi
 DX_IMAGE="${DX_IMAGE:-dx-nixos-26.05}"
 if ! live_tail_enabled; then
     test_skip "Nix store enumeration behaviour skipped by --skip-integration"
+elif [ "${DX_RUNTIME:-apple}" != apple ]; then
+    test_skip "Nix enumeration probe is Apple-only (throwaway container from the local image); DX_RUNTIME=${DX_RUNTIME}"
 elif ! command -v container >/dev/null 2>&1; then
     test_skip "Apple container CLI unavailable for the Nix enumeration probe"
 elif ! container image list 2>/dev/null | awk -v w="$DX_IMAGE" 'NR > 1 && $1 == w { f = 1 } END { exit !f }'; then
