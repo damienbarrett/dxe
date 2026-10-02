@@ -46,6 +46,7 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_MOUNT_IDENTITY_DIR` | `$HOME/.dx-cache/mount-identities` | Private directory containing bounded v2 mount manifests and their locks. |
 | `DX_TUNNEL_LOCK_TIMEOUT` | `5` | Maximum seconds to wait for a per-tunnel state-transition lock. |
 | `DX_BACKUP_DIR` | `$HOME/Backups/dxe-persist` | Base host directory for `dx-backup`/`dx-restore`. The actual per-container mirror always lives at `$DX_BACKUP_DIR/$DX_CONTAINER_NAME`, even when overridden, so `dx-host` and `dx-test` never share one. See ["Backing up and restoring /persist"](lifecycle.md#backing-up-and-restoring-persist). |
+| `DX_PROFILE_ROOT` | (empty) | Optional pin, set in a profile only: an absolute path to the one checkout that may run that profile, e.g. `/absolute/path/to/checkout`. `bin/dx-profile` compares the canonical (symlink-resolved) path of its own checkout with the canonical pin and refuses with exit status 2, before running anything, when they differ or the pin does not resolve. Empty means no pin. Keep the real value in your private profile, never in a tracked file. |
 
 `DX_NIX_VOLUME` exists because the Nix store is large, persistent, and lives on
 its own writable filesystem. Apple Container creates and mounts the volume at
@@ -116,6 +117,7 @@ registry that validates it.
 | `DX_MOUNT_IDENTITY_DIR` | `$HOME/.dx-cache/mount-identities` |
 | `DX_TUNNEL_LOCK_TIMEOUT` | `5` |
 | `DX_BACKUP_DIR` | `$HOME/Backups/dxe-persist` |
+| `DX_PROFILE_ROOT` | (empty) |
 
 ### Mounting a Host Checkout (`dx-mount`)
 

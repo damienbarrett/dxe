@@ -947,6 +947,91 @@ for invalid_profile in '' '.hidden' 'bad;command'; do
         test_fail "restart guidance avoids a shell command for invalid profile '$invalid_profile' (got '$invalid_guidance')"
     fi
 done
+
+# DX_PROFILE_ROOT pins a profile to one checkout: bin/dx-profile compares the
+# canonical (symlink-resolved) DX_PROJECT_ROOT with the canonical pin before it
+# runs anything, so a stale second checkout cannot drive a production target.
+pin_fixture="$config_fixture/pin"
+pin_root="$pin_fixture/root"
+pin_other="$pin_fixture/other"
+pin_profiles="$pin_fixture/profiles"
+pin_log="$pin_fixture/command.log"
+mkdir -p "$pin_root/bin/lib" "$pin_other/bin/lib" "$pin_profiles"
+for pin_checkout in "$pin_root" "$pin_other"; do
+    cp "$BASE_DIR/bin/dx-profile" "$pin_checkout/bin/"
+    cp "$BASE_DIR/bin/lib/dx-config.sh" "$pin_checkout/bin/lib/"
+done
+ln -s "$pin_root" "$pin_fixture/root-link"
+pin_canonical="$(cd "$pin_root" && pwd -P)"
+cat > "$pin_fixture/fake-command" <<'FAKE'
+#!/bin/bash
+printf 'ran:%s\n' "${DX_PROFILE_ROOT:-}" >> "$PIN_TEST_LOG"
+FAKE
+chmod +x "$pin_fixture/fake-command"
+export PIN_TEST_LOG="$pin_log"
+# run_pin_profile <checkout> <pin-value|-> : sets pin_status and pin_out.
+run_pin_profile() {
+    : > "$pin_log"
+    if [ "$2" = - ]; then : > "$pin_profiles/pinned.env"; else printf 'DX_PROFILE_ROOT=%s\n' "$2" > "$pin_profiles/pinned.env"; fi
+    pin_status=0
+    pin_out="$(DX_PROFILES_DIR="$pin_profiles" "$1/bin/dx-profile" pinned "$pin_fixture/fake-command" 2>&1)" || pin_status=$?
+}
+pin_ran() { [ -s "$pin_log" ]; }
+
+run_pin_profile "$pin_root" "$pin_canonical"
+if [ "$pin_status" -eq 0 ] && pin_ran; then test_pass "a profile pinned to this checkout runs"; else test_fail "a profile pinned to this checkout runs (status $pin_status, got '$pin_out')"; fi
+run_pin_profile "$pin_root" "$pin_fixture/root-link"
+if [ "$pin_status" -eq 0 ] && pin_ran; then test_pass "a pin given as a symlink to this checkout runs"; else test_fail "a pin given as a symlink to this checkout runs (status $pin_status, got '$pin_out')"; fi
+run_pin_profile "$pin_other" "$pin_canonical"
+if [ "$pin_status" -eq 2 ] && ! pin_ran \
+    && printf '%s\n' "$pin_out" | stdin_matches -F "Error: profile 'pinned' is pinned to $pin_canonical; run it from that checkout."; then
+    test_pass "a profile pinned to another checkout refuses with status 2 before running anything"
+else
+    test_fail "a profile pinned to another checkout refuses with status 2 before running anything (status $pin_status, got '$pin_out')"
+fi
+run_pin_profile "$pin_other" "$pin_fixture/missing-checkout"
+if [ "$pin_status" -eq 2 ] && ! pin_ran && printf '%s\n' "$pin_out" | stdin_matches -F "is pinned to $pin_fixture/missing-checkout;"; then
+    test_pass "a pin naming a nonexistent directory refuses rather than matching"
+else
+    test_fail "a pin naming a nonexistent directory refuses rather than matching (status $pin_status, got '$pin_out')"
+fi
+for bad_pin in 'relative/path' 'bad$(touch pwned)' '/tmp/x;y'; do
+    run_pin_profile "$pin_root" "$bad_pin"
+    if [ "$pin_status" -ne 0 ] && ! pin_ran && printf '%s\n' "$pin_out" | stdin_matches -F 'pinned.env:1:' && [ ! -e pwned ]; then
+        test_pass "malformed pin '$bad_pin' is a configuration error and never executed"
+    else
+        test_fail "malformed pin '$bad_pin' is a configuration error and never executed (status $pin_status, got '$pin_out')"
+    fi
+done
+run_pin_profile "$pin_other" -
+if [ "$pin_status" -eq 0 ] && pin_ran && [ "$(cat "$pin_log")" = "ran:" ]; then
+    test_pass "an unset pin leaves profile behaviour unchanged"
+else
+    test_fail "an unset pin leaves profile behaviour unchanged (status $pin_status, log '$(cat "$pin_log")')"
+fi
+run_pin_profile "$pin_root" "$pin_canonical"
+if [ "$(cat "$pin_log")" = "ran:$pin_canonical" ]; then
+    test_pass "the pin reaches the wrapped command through the exported snapshot"
+else
+    test_fail "the pin reaches the wrapped command through the exported snapshot (log '$(cat "$pin_log")')"
+fi
+# The pin travels in the exported snapshot: a child (dx, dx-start-container...)
+# validates it against its own root, and a child of another root still refuses.
+cat > "$pin_fixture/check-snapshot" <<'FAKE'
+#!/bin/bash
+source "$1/bin/lib/dx-config.sh"
+[ "${DXE_CONFIG_ORIGIN_DX_PROFILE_ROOT:-}" = profile:pinned ] || exit 3
+dx_validate_config_snapshot "$2"
+FAKE
+chmod +x "$pin_fixture/check-snapshot"
+pin_logical="$(cd "$pin_root" && pwd)"
+printf 'DX_PROFILE_ROOT=%s\n' "$pin_canonical" > "$pin_profiles/pinned.env"
+if DX_PROFILES_DIR="$pin_profiles" "$pin_root/bin/dx-profile" pinned "$pin_fixture/check-snapshot" "$pin_root" "$pin_logical" >/dev/null 2>&1 \
+    && ! DX_PROFILES_DIR="$pin_profiles" "$pin_root/bin/dx-profile" pinned "$pin_fixture/check-snapshot" "$pin_root" "$pin_other" >/dev/null 2>&1; then
+    test_pass "the pin is in the exported snapshot and a snapshot from another root is still refused"
+else
+    test_fail "the pin is in the exported snapshot and a snapshot from another root is still refused"
+fi
 # Silence is the contract for the ordinary case: an unchanged tree republishes
 # an identical generation id only when nothing was edited, and a guest that has
 # never been synced has no lease at all. Neither is a drift.

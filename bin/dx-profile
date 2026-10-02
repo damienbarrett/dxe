@@ -50,6 +50,18 @@ for name in $DXE_CONFIG_FIELDS; do
     fi
     unset "$parsed_name"
 done
+# A profile may pin itself to one checkout (DX_PROFILE_ROOT, kept private in the
+# profile): refuse before anything runs unless this checkout is that one. Both
+# sides are canonicalised so symlinked paths compare equal; an unresolvable pin
+# canonicalises to nothing and therefore refuses.
+if [ -n "${DX_PROFILE_ROOT:-}" ] && [ "${DXE_CONFIG_ORIGIN_DX_PROFILE_ROOT:-}" = "profile:$profile" ]; then
+    pin_canonical="$(cd "$DX_PROFILE_ROOT" 2>/dev/null && pwd -P)" || pin_canonical=""
+    root_canonical="$(cd "$DX_PROJECT_ROOT" && pwd -P)"
+    if [ -z "$pin_canonical" ] || [ "$pin_canonical" != "$root_canonical" ]; then
+        echo "Error: profile '$profile' is pinned to $DX_PROFILE_ROOT; run it from that checkout." >&2
+        exit 2
+    fi
+fi
 unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
 dx_init_config "$DX_PROJECT_ROOT"
 exec "$@"

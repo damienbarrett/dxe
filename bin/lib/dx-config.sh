@@ -90,6 +90,7 @@ DX_DELETE_COMMAND_TIMEOUT	posint	=15
 DX_MOUNT_IDENTITY_DIR	abspath	@home:.dx-cache/mount-identities
 DX_TUNNEL_LOCK_TIMEOUT	posint	=5
 DX_BACKUP_DIR	abspath	@home:Backups/dxe-persist
+DX_PROFILE_ROOT	optpath	=
 DXE_REGISTRY
 
 # Looks up NAME's registry row and prints "kind<TAB>default" (everything
