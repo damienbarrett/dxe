@@ -455,7 +455,7 @@ dx_profile_usage() {
         for file in "$directory"/*.env; do
             [ -f "$file" ] && echo "  $(basename "$file" .env) ($directory)" >&2
         done
-    done < <(dx_profile_search_dirs)
+    done < <(dx_profile_search_dirs) # KCOV_LOOP_TERMINATOR
 }
 
 # Prints the profile file for NAME. Status 2: invalid name; 1: not found.
@@ -468,7 +468,7 @@ dx_profile_resolve_file() {
             printf '%s\n' "$directory/$profile.env"
             return 0
         fi
-    done < <(dx_profile_search_dirs)
+    done < <(dx_profile_search_dirs) # KCOV_LOOP_TERMINATOR
     echo "Error: Profile not found: $first/$profile.env${second:+ (also checked $second/$profile.env)}" >&2
     return 1
 }
