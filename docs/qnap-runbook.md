@@ -408,6 +408,16 @@ prints `Restoring dx-qnap-canary's backup into dx-qnap-drill
 `--dry-run` — check for that line before trusting the run touched the
 intended pair of profiles.
 
+**Expect a refusal on the first real run, and `--force` for it.** A freshly
+created guest already holds the bootstrap-seeded Herdr configuration, which
+differs from the mirrored one, so the dry-run reports it as a conflict and
+the plain `dx-restore` refuses (as it does for any differing target; an
+existing directory whose mode differs from the captured one is refused the
+same way). On this disposable drill guest only, re-run the same command with
+`--force` once the dry-run shows nothing but that expected configuration (and,
+possibly, directory-mode) conflict. Never add `--force` against a guest that
+holds data you want to keep.
+
 **Verify content and permissions:**
 
 ```sh

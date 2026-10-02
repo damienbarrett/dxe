@@ -1588,5 +1588,62 @@ else
 fi
 rm -rf "$SHIP_FIXTURE"
 
+# ---------------------------------------------------------------------------
+# Restore follow-through (qnap-promotion findings 1 and 4): ownership is
+# restored with ONE batched `chown -h` (never plain chown, which would follow a
+# symlink), and the host tar runs with COPYFILE_DISABLE=1 so macOS does not
+# embed AppleDouble/xattr headers GNU tar warns about.
+# ---------------------------------------------------------------------------
+# The shipped-list section above left its own fake `container` installed;
+# put back the one that maps /persist onto this file's fixture.
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$FIXTURE"'/persist"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    [ "${1:-}" != -i ] || shift
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST");
+        elif [ "$a" = --hard-dereference ]; then :;
+        else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+export DX_FAKE_CHOWN_LOG="$FIXTURE/chown.log"
+modes_reset_guest
+mkdir -p "$FIXTURE/persist/home/dx/ft"
+printf 'one\n' > "$FIXTURE/persist/home/dx/ft/one.txt"
+printf 'two\n' > "$FIXTURE/persist/home/dx/ft/two.txt"
+FT_BACKUP="$FIXTURE/backups-ft"
+DX_BACKUP_DIR="$FT_BACKUP" "$BASE_DIR/bin/dx-backup" >/dev/null
+modes_reset_guest
+FT_TAR_LOG="$FIXTURE/ft-tar.log"
+: > "$FT_TAR_LOG"; : > "$FIXTURE/chown.log"
+REAL_TAR="$(command -v tar)"
+fake_tool_write "$FAKE_DIR" tar 'printf "COPYFILE_DISABLE=%s %s\n" "${COPYFILE_DISABLE:-unset}" "$*" >> "'"$FT_TAR_LOG"'"; exec "'"$REAL_TAR"'" "$@"'
+DX_BACKUP_DIR="$FT_BACKUP" "$BASE_DIR/bin/dx-restore" >/dev/null
+rm -f "$FAKE_DIR/tar"
+if grep -F -- '-cf -' "$FT_TAR_LOG" | grep -q '^COPYFILE_DISABLE=1 '; then
+    test_pass "the restore's host tar runs with COPYFILE_DISABLE=1"
+else
+    test_fail "the restore's host tar runs with COPYFILE_DISABLE=1 (log: $(cat "$FT_TAR_LOG"))"
+fi
+ft_chown_calls="$(grep -c '^-h ' "$FIXTURE/chown.log")"
+if [ "$ft_chown_calls" -eq 1 ] && grep '^-h ' "$FIXTURE/chown.log" | grep -q 'dx:dx' \
+    && grep '^-h ' "$FIXTURE/chown.log" | grep -qF '/persist/home/dx/ft/one.txt' \
+    && grep '^-h ' "$FIXTURE/chown.log" | grep -qF '/persist/home/dx/ft/two.txt'; then
+    test_pass "restore re-owns every pushed file in one batched chown -h"
+else
+    test_fail "restore re-owns every pushed file in one batched chown -h (log: $(cat "$FIXTURE/chown.log"))"
+fi
+
 print_summary
 exit_with_code
