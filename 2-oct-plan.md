@@ -164,6 +164,17 @@ Complete these requirements:
 
 ### Step 3: directory-mode and lease fixes
 
+**Done (2026-10-02, `fix/docker-ssh-lease-and-restore-modes`, evidence
+`docs/evidence/20261002/step3-leases-and-modes.md`):** lease liveness by
+full incarnation identity (shared protocol, one parser), directory modes
+captured per generation and restored with a conflict/`--force` policy, the
+one-time mirror upgrade, `chown -h`/`COPYFILE_DISABLE` pinned by tests,
+runbook 9.4 `--force` note; all gates and the Apple live tier green. The
+Docker-restart proof of the lease fix runs on a disposable spike inside the
+D5 QNAP window. Repository work for D2 is complete; guest maintenance
+(section 5) may now be scheduled.
+
+
 **Modes end-to-end:** selected-file tar and `mkdir -p` ancestor creation can lose
 original modes during capture/carry-forward, before restore. Audit all three
 stages; capture validated directory metadata and retain it through generations.
