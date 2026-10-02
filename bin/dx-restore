@@ -116,6 +116,7 @@ dir_conflicts="$(awk -F'\t' '$1 == "conflict" { print $2 " (guest " $4 ", backup
 if [ -n "$dir_conflicts" ] && [ "$FORCE" != true ]; then
     echo "Error: the following directory mode(s) in the guest differ from the backup; refusing without --force:" >&2
     printf '  %s\n' "$dir_conflicts" >&2
+    echo "Re-run as 'dx-restore --force' to apply the backup's directory modes (file conflicts are overwritten too)." >&2
     exit 1
 fi
 

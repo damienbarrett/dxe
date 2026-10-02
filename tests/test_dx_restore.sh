@@ -1418,5 +1418,175 @@ else
     test_fail "capture fails closed, publishing nothing, when a directory's mode cannot be read (rc $modes_cap_rc, out: $modes_cap_out)"
 fi
 
+# ---------------------------------------------------------------------------
+# One-time metadata upgrade: a mirror whose current generation has no dirs.tsv
+# (made before directory modes were captured) commits one new generation even
+# though no file changed, then the next run is a no-op again.
+# ---------------------------------------------------------------------------
+modes_reset_guest
+mkdir -p "$FIXTURE/persist/home/dx/up"
+printf 'x\n' > "$FIXTURE/persist/home/dx/up/f.txt"
+chmod 700 "$FIXTURE/persist/home/dx/up"
+UPGRADE_BACKUP="$FIXTURE/backups-upgrade"
+upgrade_dx_backup() { DX_BACKUP_DIR="$UPGRADE_BACKUP" "$BASE_DIR/bin/dx-backup" "$@"; }
+upgrade_mirror="$UPGRADE_BACKUP/test-container"
+upgrade_dx_backup >/dev/null
+upgrade_noop_gen="$(readlink "$upgrade_mirror/current")"
+upgrade_noop_out="$(upgrade_dx_backup 2>&1)"
+if [ "$(readlink "$upgrade_mirror/current")" = "$upgrade_noop_gen" ] && printf '%s\n' "$upgrade_noop_out" | stdin_matches -F '0 files'; then
+    test_pass "a mirror that already has dirs.tsv is a no-op when nothing changed"
+else
+    test_fail "a mirror that already has dirs.tsv is a no-op when nothing changed (out: $upgrade_noop_out)"
+fi
+rm -f "$upgrade_mirror/current/dirs.tsv"
+upgrade_dry_out="$(upgrade_dx_backup --dry-run 2>&1)"
+if printf '%s\n' "$upgrade_dry_out" | stdin_matches -F 'directory mode' && [ "$(readlink "$upgrade_mirror/current")" = "$upgrade_noop_gen" ]; then
+    test_pass "--dry-run says a legacy mirror would get its directory modes recorded, and changes nothing"
+else
+    test_fail "--dry-run says a legacy mirror would get its directory modes recorded, and changes nothing (out: $upgrade_dry_out)"
+fi
+upgrade_out="$(upgrade_dx_backup 2>&1)"
+if [ "$(readlink "$upgrade_mirror/current")" != "$upgrade_noop_gen" ] \
+    && grep -Fxq "$(printf 'home/dx/up\t700')" "$upgrade_mirror/current/dirs.tsv" \
+    && printf '%s\n' "$upgrade_out" | stdin_matches -F 'directory mode' \
+    && [ "$(cat "$upgrade_mirror/current/home/dx/up/f.txt")" = x ]; then
+    test_pass "a legacy mirror gets one committing run that records directory modes, with a notice, and keeps its files"
+else
+    test_fail "a legacy mirror gets one committing run that records directory modes, with a notice (out: $upgrade_out)"
+fi
+upgrade_after_gen="$(readlink "$upgrade_mirror/current")"
+upgrade_again_out="$(upgrade_dx_backup 2>&1)"
+if [ "$(readlink "$upgrade_mirror/current")" = "$upgrade_after_gen" ] && printf '%s\n' "$upgrade_again_out" | stdin_matches -F '0 files' \
+    && ! printf '%s\n' "$upgrade_again_out" | stdin_matches -F 'directory mode'; then
+    test_pass "the run after the metadata upgrade is a no-op again"
+else
+    test_fail "the run after the metadata upgrade is a no-op again (out: $upgrade_again_out)"
+fi
+
+# The refusal names the exact --force form.
+modes_reset_guest
+printf '%s\t700\n' "$modes_state" > "$modes_dirs"
+mkdir -p "$FIXTURE/persist/$modes_state"
+chmod 755 "$FIXTURE/persist/$modes_state"
+set +e
+modes_form_out="$(modes_dx_restore 2>&1)"
+set -e
+if printf '%s\n' "$modes_form_out" | stdin_matches -F 'dx-restore --force'; then
+    test_pass "the directory-mode refusal names the exact dx-restore --force form"
+else
+    test_fail "the directory-mode refusal names the exact dx-restore --force form (out: $modes_form_out)"
+fi
+
+# ---------------------------------------------------------------------------
+# Shipped-list variants (above DX_BACKUP_HASH_PATHS_ARG_THRESHOLD) of the
+# directory-mode query and apply, and their failure paths.
+# ---------------------------------------------------------------------------
+SHIP_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dirmodes-ship.XXXXXX")"
+SHIP_PERSIST="$SHIP_FIXTURE/persist"
+SHIP_LOG="$SHIP_FIXTURE/exec.log"
+SHIP_FAIL="$SHIP_FIXTURE/fail-mode"
+mkdir -p "$SHIP_PERSIST/a/b" "$SHIP_PERSIST/c"
+chmod 700 "$SHIP_PERSIST/a"; chmod 750 "$SHIP_PERSIST/a/b"; chmod 755 "$SHIP_PERSIST/c"
+: > "$SHIP_LOG"
+fake_tool_write "$FAKE_DIR" container '
+FIX_PERSIST="'"$SHIP_PERSIST"'"
+LOG="'"$SHIP_LOG"'"
+FAILMODE="'"$SHIP_FAIL"'"
+case "${1:-}" in
+    system) exit 0 ;;
+    list) printf "%s\n" test-container; exit 0 ;;
+esac
+if [ "${1:-}" = exec ]; then
+    shift
+    has_i=0
+    if [ "${1:-}" = -i ]; then has_i=1; shift; fi
+    if [ "${1:-}" = -u ]; then shift; shift; fi
+    shift
+    { echo "---EXEC---"; echo "has_i=$has_i"; for a in "$@"; do printf "ARG:%s\n" "$a"; done; } >> "$LOG"
+    [ ! -f "$FAILMODE" ] || [ "$(cat "$FAILMODE")" != "all" ] || exit 1
+    [ ! -f "$FAILMODE" ] || [ "$(cat "$FAILMODE")" != "ship" ] || [ "$has_i" = 0 ] || exit 1
+    args=()
+    for a in "$@"; do
+        if [ "$a" = /persist ]; then args+=("$FIX_PERSIST"); else args+=("$a"); fi
+    done
+    exec "${args[@]}"
+fi
+exit 1
+'
+SHIP_DIRS="$SHIP_FIXTURE/dirs.txt"
+printf '%s\n' a a/b c nope > "$SHIP_DIRS"
+SHIP_EXPECT="$(printf 'a\t700\na/b\t750\nc\t755\nnope\tmissing')"
+ship_pos_out="$(dx_backup_dir_modes_query test-container "$SHIP_DIRS")"
+if [ "$ship_pos_out" = "$SHIP_EXPECT" ] && ! grep -q -- '--dir-modes-file' "$SHIP_LOG"; then
+    test_pass "dx_backup_dir_modes_query passes a small batch positionally"
+else
+    test_fail "dx_backup_dir_modes_query passes a small batch positionally (got: $ship_pos_out)"
+fi
+: > "$SHIP_LOG"
+ship_file_out="$(DX_BACKUP_HASH_PATHS_ARG_THRESHOLD=1 dx_backup_dir_modes_query test-container "$SHIP_DIRS")"
+if [ "$ship_file_out" = "$SHIP_EXPECT" ] && grep -q -- '--dir-modes-file' "$SHIP_LOG"; then
+    test_pass "dx_backup_dir_modes_query ships the list above the threshold and gets the same answer"
+else
+    test_fail "dx_backup_dir_modes_query ships the list above the threshold and gets the same answer (got: $ship_file_out)"
+fi
+printf 'ship' > "$SHIP_FAIL"
+if DX_BACKUP_HASH_PATHS_ARG_THRESHOLD=1 dx_backup_dir_modes_query test-container "$SHIP_DIRS" >/dev/null 2>&1; then
+    test_fail "dx_backup_dir_modes_query fails when the list cannot be shipped"
+else
+    test_pass "dx_backup_dir_modes_query fails when the list cannot be shipped"
+fi
+printf 'all' > "$SHIP_FAIL"
+if dx_backup_dir_modes_query test-container "$SHIP_DIRS" >/dev/null 2>&1; then
+    test_fail "dx_backup_dir_modes_query fails when the guest probe fails"
+else
+    test_pass "dx_backup_dir_modes_query fails when the guest probe fails"
+fi
+rm -f "$SHIP_FAIL"
+: > "$SHIP_FIXTURE/empty.txt"
+if [ -z "$(dx_backup_dir_modes_query test-container "$SHIP_FIXTURE/empty.txt")" ]; then
+    test_pass "dx_backup_dir_modes_query with no directories asks nothing"
+else
+    test_fail "dx_backup_dir_modes_query with no directories asks nothing"
+fi
+
+SHIP_APPLY="$SHIP_FIXTURE/apply.tsv"
+printf 'a\t750\na/b\t700\n' > "$SHIP_APPLY"
+: > "$SHIP_LOG"
+dx_backup_restore_apply_dir_modes test-container "$SHIP_APPLY"
+if [ "$(dx_path_mode "$SHIP_PERSIST/a")" = 750 ] && [ "$(dx_path_mode "$SHIP_PERSIST/a/b")" = 700 ] && ! grep -q xargs "$SHIP_LOG"; then
+    test_pass "dx_backup_restore_apply_dir_modes applies a small batch positionally in one exec"
+else
+    test_fail "dx_backup_restore_apply_dir_modes applies a small batch positionally in one exec"
+fi
+printf 'a\t700\na/b\t750\n' > "$SHIP_APPLY"
+: > "$SHIP_LOG"
+DX_BACKUP_HASH_PATHS_ARG_THRESHOLD=1 dx_backup_restore_apply_dir_modes test-container "$SHIP_APPLY"
+if [ "$(dx_path_mode "$SHIP_PERSIST/a")" = 700 ] && [ "$(dx_path_mode "$SHIP_PERSIST/a/b")" = 750 ] && grep -q xargs "$SHIP_LOG"; then
+    test_pass "dx_backup_restore_apply_dir_modes ships the list above the threshold and applies through xargs -0"
+else
+    test_fail "dx_backup_restore_apply_dir_modes ships the list above the threshold and applies through xargs -0"
+fi
+printf 'ship' > "$SHIP_FAIL"
+if DX_BACKUP_HASH_PATHS_ARG_THRESHOLD=1 dx_backup_restore_apply_dir_modes test-container "$SHIP_APPLY" >/dev/null 2>&1; then
+    test_fail "dx_backup_restore_apply_dir_modes fails closed when the list cannot be shipped"
+else
+    test_pass "dx_backup_restore_apply_dir_modes fails closed when the list cannot be shipped"
+fi
+rm -f "$SHIP_FAIL"
+ln -s c "$SHIP_PERSIST/linkdir"
+printf 'linkdir\t700\n' > "$SHIP_APPLY"
+if dx_backup_restore_apply_dir_modes test-container "$SHIP_APPLY" >/dev/null 2>&1 || [ "$(dx_path_mode "$SHIP_PERSIST/c")" != 755 ]; then
+    test_fail "dx_backup_restore_apply_dir_modes refuses a symlinked directory and never touches its target"
+else
+    test_pass "dx_backup_restore_apply_dir_modes refuses a symlinked directory and never touches its target"
+fi
+: > "$SHIP_APPLY"
+if dx_backup_restore_apply_dir_modes test-container "$SHIP_APPLY"; then
+    test_pass "dx_backup_restore_apply_dir_modes with nothing to apply is a no-op"
+else
+    test_fail "dx_backup_restore_apply_dir_modes with nothing to apply is a no-op"
+fi
+rm -rf "$SHIP_FIXTURE"
+
 print_summary
 exit_with_code

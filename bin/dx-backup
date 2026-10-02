@@ -109,6 +109,11 @@ dx_backup_diff "$MANIFEST" "$LISTING" "$FETCH" "$REMOVE"
 fetch_count="$(wc -l < "$FETCH" | tr -d '[:space:]')"
 fetch_bytes="$(dx_backup_sum_sizes "$FETCH")"
 remove_count="$(wc -l < "$REMOVE" | tr -d '[:space:]')"
+# A mirror whose published generation has no dirs.tsv (made before directory
+# modes were captured) gets one committing run that records them, even with no
+# file change; the run after that is a no-op again.
+dir_modes_upgrade=false
+if dx_backup_generation_needs_dir_modes "$BACKUP_DIR"; then dir_modes_upgrade=true; fi
 
 if [ "$DRY_RUN" = true ]; then
     echo "Dry run: destination $BACKUP_DIR"
@@ -120,11 +125,17 @@ if [ "$DRY_RUN" = true ]; then
         echo "Would remove from the mirror (no longer at-risk):"
         sed 's/^/  /' "$REMOVE"
     fi
+    if [ "$dir_modes_upgrade" = true ]; then
+        echo "Would record directory modes for this mirror (one-time metadata upgrade)."
+    fi
     echo "${fetch_count:-0} files, ${fetch_bytes:-0} bytes would be transferred."
     exit 0
 fi
 
-if [ "${fetch_count:-0}" -gt 0 ] || [ "${remove_count:-0}" -gt 0 ]; then
+if [ "${fetch_count:-0}" -gt 0 ] || [ "${remove_count:-0}" -gt 0 ] || [ "$dir_modes_upgrade" = true ]; then
+    if [ "$dir_modes_upgrade" = true ]; then
+        echo "Recording directory modes for this mirror (one-time metadata upgrade)..."
+    fi
     if [ "${fetch_count:-0}" -gt 0 ]; then
         echo "Fetching ${fetch_count} changed file(s)..."
     fi

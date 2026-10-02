@@ -419,7 +419,8 @@ intended pair of profiles.
 # Permissions: dx-restore always restores dx:dx ownership and preserves
 # file modes from the mirror, and recreates each directory with the mode
 # captured in the generation's dirs.tsv (an existing directory with a
-# different mode is reported and only changed with --force) -- spot-check
+# different mode is refused unless you re-run as `dx-restore --force`,
+# which also overwrites differing files) -- spot-check
 # both explicitly, including a directory such as the guest's private state
 # directory. A mirror made before directory modes were captured says so
 # once and restores directories with default modes.

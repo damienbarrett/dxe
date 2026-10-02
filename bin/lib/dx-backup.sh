@@ -205,6 +205,15 @@ dx_backup_ancestor_dirs() {
     awk -F/ '{ n = split($0, parts, "/"); prefix = ""; for (i = 1; i < n; i++) { prefix = (prefix == "" ? parts[i] : prefix "/" parts[i]); print prefix } }' "$1" | LC_ALL=C sort -u
 }
 
+# True when a generation is published but lacks dirs.tsv (a mirror made before
+# directory modes were captured): bin/dx-backup then commits one generation
+# even though no file changed, as a one-time metadata upgrade.
+dx_backup_generation_needs_dir_modes() {
+    local backup_dir="$1" id
+    id="$(dx_backup_generation_current "$backup_dir")" || return 1
+    [ ! -f "$backup_dir/generations/$id/dirs.tsv" ]
+}
+
 # Print the selector's --dir-modes output (path<TAB>mode|missing|symlink|
 # unreadable) for the directories listed in file $2, in ONE guest exec: the
 # paths are positional at or under DX_BACKUP_HASH_PATHS_ARG_THRESHOLD, shipped
