@@ -193,7 +193,7 @@ run_migration_helper_tests() {
     fi
 }
 
-if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+if ! live_tail_enabled; then
     test_skip "migration helper integration checks (--skip-integration)"
 else
     run_migration_helper_tests
@@ -337,7 +337,7 @@ fi
 
 rm -rf "$race_fake_dir"
 
-if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+if ! live_tail_enabled; then
     test_skip "live persistence guest runtime checks (--skip-integration)"
     print_summary
     exit_with_code

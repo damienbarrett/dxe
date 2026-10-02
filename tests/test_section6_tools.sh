@@ -669,7 +669,7 @@ assert_tmux_runtime "$RESURRECT_PROBE_OUT" resurrect-dir /persist/home/dx/.local
 assert_tmux_runtime "$RESURRECT_PROBE_OUT" save-bound yes "tmux resurrect probe polls until the save binding settles instead of reading it too early"
 assert_tmux_runtime "$RESURRECT_PROBE_OUT" restore-bound yes "tmux resurrect probe polls until the restore binding settles instead of reading it too early"
 
-if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+if ! live_tail_enabled; then
     test_skip "guest tool live checks skipped by --skip-integration"
 elif ! requires_container; then
     :

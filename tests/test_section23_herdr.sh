@@ -955,7 +955,7 @@ else
 fi
 
 # --- Live integration tests ---
-if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+if ! live_tail_enabled; then
     test_skip "Herdr live tests skipped by --skip-integration"
     print_summary
     exit_with_code

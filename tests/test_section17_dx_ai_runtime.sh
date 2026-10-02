@@ -2213,7 +2213,7 @@ rm -rf "$keyring_fail_fixture"
 # Reinstall the fixture-cleanup trap the blocks above replaced.
 trap 'chmod -R u+w "$ai_fixture" 2>/dev/null || true; rm -rf "$ai_fixture"' EXIT
 
-if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+if ! live_tail_enabled; then
     test_skip "dx-ai guest runtime checks (--skip-integration)"
     print_summary
     exit_with_code

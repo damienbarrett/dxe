@@ -247,6 +247,23 @@ test_section() {
     echo -e "${YELLOW}=== $title ===${NC}"
 }
 
+# live_tail_enabled -- the one place that decides whether a unit-tier file's
+# live tail (real guest work through requires_container / wait_for_ssh /
+# dx-ssh) may run. Succeeds ONLY when SKIP_INTEGRATION is explicitly the
+# string `false`; unset (an interactive shell, a file invoked directly rather
+# than through tests/run.sh, which forces the variable), `true` or anything
+# else means skip. The old `${SKIP_INTEGRATION:-false}` default let a direct
+# `bash tests/test_section17_*.sh` reach whatever guest the registry default
+# named (the user's primary guest). requires_container and wait_for_ssh call
+# this first, so a file that forgets its own top-level check still cannot
+# reach a guest.
+live_tail_enabled() {
+    [ "${SKIP_INTEGRATION-}" = false ]
+}
+
+# The invocation that legitimately runs live tails, for skip messages.
+LIVE_TAIL_HINT="live tails run only via: ./bin/dx-profile dx-test tests/run.sh --live ..."
+
 # Requires running container
 #
 # Uses stdin_matches (this file's own read-all idiom, see its comment above)
@@ -256,26 +273,17 @@ test_section() {
 # same way dx-container.sh's container_is_running/container_exists did
 # before their fix (tests/test_section20_skip_integration.sh).
 #
-# Fable D11: SKIP_INTEGRATION is checked by hand in twelve suites (each
-# gating its whole file before ever calling this) and, until now, never
-# here -- so a suite that calls requires_container directly, without its
-# own hand-check, still did live container discovery under
-# --skip-integration whenever a container genuinely was not present (the
-# common case): the skip message just did not say --skip-integration was
-# involved. Made that explicit rather than changing WHEN this skips (still
-# exactly "no usable container was found" -- section 20's
-# requires_container_reports_running case above proves a real match is
-# still honoured even with SKIP_INTEGRATION=true inherited from
-# `run_all_tests.sh --skip-integration`, so this intentionally does not
-# skip out from under a container that actually is there). Not changing
-# the twelve suites' own hand-checks (they gate before ever reaching here).
+# Skips (returns 1, no container call) unless live_tail_enabled: only an
+# explicit SKIP_INTEGRATION=false opts in to live work. Callers that need a
+# real container match (section 20's requires_container cases) set
+# SKIP_INTEGRATION=false around the call.
 requires_container() {
+    if ! live_tail_enabled; then
+        test_skip "Live guest checks skipped (SKIP_INTEGRATION is not false; $LIVE_TAIL_HINT)"
+        return 1
+    fi
     if ! command -v container >/dev/null 2>&1 || ! container list --quiet 2>/dev/null | stdin_matches -F -x -- "$DX_CONTAINER_NAME"; then
-        if [ "${SKIP_INTEGRATION:-false}" = true ]; then
-            test_skip "Container '$DX_CONTAINER_NAME' is not running (--skip-integration)"
-        else
-            test_skip "Container '$DX_CONTAINER_NAME' is not running"
-        fi
+        test_skip "Container '$DX_CONTAINER_NAME' is not running"
         return 1
     fi
     return 0
@@ -287,6 +295,10 @@ GLOBAL_FAILED=0
 # Wait for SSH to be available on the active profile port.
 wait_for_ssh() {
     local timeout="${1:-180}"
+    if ! live_tail_enabled; then
+        echo "  Not waiting for the guest: SKIP_INTEGRATION is not false ($LIVE_TAIL_HINT)."
+        return 1
+    fi
     echo "  Waiting for guest bootstrap on localhost:$DX_SSH_PORT (up to ${timeout}s)..."
     if DX_SSH_WAIT_TIMEOUT="$timeout" "$BASE_DIR/bin/dx-wait-ssh"; then
         echo "  Guest bootstrap complete (authenticated SSH is responsive)."

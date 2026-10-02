@@ -366,7 +366,7 @@ dxe_s19_check "dx-reverse rejects an unknown option" \
 
 rm -rf "$dxe_s19_cli_state"
 
-if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+if ! live_tail_enabled; then
     test_skip "dx-reverse live round trip skipped by --skip-integration"
     print_summary
     exit_with_code

@@ -523,7 +523,7 @@ esac
 assert_file_contains "$RUNNER" 'run_test "$SCRIPT_DIR/test_section14_tinty_theming.sh" "14"' "test runner explicitly runs section 14"
 assert_file_not_contains "$FLAKE_NIX" "stylix" "Stylix dependency was not added"
 
-if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+if ! live_tail_enabled; then
     test_skip "Tinty integration skipped by --skip-integration"
 elif ! requires_container; then
     : # requires_container records the skip reason.

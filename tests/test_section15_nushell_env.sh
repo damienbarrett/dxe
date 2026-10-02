@@ -101,7 +101,7 @@ else
     test_pass "fish shell init avoids Nix-breaking adjacent single quotes"
 fi
 
-if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+if ! live_tail_enabled; then
     test_skip "nushell SSH/SCP guest runtime checks (--skip-integration)"
     print_summary
     exit_with_code

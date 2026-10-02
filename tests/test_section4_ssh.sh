@@ -68,7 +68,7 @@ assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '--publish "$DX
 assert_file_contains_literal "$SYSTEM" '/persist/etc/ssh' "SSH host keys are persisted across rebuilds"
 assert_file_contains_literal "$SYSTEM" 'dx_persist_host_keys' "configure_ssh restores or persists the host identity"
 
-if [ "${SKIP_INTEGRATION:-false}" = true ]; then test_skip "SSH live behavior skipped by --skip-integration"; else
+if ! live_tail_enabled; then test_skip "SSH live behavior skipped by --skip-integration"; else
     # requires_container already records its own SKIP and returns 1 when no
     # guest is running; short-circuiting `requires_container && dx-ssh` into
     # the same pass/fail branch as a real command failure turned that skip

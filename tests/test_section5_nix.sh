@@ -146,7 +146,7 @@ fi
 assert_file_contains_literal "$FLAKE_NIX" 'supportedSystems = [ "aarch64-linux" "x86_64-linux" ]' "flake.nix declares both supported systems"
 assert_file_contains_literal "$FLAKE_NIX" 'dx-${system}' "flake.nix names homeConfigurations per system as dx-<system>"
 
-if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+if ! live_tail_enabled; then
     test_skip "Nix release identity live checks skipped by --skip-integration"
 elif ! requires_container; then
     :
@@ -200,7 +200,7 @@ fi
 # a running guest for a named volume. Verified to discriminate -- restoring the
 # read-only spelling turns this red.
 DX_IMAGE="${DX_IMAGE:-dx-nixos-26.05}"
-if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+if ! live_tail_enabled; then
     test_skip "Nix store enumeration behaviour skipped by --skip-integration"
 elif ! command -v container >/dev/null 2>&1; then
     test_skip "Apple container CLI unavailable for the Nix enumeration probe"

@@ -60,7 +60,7 @@ else
     test_pass "nvim/ directory removed"
 fi
 
-if [ "${SKIP_INTEGRATION:-false}" = true ]; then
+if ! live_tail_enabled; then
     test_skip "NixVim live launch skipped by --skip-integration"
 elif ! requires_container; then
     :

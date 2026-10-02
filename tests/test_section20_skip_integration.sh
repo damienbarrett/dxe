@@ -53,7 +53,10 @@ write_stub "container" '
 printf "container %s\n" "$*" >> "$DXE_STUB_MARKER"
 case "${1:-}" in
     list)
-        printf "%s running\n" "$DX_CONTAINER_NAME"
+        case " $* " in
+            *" --quiet "*) printf "%s\n" "$DX_CONTAINER_NAME" ;;
+            *) printf "%s running\n" "$DX_CONTAINER_NAME" ;;
+        esac
         ;;
 esac
 exit 0
@@ -205,7 +208,7 @@ requires_container_reports_running() (
     # (matching this file's own sanity_out/sanity_out_a calls above) keeps
     # the assignment and its one consumer on the same statement instead of a
     # separate one SC2034 would flag as unused.
-    DX_CONTAINER_NAME="$BIGLIST_TARGET" requires_container >/dev/null 2>&1
+    SKIP_INTEGRATION=false DX_CONTAINER_NAME="$BIGLIST_TARGET" requires_container >/dev/null 2>&1
 )
 requires_container_reports_absent() (
     set -o pipefail
@@ -407,6 +410,71 @@ else
     test_fail "SKIP_INTEGRATION=false without --live invokes no container/ssh/scp/dx-ai command (recorded: $(tr '\n' ';' < "$refuse_marker"))"
 fi
 rm -f "$refuse_marker"
+
+# --- Live-tail guard (fix/live-tail-guards, increment 1): only an explicit
+# SKIP_INTEGRATION=false enables a unit-tier file's live tail. The old
+# `${SKIP_INTEGRATION:-false}` default meant a file invoked DIRECTLY (not via
+# tests/run.sh, which forces the variable) with it unset ran its tail against
+# whatever guest the registry default named. These cases use only this file's
+# stub PATH and fake container name, so even a broken guard reaches no real
+# guest; the marker records any container/ssh/scp/dx-ai call.
+
+live_probe() {
+    # live_probe <marker> <skip-integration-setting: unset|true|false|other> <probe body>
+    local marker="$1" setting="$2" body="$3"
+    if [ "$setting" = unset ]; then
+        DXE_TEST_RESULTS="" DXE_STUB_MARKER="$marker" DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" \
+            PATH="$STUB_DIR:$PATH" env -u SKIP_INTEGRATION \
+            bash -c 'source "$1/test_helpers.sh" >/dev/null 2>&1; '"$body" _ "$SCRIPT_DIR" 2>&1
+    else
+        DXE_TEST_RESULTS="" DXE_STUB_MARKER="$marker" DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" \
+            PATH="$STUB_DIR:$PATH" SKIP_INTEGRATION="$setting" \
+            bash -c 'source "$1/test_helpers.sh" >/dev/null 2>&1; '"$body" _ "$SCRIPT_DIR" 2>&1
+    fi
+}
+
+for setting in unset true other; do
+    lt_marker="$(mktemp -t dxe-stub-marker-lt.XXXXXX)"
+    rm -f "$lt_marker"
+    lt_out="$(live_probe "$lt_marker" "$setting" 'live_tail_enabled; echo "enabled=$?"')"
+    if printf '%s' "$lt_out" | stdin_matches -F -x 'enabled=1'; then
+        test_pass "live_tail_enabled is false when SKIP_INTEGRATION is $setting"
+    else
+        test_fail "live_tail_enabled is false when SKIP_INTEGRATION is $setting (output: $lt_out)"
+    fi
+    lt_out="$(live_probe "$lt_marker" "$setting" 'requires_container; echo "rc=$?"; wait_for_ssh 1; echo "wait=$?"')"
+    if printf '%s' "$lt_out" | stdin_matches -F -x 'rc=1' && printf '%s' "$lt_out" | stdin_matches -F -x 'wait=1' && [ ! -s "$lt_marker" ]; then
+        test_pass "requires_container and wait_for_ssh refuse and call nothing when SKIP_INTEGRATION is $setting"
+    else
+        test_fail "requires_container and wait_for_ssh refuse and call nothing when SKIP_INTEGRATION is $setting (output: $lt_out; recorded: $(tr '\n' ';' < "$lt_marker" 2>/dev/null))"
+    fi
+    rm -f "$lt_marker"
+done
+
+lt_marker="$(mktemp -t dxe-stub-marker-lt.XXXXXX)"
+rm -f "$lt_marker"
+lt_out="$(live_probe "$lt_marker" false 'live_tail_enabled; echo "enabled=$?"; requires_container; echo "rc=$?"')"
+if printf '%s' "$lt_out" | stdin_matches -F -x 'enabled=0' && printf '%s' "$lt_out" | stdin_matches -F -x 'rc=0' && stdin_matches -F 'container list' < "$lt_marker"; then
+    test_pass "SKIP_INTEGRATION=false enables the live tail (requires_container reaches the stub container)"
+else
+    test_fail "SKIP_INTEGRATION=false enables the live tail (output: $lt_out; recorded: $(tr '\n' ';' < "$lt_marker" 2>/dev/null))"
+fi
+rm -f "$lt_marker"
+
+# A unit-tier file invoked directly (no runner) with SKIP_INTEGRATION unset
+# must skip its tail without touching container/ssh/scp/dx-ai.
+for lt_file in test_section17_dx_ai_runtime.sh test_section7_lazyvim.sh test_section4_ssh.sh; do
+    lt_marker="$(mktemp -t dxe-stub-marker-lt.XXXXXX)"
+    rm -f "$lt_marker"
+    DXE_TEST_RESULTS="" DXE_STUB_MARKER="$lt_marker" DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" \
+        PATH="$STUB_DIR:$PATH" env -u SKIP_INTEGRATION bash "$SCRIPT_DIR/$lt_file" >/dev/null 2>&1
+    if [ ! -s "$lt_marker" ]; then
+        test_pass "$lt_file run directly with SKIP_INTEGRATION unset invokes no container/ssh/scp/dx-ai command"
+    else
+        test_fail "$lt_file run directly with SKIP_INTEGRATION unset invokes no container/ssh/scp/dx-ai command (recorded: $(tr '\n' ';' < "$lt_marker"))"
+    fi
+    rm -f "$lt_marker"
+done
 
 print_summary
 exit_with_code
