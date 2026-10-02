@@ -1586,6 +1586,37 @@ if dx_backup_restore_apply_dir_modes test-container "$SHIP_APPLY"; then
 else
     test_fail "dx_backup_restore_apply_dir_modes with nothing to apply is a no-op"
 fi
+# Failure paths of the capture and the restore plan's guest probes.
+SHIP_LISTING="$SHIP_FIXTURE/listing.tsv"
+printf 'a/b/f.txt\t1\t0\tdeadbeef\n' > "$SHIP_LISTING"
+printf 'all' > "$SHIP_FAIL"
+if dx_backup_capture_dir_modes test-container "$SHIP_LISTING" "$SHIP_FIXTURE/dirs.out" >/dev/null 2>"$SHIP_FIXTURE/cap.err" \
+    || ! grep -q 'could not read directory modes' "$SHIP_FIXTURE/cap.err"; then
+    test_fail "capture fails closed, naming the cause, when the guest probe itself fails"
+else
+    test_pass "capture fails closed, naming the cause, when the guest probe itself fails"
+fi
+SHIP_MIRROR="$SHIP_FIXTURE/mirror"
+mkdir -p "$SHIP_MIRROR/current"
+printf 'a\t700\n' > "$SHIP_MIRROR/current/dirs.tsv"
+printf 'a/b/f.txt\n' > "$SHIP_FIXTURE/targets.txt"
+if dx_backup_restore_dir_plan test-container "$SHIP_MIRROR" "$SHIP_FIXTURE/targets.txt" >/dev/null 2>"$SHIP_FIXTURE/plan.err" \
+    || ! grep -q 'could not read directory modes' "$SHIP_FIXTURE/plan.err"; then
+    test_fail "the restore plan fails closed when the guest probe fails"
+else
+    test_pass "the restore plan fails closed when the guest probe fails"
+fi
+rm -f "$SHIP_FAIL"
+ship_stat_dir="$SHIP_FIXTURE/fake-stat"
+mkdir -p "$ship_stat_dir"
+printf '#!/bin/sh\ncase "$*" in *%%a*|*%%Lp*) exit 1 ;; esac\nexec /usr/bin/stat "$@"\n' > "$ship_stat_dir/stat"
+chmod +x "$ship_stat_dir/stat"
+if PATH="$ship_stat_dir:$PATH" dx_backup_restore_dir_plan test-container "$SHIP_MIRROR" "$SHIP_FIXTURE/targets.txt" >/dev/null 2>"$SHIP_FIXTURE/plan.err" \
+    || ! grep -q 'cannot read the directory mode' "$SHIP_FIXTURE/plan.err"; then
+    test_fail "the restore plan refuses a guest directory whose mode cannot be read"
+else
+    test_pass "the restore plan refuses a guest directory whose mode cannot be read"
+fi
 rm -rf "$SHIP_FIXTURE"
 
 # ---------------------------------------------------------------------------

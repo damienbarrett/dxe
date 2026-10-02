@@ -217,8 +217,9 @@ dx_bootstrap_sync() {
             # generation it booted two restarts ago. Prune by the full incarnation
             # identity (boot id, PID and process start time), not boot id alone: in
             # a Docker container the boot id survives a restart.
-            dx_runtime_exec "$container" sh -c "$(dx_guest_publication_protocol_snippet)
-$dx_sync_prune_stale_leases_program" -- "$path" >/dev/null 2>&1 || true
+            local prune_program
+            prune_program="$(dx_guest_publication_protocol_snippet)"$'\n'"$dx_sync_prune_stale_leases_program"
+            dx_runtime_exec "$container" sh -c "$prune_program" -- "$path" >/dev/null 2>&1 || true
             # Signal boot readiness here too. The guest launcher waits for this
             # marker before resolving `current`, so a skip that stayed silent would
             # stall every restart with unchanged content for the launcher's full

@@ -1440,6 +1440,29 @@ else
     test_fail "malformed leases are ignored and removed without aborting; the live and in-flight ones stay (left: $(lease_names))"
 fi
 
+# The guest ships the same functions in scripts/lib/dx-publication.sh (sourced
+# by dx-ai-lock.sh); run that copy under bash against the same fake /proc.
+lease_guest_shipped() { # <function>
+    (
+        # shellcheck source=/dev/null
+        source "$CONTAINER_DIR/scripts/lib/dx-publication.sh"
+        DX_LOCK_PROC_ROOT="$lease_proc"
+        "$1" "$lease_dir/leases"
+    )
+}
+lease_reset
+lease_fake_process 1 2000
+printf 'old-gen\t%s\t1\t1000\n' "$lease_boot" > "$lease_dir/leases/old-gen.1"
+printf 'new-gen\t%s\t1\t2000\n' "$lease_boot" > "$lease_dir/leases/new-gen.1"
+printf 'garbage\n' > "$lease_dir/leases/garbage.2"
+printf 'tmp-gen\t%s\t1\t2000\n' "$lease_boot" > "$lease_dir/leases/.lease.9.tmp"
+if [ "$(lease_guest_shipped execution_leases_live)" = new-gen.1 ] && lease_guest_shipped execution_leases_prune \
+    && [ "$(lease_names)" = ".lease.9.tmp new-gen.1 " ]; then
+    test_pass "the shipped dx-publication.sh lease functions list and prune exactly like the host snippet"
+else
+    test_fail "the shipped dx-publication.sh lease functions list and prune exactly like the host snippet (left: $(lease_names))"
+fi
+
 # The host reader (dx_bootstrap_lease_generation fed by dx_bootstrap_lease_listing)
 # names the new generation, not whichever .1 sorts first.
 # shellcheck source=../bin/lib/dx-container.sh

@@ -204,9 +204,9 @@ container_stop_bounded() {
 # host kernel's -- is never offered to dx_bootstrap_lease_generation. Prints
 # nothing, and succeeds, when the guest cannot be read.
 dx_bootstrap_lease_listing() {
-    local name="$1" bootstrap_path="$2"
-    dx_runtime_exec "$name" sh -c "$(dx_guest_publication_protocol_snippet)
-execution_leases_live \"\$1/.locks/leases\"" -- "$bootstrap_path" 2>/dev/null || true
+    local name="$1" bootstrap_path="$2" program
+    program="$(dx_guest_publication_protocol_snippet)"$'\n''execution_leases_live "$1/.locks/leases"'
+    dx_runtime_exec "$name" sh -c "$program" -- "$bootstrap_path" 2>/dev/null || true
 }
 
 # The bootstrap generation the running guest is actually executing, read from
