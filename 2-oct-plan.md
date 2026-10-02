@@ -223,10 +223,10 @@ stop/start → D6 recreate; Appendix D of `checkout-consolidation-plan.md`).
 The canary was synced, backed up (mirror migrated, directory modes
 recorded) and restarted; it soaks `main` `00b67d0` from 22:39 NZDT with no
 drift warning (`docs/evidence/20260928/qnap-promotion.md`, "Day 4
-maintenance"). Open before the production profile: the docker-ssh lock
-container must not depend on the profile's own image (branch
-`fix/docker-lock-image`); the disposable spike proof of the lease fix across
-a Docker restart runs after that fix.
+maintenance"). The docker-ssh lock no longer depends on the profile's own image
+(`fix/docker-lock-image`, evidence `docs/evidence/20261002/docker-lock-image.md`),
+so a new profile's first `dx` works again; the disposable spike proof of the
+lease fix across a Docker restart follows in the QNAP window.
 
 
 Prepare exact clean release SHA, profiles/targets, inventory, current image and
