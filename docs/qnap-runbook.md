@@ -209,6 +209,10 @@ for exactly what is captured and why. Run it before any update, any
 storage migration, or any base-image pin change, and whenever you want a
 fresh recovery point.
 
+The selector may warn "`<path>/.git` is a file, not a directory (a linked
+worktree or submodule)". That is informational: the path is still backed
+up, it is just not treated as a repository boundary.
+
 ## 6. Restore
 
 ```sh
@@ -223,6 +227,12 @@ step 5) so `/persist` exists, then run `dx-restore` with the same
 drill for a QNAP profile beyond this — a QNAP guest always starts from
 scratch (`direct-volume` storage mode), so restoring `/persist` content is
 the only migration path that ever applies.
+
+After a `dx-backup`, a `dx-restore --dry-run` may list a few "would create"
+entries for files that existed at backup time and were removed since,
+typically SQLite `-wal`/`-shm` side files of a tool that was running. They
+are not a backup defect: the backup is verified when the dry-run shows no
+directory-mode conflicts and the file count is otherwise identical.
 
 ## 7. Removal
 
