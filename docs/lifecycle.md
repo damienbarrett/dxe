@@ -421,7 +421,7 @@ accident. Inside `$DX_BACKUP_DIR/$DX_CONTAINER_NAME`:
 | Path | Contents |
 | --- | --- |
 | `current` | A symlink to the published `generations/<id>/` (never a plain directory once a run has published through it). Reads (`dx-restore`, `--dry-run`) go through this path exactly as before; only `dx-backup`'s publish step ever repoints it. |
-| `generations/<id>/` | One full mirror of the at-risk set as of that run, plus that run's own `manifest.tsv` (`path<TAB>size<TAB>mtime<TAB>sha256` for every mirrored file). Unchanged files are hard-linked forward from the previous generation, never copied or edited in place; only a changed file's fresh bytes land as new files. |
+| `generations/<id>/` | One full mirror of the at-risk set as of that run, plus that run's own `manifest.tsv` (`path<TAB>size<TAB>mtime<TAB>sha256` for every mirrored file). Also a `dirs.tsv` (`path<TAB>octal mode`) for every directory holding a mirrored file, probed from the guest at each commit (a commit fails closed if any directory's mode cannot be read). Like `manifest.tsv` it is bookkeeping and never restored as content. `dx-restore` creates a missing directory with its captured mode; an existing directory with a different mode is reported and changed only with `--force`; a symlinked guest directory is never followed; a mirror without `dirs.tsv` restores with default modes and says so once. Unchanged files are hard-linked forward from the previous generation, never copied or edited in place; only a changed file's fresh bytes land as new files. |
 | `.lock/` | A per-mirror lock directory (`bin/lib/dx-host-util.sh`'s `dx_lock_acquire`), shared by `dx-backup` and `dx-restore`. |
 | `last-run.log` | One line per completed run: timestamp and the transfer summary. |
 

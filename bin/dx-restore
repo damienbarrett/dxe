@@ -81,6 +81,13 @@ fi
 
 dx_backup_restore_status "$DX_CONTAINER_NAME" "$BACKUP_DIR" "$TARGETS" > "$STATUS"
 
+# Directory modes (qnap-promotion finding 2): the captured mode of every
+# directory holding a target, compared with the guest's. A missing directory is
+# created with its captured mode; an existing one with a different mode is a
+# conflict, reported and applied only with --force.
+DIR_PLAN="$WORK/dir-plan.tsv"
+dx_backup_restore_dir_plan "$DX_CONTAINER_NAME" "$BACKUP_DIR" "$TARGETS" > "$DIR_PLAN" || exit 1
+
 if [ "$DRY_RUN" = true ]; then
     while IFS="$(printf '\t')" read -r path status; do
         [ -n "$path" ] || continue
@@ -90,6 +97,12 @@ if [ "$DRY_RUN" = true ]; then
             conflict) echo "would OVERWRITE (conflicts with the guest): $path" ;;
         esac
     done < "$STATUS"
+    while IFS="$(printf '\t')" read -r dir_state dir_path dir_wanted dir_current; do
+        [ "$dir_state" = conflict ] || continue
+        echo "would CHANGE directory mode (guest $dir_current, backup $dir_wanted): $dir_path"
+    done < "$DIR_PLAN"
+    dir_create_count="$(awk -F'\t' '$1 == "create" { n++ } END { print n + 0 }' "$DIR_PLAN")"
+    [ "$dir_create_count" -eq 0 ] || echo "would create $dir_create_count director(y/ies) with their captured modes"
     exit 0
 fi
 
@@ -99,11 +112,20 @@ if [ -n "$conflicts" ] && [ "$FORCE" != true ]; then
     printf '  %s\n' "$conflicts" >&2
     exit 1
 fi
+dir_conflicts="$(awk -F'\t' '$1 == "conflict" { print $2 " (guest " $4 ", backup " $3 ")" }' "$DIR_PLAN")"
+if [ -n "$dir_conflicts" ] && [ "$FORCE" != true ]; then
+    echo "Error: the following directory mode(s) in the guest differ from the backup; refusing without --force:" >&2
+    printf '  %s\n' "$dir_conflicts" >&2
+    exit 1
+fi
 
 PUSH_TARGETS="$WORK/push-targets.txt"
 awk -F'\t' '$2 != "identical" { print $1 }' "$STATUS" > "$PUSH_TARGETS"
 dx_backup_restore_push "$DX_CONTAINER_NAME" "$BACKUP_DIR" "$PUSH_TARGETS"
 count="$(wc -l < "$PUSH_TARGETS" | tr -d '[:space:]')"
+DIR_APPLY="$WORK/dir-apply.tsv"
+awk -F'\t' '$1 == "create" || $1 == "conflict" { print $2 "\t" $3 }' "$DIR_PLAN" > "$DIR_APPLY"
+dx_backup_restore_apply_dir_modes "$DX_CONTAINER_NAME" "$DIR_APPLY"
 echo "Restored ${count} file(s) into $DX_CONTAINER_NAME:$DX_BACKUP_GUEST_ROOT."
 }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then restore_main "$@"; fi

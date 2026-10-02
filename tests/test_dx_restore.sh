@@ -1277,5 +1277,146 @@ else
 fi
 rm -rf "$GEN_MANIFEST_ROOT"
 
+# ---------------------------------------------------------------------------
+# 2-oct-plan step 3 (qnap-promotion finding 2): directory modes end to end.
+# A restore into a fresh guest used to recreate directories with the umask
+# (755) where the source had 700. Capture now records the mode of every
+# directory that contains a selected file (generation-level dirs.tsv),
+# restore creates missing directories with that mode, and an existing
+# directory whose mode differs is a conflict that needs --force.
+# ---------------------------------------------------------------------------
+export DX_FAKE_CHOWN_LOG="$FIXTURE/chown.log"
+MODES_BACKUP="$FIXTURE/backups-modes"
+modes_state="home/dx/.local/state/dx"
+modes_mirror="$MODES_BACKUP/test-container"
+modes_dx_backup() { DX_BACKUP_DIR="$MODES_BACKUP" "$BASE_DIR/bin/dx-backup" "$@"; }
+modes_dx_restore() { DX_BACKUP_DIR="$MODES_BACKUP" "$BASE_DIR/bin/dx-restore" "$@"; }
+modes_reset_guest() { chmod -R u+rwx "$FIXTURE/persist" 2>/dev/null || true; rm -rf "$FIXTURE/persist" "$FIXTURE/elsewhere"; mkdir -p "$FIXTURE/persist"; }
+modes_reset_guest
+mkdir -p "$FIXTURE/persist/$modes_state" "$FIXTURE/persist/home/dx/open"
+printf 'secret\n' > "$FIXTURE/persist/$modes_state/secret.txt"
+printf 'plain\n' > "$FIXTURE/persist/home/dx/open/plain.txt"
+chmod 700 "$FIXTURE/persist/$modes_state"
+modes_dx_backup >/dev/null
+modes_dirs="$modes_mirror/current/dirs.tsv"
+if [ -f "$modes_dirs" ] && grep -Fxq "$(printf '%s\t700' "$modes_state")" "$modes_dirs" \
+    && grep -Fxq "$(printf 'home/dx/open\t%s' "$(dx_path_mode "$FIXTURE/persist/home/dx/open")")" "$modes_dirs"; then
+    test_pass "dx-backup records each selected file's directory with its mode in the generation's dirs.tsv"
+else
+    test_fail "dx-backup records each selected file's directory with its mode in the generation's dirs.tsv (got: $(cat "$modes_dirs" 2>&1 | tr '\t\n' ' >'))"
+fi
+
+# A fresh target: the directory comes back 700.
+modes_reset_guest
+modes_dx_restore >/dev/null
+if [ "$(dx_path_mode "$FIXTURE/persist/$modes_state")" = 700 ] && [ "$(cat "$FIXTURE/persist/$modes_state/secret.txt")" = secret ]; then
+    test_pass "a restore into an empty target recreates a 700 directory as 700"
+else
+    test_fail "a restore into an empty target recreates a 700 directory as 700 (mode: $(dx_path_mode "$FIXTURE/persist/$modes_state" 2>&1))"
+fi
+if [ ! -e "$FIXTURE/persist/dirs.tsv" ] && [ ! -e "$FIXTURE/persist/manifest.tsv" ]; then
+    test_pass "restore never writes the generation's dirs.tsv into the guest"
+else
+    test_fail "restore never writes the generation's dirs.tsv into the guest"
+fi
+if modes_dx_restore dirs.tsv >/dev/null 2>"$FIXTURE/dirs-named.err" || ! grep -q 'dirs.tsv is the generation.s own bookkeeping' "$FIXTURE/dirs-named.err"; then
+    test_fail "naming dirs.tsv as a restore path is refused with an Error that names it"
+else
+    test_pass "naming dirs.tsv as a restore path is refused with an Error that names it"
+fi
+
+# An existing directory with a different mode is a conflict, not silently changed.
+modes_reset_guest
+mkdir -p "$FIXTURE/persist/$modes_state"
+chmod 755 "$FIXTURE/persist/$modes_state"
+set +e
+modes_refuse_out="$(modes_dx_restore 2>&1)"; modes_refuse_rc=$?
+set -e
+if [ "$modes_refuse_rc" -ne 0 ] && printf '%s\n' "$modes_refuse_out" | stdin_matches -F "$modes_state" \
+    && printf '%s\n' "$modes_refuse_out" | stdin_matches -F 'refusing without --force' \
+    && [ "$(dx_path_mode "$FIXTURE/persist/$modes_state")" = 755 ] && [ ! -e "$FIXTURE/persist/$modes_state/secret.txt" ]; then
+    test_pass "an existing 755 directory whose backup mode is 700 is refused without --force, naming it, and nothing is pushed or changed"
+else
+    test_fail "an existing 755 directory whose backup mode is 700 is refused without --force, naming it, and nothing is pushed or changed (rc $modes_refuse_rc, out: $modes_refuse_out)"
+fi
+modes_dry_out="$(modes_dx_restore --dry-run 2>&1)"
+if printf '%s\n' "$modes_dry_out" | stdin_matches -F "$modes_state" && printf '%s\n' "$modes_dry_out" | stdin_matches -F '700' \
+    && [ "$(dx_path_mode "$FIXTURE/persist/$modes_state")" = 755 ]; then
+    test_pass "--dry-run reports the directory mode conflict and changes nothing"
+else
+    test_fail "--dry-run reports the directory mode conflict and changes nothing (got: $modes_dry_out)"
+fi
+modes_dx_restore --force >/dev/null
+if [ "$(dx_path_mode "$FIXTURE/persist/$modes_state")" = 700 ] && [ "$(cat "$FIXTURE/persist/$modes_state/secret.txt")" = secret ]; then
+    test_pass "--force applies the captured directory mode and restores the files"
+else
+    test_fail "--force applies the captured directory mode and restores the files (mode: $(dx_path_mode "$FIXTURE/persist/$modes_state" 2>&1))"
+fi
+# Repeat run: nothing differs any more, so no force is needed.
+if modes_dx_restore >/dev/null 2>&1; then
+    test_pass "a repeat restore after the mode was applied needs no --force"
+else
+    test_fail "a repeat restore after the mode was applied needs no --force"
+fi
+
+# A symlinked guest directory is never followed, even with --force.
+modes_reset_guest
+mkdir -p "$FIXTURE/elsewhere" "$FIXTURE/persist/home/dx/.local/state"
+chmod 755 "$FIXTURE/elsewhere"
+ln -s "$FIXTURE/elsewhere" "$FIXTURE/persist/$modes_state"
+set +e
+modes_link_out="$(modes_dx_restore --force 2>&1)"; modes_link_rc=$?
+set -e
+if [ "$modes_link_rc" -ne 0 ] && printf '%s\n' "$modes_link_out" | stdin_matches -F 'symbolic link' \
+    && [ "$(dx_path_mode "$FIXTURE/elsewhere")" = 755 ] && [ ! -e "$FIXTURE/elsewhere/secret.txt" ]; then
+    test_pass "a symlinked guest directory is refused even with --force and its target is never touched"
+else
+    test_fail "a symlinked guest directory is refused even with --force and its target is never touched (rc $modes_link_rc, out: $modes_link_out)"
+fi
+
+# A legacy mirror (no dirs.tsv) restores with default modes and says so once.
+modes_reset_guest
+rm -f "$modes_dirs"
+modes_legacy_out="$(modes_dx_restore 2>&1)"
+if [ "$(printf '%s\n' "$modes_legacy_out" | grep -c 'no directory mode metadata')" = 1 ] \
+    && [ "$(cat "$FIXTURE/persist/$modes_state/secret.txt")" = secret ] \
+    && [ "$(dx_path_mode "$FIXTURE/persist/$modes_state")" = "$(dx_path_mode "$FIXTURE/persist/home/dx/open")" ]; then
+    test_pass "a legacy mirror without directory metadata restores with default modes and says so exactly once"
+else
+    test_fail "a legacy mirror without directory metadata restores with default modes and says so exactly once (out: $modes_legacy_out)"
+fi
+
+# A malformed dirs.tsv fails closed before anything is pushed.
+modes_reset_guest
+printf '%s\tnot-a-mode\n' "$modes_state" > "$modes_dirs"
+set +e
+modes_bad_out="$(modes_dx_restore 2>&1)"; modes_bad_rc=$?
+set -e
+if [ "$modes_bad_rc" -ne 0 ] && printf '%s\n' "$modes_bad_out" | stdin_matches -F 'dirs.tsv' && [ ! -e "$FIXTURE/persist/$modes_state" ]; then
+    test_pass "a malformed dirs.tsv is refused before anything is pushed"
+else
+    test_fail "a malformed dirs.tsv is refused before anything is pushed (rc $modes_bad_rc, out: $modes_bad_out)"
+fi
+
+# Capture fails closed when a directory's mode cannot be read: no new
+# generation is published.
+modes_reset_guest
+mkdir -p "$FIXTURE/persist/$modes_state"
+printf 'changed\n' > "$FIXTURE/persist/$modes_state/secret.txt"
+modes_gen_before="$(readlink "$modes_mirror/current")"
+modes_stat_dir="$FIXTURE/modes-fake-stat"
+mkdir -p "$modes_stat_dir"
+printf '#!/bin/sh\ncase "$*" in *%%a*|*%%Lp*) exit 1 ;; esac\nexec /usr/bin/stat "$@"\n' > "$modes_stat_dir/stat"
+chmod +x "$modes_stat_dir/stat"
+set +e
+modes_cap_out="$(PATH="$modes_stat_dir:$PATH" modes_dx_backup 2>&1)"; modes_cap_rc=$?
+set -e
+if [ "$modes_cap_rc" -ne 0 ] && [ "$(readlink "$modes_mirror/current")" = "$modes_gen_before" ] \
+    && printf '%s\n' "$modes_cap_out" | stdin_matches -F 'directory mode'; then
+    test_pass "capture fails closed, publishing nothing, when a directory's mode cannot be read"
+else
+    test_fail "capture fails closed, publishing nothing, when a directory's mode cannot be read (rc $modes_cap_rc, out: $modes_cap_out)"
+fi
+
 print_summary
 exit_with_code

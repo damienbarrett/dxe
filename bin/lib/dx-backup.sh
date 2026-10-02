@@ -188,6 +188,77 @@ dx_backup_sum_sizes() {
 }
 
 # ---------------------------------------------------------------------------
+# Directory modes (2-oct-plan step 3, qnap-promotion finding 2)
+#
+# The archive names FILES only, so a directory's mode used to be lost at every
+# stage: capture (the host tar makes parents with the umask), generation
+# carry-forward (`mkdir -p`) and restore (`mkdir -p` + chown). Each generation
+# now also carries `dirs.tsv` (path<TAB>octal mode), one line for every
+# directory that is an ancestor of a selected file, written from a guest probe
+# (the selector's --dir-modes) at commit time. It is bookkeeping, like
+# manifest.tsv: never restored as content.
+# ---------------------------------------------------------------------------
+
+# Every ancestor directory of every path in file $1 (one path per line), one
+# per line, deduplicated: one awk pass, never a per-path `dirname` fork.
+dx_backup_ancestor_dirs() {
+    awk -F/ '{ n = split($0, parts, "/"); prefix = ""; for (i = 1; i < n; i++) { prefix = (prefix == "" ? parts[i] : prefix "/" parts[i]); print prefix } }' "$1" | LC_ALL=C sort -u
+}
+
+# Print the selector's --dir-modes output (path<TAB>mode|missing|symlink|
+# unreadable) for the directories listed in file $2, in ONE guest exec: the
+# paths are positional at or under DX_BACKUP_HASH_PATHS_ARG_THRESHOLD, shipped
+# as a list file above it (dx_backup_ship_list, same shape as
+# dx_backup_restore_status). Fails -- printing nothing it could not vouch
+# for -- when the list cannot be shipped or the guest probe fails.
+dx_backup_dir_modes_query() {
+    local container_name="$1" dirs_file="$2" count guest_list path rc=0
+    local -a dir_list=()
+    count="$(wc -l < "$dirs_file" | tr -d '[:space:]')"
+    [ "${count:-0}" -gt 0 ] || return 0
+    guest_list="$(dx_backup_ship_list "$container_name" "$dirs_file" "$count")" || return 1
+    if [ -n "$guest_list" ]; then
+        dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" --dir-modes-file "$DX_BACKUP_GUEST_ROOT" "$guest_list" </dev/null || rc=$?
+        dx_backup_remove_guest_list "$container_name" "$guest_list"
+    else
+        while IFS= read -r path; do dir_list+=("$path"); done < "$dirs_file"
+        dx_runtime_exec -u dx "$container_name" "$(dx_backup_selector_path)" --dir-modes "$DX_BACKUP_GUEST_ROOT" "${dir_list[@]}" </dev/null || rc=$?
+    fi
+    return "$rc"
+}
+
+# Write to $3 (sorted dirs.tsv content, path<TAB>mode) the validated mode of
+# every directory holding a file in the listing $2. Fail closed: any directory
+# the guest cannot report as a plain octal mode (missing, symlinked,
+# unreadable, or absent from the reply) fails the capture with an Error naming
+# it, so no incomplete record is ever published.
+dx_backup_capture_dir_modes() {
+    local container_name="$1" listing="$2" out="$3" paths dirs reply expected got bad rc=0
+    paths="$(mktemp "${TMPDIR:-/tmp}/dxe-backup-dm-paths.XXXXXX")" || return 1
+    dirs="$(mktemp "${TMPDIR:-/tmp}/dxe-backup-dm-dirs.XXXXXX")" || { rm -f "$paths"; return 1; }
+    reply="$(mktemp "${TMPDIR:-/tmp}/dxe-backup-dm-reply.XXXXXX")" || { rm -f "$paths" "$dirs"; return 1; }
+    cut -f1 "$listing" > "$paths"
+    dx_backup_ancestor_dirs "$paths" > "$dirs"
+    if dx_backup_dir_modes_query "$container_name" "$dirs" > "$reply"; then
+        expected="$(wc -l < "$dirs" | tr -d '[:space:]')"
+        got="$(awk -F'\t' 'NF == 2 && $1 != "" && $2 ~ /^[0-7][0-7][0-7][0-7]?$/ { n++ } END { print n + 0 }' "$reply")"
+        if [ "$got" != "${expected:-0}" ]; then
+            bad="$(awk -F'\t' '!(NF == 2 && $1 != "" && $2 ~ /^[0-7][0-7][0-7][0-7]?$/) { print "  " $1 " (" $2 ")" }' "$reply")"
+            echo "Error: cannot capture directory mode for every directory of the selection; refusing to publish an incomplete record." >&2
+            [ -z "$bad" ] || printf '%s\n' "$bad" >&2
+            rc=1
+        else
+            LC_ALL=C sort "$reply" > "$out"
+        fi
+    else
+        echo "Error: could not read directory modes from the guest; refusing to publish an incomplete record." >&2
+        rc=1
+    fi
+    rm -f "$paths" "$dirs" "$reply"
+    return "$rc"
+}
+
+# ---------------------------------------------------------------------------
 # Branch 17 (fix/dx-backup-transfer-stall): shipping a name list into the
 # guest, unidirectionally
 #
@@ -469,7 +540,7 @@ dx_backup_generation_carry_forward() {
         # needs.
         local dirs
         dirs="$(mktemp "${TMPDIR:-/tmp}/dxe-backup-carry-dirs.XXXXXX")" || { rm -f "$all_sorted" "$skip_sorted" "$carry"; return 1; }
-        awk -F/ '{ n = split($0, parts, "/"); prefix = ""; for (i = 1; i < n; i++) { prefix = (prefix == "" ? parts[i] : prefix "/" parts[i]); print prefix } }' "$carry" | LC_ALL=C sort -u > "$dirs"
+        dx_backup_ancestor_dirs "$carry" > "$dirs"
         while IFS= read -r d || [ -n "$d" ]; do
             [ -n "$d" ] || continue
             mkdir -p "$new_dir/$d" || { rc=1; break; }
@@ -580,7 +651,7 @@ dx_backup_generation_prune() {
 # generation -- and its manifest -- exactly as they were.
 dx_backup_generation_commit() {
     local container_name="$1" backup_dir="$2" listing="$3" fetch_lines="$4" remove_lines="$5"
-    local prev_id new_id new_dir skip_file rc=0
+    local prev_id new_id new_dir skip_file dirs_tmp rc=0
     prev_id="$(dx_backup_generation_current "$backup_dir" || true)"
     new_id="$(dx_backup_generation_new_id)"
     new_dir="$backup_dir/generations/$new_id"
@@ -603,6 +674,15 @@ dx_backup_generation_commit() {
     fi
 
     dx_backup_write_manifest_atomic "$new_dir/manifest.tsv" "$listing" || { rm -rf "$new_dir"; return 1; }
+
+    # Directory modes: probed from the guest for the FULL listing on every
+    # commit (not carried forward), so the record always matches the guest as
+    # captured; fails closed before anything is published. A rename into place
+    # also replaces any hard link carry-forward made of the previous
+    # generation's dirs.tsv, never mutating that file.
+    dirs_tmp="$(mktemp "$new_dir/.dirs.XXXXXX")" || { rm -rf "$new_dir"; return 1; }
+    dx_backup_capture_dir_modes "$container_name" "$listing" "$dirs_tmp" || { rm -rf "$new_dir"; return 1; }
+    mv -f "$dirs_tmp" "$new_dir/dirs.tsv" || { rm -rf "$new_dir"; return 1; }
 
     dx_backup_generation_publish "$backup_dir" "$new_id" || { rm -rf "$new_dir"; return 1; }
 
@@ -683,10 +763,11 @@ dx_backup_restore_targets() {
     # The generation's own manifest.tsv sits beside the content inside
     # generations/<id>/ (WP6.6); it is bookkeeping, never something to
     # restore into /persist (a live dx-restore --dry-run on dx-test listed
-    # it as "would create", 2026-10-01). Only the top-level one is special:
+    # it as "would create", 2026-10-01); dirs.tsv (directory modes) is the same
+    # kind of bookkeeping. Only the top-level ones are special:
     # a nested file that merely shares the name is ordinary content.
     if [ "$#" -eq 0 ]; then
-        dx_backup_restore_list_prefixed "$backup_dir/current" "" | awk '$0 != "manifest.tsv"'
+        dx_backup_restore_list_prefixed "$backup_dir/current" "" | awk '$0 != "manifest.tsv" && $0 != "dirs.tsv"'
         return
     fi
     local path scratch rc=0
@@ -700,8 +781,8 @@ dx_backup_restore_targets() {
                 ;;
         esac
         dx_backup_restore_path_safe "$path" || { echo "Error: refusing unsafe restore path '$path'." >&2; rc=1; break; }
-        if [ "$path" = manifest.tsv ]; then
-            echo "Error: manifest.tsv is the generation's own bookkeeping, not restorable content." >&2
+        if [ "$path" = manifest.tsv ] || [ "$path" = dirs.tsv ]; then
+            echo "Error: $path is the generation's own bookkeeping, not restorable content." >&2
             rc=1
             break
         fi
@@ -849,6 +930,85 @@ dx_backup_restore_status() {
     rm -f "$hashes" "$local_hashes" "$present_list"
 }
 
+# Directory-mode plan for a restore (finding 2). For every directory that is
+# an ancestor of a target AND has a captured mode in the generation's
+# dirs.tsv, compare the guest's current directory (ONE guest exec) and print:
+#   create<TAB>path<TAB>wanted-mode            absent in the guest
+#   same<TAB>path<TAB>wanted-mode              already has the captured mode
+#   conflict<TAB>path<TAB>wanted<TAB>current   exists with a different mode
+# A mirror with no dirs.tsv (made before directory modes were captured) prints
+# a single notice on stderr and an empty plan: directories are then created
+# with default modes, as before. Fails closed -- nothing printed, nonzero --
+# on a malformed dirs.tsv, or when a guest directory is a symbolic link or its
+# mode cannot be read (a symlinked directory is never followed or chmod'ed,
+# whether or not --force is given).
+dx_backup_restore_dir_plan() {
+    local container_name="$1" backup_dir="$2" targets="$3"
+    local dirs_tsv="$backup_dir/current/dirs.tsv" problem wanted ancestors reply rc=0 line
+    if [ ! -f "$dirs_tsv" ]; then
+        echo "Notice: this backup has no directory mode metadata (made before it was captured); directories are created with default modes." >&2
+        return 0
+    fi
+    problem="$(awk -F'\t' 'NF != 2 || $1 == "" || $1 ~ /^\// || $1 ~ /(^|\/)\.\.?(\/|$)/ || $2 !~ /^[0-7][0-7][0-7][0-7]?$/ || ($1 in seen) { print NR; exit } { seen[$1] = 1 }' "$dirs_tsv")"
+    if [ -n "$problem" ]; then
+        echo "Error: $dirs_tsv is malformed at line $problem; refusing to restore with unreadable directory modes." >&2
+        return 1
+    fi
+    ancestors="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-dm-anc.XXXXXX")" || return 1
+    wanted="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-dm-want.XXXXXX")" || { rm -f "$ancestors"; return 1; }
+    reply="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-dm-reply.XXXXXX")" || { rm -f "$ancestors" "$wanted"; return 1; }
+    dx_backup_ancestor_dirs "$targets" > "$ancestors"
+    awk -F'\t' 'NR == FNR { want[$1] = 1; next } ($1 in want) { print }' "$ancestors" "$dirs_tsv" > "$wanted"
+    if [ -s "$wanted" ]; then
+        cut -f1 "$wanted" > "$ancestors"
+        if dx_backup_dir_modes_query "$container_name" "$ancestors" > "$reply"; then
+            line="$(awk -F'\t' '$2 == "symlink" || $2 == "unreadable" { print $2 "\t" $1; exit }' "$reply")"
+            if [ -n "$line" ]; then
+                case "$line" in
+                    symlink*) echo "Error: ${line#*$'\t'} is a symbolic link in the guest; refusing to follow it to apply directory modes." >&2 ;;
+                    *) echo "Error: cannot read the directory mode of ${line#*$'\t'} in the guest; refusing to guess." >&2 ;;
+                esac
+                rc=1
+            else
+                awk -F'\t' 'NR == FNR { cur[$1] = $2; next } { state = ($1 in cur) ? cur[$1] : "missing"; if (state == "missing") print "create\t" $1 "\t" $2; else if (state == $2) print "same\t" $1 "\t" $2; else print "conflict\t" $1 "\t" $2 "\t" state }' "$reply" "$wanted"
+            fi
+        else
+            echo "Error: could not read directory modes from the guest." >&2
+            rc=1
+        fi
+    fi
+    rm -f "$ancestors" "$wanted" "$reply"
+    return "$rc"
+}
+
+# Apply the captured mode to each directory listed in file $2
+# (path<TAB>mode), as root, in ONE guest exec (positional, or shipped and run
+# through `xargs -0` above the threshold, like the other batched passes). Run
+# AFTER the file extraction: a restrictive mode must not stop the extraction
+# itself. Refuses to chmod anything that is not a plain directory.
+dx_backup_restore_apply_dir_modes() {
+    local container_name="$1" apply_file="$2" count entries guest_list rc=0 path mode
+    local -a entry_list=()
+    local body='r="$1"; shift; for e; do m=${e%% *}; p=${e#* }; if [ -L "$r/$p" ] || [ ! -d "$r/$p" ]; then echo "Error: $p is not a plain directory in the guest; not changing its mode." >&2; exit 1; fi; chmod "$m" "$r/$p" || exit 1; done'
+    count="$(wc -l < "$apply_file" | tr -d '[:space:]')"
+    [ "${count:-0}" -gt 0 ] || return 0
+    entries="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-dm-apply.XXXXXX")" || return 1
+    while IFS="$(printf '\t')" read -r path mode; do printf '%s %s\n' "$mode" "$path"; done < "$apply_file" > "$entries"
+    if guest_list="$(dx_backup_ship_list "$container_name" "$entries" "$count")"; then
+        if [ -n "$guest_list" ]; then
+            dx_runtime_exec -u root "$container_name" sh -c 'root="$1"; list="$2"; body="$3"; tr "\n" "\0" < "$list" | xargs -0 sh -c "$body" -- "$root"' -- "$DX_BACKUP_GUEST_ROOT" "$guest_list" "$body" || rc=$?
+            dx_backup_remove_guest_list "$container_name" "$guest_list"
+        else
+            while IFS= read -r path; do entry_list+=("$path"); done < "$entries"
+            dx_runtime_exec -u root "$container_name" sh -c "$body" -- "$DX_BACKUP_GUEST_ROOT" "${entry_list[@]}" || rc=$?
+        fi
+    else
+        rc=1
+    fi
+    rm -f "$entries"
+    return "$rc"
+}
+
 # Push $3 (relative paths, one per line) from $2/current/ into the guest at
 # $DX_BACKUP_GUEST_ROOT, preserving modes and restoring dx ownership.
 #
@@ -883,7 +1043,7 @@ dx_backup_restore_push() {
     # first line.
     local dirs_file dir_count
     dirs_file="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-push-dirs.XXXXXX")" || return 1
-    awk -F/ '{ n = split($0, parts, "/"); prefix = ""; for (i = 1; i < n; i++) { prefix = (prefix == "" ? parts[i] : prefix "/" parts[i]); print prefix } }' "$targets" | LC_ALL=C sort -u > "$dirs_file"
+    dx_backup_ancestor_dirs "$targets" > "$dirs_file"
     dir_count="$(wc -l < "$dirs_file" | tr -d '[:space:]')"
     if [ "${dir_count:-0}" -gt 0 ]; then
         local dirs_guest_list

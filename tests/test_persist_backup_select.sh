@@ -1196,5 +1196,42 @@ else
 fi
 rm -rf "$emitsafe_root"
 
+# --- --dir-modes / --dir-modes-file: directory mode probe (restore step 2:
+# directory modes captured at backup and compared at restore). ---
+dirmodes_root="$FIXTURE/dirmodes"
+mkdir -p "$dirmodes_root/a/priv" "$dirmodes_root/a/open" "$dirmodes_root/real"
+chmod 700 "$dirmodes_root/a/priv"
+chmod 755 "$dirmodes_root/a/open"
+ln -s ../real "$dirmodes_root/a/linked"
+dirmodes_out="$FIXTURE/dirmodes-out.tsv"
+dx_pbs_dir_modes "$dirmodes_root" a/priv a/open a/linked a/absent > "$dirmodes_out"
+if [ "$(cat "$dirmodes_out")" = "$(printf 'a/priv\t700\na/open\t755\na/linked\tsymlink\na/absent\tmissing')" ]; then
+    test_pass "--dir-modes reports each directory's octal mode, never following a symlinked directory, and names a missing one"
+else
+    test_fail "--dir-modes reports each directory's octal mode, never following a symlinked directory, and names a missing one (got: $(tr '\t\n' ' >' < "$dirmodes_out"))"
+fi
+printf '%s\n' a/priv a/linked '' a/absent > "$FIXTURE/dirmodes-list.txt"
+if [ "$(dx_pbs_dir_modes_file "$dirmodes_root" "$FIXTURE/dirmodes-list.txt")" = "$(printf 'a/priv\t700\na/linked\tsymlink\na/absent\tmissing')" ]; then
+    test_pass "--dir-modes-file reads one directory per line and skips blank lines"
+else
+    test_fail "--dir-modes-file reads one directory per line and skips blank lines"
+fi
+if [ "$(bash "$SELECTOR" --dir-modes "$dirmodes_root" a/priv)" = "$(printf 'a/priv\t700')" ] \
+    && [ "$(bash "$SELECTOR" --dir-modes-file "$dirmodes_root" "$FIXTURE/dirmodes-list.txt" | head -1)" = "$(printf 'a/priv\t700')" ]; then
+    test_pass "dx-persist-backup-select.sh --dir-modes and --dir-modes-file run standalone"
+else
+    test_fail "dx-persist-backup-select.sh --dir-modes and --dir-modes-file run standalone"
+fi
+# A directory whose mode cannot be read is reported, never guessed.
+dirmodes_stat_dir="$FIXTURE/dirmodes-stat"
+mkdir -p "$dirmodes_stat_dir"
+printf '#!/bin/sh\ncase "$*" in *%%a*|*%%Lp*) exit 1 ;; esac\nexec /usr/bin/stat "$@"\n' > "$dirmodes_stat_dir/stat"
+chmod +x "$dirmodes_stat_dir/stat"
+if [ "$(PATH="$dirmodes_stat_dir:$PATH" dx_pbs_dir_modes "$dirmodes_root" a/priv)" = "$(printf 'a/priv\tunreadable')" ]; then
+    test_pass "--dir-modes reports a directory whose mode cannot be read as unreadable"
+else
+    test_fail "--dir-modes reports a directory whose mode cannot be read as unreadable"
+fi
+
 print_summary
 exit_with_code

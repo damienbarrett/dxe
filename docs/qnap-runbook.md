@@ -417,8 +417,12 @@ intended pair of profiles.
 ./bin/dx-profile dx-qnap-drill ./bin/dx-restore --source-container=dx-qnap-canary --dry-run
 
 # Permissions: dx-restore always restores dx:dx ownership and preserves
-# mode from the mirror -- spot-check both explicitly, since neither the
-# manifest nor the guest listing carries mode/owner bits on their own.
+# file modes from the mirror, and recreates each directory with the mode
+# captured in the generation's dirs.tsv (an existing directory with a
+# different mode is reported and only changed with --force) -- spot-check
+# both explicitly, including a directory such as the guest's private state
+# directory. A mirror made before directory modes were captured says so
+# once and restores directories with default modes.
 ./bin/dx-profile dx-qnap-drill ./bin/dx-enter -- \
     find /persist -not \( -user dx -a -group dx \) -print   # expect empty
 ./bin/dx-profile dx-qnap-drill ./bin/dx-enter -- \

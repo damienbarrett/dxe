@@ -813,6 +813,58 @@ dx_pbs_hash_paths_file() {
 }
 
 # ---------------------------------------------------------------------------
+# --dir-modes / --dir-modes-file mode: directory mode probe (backup captures
+# the mode of every directory holding a selected file; restore compares the
+# guest's current directory modes against them)
+# ---------------------------------------------------------------------------
+
+dx_pbs_stat_mode() {
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+}
+
+# Print one line for directory RELPATH $2 (relative to ROOT $1):
+#   relpath<TAB>octal-mode    a real directory (lstat: never followed)
+#   relpath<TAB>symlink       the path is a symbolic link, whatever it points at
+#   relpath<TAB>unreadable    a directory whose mode could not be read
+#   relpath<TAB>missing       nothing there, or not a directory
+# A caller treats anything but an octal mode as "cannot be trusted" -- this
+# function never guesses a mode.
+dx_pbs_dir_mode_one() {
+    local root="$1" relpath="$2" mode
+    if [ -L "$root/$relpath" ]; then
+        printf '%s\tsymlink\n' "$relpath"
+    elif [ -d "$root/$relpath" ]; then
+        if mode="$(dx_pbs_stat_mode "$root/$relpath")" && [ -n "$mode" ]; then
+            printf '%s\t%s\n' "$relpath" "$mode"
+        else
+            printf '%s\tunreadable\n' "$relpath"
+        fi
+    else
+        printf '%s\tmissing\n' "$relpath"
+    fi
+}
+
+# dx_pbs_dir_modes ROOT [RELPATH...]
+dx_pbs_dir_modes() {
+    local root="$1" relpath
+    shift
+    root="${root%/}"
+    for relpath in "$@"; do
+        dx_pbs_dir_mode_one "$root" "$relpath"
+    done
+}
+
+# dx_pbs_dir_modes_file ROOT LISTFILE -- same output, RELPATHs one per line
+# from LISTFILE (a batch large enough that argv risks ARG_MAX).
+dx_pbs_dir_modes_file() {
+    local root="$1" listfile="$2" relpath
+    root="${root%/}"
+    while IFS= read -r relpath || [ -n "$relpath" ]; do
+        [ -n "$relpath" ] || continue
+        dx_pbs_dir_mode_one "$root" "$relpath"; done < "$listfile"
+}
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -826,6 +878,14 @@ dx_pbs_main() {
             shift
             dx_pbs_hash_paths_file "$@"
             ;;
+        --dir-modes)
+            shift
+            dx_pbs_dir_modes "$@"
+            ;;
+        --dir-modes-file)
+            shift
+            dx_pbs_dir_modes_file "$@"
+            ;;
         --with-reason)
             shift
             dx_pbs_list_with_reason "$@"
@@ -835,6 +895,8 @@ dx_pbs_main() {
             echo "       dx-persist-backup-select.sh --with-reason ROOT [DENY_PATTERN...]" >&2
             echo "       dx-persist-backup-select.sh --hash-paths ROOT [RELPATH...]" >&2
             echo "       dx-persist-backup-select.sh --hash-paths-file ROOT LISTFILE" >&2
+            echo "       dx-persist-backup-select.sh --dir-modes ROOT [RELDIR...]" >&2
+            echo "       dx-persist-backup-select.sh --dir-modes-file ROOT LISTFILE" >&2
             return 64
             ;;
         *)
