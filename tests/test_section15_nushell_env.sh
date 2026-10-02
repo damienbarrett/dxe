@@ -74,6 +74,28 @@ else
     test_skip "nix not available, skipping home.sessionPath evaluation"
 fi
 
+# A raw `ssh dx@guest 'bash -lc ...'` login sources Home Manager's
+# hm-session-vars.sh BEFORE home.sessionPath has put ~/.nix-profile/bin on
+# PATH, and sshd's default PATH has no coreutils, so any bare `$(id -u)` in
+# a session variable prints "id: command not found" on every login. The
+# only source was programs.tmux's default TMUX_TMPDIR (secureSocket), which
+# renders `${XDG_RUNTIME_DIR:-/run/user/$(id -u)}`. Evaluate every generated
+# session variable and require that none runs a bare `id`.
+if command -v nix >/dev/null 2>&1; then
+    if sessionvars_json="$(nix eval --json --no-write-lock-file "$CONTAINER_DIR#homeConfigurations.dx.config.home.sessionVariables" 2>&1)"; then
+        if printf '%s\n' "$sessionvars_json" | stdin_matches -F 'TMUX_TMPDIR' \
+            && ! printf '%s\n' "$sessionvars_json" | stdin_matches -F '$(id '; then
+            test_pass "no generated session variable runs a bare \`id\` (a raw ssh login has no coreutils on PATH yet)"
+        else
+            test_fail "no generated session variable runs a bare \`id\` (got: ${sessionvars_json})"
+        fi
+    else
+        test_fail "home.sessionVariables evaluates (${sessionvars_json})"
+    fi
+else
+    test_skip "nix not available, skipping home.sessionVariables evaluation"
+fi
+
 if grep -Fq '$env.TZ = ":/etc/localtime"' "$SHELL_NIX"; then
     test_pass "shell.nix points nushell TZ at /etc/localtime"
 else

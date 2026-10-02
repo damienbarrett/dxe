@@ -156,6 +156,14 @@
     PERSIST = "/persist";
     TZ = ":/etc/localtime";
     TZDIR = "${pkgs.tzdata}/share/zoneinfo";
+    # programs.tmux's default (secureSocket) renders the same value with a
+    # bare `$(id -u)`. hm-session-vars.sh is sourced by a raw ssh login
+    # before home.sessionPath has put ~/.nix-profile/bin on PATH, and sshd's
+    # default PATH has no coreutils, so that printed "id: command not found"
+    # on every login. Same path, absolute `id` (mkForce: Home Manager's own
+    # definition is a plain string, so a second one would conflict); section
+    # 15 evaluates it.
+    TMUX_TMPDIR = pkgs.lib.mkForce "\${XDG_RUNTIME_DIR:-/run/user/$(${pkgs.coreutils}/bin/id -u)}";
   };
 
   home.shellAliases = {
