@@ -17,6 +17,7 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_SSH_KEY` | `$DX_PROJECT_ROOT/dx_key` | Host private key used for SSH into the guest. |
 | `DX_SSH_KEY_PUB` | `$DX_PROJECT_ROOT/dx_key.pub` | Host public key provisioned into the guest on create. |
 | `DX_SSH_CONNECT_TIMEOUT` | `15` | Host-side SSH connection timeout in seconds for `dx-ssh`. |
+| `DX_SYSTEM_WAIT_TIMEOUT` | `30` | Seconds to wait for container-service readiness after starting the local Apple service. Startup failure or timeout stops `dx` before guest checks; QNAP service startup remains manual. |
 | `DX_CONTEXT_DIR` | `container/dx-nixos-26.05` | Directory used as the image build context and default bootstrap source. Renamed from `container/aarch64-darwin-apple-container-dx-nixos-26.05` in WP9.4 (the flake is architecture-neutral; the QNAP guest is x86_64). A git-tracked symlink at the old path keeps a profile that still names it working for one release; `dx_config_validate_cross_fields` prints a one-line deprecation warning to stderr when it sees the old name. The old path is removed at the next base changeover (see `docs/release-maintenance.md`). |
 | `DX_BOOTSTRAP_SOURCE` | `$DX_CONTEXT_DIR` | Host directory pushed into the clean guest bootstrap volume. Override this to test a different bootstrap checkout without rebuilding the image. |
 | `DX_BOOTSTRAP_VOLUME` | `dx-bootstrap` | Named volume mounted at `/guest-bootstrap` by default. It stores the pushed bootstrap payload outside the image layer. |
@@ -87,6 +88,7 @@ registry that validates it.
 | `DX_SSH_KEY` | `$DX_PROJECT_ROOT/dx_key` |
 | `DX_SSH_KEY_PUB` | `$DX_PROJECT_ROOT/dx_key.pub` |
 | `DX_SSH_CONNECT_TIMEOUT` | `15` |
+| `DX_SYSTEM_WAIT_TIMEOUT` | `30` |
 | `DX_CONTEXT_DIR` | `$DX_PROJECT_ROOT/container/dx-nixos-26.05` |
 | `DX_BOOTSTRAP_SOURCE` | `$DX_CONTEXT_DIR` |
 | `DX_BOOTSTRAP_VOLUME` | `dx-bootstrap` |
@@ -170,8 +172,12 @@ DX_BOOTSTRAP_VOLUME=dx-lifecycle-bootstrap \
 
 ### Profiles
 
-Bundling those overrides into one invocation is what `tests/profiles/` and
-`bin/dx-profile` are for. Root `.env` and profiles are data files, never shell
+Bundle those overrides into a named profile in
+`${XDG_CONFIG_HOME:-$HOME/.config}/dxe/profiles/`. `bin/dx-profile` looks there
+first, then in the checkout's `tests/profiles/` for bundled examples and test
+fixtures. Set `DX_PROFILES_DIR` to select a single explicit directory instead;
+an absent profile in that directory fails without falling back.
+Root `.env` and profiles are data files, never shell
 scripts. Run them only through `dx-profile <name>`:
 
 ```bash
@@ -183,6 +189,29 @@ scripts. Run them only through `dx-profile <name>`:
 Profiles are purely opt-in. Do not source a profile. Running a script without
 `dx-profile` uses the canonical defaults — `dx-host` on port `2222`, default
 volumes, and default keys.
+
+Keep personal profiles outside the repository. Store SSH keys separately in
+`~/.ssh/dxe/`, with the private key readable only by you (`chmod 600`). The
+profile contains absolute paths in `DX_SSH_KEY` and `DX_SSH_KEY_PUB`, never key
+material. For example:
+
+```text
+DX_SSH_KEY=/absolute/path/to/.ssh/dxe/qnap-canary
+DX_SSH_KEY_PUB=/absolute/path/to/.ssh/dxe/qnap-canary.pub
+```
+
+Use your actual home path: profiles do not expand `~`, `$HOME`, or
+`$XDG_CONFIG_HOME`. Moving an existing key preserves the controller's SSH
+identity and access to the guest;
+generating a replacement key would require changing the guest's authorized
+keys.
+
+To recreate a missing profile, copy the matching bundled example into your
+user profile directory and restore your host alias, resource names, port,
+and absolute key paths. A missing public key can be derived from the private
+key with `ssh-keygen -y -f /absolute/path/to/private-key`; a private key cannot
+be recovered from its public key. If the original private key is lost, create
+a replacement and provision its public key into the guest before reconnecting.
 
 The accepted grammar is deliberately bounded: blank lines, full-line comments,
 an optional literal `export ` prefix, and one allowlisted `NAME=value` record

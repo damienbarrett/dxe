@@ -30,8 +30,10 @@ operations.
    (`store-trust-plan.md`) without also discarding `/persist`.
 7. **The bootstrap payload is part of every start.** `dx-start-container`
    always runs `dx-sync-bootstrap` after ensuring the container is running, so edits to
-   `home/*.nix` or `bootstrap.sh` land on the next `dx` without an image
-   rebuild. When that sync actually publishes a new generation (not the
+   `home/*.nix` or `bootstrap.sh` land on the next container start without
+   an image rebuild. `dx` connects directly when the container is already running;
+   applying bootstrap edits then requires an explicit publish and restart.
+   When that sync actually publishes a new generation (not the
    unchanged-content skip), `dx-start-container` also confirms, bounded by
    `DX_BOOTSTRAP_CONFIRM_TIMEOUT` (default 5s), that the guest's execution
    lease already names it before declaring the start a success. If the
@@ -146,7 +148,7 @@ fire-and-forget.
 
 | Wrapper | Composition |
 | --- | --- |
-| [`bin/dx`](../bin/dx) | `create-keys → create-image → create-volumes → create-container → start-container → wait-ssh → ssh` |
+| [`bin/dx`](../bin/dx) | Checks the container service first, starts Apple Container if needed, and waits up to `DX_SYSTEM_WAIT_TIMEOUT` (default 30s) for readiness; connects directly when running; otherwise `create-keys → create-image → create-volumes → create-container → start-container → wait-ssh → ssh`. |
 | [`bin/dx-destroy`](../bin/dx-destroy) | `destroy-container → destroy-image` (preserves volumes and keys) |
 | [`bin/dx-recreate`](../bin/dx-recreate) | `dx-destroy → exec dx` (preserves volumes and keys) |
 | [`bin/dx-factory-reset`](../bin/dx-factory-reset) | prompts once, then `destroy-container → destroy-image → destroy-volumes --force → destroy-keys` |
@@ -219,7 +221,7 @@ or perform maintenance operations.
 | Script | Role |
 | --- | --- |
 | [`bin/dx-lib.sh`](../bin/dx-lib.sh) | Short compatibility facade that loads the source-only host libraries and resolves one complete configuration snapshot. |
-| [`bin/dx-profile`](../bin/dx-profile) | Parses a named data profile from `tests/profiles/<name>.env`, resolves the complete snapshot, then execs the command. A remote Docker-over-SSH profile (`DX_RUNTIME=docker-ssh`, `DX_REMOTE_HOST`, `DX_GUEST_SYSTEM`, `DX_NIX_STORAGE_MODE`, `DX_CONTAINER_RESTART_POLICY`) follows the placeholder-only shape in [`tests/profiles/qnap-example.env`](../tests/profiles/qnap-example.env); the real profile is a local, git-ignored copy (see that file's header and [`docs/configuration.md`](configuration.md)). |
+| [`bin/dx-profile`](../bin/dx-profile) | Parses a named data profile from `${XDG_CONFIG_HOME:-$HOME/.config}/dxe/profiles/<name>.env`, falling back to bundled `tests/profiles/<name>.env`, resolves the complete snapshot, then execs the command. `DX_PROFILES_DIR` selects one explicit directory. A remote Docker-over-SSH profile (`DX_RUNTIME=docker-ssh`, `DX_REMOTE_HOST`, `DX_GUEST_SYSTEM`, `DX_NIX_STORAGE_MODE`, `DX_CONTAINER_RESTART_POLICY`) follows the placeholder-only shape in [`tests/profiles/qnap-example.env`](../tests/profiles/qnap-example.env); keep the real profile in user config and its keys under `~/.ssh/dxe/` (see [`docs/configuration.md`](configuration.md)). |
 | [`bin/dx-mount`](../bin/dx-mount) | Launches an isolated side container, records a bounded v2 identity manifest, and exposes audit/migration/destroy-plan modes. Refuses before any mutation under a runtime without the `bind_mounts` capability (`DX_RUNTIME=docker-ssh` today): a controller-local directory is never a valid remote bind source over SSH. |
 | [`bin/dx-wait-ssh`](../bin/dx-wait-ssh) | Blocks until guest SSH responds, dialling the guest's own remote-aware address (`dx_ssh_endpoint`). Gates the SSH connection layer. |
 | [`bin/dx-status`](../bin/dx-status) | Reports image, container, SSH (the address actually probed, on either runtime), tool, persist, tmux, and profile-aware tunnel migration state; for `DX_RUNTIME=docker-ssh`, also the remote per-profile lock's read-only state. |

@@ -37,13 +37,18 @@ container_system_is_running() { dx_runtime_system_running; }
 # clear message pointing at the NAS's App Center UI) rather than actually
 # starting anything remotely.
 container_system_ensure_started() {
+    local timeout="${DX_SYSTEM_WAIT_TIMEOUT:-30}"
     if ! container_system_is_running; then
         if [ "${DX_RUNTIME:-apple}" = docker-ssh ]; then
             echo "Docker Engine on $DX_REMOTE_HOST is not running; starting it..."
         else
             echo "Apple container system is not running; starting it..."
         fi
-        dx_runtime_system_start
+        dx_runtime_system_start || return $?
+        if ! dx_wait_until "$timeout" 1 container_system_is_running; then
+            echo "Error: container service did not become ready within ${timeout}s after starting." >&2
+            return 1
+        fi
     fi
 }
 
@@ -245,6 +250,26 @@ dx_bootstrap_content_digest() {
     printf '%s\n' "$digest"
 }
 
+# Keep a restart remedy on the same profile as the container it describes.
+# An unprofiled command from qx would otherwise target the Mac's dx-host.
+# Profile names are data, so validate before putting one in shell guidance.
+dx_bootstrap_restart_guidance() {
+    local origin="${DXE_CONFIG_ORIGIN_DX_CONTAINER_NAME:-}" profile prefix="./bin/"
+    case "$origin" in
+        profile:*)
+            profile="${origin#profile:}"
+            case "$profile" in
+                ''|[.-]*|*[!A-Za-z0-9_.-]*)
+                    echo "Restart the container using the same profile and environment: stop it, then start it again." >&2
+                    return 0
+                    ;;
+            esac
+            prefix="./bin/dx-profile $profile ./bin/"
+            ;;
+    esac
+    echo "Restart it so its launcher waits for publication fresh: ${prefix}dx-stop-container && ${prefix}dx-start-container." >&2
+}
+
 # Announce that the guest is running an older generation than the published
 # one. This is the diagnostic for the unchanged-content skip path only (see
 # dx_bootstrap_sync_result_read's outcome in bin/dx-start-container): a start
@@ -258,8 +283,8 @@ dx_bootstrap_report_drift() {
     local running="$1" published="$2" name="$3"
     [ -n "$running" ] && [ -n "$published" ] && [ "$running" != "$published" ] || return 0
     echo "Warning: $name is running bootstrap generation $running, but $published is now published." >&2
-    echo "The guest boots whichever generation was current when it started, so a bootstrap change needs one more start to take effect." >&2
-    echo "Run dx-start-container again to pick it up." >&2
+    echo "The guest boots whichever generation was current when it started, so a bootstrap change needs a restart to take effect." >&2
+    dx_bootstrap_restart_guidance
     return 0
 }
 
@@ -299,7 +324,8 @@ dx_bootstrap_confirm_publication() {
     local running=""
     dx_wait_until "$timeout" 1 dx_bootstrap_confirm_publication_check "$name" "$bootstrap_path" "$published" && return 0
     echo "Error: $name published bootstrap generation $published, but after waiting ${timeout}s the guest is running ${running:-no leased generation (never synced, or still resolving)}." >&2
-    echo "The running guest will not pick this publish up on its own. Restart it so its launcher waits for publication fresh: ./bin/dx-stop-container && ./bin/dx-start-container." >&2
+    echo "The running guest will not pick this publish up on its own." >&2
+    dx_bootstrap_restart_guidance
     return 1
 }
 # Astra F4 item 5: this used to be a bare "$HOME/.dx-cache/nix-volume-claims"

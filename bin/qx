@@ -1,0 +1,10 @@
+#!/bin/bash
+set -euo pipefail
+
+# The shared DX entrypoint, using the QNAP canary profile.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+qx_main() {
+    exec "$SCRIPT_DIR/dx-profile" qnap-canary "$SCRIPT_DIR/dx" "$@"
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then qx_main "$@"; fi

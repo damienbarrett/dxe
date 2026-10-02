@@ -419,20 +419,40 @@ if [ \"\${1:-}\" = exec ]; then cat; fi
 # (byte-for-byte unchanged message).
 (
     DX_RUNTIME=apple
-    container_system_is_running() { return 1; }
-    dx_runtime_system_start() { :; }
-    out="$(container_system_ensure_started 2>&1)"
-    [ "$out" = "Apple container system is not running; starting it..." ]
+    unset DX_SYSTEM_WAIT_TIMEOUT
+    service_ready=false
+    container_system_is_running() { [ "$service_ready" = true ]; }
+    dx_runtime_system_start() { service_ready=true; }
+    out="$(container_system_ensure_started 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ] && [ "$out" = "Apple container system is not running; starting it..." ]
 )
 [ "$?" -eq 0 ] && test_pass "container_system_ensure_started: apple's message is byte-for-byte unchanged" || test_fail "container_system_ensure_started: apple's message is byte-for-byte unchanged"
 (
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
-    container_system_is_running() { return 1; }
-    dx_runtime_system_start() { :; }
-    out="$(container_system_ensure_started 2>&1)"
-    printf '%s\n' "$out" | stdin_matches -F -- "qnap-dxe" && ! printf '%s\n' "$out" | stdin_matches "Apple"
+    unset DX_SYSTEM_WAIT_TIMEOUT
+    service_ready=false
+    container_system_is_running() { [ "$service_ready" = true ]; }
+    dx_runtime_system_start() { service_ready=true; }
+    out="$(container_system_ensure_started 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "qnap-dxe" && ! printf '%s\n' "$out" | stdin_matches "Apple"
 )
 [ "$?" -eq 0 ] && test_pass "container_system_ensure_started: docker-ssh's message never says 'Apple'" || test_fail "container_system_ensure_started: docker-ssh's message never says 'Apple'"
+
+# Source-only callers need the default even without dx_init_config. Use the
+# real wait loop with a fake sleep so a never-ready service stays bounded.
+(
+    DX_RUNTIME=apple
+    unset DX_SYSTEM_WAIT_TIMEOUT
+    container_system_is_running() { return 1; }
+    dx_runtime_system_start() { return 0; }
+    sleep_log="$fixture/service-wait-sleeps"
+    fake_service_sleep() { printf '%s\n' "$1" >> "$sleep_log"; }
+    DX_SLEEP=fake_service_sleep
+    out="$(container_system_ensure_started 2>&1)"; rc=$?
+    [ "$rc" -eq 1 ] && [ "$(wc -l < "$sleep_log" | tr -d ' ')" -eq 30 ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "did not become ready within 30s"
+)
+[ "$?" -eq 0 ] && test_pass "container_system_ensure_started: source-only default bounds a never-ready service" || test_fail "container_system_ensure_started: source-only default bounds a never-ready service"
 
 # --- Coverage-closing cases (kcov gaps found by the full coverage
 # checkpoint, tests/run-coverage-linux.sh -- each proves a distinct branch

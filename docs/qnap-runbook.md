@@ -12,7 +12,8 @@ placeholder shape and the `qnap-dxe` SSH alias name that file documents.
 **Never** put a real hostname, tailnet address, username, or storage-pool
 path into a tracked file — this repository is public
 (`docs/refactor/constraints.md`, `tests/test_section1_secrets.sh`). Your
-own real profile is a local, git-ignored file.
+own real profile lives outside the checkout in the user config directory
+described below; its SSH keys live separately under `~/.ssh/dxe/`.
 
 ## 1. Install
 
@@ -27,10 +28,12 @@ own real profile is a local, git-ignored file.
    ```sh
    ssh -o BatchMode=yes -o ConnectTimeout=10 <your-alias> true
    ```
-3. Copy `tests/profiles/qnap-example.env` to a new, git-ignored profile
-   (its own header explains why: `tests/profiles/` has no repository-wide
-   `*.env` ignore rule, so add your new file's exact name to `.gitignore`
-   the same way `dx_key`/`dx_key.pub` are ignored by name). Set
+3. Copy `tests/profiles/qnap-example.env` to
+   `${XDG_CONFIG_HOME:-$HOME/.config}/dxe/profiles/<your-profile-name>.env`.
+   Keep personal profiles outside the checkout and set `DX_SSH_KEY` and
+   `DX_SSH_KEY_PUB` to absolute paths under `~/.ssh/dxe/`; the profile stores
+   paths, never key material. Create that key directory with mode `700`.
+   Profiles do not expand `~` or `$HOME`, so write your actual home path. Set
    `DX_REMOTE_HOST` to your alias name; leave everything else at the
    example's values unless you have a specific reason to change them
    (`DX_GUEST_SYSTEM` must match the NAS's own `uname -m`: `aarch64` ->
@@ -78,6 +81,23 @@ own real profile is a local, git-ignored file.
   runbook's Update section below.
 
 ## 3. Normal operation
+
+`./bin/qx` delegates to `dx` with the user profile
+`${XDG_CONFIG_HOME:-$HOME/.config}/dxe/profiles/qnap-canary.env` to
+connect to the QNAP canary and attach to its `dx` tmux session. If the
+container is already running, it connects directly without publishing
+bootstrap changes. If it is stopped or absent, it runs the full `dx`
+bring-up flow first. With `bin/` on your PATH,
+run `qx` to connect or `qx 'uname -a'` to run a guest command. Arguments
+pass through unchanged. The profile must exist; `qx` fails if it
+is missing. `dx-profile` also supports `DX_PROFILES_DIR` for an explicit
+directory and bundled profiles under `tests/profiles/`; user profiles take
+precedence when no explicit directory is supplied.
+
+Bootstrap updates remain an explicit maintenance step: publish with
+`./bin/dx-profile qnap-canary ./bin/dx-sync-bootstrap`, then stop and start
+the container under the same profile to activate the update. A restart
+ends running guest processes and tmux sessions, so choose a suitable time.
 
 ```sh
 ./bin/dx-profile <your-profile-name> ./bin/dx-status   # image/container/health/SSH/tools

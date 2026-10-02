@@ -502,9 +502,9 @@ registry_actual_count=0
     done
 ) > "$registry_actual"
 for registry_name in $DXE_CONFIG_FIELDS; do registry_actual_count=$((registry_actual_count + 1)); done
-[ "$registry_actual_count" -eq 38 ] \
-    && test_pass "the config registry has exactly 38 fields" \
-    || test_fail "the config registry has exactly 38 fields (got $registry_actual_count)"
+[ "$registry_actual_count" -eq 39 ] \
+    && test_pass "the config registry has exactly 39 fields" \
+    || test_fail "the config registry has exactly 39 fields (got $registry_actual_count)"
 if diff -q "$registry_fixture" "$registry_actual" >/dev/null 2>&1; then
     test_pass "the heredoc registry's dx_config_kind/dx_config_default per field match the pre-refactor fixture"
 else

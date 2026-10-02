@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v17
       - name: Syntax
-        run: find bin tests container -type f \( -name '*.sh' -o -path 'bin/dx*' \) -print0 | xargs -0 -n1 bash -n
+        run: find bin tests container -type f \( -name '*.sh' -o -path 'bin/dx*' -o -path 'bin/qx' \) -print0 | xargs -0 -n1 bash -n
       # ShellCheck is pinned rather than taken from the runner image. 0.11.0
       # aborts with "Non-exhaustive patterns in checkCmd" on `x="$(source f)"`,
       # which is exactly how the import-purity contract is written in both
@@ -26,7 +26,7 @@ jobs:
       # re-check whether 0.11.x still crashes on this construct.
       - name: ShellCheck
         run: |
-          find bin tests container -type f \( -name '*.sh' -o -path 'bin/dx*' \) -print0 \
+          find bin tests container -type f \( -name '*.sh' -o -path 'bin/dx*' -o -path 'bin/qx' \) -print0 \
             | xargs -0 nix shell "nixpkgs/${NIXPKGS_PIN}#shellcheck" --command shellcheck --severity=warning
         env:
           NIXPKGS_PIN: nixos-25.05

@@ -898,7 +898,7 @@ if dx_bootstrap_lease_generation 'gen-a.4242' >/dev/null 2>&1; then
 else
     test_pass "an absent launcher lease reports no running generation"
 fi
-drift_out="$(dx_bootstrap_report_drift old-gen new-gen dx-probe 2>&1 >/dev/null || true)"
+drift_out="$(DXE_CONFIG_ORIGIN_DX_CONTAINER_NAME= dx_bootstrap_report_drift old-gen new-gen dx-probe 2>&1 >/dev/null || true)"
 if printf '%s\n' "$drift_out" | stdin_matches -F old-gen \
     && printf '%s\n' "$drift_out" | stdin_matches -F new-gen \
     && printf '%s\n' "$drift_out" | stdin_matches -F dx-probe; then
@@ -906,6 +906,47 @@ if printf '%s\n' "$drift_out" | stdin_matches -F old-gen \
 else
     test_fail "a drifted guest is reported with both generations and the container (got '$drift_out')"
 fi
+if printf '%s\n' "$drift_out" | stdin_matches -F './bin/dx-stop-container && ./bin/dx-start-container'; then
+    test_pass "drift guidance requires a stop/start instead of another no-op start"
+else
+    test_fail "drift guidance requires a stop/start instead of another no-op start (got '$drift_out')"
+fi
+
+# Exercise the real profile wrapper: the diagnostic must preserve its target
+# when copied into a new shell, where the wrapper's exports no longer exist.
+restart_profile_fixture="$config_fixture/restart-profiles"
+mkdir -p "$restart_profile_fixture"
+printf '%s\n' 'DX_CONTAINER_NAME=dx-qnap-contract' > "$restart_profile_fixture/qnap-contract.env"
+restart_command='./bin/dx-profile qnap-contract ./bin/dx-stop-container && ./bin/dx-profile qnap-contract ./bin/dx-start-container'
+restart_status=0
+restart_out="$(DX_PROFILES_DIR="$restart_profile_fixture" "$BASE_DIR/bin/dx-profile" qnap-contract bash -c '
+    source "$1"
+    dx_wait_until() { return 1; }
+    dx_bootstrap_confirm_publication dx-qnap-contract /guest-bootstrap new-gen 1
+' _ "$BASE_DIR/bin/lib/dx-container.sh" 2>&1)" || restart_status=$?
+if [ "$restart_status" -eq 1 ] && printf '%s\n' "$restart_out" | stdin_matches -F "$restart_command"; then
+    test_pass "publication failure preserves the profile in both recovery commands and still fails"
+else
+    test_fail "publication failure preserves the profile in both recovery commands and still fails (status $restart_status, got '$restart_out')"
+fi
+restart_drift_out="$(DX_PROFILES_DIR="$restart_profile_fixture" "$BASE_DIR/bin/dx-profile" qnap-contract bash -c '
+    source "$1"
+    dx_bootstrap_report_drift old-gen new-gen dx-qnap-contract
+' _ "$BASE_DIR/bin/lib/dx-container.sh" 2>&1)"
+if printf '%s\n' "$restart_drift_out" | stdin_matches -F "$restart_command"; then
+    test_pass "unchanged-content drift uses the same profile-preserving restart remedy"
+else
+    test_fail "unchanged-content drift uses the same profile-preserving restart remedy (got '$restart_drift_out')"
+fi
+for invalid_profile in '' '.hidden' 'bad;command'; do
+    invalid_guidance="$(DXE_CONFIG_ORIGIN_DX_CONTAINER_NAME="profile:$invalid_profile" dx_bootstrap_restart_guidance 2>&1)"
+    if printf '%s\n' "$invalid_guidance" | stdin_matches -F 'using the same profile and environment' \
+        && ! printf '%s\n' "$invalid_guidance" | stdin_matches -F './bin/'; then
+        test_pass "restart guidance avoids a shell command for invalid profile '$invalid_profile'"
+    else
+        test_fail "restart guidance avoids a shell command for invalid profile '$invalid_profile' (got '$invalid_guidance')"
+    fi
+done
 # Silence is the contract for the ordinary case: an unchanged tree republishes
 # an identical generation id only when nothing was edited, and a guest that has
 # never been synced has no lease at all. Neither is a drift.

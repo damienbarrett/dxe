@@ -22,8 +22,13 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
    keypair, builds the image, creates persistent volumes, creates and starts
    the container, syncs the bootstrap payload as part of container start,
    waits for SSH, and connects.
-   On every later run it skips whatever already exists and reconnects. Each
-   underlying lifecycle script is idempotent toward its end state, so `dx`
+   It first checks the container service, starts the local Apple service if
+   needed, and waits up to `DX_SYSTEM_WAIT_TIMEOUT` (default 30 seconds) for
+   readiness before checking the container.
+   When the container is running, it connects directly without publishing
+   bootstrap changes. When stopped or absent, it runs the bring-up flow,
+   skipping whatever already exists. Each underlying lifecycle script is
+   idempotent toward its end state, so `dx`
    is safe to run from any starting state.
 
    The first run takes a few minutes for the image build; later runs reconnect

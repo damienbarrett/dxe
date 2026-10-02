@@ -138,6 +138,16 @@ picks up the edit on its own first boot. See
 [D7](refactor/decisions/D7-start-generation.md) for the full mechanism and
 `docs/configuration.md`'s `DX_BOOTSTRAP_CONFIRM_TIMEOUT` entry for the bound.
 
+For a named profile, apply it to **both** commands so the restart targets
+the same container. For the QNAP canary:
+
+```bash
+./bin/dx-profile qnap-canary ./bin/dx-stop-container && ./bin/dx-profile qnap-canary ./bin/dx-start-container
+```
+
+To connect to the running guest while postponing that restart, use
+`qx` or `./bin/dx-profile qnap-canary ./bin/dx-ssh`.
+
 ### A healthy boot reported as a failure
 
 `./bin/dx` can exit non-zero on a guest that is actually fine. Two causes, both

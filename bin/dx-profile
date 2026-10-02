@@ -9,15 +9,20 @@ source "$SCRIPT_DIR/lib/dx-config.sh"
 usage() {
     echo "Usage: $(basename "$0") <profile> <command...>" >&2
     echo "Available profiles:" >&2
-    if [ -d "$PROFILES_DIR" ]; then
-        for file in "$PROFILES_DIR"/*.env; do
-            [ -f "$file" ] && echo "  $(basename "$file" .env)" >&2
+    for directory in "$PROFILES_DIR" ${BUNDLED_PROFILES_DIR:+"$BUNDLED_PROFILES_DIR"}; do
+        [ -d "$directory" ] || continue
+        for file in "$directory"/*.env; do
+            [ -f "$file" ] && echo "  $(basename "$file" .env) ($directory)" >&2
         done
-    fi
+    done
 }
 
 profile_main() {
-PROFILES_DIR="${DX_PROFILES_DIR:-$DX_PROJECT_ROOT/tests/profiles}"
+PROFILES_DIR="${DX_PROFILES_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/dxe/profiles}"
+BUNDLED_PROFILES_DIR=""
+if [ -z "${DX_PROFILES_DIR:-}" ]; then
+    BUNDLED_PROFILES_DIR="$DX_PROJECT_ROOT/tests/profiles"
+fi
 [ "$#" -ge 2 ] || { usage; exit 2; }
 profile=$1
 shift
@@ -25,7 +30,13 @@ case "$profile" in
     ''|[.-]*|*[!A-Za-z0-9_.-]*) echo "Error: invalid profile name '$profile'." >&2; exit 2 ;;
 esac
 profile_file="$PROFILES_DIR/$profile.env"
-[ -f "$profile_file" ] || { echo "Error: Profile not found: $profile_file" >&2; exit 1; }
+if [ ! -f "$profile_file" ] && [ -n "$BUNDLED_PROFILES_DIR" ]; then
+    profile_file="$BUNDLED_PROFILES_DIR/$profile.env"
+fi
+[ -f "$profile_file" ] || {
+    echo "Error: Profile not found: $PROFILES_DIR/$profile.env${BUNDLED_PROFILES_DIR:+ (also checked $BUNDLED_PROFILES_DIR/$profile.env)}" >&2
+    exit 1
+}
 
 export DX_PROJECT_ROOT
 dx_parse_config_file "$profile_file"
