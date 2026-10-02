@@ -1446,7 +1446,7 @@ lease_guest_shipped() { # <function>
     (
         # shellcheck source=/dev/null
         source "$CONTAINER_DIR/scripts/lib/dx-publication.sh"
-        DX_LOCK_PROC_ROOT="$lease_proc"
+        export DX_LOCK_PROC_ROOT="$lease_proc"
         "$1" "$lease_dir/leases"
     )
 }

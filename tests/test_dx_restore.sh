@@ -1289,7 +1289,7 @@ export DX_FAKE_CHOWN_LOG="$FIXTURE/chown.log"
 MODES_BACKUP="$FIXTURE/backups-modes"
 modes_state="home/dx/.local/state/dx"
 modes_mirror="$MODES_BACKUP/test-container"
-modes_dx_backup() { DX_BACKUP_DIR="$MODES_BACKUP" "$BASE_DIR/bin/dx-backup" "$@"; }
+modes_dx_backup() { DX_BACKUP_DIR="$MODES_BACKUP" "$BASE_DIR/bin/dx-backup"; }
 modes_dx_restore() { DX_BACKUP_DIR="$MODES_BACKUP" "$BASE_DIR/bin/dx-restore" "$@"; }
 modes_reset_guest() { chmod -R u+rwx "$FIXTURE/persist" 2>/dev/null || true; rm -rf "$FIXTURE/persist" "$FIXTURE/elsewhere"; mkdir -p "$FIXTURE/persist"; }
 modes_reset_guest
