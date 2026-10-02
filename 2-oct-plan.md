@@ -217,6 +217,18 @@ validated final main SHA. No landing automatically publishes into guests.
 
 ## 5. Guest maintenance and acceptance — decisions D2–D7
 
+**Status (2026-10-02 evening, both D5 windows run on the user's go):**
+`dx-host` promotion #9 complete (sync → backup with mirror migration →
+stop/start → D6 recreate; Appendix D of `checkout-consolidation-plan.md`).
+The canary was synced, backed up (mirror migrated, directory modes
+recorded) and restarted; it soaks `main` `00b67d0` from 22:39 NZDT with no
+drift warning (`docs/evidence/20260928/qnap-promotion.md`, "Day 4
+maintenance"). Open before the production profile: the docker-ssh lock
+container must not depend on the profile's own image (branch
+`fix/docker-lock-image`); the disposable spike proof of the lease fix across
+a Docker restart runs after that fix.
+
+
 Prepare exact clean release SHA, profiles/targets, inventory, current image and
 published/running generation, idle status, retained predecessor/backout and
 expected session disruption before the D5-selected window. All publication itself

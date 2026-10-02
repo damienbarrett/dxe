@@ -299,3 +299,30 @@ allowed UDP hole-punching, so the path stayed direct. Per the user's
 decision D4 (2026-10-02) no artificial UDP block is used; the relay proof
 stays open until a network that forces the relay turns up, and is flagged
 for owner review at the production decision.
+
+### Day 4 maintenance — the canary moves to the final release (2026-10-02, evening)
+
+Inside the user's named QNAP window (2-oct-plan.md D5), from the
+coordinating session's clean clone of `main` `00b67d0`, canary idle (no
+established connection, no user).
+
+| Step | Result |
+| --- | --- |
+| `dx-sync-bootstrap` first (non-activating) | published generation `20261002T093725Z`; running unchanged — ordered this way because `dx-backup` runs the guest's *published* selector and the old one lacked directory-mode support |
+| `dx-backup` | legacy mirror migrated in place (`current -> generations/…`, manifest and `dirs.tsv`), 468 files / 44 MiB; the selector skipped the root-owned top-level `/persist/etc` with a named warning |
+| `dx-restore --dry-run` | 1,705 identical, 0 would create, 0 directory-mode conflicts |
+| stop/start | ready in 30 s; running = published; **no drift warning** — the stale previous-incarnation lease is pruned on docker-ssh now, which is the lease fix observed live; the two unreferenced older generations were retired from the volume |
+| health, keyring | `healthy` at +60 s, restart count still 0; keyring started, `live` |
+
+From this point the week soaks `main` `00b67d0`, the release the day-7
+decision will consider. Two things did not go to plan the same evening and
+are recorded honestly: (1) the disposable `dx-qnap-spike3` meant to prove
+the lease fix across a Docker restart could not be created — the lifecycle
+lock container is built from the profile's own image, which does not exist
+for a never-created profile, so the first `dx` of any new docker-ssh profile
+refuses ("may already be held"); a fix branch is in progress and must land
+before the production profile is created, and the spike proof follows it;
+(2) the first attempt ran the backup before the sync and failed closed on
+the old selector ("refusing to publish an incomplete record"), leaving the
+mirror untouched — the order above is the correct one and is now the rule
+for every guest update.

@@ -560,8 +560,16 @@ flags in its create argv; the guest was idle beforehand, backup current,
 (2026-09-29, Phase 7's code: container-only recreate with an unchanged create
 argv; the primary guest now carries the cross-profile restore flag; guest idle
 beforehand, backup current, `/persist` file count identical, keyring `stale`
-then `live` after a cold `dx-ai`). `dx-host` is current; the next promotion
-follows the next runtime-affecting landing.
+then `live` after a cold `dx-ai`), and `main` `00b67d0` (2026-10-02, the
+findings branch plus the reconnect/pin and lease/directory-mode fixes:
+ordered sync first so the fixed backup selector was the published one, then
+`dx-backup` migrating the legacy mirror in place and recording directory
+modes, then stop/start, then one recreate (decision D6); guest idle
+beforehand, `/persist` file count identical through both restarts, running
+= published, six tools present, keyring `stale` then `live`; the guest had
+been running an unvetted branch tree since the previous evening's incident).
+`dx-host` is current; the next promotion follows the next runtime-affecting
+landing.
 
 **Before promoting:**
 
