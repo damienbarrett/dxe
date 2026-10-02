@@ -1032,6 +1032,45 @@ if DX_PROFILES_DIR="$pin_profiles" "$pin_root/bin/dx-profile" pinned "$pin_fixtu
 else
     test_fail "the pin is in the exported snapshot and a snapshot from another root is still refused"
 fi
+# The runner pins its own fixture profiles: a personal
+# ${XDG_CONFIG_HOME}/dxe/profiles/dx-test.env (or a caller-set DX_PROFILES_DIR)
+# must never shadow tests/profiles/dx-test.env for any suite it runs, and a
+# missing fixture directory fails closed instead of falling through.
+runner_fixture="$config_fixture/runner"
+mkdir -p "$runner_fixture/tests/profiles" "$runner_fixture/decoy/dxe/profiles"
+cp "$BASE_DIR/tests/run.sh" "$runner_fixture/tests/"
+printf '%s\n' 'DX_CONTAINER_NAME=bundled-fixture' > "$runner_fixture/tests/profiles/dx-test.env"
+printf '%s\n' 'DX_CONTAINER_NAME=decoy-user-profile' > "$runner_fixture/decoy/dxe/profiles/dx-test.env"
+# (Header lines are printf-built so this file keeps exactly one of each.)
+{
+    printf '#!/bin/bash\n# %s: unit\n# %s: yes\n' tier bash32
+    printf '"%s/bin/dx-profile" dx-test printenv DX_CONTAINER_NAME\n' "$BASE_DIR"
+} > "$runner_fixture/tests/test_probe.sh"
+runner_status=0
+runner_out="$(env -u DX_PROFILES_DIR XDG_CONFIG_HOME="$runner_fixture/decoy" bash "$runner_fixture/tests/run.sh" --file "$runner_fixture/tests/test_probe.sh" 2>&1)" || runner_status=$?
+if [ "$runner_status" -eq 0 ] && printf '%s\n' "$runner_out" | stdin_matches -x 'bundled-fixture' \
+    && ! printf '%s\n' "$runner_out" | stdin_matches -F 'decoy-user-profile'; then
+    test_pass "the runner resolves dx-test from tests/profiles even with a decoy user profile"
+else
+    test_fail "the runner resolves dx-test from tests/profiles even with a decoy user profile (status $runner_status, got '$runner_out')"
+fi
+runner_status=0
+runner_out="$(DX_PROFILES_DIR="$runner_fixture/decoy/dxe/profiles" bash "$runner_fixture/tests/run.sh" --file "$runner_fixture/tests/test_probe.sh" 2>&1)" || runner_status=$?
+if [ "$runner_status" -eq 0 ] && printf '%s\n' "$runner_out" | stdin_matches -x 'bundled-fixture' \
+    && ! printf '%s\n' "$runner_out" | stdin_matches -F 'decoy-user-profile'; then
+    test_pass "the runner overrides a caller-set DX_PROFILES_DIR with its own fixture directory"
+else
+    test_fail "the runner overrides a caller-set DX_PROFILES_DIR with its own fixture directory (status $runner_status, got '$runner_out')"
+fi
+mv "$runner_fixture/tests/profiles" "$runner_fixture/tests/profiles.gone"
+runner_status=0
+runner_out="$(env -u DX_PROFILES_DIR XDG_CONFIG_HOME="$runner_fixture/decoy" bash "$runner_fixture/tests/run.sh" --file "$runner_fixture/tests/test_probe.sh" 2>&1)" || runner_status=$?
+if [ "$runner_status" -eq 2 ] && ! printf '%s\n' "$runner_out" | stdin_matches -F 'decoy-user-profile' \
+    && ! printf '%s\n' "$runner_out" | stdin_matches -F 'Running:'; then
+    test_pass "a missing fixture profile directory fails the runner closed before any suite runs"
+else
+    test_fail "a missing fixture profile directory fails the runner closed before any suite runs (status $runner_status, got '$runner_out')"
+fi
 # Silence is the contract for the ordinary case: an unchanged tree republishes
 # an identical generation id only when nothing was edited, and a guest that has
 # never been synced has no lease at all. Neither is a drift.

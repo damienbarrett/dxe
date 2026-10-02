@@ -71,6 +71,14 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Every suite resolves profiles from the bundled fixtures only: a personal
+# ${XDG_CONFIG_HOME:-$HOME/.config}/dxe/profiles/dx-test.env (or a stale
+# caller-set DX_PROFILES_DIR) must never shadow tests/profiles/. A missing
+# fixture directory fails closed rather than falling through to user config.
+DX_PROFILES_DIR="$SCRIPT_DIR/profiles"
+[ -d "$DX_PROFILES_DIR" ] || { echo "Error: fixture profile directory '$DX_PROFILES_DIR' is missing." >&2; exit 2; }
+export DX_PROFILES_DIR
+
 usage() {
     cat <<'USAGE'
 Usage: tests/run.sh --tier unit|host-contract|live|destructive [--bash32] [--section N|--file PATH] [--live]
