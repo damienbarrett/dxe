@@ -12,7 +12,7 @@ source "$BASE_DIR/bin/lib/dx-host-util.sh"
 source "$SCRIPT_DIR/lib/fake-tools.sh"
 test_section "Section 9: Host Library And Command Contracts"
 
-for script in "$BASE_DIR"/bin/dx*; do
+for script in "$BASE_DIR"/bin/dx* "$BASE_DIR/bin/qx"; do
     [ -f "$script" ] || continue
     case "$script" in */dx-lib.sh) continue ;; esac
     if grep -q '^set -euo pipefail$' "$script"; then test_pass "$(basename "$script") owns strict mode"; else test_fail "$(basename "$script") owns strict mode"; fi

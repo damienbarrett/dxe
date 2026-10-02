@@ -196,7 +196,7 @@ fi
 FILES=()
 while IFS= read -r file; do FILES+=("$file"); done < <(
     find "$BASE_DIR/bin" "$BASE_DIR/tests" "$CONTAINER_DIR" -type f \
-        \( -name '*.sh' -o -path "$BASE_DIR/bin/dx*" \) -print
+        \( -name '*.sh' -o -path "$BASE_DIR/bin/dx*" -o -path "$BASE_DIR/bin/qx" \) -print
 )
 
 for file in "${FILES[@]}"; do

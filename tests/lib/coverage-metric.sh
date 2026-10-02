@@ -146,7 +146,7 @@ dx_coverage_count_exec_lines() {
 # dx_coverage_unscoped_prod_lines ROOT
 #
 # Non-blank, non-comment lines over the exempt production set:
-# ROOT/bin/dx*, ROOT/container/*/bootstrap.sh, ROOT/container/*/scripts/*.sh
+# ROOT/bin/dx*, ROOT/bin/qx, ROOT/container/*/bootstrap.sh, ROOT/container/*/scripts/*.sh
 # (deliberately not recursing into scripts/lib, which is in scope).
 dx_coverage_unscoped_prod_lines() {
     local root="$1"
@@ -154,7 +154,7 @@ dx_coverage_unscoped_prod_lines() {
     local files
     files=()
     local f
-    for f in "$root"/bin/dx*; do
+    for f in "$root"/bin/dx* "$root"/bin/qx; do
         [ -f "$f" ] && files+=("$f")
     done
     for f in "$root"/container/*/bootstrap.sh; do

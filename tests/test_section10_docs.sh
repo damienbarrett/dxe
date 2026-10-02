@@ -226,7 +226,7 @@ while IFS= read -r docs_readme_target; do
 done < <(find "$BASE_DIR/docs" -maxdepth 1 -type f -name '*.md' | sort)
 
 all_docs="$README $BASE_DIR/docs/lifecycle.md $CONFIG_DOC $BASE_DIR/docs/guest.md $BASE_DIR/docs/troubleshooting.md $BASE_DIR/docs/release-maintenance.md $BASE_DIR/docs/qnap-runbook.md"
-for command in "$BASE_DIR"/bin/dx*; do
+for command in "$BASE_DIR"/bin/dx* "$BASE_DIR/bin/qx"; do
     [ -f "$command" ] || continue
     name="$(basename "$command")"
     [ "$name" = dx-lib.sh ] && continue
