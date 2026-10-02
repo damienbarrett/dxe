@@ -202,7 +202,7 @@ if [ "$bad_status" -eq 2 ]; then test_pass "dx_profile_apply refuses a pin to an
 
 # --- dx_qx_profile ------------------------------------------------------------
 if [ "$(env -u QX_PROFILE bash -c 'source "$1"; dx_qx_profile' _ "$BASE_DIR/bin/lib/dx-config.sh")" = qnap-canary ] \
-    && [ "$(QX_PROFILE= bash -c 'source "$1"; dx_qx_profile' _ "$BASE_DIR/bin/lib/dx-config.sh")" = qnap-canary ] \
+    && [ "$(QX_PROFILE='' bash -c 'source "$1"; dx_qx_profile' _ "$BASE_DIR/bin/lib/dx-config.sh")" = qnap-canary ] \
     && [ "$(QX_PROFILE=other bash -c 'source "$1"; dx_qx_profile' _ "$BASE_DIR/bin/lib/dx-config.sh")" = other ]; then
     test_pass "dx_qx_profile defaults to qnap-canary and honours QX_PROFILE"
 else test_fail "dx_qx_profile defaults to qnap-canary and honours QX_PROFILE"; fi

@@ -898,7 +898,7 @@ if dx_bootstrap_lease_generation 'gen-a.4242' >/dev/null 2>&1; then
 else
     test_pass "an absent launcher lease reports no running generation"
 fi
-drift_out="$(DXE_CONFIG_ORIGIN_DX_CONTAINER_NAME= dx_bootstrap_report_drift old-gen new-gen dx-probe 2>&1 >/dev/null || true)"
+drift_out="$(DXE_CONFIG_ORIGIN_DX_CONTAINER_NAME='' dx_bootstrap_report_drift old-gen new-gen dx-probe 2>&1 >/dev/null || true)"
 if printf '%s\n' "$drift_out" | stdin_matches -F old-gen \
     && printf '%s\n' "$drift_out" | stdin_matches -F new-gen \
     && printf '%s\n' "$drift_out" | stdin_matches -F dx-probe; then

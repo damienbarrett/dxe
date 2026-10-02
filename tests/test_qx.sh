@@ -233,7 +233,7 @@ else
     test_fail "missing explicit profile never falls back to another target"
 fi
 printf '%s\n' 'DX_CONTAINER_NAME=dx-home-contract' > "$fixture/home/.config/dxe/profiles/qnap-canary.env"
-HOME="$fixture/home" XDG_CONFIG_HOME= run_qx
+HOME="$fixture/home" XDG_CONFIG_HOME='' run_qx
 if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-home-contract lock owned:dx-home-contract:connect unlock dx-ssh; then
     test_pass "qx uses HOME/.config when XDG_CONFIG_HOME is empty"
 else
