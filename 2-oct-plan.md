@@ -225,8 +225,12 @@ recorded) and restarted; it soaks `main` `00b67d0` from 22:39 NZDT with no
 drift warning (`docs/evidence/20260928/qnap-promotion.md`, "Day 4
 maintenance"). The docker-ssh lock no longer depends on the profile's own image
 (`fix/docker-lock-image`, evidence `docs/evidence/20261002/docker-lock-image.md`),
-so a new profile's first `dx` works again; the disposable spike proof of the
-lease fix across a Docker restart follows in the QNAP window.
+so a new profile's first `dx` works again — proven live the same night on a
+disposable `dx-qnap-spike3`, which also proved the lease fix across a Docker
+restart (`docs/evidence/20260928/qnap-promotion.md`, "Day 4, late").
+Remaining for Phase 7: the week's real use on `main` `00b67d0`+, the
+relay-fallback observation (still unexercised), and the production decision
+on Tuesday 6 October.
 
 
 Prepare exact clean release SHA, profiles/targets, inventory, current image and

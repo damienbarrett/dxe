@@ -326,3 +326,21 @@ before the production profile is created, and the spike proof follows it;
 the old selector ("refusing to publish an incomplete record"), leaving the
 mirror untouched — the order above is the correct one and is now the rule
 for every guest update.
+
+### Day 4, late — disposable spike proofs of the two docker-ssh fixes (2026-10-02, 23:51–23:55)
+
+Inside the same user-named QNAP window, from the coordinating session's
+clean clone of `main` `b4c4b0d` (which carries the lock-image fix landed
+minutes earlier), with the canary live throughout and the only managed
+resources before and after being the canary and its three volumes.
+
+| Step | Result |
+| --- | --- |
+| first `dx` of the never-created disposable `dx-qnap-spike3` (port 2225) | the lifecycle lock was acquired from the pinned base image and released; keys, image, volumes, container, start, `dx-wait-ssh`; guest reached (`x86_64`) in 185 s — **lock-image fix proven**; no lock container left behind |
+| Docker restart of the spike (`dx-stop-container`, `dx-start-container`) | ready; `dx-status` running = published `20261002T105121Z`, **no drift warning**; exactly one execution lease on the volume (the previous incarnation's PID-1 lease was pruned although the kernel boot id is the NAS's and unchanged) — **execution-lease fix proven on docker-ssh** |
+| `dx-factory-reset --force` on the spike | immutable ownership plan, container, image, three volumes and key pair removed; canary `running/healthy/restarts=0`; no lock containers |
+
+With this, every item the plan's D2 required before real-guest
+publication has both its gates and its live proof, and the canary's own
+restart earlier the same evening showed the same lease behaviour on the
+real guest.
