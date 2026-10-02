@@ -85,4 +85,42 @@ publication_lock_acquire() {
     fi
 }
 publication_lock_release() { rm -f "$1/owner"; rmdir "$1"; }
+# An execution lease ("<generation>\t<boot id>\t<pid>\t<start time>", file name
+# "<generation>.<pid>") is live only when its whole incarnation identity still
+# holds: well-formed, boot id equal to the current one, a process with that PID
+# present, and that process's start time equal to the recorded one. Boot id alone
+# is not enough: inside a Docker container it is the host kernel's and survives a
+# container restart, so the previous incarnation's PID 1 lease carries the same
+# boot id as the live one and only the start time tells them apart.
+execution_lease_live() {
+    dxgpp_tab=$(printf "\t")
+    dxgpp_lgen="" dxgpp_lboot="" dxgpp_lpid="" dxgpp_lstart=""
+    IFS="$dxgpp_tab" read -r dxgpp_lgen dxgpp_lboot dxgpp_lpid dxgpp_lstart < "$1" || true
+    case "$dxgpp_lgen" in ""|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
+    case "$dxgpp_lboot" in ""|*[!A-Za-z0-9:-]*) return 1 ;; esac
+    case "$dxgpp_lpid" in ""|*[!0-9]*) return 1 ;; esac
+    case "$dxgpp_lstart" in ""|*[!0-9]*) return 1 ;; esac
+    [ "${1##*/}" = "$dxgpp_lgen.$dxgpp_lpid" ] || return 1
+    dxgpp_now=$(boot_id) || return 1
+    [ "$dxgpp_lboot" = "$dxgpp_now" ] || return 1
+    dxgpp_live=$(process_start "$dxgpp_lpid") || return 1
+    [ "$dxgpp_lstart" = "$dxgpp_live" ]
+}
+# Remove every lease in directory $1 that is not live. Dot-names are in-flight
+# temporary writes (generation ids cannot start with a dot) and are left alone.
+execution_leases_prune() {
+    for dxgpp_lease in "$1"/*; do
+        [ -f "$dxgpp_lease" ] || continue
+        execution_lease_live "$dxgpp_lease" || rm -f "$dxgpp_lease"
+    done
+    return 0
+}
+# Print the names of the live leases in directory $1, one per line (read-only).
+execution_leases_live() {
+    for dxgpp_lease in "$1"/*; do
+        [ -f "$dxgpp_lease" ] || continue
+        if execution_lease_live "$dxgpp_lease"; then printf "%s\n" "${dxgpp_lease##*/}"; fi
+    done
+    return 0
+}
 # --- END dx_guest_publication_protocol ---

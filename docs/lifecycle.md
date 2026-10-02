@@ -45,6 +45,14 @@ operations.
    sync sees the content unchanged (already published) and takes the skip
    path, so the freshly-started guest picks it up on its own first boot. See
    [D7](refactor/decisions/D7-start-generation.md) for the full mechanism.
+   An execution lease (`<generation>.<pid>`, holding generation, boot id, PID
+   and process start time) counts only while that whole incarnation identity is
+   live: a process with that PID exists and its start time matches. Boot id
+   alone is not enough, because inside a Docker container it is the host
+   kernel's and survives a container restart; the reader (`dx-status`,
+   `dx-start-container`) lists only live leases and every sync prunes the rest,
+   both through the shared guest protocol (`execution_lease_live`,
+   `execution_leases_live`, `execution_leases_prune`).
 8. **Layer cost informs default behaviour.** Volumes (hours to rebuild) are
    never touched implicitly. Image (minutes) is rebuilt only by `dx-recreate`
    or explicit destroy. Container and runtime state (seconds) are freely

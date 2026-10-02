@@ -50,7 +50,7 @@ trap 'rm -f "$dx_sync_result_file"; dx_lifecycle_lock_release' EXIT HUP INT TERM
 dx_running_generation=""
 dx_published_generation="$(dx_runtime_exec "$DX_CONTAINER_NAME" readlink "$DX_BOOTSTRAP_PATH/current" 2>/dev/null || true)"
 dx_published_generation="${dx_published_generation#generations/}"
-dx_lease_listing="$(dx_runtime_exec "$DX_CONTAINER_NAME" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$DX_BOOTSTRAP_PATH" 2>/dev/null || true)"
+dx_lease_listing="$(dx_bootstrap_lease_listing "$DX_CONTAINER_NAME" "$DX_BOOTSTRAP_PATH")"
 [ -z "$dx_lease_listing" ] || dx_running_generation="$(dx_bootstrap_lease_generation "$dx_lease_listing" || true)"
 
 outcome="" generation=""

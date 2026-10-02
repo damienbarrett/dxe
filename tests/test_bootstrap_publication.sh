@@ -302,12 +302,22 @@ fi
 # drift check reads a stale PID 1 lease and names the wrong running generation.
 mkdir -p "$root/.locks/leases"
 printf 'stale-gen\tother-boot-id\t1\t29\n' > "$root/.locks/leases/stale-gen.1"
-printf 'live-gen\tdeadbeef-cafe-babe-dead-beefcafebabe\t1\t29\n' > "$root/.locks/leases/live-gen.1"
+printf 'live-gen\tdeadbeef-cafe-babe-dead-beefcafebabe\t1\t99\n' > "$root/.locks/leases/live-gen.1"
+# Docker: the boot id is the host kernel's and survives a container restart, so
+# the previous incarnation's PID 1 lease has the SAME boot id as the live one;
+# only its process start time (fake /proc below reports 99 for every PID)
+# differs. It is the one the old boot-id-only prune kept.
+printf 'prev-incarnation-gen\tdeadbeef-cafe-babe-dead-beefcafebabe\t1\t29\n' > "$root/.locks/leases/prev-incarnation-gen.1"
 run_sync "$good" >/dev/null
 if [ ! -e "$root/.locks/leases/stale-gen.1" ] && [ -f "$root/.locks/leases/live-gen.1" ]; then
     test_pass "an unchanged sync prunes leases from earlier boots and keeps the live one"
 else
     test_fail "an unchanged sync prunes leases from earlier boots and keeps the live one"
+fi
+if [ ! -e "$root/.locks/leases/prev-incarnation-gen.1" ]; then
+    test_pass "an unchanged sync prunes a same-boot lease whose process start time no longer matches (Docker restart)"
+else
+    test_fail "an unchanged sync prunes a same-boot lease whose process start time no longer matches (Docker restart)"
 fi
 
 # A generation published before digests existed has none recorded, so the sync
@@ -1331,6 +1341,122 @@ wp52_setup_garbage_btime() {
     mkdir -p "$lock"
 }
 wp52_case "a /proc/stat btime field that is garbage, with no boot_id file" wp52_setup_garbage_btime
+
+# --- Execution-lease liveness (2-oct-plan step 3, finding 6) -----------------
+# A lease is live only if its boot id, PID AND process start time all match the
+# running guest. Inside a Docker container the boot id never changes across a
+# container restart, so the previous incarnation's PID 1 lease must be told
+# apart from the live one by start time. The guest functions are the shared
+# protocol's (bin/lib/dx-bootstrap-protocol.sh); the fake /proc is the
+# DX_LOCK_PROC_ROOT override the lock fixtures above already use.
+lease_dir="$fixture/lease-liveness"
+lease_proc="$lease_dir/proc"
+lease_boot=feedbeef-1111-2222-3333-444455556666
+lease_reset() {
+    rm -rf "$lease_dir"
+    mkdir -p "$lease_proc/sys/kernel/random" "$lease_dir/leases"
+    printf '%s\n' "$lease_boot" > "$lease_proc/sys/kernel/random/boot_id"
+}
+lease_fake_process() { # <pid> <start>
+    mkdir -p "$lease_proc/$1"
+    printf '%s\n' "$1 (x) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 $2" > "$lease_proc/$1/stat"
+}
+lease_guest() { # <function> -- runs one protocol function on the fixture leases
+    DX_LOCK_PROC_ROOT="$lease_proc" sh -c "$(dx_guest_publication_protocol_snippet)
+$1 \"\$1\"" -- "$lease_dir/leases"
+}
+lease_names() { (cd "$lease_dir/leases" && ls -A | tr '\n' ' '); }
+
+# Docker restart: two PID 1 leases, same boot id, only the newer start time is alive.
+lease_reset
+lease_fake_process 1 2000
+printf 'old-gen\t%s\t1\t1000\n' "$lease_boot" > "$lease_dir/leases/old-gen.1"
+printf 'new-gen\t%s\t1\t2000\n' "$lease_boot" > "$lease_dir/leases/new-gen.1"
+if [ "$(lease_guest execution_leases_live)" = new-gen.1 ] && [ -f "$lease_dir/leases/old-gen.1" ]; then
+    test_pass "the live listing names only the lease whose PID 1 start time matches, and removes nothing"
+else
+    test_fail "the live listing names only the lease whose PID 1 start time matches, and removes nothing (got '$(lease_guest execution_leases_live)')"
+fi
+lease_guest execution_leases_prune
+if [ "$(lease_names)" = "new-gen.1 " ]; then
+    test_pass "prune removes the previous incarnation's same-boot lease and never the live one"
+else
+    test_fail "prune removes the previous incarnation's same-boot lease and never the live one (left: $(lease_names))"
+fi
+lease_guest execution_leases_prune
+if [ "$(lease_names)" = "new-gen.1 " ]; then
+    test_pass "pruning again is a no-op on a clean lease directory"
+else
+    test_fail "pruning again is a no-op on a clean lease directory (left: $(lease_names))"
+fi
+
+# PID reuse: the PID exists but is a different process (different start time).
+lease_reset
+lease_fake_process 4242 60
+printf 'reused-gen\t%s\t4242\t50\n' "$lease_boot" > "$lease_dir/leases/reused-gen.4242"
+lease_guest execution_leases_prune
+if [ -z "$(lease_names)" ]; then
+    test_pass "prune removes a lease whose PID was reused by a process with a different start time"
+else
+    test_fail "prune removes a lease whose PID was reused by a process with a different start time (left: $(lease_names))"
+fi
+
+# Apple: a VM reboot changes the boot id (and PID 1's start can coincide).
+lease_reset
+lease_fake_process 1 29
+printf 'rebooted-gen\tother-boot-id\t1\t29\n' > "$lease_dir/leases/rebooted-gen.1"
+lease_guest execution_leases_prune
+if [ -z "$(lease_names)" ]; then
+    test_pass "prune removes a lease from an earlier boot even when its PID and start time coincide"
+else
+    test_fail "prune removes a lease from an earlier boot even when its PID and start time coincide (left: $(lease_names))"
+fi
+
+# A dead PID (no /proc entry) is stale too.
+lease_reset
+printf 'dead-gen\t%s\t777\t5\n' "$lease_boot" > "$lease_dir/leases/dead-gen.777"
+lease_guest execution_leases_prune
+if [ -z "$(lease_names)" ]; then
+    test_pass "prune removes a lease whose process no longer exists"
+else
+    test_fail "prune removes a lease whose process no longer exists (left: $(lease_names))"
+fi
+
+# Malformed records are removed without aborting, and never reach the listing;
+# a dot-named in-flight temporary write is left alone.
+lease_reset
+lease_fake_process 1 2000
+printf 'good-gen\t%s\t1\t2000\n' "$lease_boot" > "$lease_dir/leases/good-gen.1"
+: > "$lease_dir/leases/empty-gen.1"
+printf 'garbage\n' > "$lease_dir/leases/garbage.2"
+printf 'bad name\t%s\t1\t2000\n' "$lease_boot" > "$lease_dir/leases/bad-name.1"
+printf 'mismatch-gen\t%s\t1\t2000\n' "$lease_boot" > "$lease_dir/leases/other-gen.1"
+printf 'nonnumeric\t%s\tx\ty\n' "$lease_boot" > "$lease_dir/leases/nonnumeric.x"
+printf 'tmp-gen\t%s\t1\t2000\n' "$lease_boot" > "$lease_dir/leases/.lease.9.tmp"
+if [ "$(lease_guest execution_leases_live)" = good-gen.1 ] && lease_guest execution_leases_prune \
+    && [ "$(lease_names)" = ".lease.9.tmp good-gen.1 " ]; then
+    test_pass "malformed leases are ignored and removed without aborting; the live and in-flight ones stay"
+else
+    test_fail "malformed leases are ignored and removed without aborting; the live and in-flight ones stay (left: $(lease_names))"
+fi
+
+# The host reader (dx_bootstrap_lease_generation fed by dx_bootstrap_lease_listing)
+# names the new generation, not whichever .1 sorts first.
+# shellcheck source=../bin/lib/dx-container.sh
+source "$BASE_DIR/bin/lib/dx-container.sh"
+lease_reset
+lease_fake_process 1 2000
+printf 'aaa-old\t%s\t1\t1000\n' "$lease_boot" > "$lease_dir/leases/aaa-old.1"
+printf 'zzz-new\t%s\t1\t2000\n' "$lease_boot" > "$lease_dir/leases/zzz-new.1"
+dx_runtime_exec() { shift; DX_LOCK_PROC_ROOT="$lease_proc" "$@"; }
+mkdir -p "$lease_dir/.locks"; rm -rf "$lease_dir/.locks/leases"; cp -R "$lease_dir/leases" "$lease_dir/.locks/leases"
+reader_listing="$(dx_bootstrap_lease_listing dx-fixture "$lease_dir")"
+if [ "$(dx_bootstrap_lease_generation "$reader_listing")" = zzz-new ]; then
+    test_pass "the drift reader names the generation of the live PID 1, not the first .1 lease by name"
+else
+    test_fail "the drift reader names the generation of the live PID 1, not the first .1 lease by name (listing '$reader_listing')"
+fi
+unset -f dx_runtime_exec
 
 print_summary
 exit_with_code

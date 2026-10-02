@@ -196,6 +196,19 @@ container_stop_bounded() {
     return 1
 }
 
+# The names of the live execution leases in a guest's bootstrap directory,
+# one per line: the shared guest protocol's execution_leases_live, run inside
+# the container. "Live" means boot id, PID and process start time all match
+# (see dx_guest_publication_protocol_snippet), so a previous incarnation's
+# PID 1 lease -- same boot id inside a Docker container, because that is the
+# host kernel's -- is never offered to dx_bootstrap_lease_generation. Prints
+# nothing, and succeeds, when the guest cannot be read.
+dx_bootstrap_lease_listing() {
+    local name="$1" bootstrap_path="$2"
+    dx_runtime_exec "$name" sh -c "$(dx_guest_publication_protocol_snippet)
+execution_leases_live \"\$1/.locks/leases\"" -- "$bootstrap_path" 2>/dev/null || true
+}
+
 # The bootstrap generation the running guest is actually executing, read from
 # the launcher's execution lease.
 #
@@ -313,7 +326,7 @@ dx_bootstrap_report_drift() {
 # below needs the last-observed value even when it never matched.
 dx_bootstrap_confirm_publication_check() {
     local name="$1" bootstrap_path="$2" published="$3" lease_listing
-    lease_listing="$(dx_runtime_exec "$name" sh -c 'ls -1 "$1/.locks/leases" 2>/dev/null || true' -- "$bootstrap_path" 2>/dev/null || true)"
+    lease_listing="$(dx_bootstrap_lease_listing "$name" "$bootstrap_path")"
     running=""
     [ -z "$lease_listing" ] || running="$(dx_bootstrap_lease_generation "$lease_listing" || true)"
     [ "$running" = "$published" ]

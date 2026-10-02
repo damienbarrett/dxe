@@ -173,6 +173,18 @@ it exited with a bind error rather than silently publishing on the wrong
 address (DQ5's invariant always holds); the remedy is the same manual
 start once `tailscale0` has its address again, never a wider publish.
 
+**Troubleshooting: `dx-status` reports a stale "Running" generation after a
+restart.** Inside a Docker container the kernel boot id is the NAS kernel's
+and does not change when the container restarts, so the previous
+incarnation's PID 1 execution lease carries the same boot id as the live one.
+`dx-status` and `dx-start-container` now treat a lease as live only when its
+boot id, PID and process start time all match a running process, and every
+sync (published or unchanged-content skip) prunes the rest, so a false
+"running an older generation" drift line should not recur. If you still see
+one, run `dx-sync-bootstrap` (or any `dx-start-container`) once to prune, then
+re-check `dx-status`; the Docker health check, which looks only at the
+current generation's lease, was always authoritative.
+
 ## 5. Backup
 
 ```sh

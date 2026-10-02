@@ -72,14 +72,7 @@ DX_SYNC_PUBLISHED_CHECK
 
 IFS= read -r -d '' dx_sync_prune_stale_leases_program <<'DX_SYNC_PRUNE_STALE_LEASES' || true
 
-            root=$1
-            boot=$(cat /proc/sys/kernel/random/boot_id) || exit 0
-            for lease in "$root/.locks/leases"/*; do
-                [ -f "$lease" ] || continue
-                tab=$(printf "\t")
-                IFS="$tab" read -r lease_generation lease_boot lease_rest < "$lease" || continue
-                [ "$lease_boot" = "$boot" ] || rm -f "$lease"
-            done
+            execution_leases_prune "$1/.locks/leases"
         
 DX_SYNC_PRUNE_STALE_LEASES
 
@@ -108,7 +101,6 @@ chown root:root "$root" "$generations" "$locks" "$locks/leases"
 chmod 0755 "$root" "$generations"
 chmod 0700 "$locks" "$locks/leases"
 publication_lock_acquire "$lock" 30 || exit 1
-boot=$(cat /proc/sys/kernel/random/boot_id)
 cleanup() { rm -rf "$stage"; publication_lock_release "$lock" 2>/dev/null || true; }
 trap cleanup EXIT
 trap "exit 129" HUP
@@ -152,20 +144,10 @@ touch "$root/.dx-bootstrap-ready"
 rm -f "$root/.dx-bootstrap-waiting"
 
 # Retain current, its immutable predecessor, and generations with a fully
-# matching boot/PID/start-time lease. Stale leases are removed.
+# matching boot/PID/start-time lease. Stale leases are removed
+# (execution_leases_prune, shared protocol).
 current=$generation
-for lease in "$locks/leases"/*; do
-    [ -f "$lease" ] || continue
-    tab=$(printf "\t"); IFS="$tab" read -r lease_gen lease_boot lease_pid lease_start < "$lease" || true
-    lease_name=${lease##*/}
-    case "$lease_gen" in ""|[.-]*|*[!A-Za-z0-9_.-]*) rm -f "$lease"; continue ;; esac
-    case "$lease_boot" in ""|*[!A-Za-z0-9-]*) rm -f "$lease"; continue ;; esac
-    case "$lease_pid" in ""|*[!0-9]*) rm -f "$lease"; continue ;; esac
-    case "$lease_start" in ""|*[!0-9]*) rm -f "$lease"; continue ;; esac
-    [ "$lease_name" = "$lease_gen.$lease_pid" ] || { rm -f "$lease"; continue; }
-    live_start=$(process_start "${lease_pid:-0}" || true)
-    if [ "$lease_boot" != "$boot" ] || [ -z "$live_start" ] || [ "$lease_start" != "$live_start" ]; then rm -f "$lease"; fi
-done
+execution_leases_prune "$locks/leases"
 for candidate in "$generations"/*; do
     [ -d "$candidate" ] || continue; id=${candidate##*/}
     [ "$id" = "$current" ] && continue
@@ -232,10 +214,11 @@ dx_bootstrap_sync() {
             # Skipping it leaves the previous boot's PID 1 lease beside the live
             # one, and dx_bootstrap_lease_generation returns whichever it sees
             # first -- so the drift check would report the guest as running a
-            # generation it booted two restarts ago. Prune by boot id, which is the
-            # part that makes a lease stale across a restart; publication still owns
-            # the fuller process-identity retention pass.
-            dx_runtime_exec "$container" sh -c "$dx_sync_prune_stale_leases_program" -- "$path" >/dev/null 2>&1 || true
+            # generation it booted two restarts ago. Prune by the full incarnation
+            # identity (boot id, PID and process start time), not boot id alone: in
+            # a Docker container the boot id survives a restart.
+            dx_runtime_exec "$container" sh -c "$(dx_guest_publication_protocol_snippet)
+$dx_sync_prune_stale_leases_program" -- "$path" >/dev/null 2>&1 || true
             # Signal boot readiness here too. The guest launcher waits for this
             # marker before resolving `current`, so a skip that stayed silent would
             # stall every restart with unchanged content for the launcher's full
