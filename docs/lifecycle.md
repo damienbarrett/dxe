@@ -147,6 +147,13 @@ operations.
 | 6 | Bootstrap payload | [`bin/dx-sync-bootstrap`](../bin/dx-sync-bootstrap) | *(replaced on next sync)* |
 | 7 | SSH connection | [`bin/dx-ssh`](../bin/dx-ssh) | *(user exits)* |
 
+With no arguments `dx-ssh` attaches the guest's tmux session. When stdin or
+stdout is not a terminal (a script, stdin from `/dev/null`) it does not
+attempt the attach: it proves the guest answers with one non-interactive
+`true` over SSH, prints `no terminal: not attaching tmux; use
+`dx-ssh <command>`` to stderr and exits 0, so a scripted `dx` still ends
+cleanly after a bring-up.
+
 `dx-destroy-volumes` is the only interactive lifecycle script: it lists the
 volumes it is about to remove, requires the user to type `destroy` to confirm,
 and refuses to run non-interactively without `--force`. Every other script is

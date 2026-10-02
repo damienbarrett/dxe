@@ -239,6 +239,13 @@ dx_guest_theme_restore_prefix() {
     printf '%s' 'if [ -x /home/dx/.local/bin/dx-theme-restore ]; then /home/dx/.local/bin/dx-theme-restore 2>/dev/null || true; fi; '
 }
 
+# True when both stdin and stdout are terminals, i.e. an interactive tmux
+# attach can work. A function (not an inline test) so callers and tests have
+# one place to ask, and tests can override it.
+dx_ssh_have_terminal() {
+    [ -t 0 ] && [ -t 1 ]
+}
+
 # Attach an interactive (pty) guest session running $1 inside the boundary
 # above. Prints the "Connecting..." banner once, installs the Apple Terminal
 # colour-restore cleanup, and always returns the real ssh exit status -- it

@@ -10,6 +10,15 @@ if [ ! -f "$DX_SSH_KEY" ]; then
     exit 1
 fi
 
+NO_TERMINAL_NOTE=""
+if [ $# -eq 0 ] && ! dx_ssh_have_terminal; then
+    # No arguments and no terminal (a script, stdin from /dev/null): a tmux
+    # attach would only print "open terminal failed: not a terminal". Prove
+    # the guest answers with one non-interactive `true` instead, then say so.
+    set -- true
+    NO_TERMINAL_NOTE="no terminal: not attaching tmux; use \`dx-ssh <command>\`"
+fi
+
 if [ $# -eq 0 ]; then
     # No arguments: interactive login to tmux. dx_run_interactive_ssh (shared
     # with dx-herdr) owns the "Connecting..." banner, the timezone lookup, the
@@ -50,6 +59,7 @@ else
     ENCODED_COMMAND="$(printf '%s' "$USER_COMMAND" | base64 | tr -d '\n')"
     REMOTE_COMMAND="$(dx_guest_env_prefix "$HOST_TZ") bash -lc 'printf %s $ENCODED_COMMAND | base64 -d | bash -l'"
     ssh "${SSH_OPTS[@]}" "$ENDPOINT" "$REMOTE_COMMAND"
+    if [ -n "$NO_TERMINAL_NOTE" ]; then echo "$NO_TERMINAL_NOTE" >&2; fi
 fi
 }
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then ssh_main "$@"; fi

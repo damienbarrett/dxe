@@ -636,7 +636,15 @@ if diag="$(
     # and fails on a fresh clone, in CI, and in any git worktree. ssh is faked
     # here, so the guard only needs a file to exist.
     : > "$fake_dir/ssh-key"
-    out="$(DX_SSH_KEY="$fake_dir/ssh-key" TERM_PROGRAM=Apple_Terminal "$BASE_DIR/bin/dx-ssh" 2>&1)"
+    # The interactive path needs a terminal; this test runs without one, so
+    # source dx-ssh and say there is one (see dx_ssh_have_terminal).
+    out="$(
+        export DX_SSH_KEY="$fake_dir/ssh-key" TERM_PROGRAM=Apple_Terminal
+        # shellcheck source=/dev/null
+        source "$BASE_DIR/bin/dx-ssh"
+        dx_ssh_have_terminal() { return 0; }
+        ssh_main 2>&1
+    )"
     rc=$?
     rm -rf "$fake_dir"
     connects="$(printf '%s\n' "$out" | grep -c "Connecting to DX guest via SSH")"
@@ -652,6 +660,53 @@ if diag="$(
     test_pass "interactive dx-ssh prints the connect banner once and restores Apple Terminal colours after the session ends (F3)"
 else
     test_fail "interactive dx-ssh prints the connect banner once and restores Apple Terminal colours after the session ends (F3) ($diag)"
+fi
+
+# No arguments and no terminal (how `dx` ends after a bring-up in a script,
+# stdin from /dev/null): the tmux attach cannot work ("open terminal failed:
+# not a terminal"), so dx-ssh proves the connection with ONE non-interactive
+# `true`, says so on stderr and exits 0. With a terminal the interactive path
+# (ssh -t ... tmux) is unchanged. The terminal check is the function
+# dx_ssh_have_terminal, overridden here after sourcing, the same idiom as the
+# other cross-process cases in this section.
+dx_ssh_no_arg_run() {
+    # $1 = terminal answer (0 = a terminal, 1 = none); prints "log|rc|stderr"
+    (
+        fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+        ssh_log="$fake_dir/ssh.log"
+        fake_ssh_write "$fake_dir" "printf 'ARGV:%s\\n' \"\$*\" >> '$ssh_log'; exit 0"
+        export PATH="$fake_dir:$PATH"
+        : > "$fake_dir/ssh-key"
+        export DX_SSH_KEY="$fake_dir/ssh-key"
+        # shellcheck source=/dev/null
+        source "$BASE_DIR/bin/dx-ssh"
+        if [ "$1" = 0 ]; then dx_ssh_have_terminal() { return 0; }; else dx_ssh_have_terminal() { return 1; }; fi
+        rc=0
+        err="$(ssh_main 2>&1 >/dev/null)" || rc=$?
+        calls="$(grep -c '^ARGV:' "$ssh_log" 2>/dev/null || true)"
+        tflags="$(grep -c -- 'ARGV:-t ' "$ssh_log" 2>/dev/null || true)"
+        rm -rf "$fake_dir"
+        printf 'calls=%s tflags=%s rc=%s err=%s' "$calls" "$tflags" "$rc" "$err"
+    )
+}
+notty_out="$(dx_ssh_no_arg_run 1 2>/dev/null)"
+if [[ "$notty_out" == "calls=1 tflags=0 rc=0 err="*"no terminal: not attaching tmux; use \`dx-ssh <command>\`"* ]]; then
+    test_pass "dx-ssh with no arguments and no terminal makes one non-interactive ssh call, notes it on stderr and exits 0"
+else
+    test_fail "dx-ssh with no arguments and no terminal makes one non-interactive ssh call, notes it on stderr and exits 0 ($notty_out)"
+fi
+tty_out="$(dx_ssh_no_arg_run 0 2>/dev/null)"
+if [[ "$tty_out" == "calls=1 tflags=1 rc=0 err="* ]] && [[ "$tty_out" != *"no terminal"* ]]; then
+    test_pass "dx-ssh with no arguments and a terminal still takes the interactive tmux path (ssh -t)"
+else
+    test_fail "dx-ssh with no arguments and a terminal still takes the interactive tmux path (ssh -t) ($tty_out)"
+fi
+
+# The real terminal check (not the override): false with stdin from /dev/null.
+if ( source "$BASE_DIR/bin/lib/dx-ssh-common.sh"; ! dx_ssh_have_terminal </dev/null ); then
+    test_pass "dx_ssh_have_terminal is false when stdin is not a terminal"
+else
+    test_fail "dx_ssh_have_terminal is false when stdin is not a terminal"
 fi
 
 # F3: the function must stop claiming to exec, and no exec-into-ssh may
