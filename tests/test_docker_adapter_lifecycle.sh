@@ -196,6 +196,11 @@ printf '%s\n' "$got" | stdin_matches -F -- "--health-retries" && printf '%s\n' "
 printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.managed=true" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.role=container" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.profile=qnap-dxe__dx-qnap" && test_pass "container_create carries the DQ6 labels" || test_fail "container_create carries the DQ6 labels"
 printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.system=x86_64-linux" && test_pass "container_create carries the io.dxe.system label (Branch 11 / Phase 4)" || test_fail "container_create carries the io.dxe.system label (Branch 11 / Phase 4)"
 printf '%s\n' "$got" | stdin_matches -F -- "--name" && test_pass "container_create keeps --name" || test_fail "container_create keeps --name"
+# The guest's hostname equals its container name, as on the Apple runtime
+# (where `container create --name` also sets it); without --hostname Docker
+# uses the short container ID, which changes on every recreate. Exact adjacent
+# argv lines, so "--hostname" and the name must be one pair.
+printf '%s\n' "$got" | tr '\n' ' ' | stdin_matches -F -- "--hostname dx-qnap " && test_pass "container_create (docker-ssh) passes --hostname equal to the container name" || test_fail "container_create (docker-ssh) passes --hostname equal to the container name (got: $got)"
 printf '%s\n' "$got" | stdin_matches -F -- "-c
 echo hi
 --

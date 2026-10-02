@@ -170,6 +170,25 @@ printf '%s\n' \"\$@\" > '$argv_log'
 )
 [ "$?" -eq 0 ] && test_pass "lock_acquire carries io.dxe.system alongside its existing DQ6 labels" || test_fail "lock_acquire carries io.dxe.system alongside its existing DQ6 labels"
 
+# The lock container is never started, so it gets no hostname flag (only the
+# guest container does; see test_docker_adapter_lifecycle.sh).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/lock-acquire-nohostname.log"
+    fake_tool_write "$dir" docker "
+[ \"\$1\" = create ] || { echo UNMATCHED >&2; exit 99; }
+shift
+printf '%s\n' \"\$@\" > '$argv_log'
+"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_docker_lock_acquire >/dev/null
+    [ -s "$argv_log" ] && ! stdin_matches -F -- "--hostname" < "$argv_log"
+)
+[ "$?" -eq 0 ] && test_pass "lock_acquire passes no --hostname (the lock container is never started)" || test_fail "lock_acquire passes no --hostname (the lock container is never started)"
+
 # Acquire: fails (name conflict) when already held.
 (
     dir="$(new_tool_dir)"

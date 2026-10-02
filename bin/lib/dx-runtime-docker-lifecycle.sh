@@ -224,7 +224,10 @@ dx_runtime_docker_container_create() {
     # dx_runtime_docker_exec's own module comment above for the full
     # reasoning and bin/lib/dx-runtime-apple.sh's container_create for the
     # same fix on the Apple side.
-    dx_runtime_docker_cli create --name "$name" --entrypoint sh \
+    # --hostname equals --name: Apple's `container create --name` also sets the
+    # guest hostname, but Docker would use the short container ID (new on every
+    # recreate), so the guest would differ between runtimes for no reason.
+    dx_runtime_docker_cli create --name "$name" --hostname "$name" --entrypoint sh \
         "${flags[@]+"${flags[@]}"}" "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}" \
         "$image" -c "$entrypoint_cmd" -- "${entrypoint_args[@]+"${entrypoint_args[@]}"}"
 }

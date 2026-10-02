@@ -69,6 +69,9 @@ described below; its SSH keys live separately under `~/.ssh/dxe/`.
    assuming a slow start is a hang; see
    ["Operating a QNAP guest"](lifecycle.md#operating-a-qnap-guest) and
    `docs/troubleshooting.md`.
+   The guest's hostname is its container name (the adapter passes
+   `--hostname` equal to `--name`, as Apple does), so the shell prompt and tmux
+   status read the same on every recreate and on both runtimes.
 
 ## 2. Preflight (before every operational session, not only install)
 
