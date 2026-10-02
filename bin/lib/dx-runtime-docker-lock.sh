@@ -26,8 +26,13 @@
 # cannot serve as an exclusion primitive; `docker create --name X` fails
 # atomically with a "Conflict... name is already in use" error if X
 # exists) -- so the lock itself is a labelled, never-started container
-# named "dxe-lock-<profile-id>", using the already-pulled/tagged $DX_IMAGE
-# as its (never run) base image. The owner label identifies more than a
+# named "dxe-lock-<profile-id>", using the Containerfile's pinned base image
+# reference (dx_runtime_docker_base_image_ref, the same reference
+# dx_runtime_docker_image_build pulls) as its (never run) base image. Never
+# $DX_IMAGE: that is a local-only tag the profile's own dx-create-image
+# makes, so it does not exist -- and cannot be pulled -- on the remote
+# daemon for a never-created profile, and dx acquires this lock BEFORE
+# dx-create-image (WP6.5). The owner label identifies more than a
 # PID alone (docs/refactor/constraints.md: "Locks and execution leases
 # identify an owner by more than PID alone"): controller hostname, this
 # process's PID, a random component, and a UTC timestamp.
@@ -48,7 +53,12 @@ dx_runtime_docker_lock_owner_token() {
 # acquisition can pass that exact token back to dx_runtime_docker_lock_release.
 
 dx_runtime_docker_lock_acquire() {
-    local lock_name owner
+    local lock_name owner base_ref
+    [ -n "${DX_CONTEXT_DIR:-}" ] || {
+        echo "Error: DX_CONTEXT_DIR is not set; the remote lock needs the Containerfile's pinned base image reference." >&2
+        return 1
+    }
+    base_ref="$(dx_runtime_docker_base_image_ref "$DX_CONTEXT_DIR")" || return 1
     lock_name="$(dx_runtime_docker_lock_name)"
     owner="$(dx_runtime_docker_lock_owner_token)"
     # Reuses the same shared label helper containers and volumes already
@@ -58,7 +68,7 @@ dx_runtime_docker_lock_acquire() {
     dx_runtime_docker_cli create --name "$lock_name" \
         "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}" \
         --label "io.dxe.owner=$owner" \
-        "$DX_IMAGE" >/dev/null 2>&1 || {
+        "$base_ref" >/dev/null 2>&1 || {
         echo "Error: could not acquire the remote lock '$lock_name' (it may already be held -- run 'dx-lock status' to see by whom)." >&2
         # Astra F4 / WP6.5: this atomic create-fails-if-present primitive
         # can never distinguish a live owner from an interrupted one (the

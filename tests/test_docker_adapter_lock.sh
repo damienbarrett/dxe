@@ -71,6 +71,14 @@ mkdir -p "$dxe_adapter_home"
 unset XDG_STATE_HOME
 export HOME="$dxe_adapter_home"
 
+# The lock container's base image is the Containerfile's pinned FROM
+# reference (never $DX_IMAGE, which does not exist for a never-created
+# profile), read from DX_CONTEXT_DIR -- which bin/lib/dx-config.sh always
+# resolves for a real run. Direct-call scenarios below use this repository's
+# own context directory; the missing-Containerfile scenario overrides it.
+export DX_CONTEXT_DIR="$BASE_DIR/container/dx-nixos-26.05"
+lock_base_ref="$(sed -n 's/^FROM //p' "$DX_CONTEXT_DIR/Containerfile")"
+
 expect_ok() { local label="$1"; shift; if "$@"; then test_pass "$label"; else test_fail "$label"; fi; }
 expect_reject() { local label="$1"; shift; if "$@" >/dev/null 2>&1; then test_fail "$label"; else test_pass "$label"; fi; }
 
@@ -174,6 +182,119 @@ printf '%s\n' \"\$@\" > '$argv_log'
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "may already be held"
 )
 [ "$?" -eq 0 ] && test_pass "lock_acquire: refuses when the lock is already held" || test_fail "lock_acquire: refuses when the lock is already held"
+
+# Acquire: the lock's (never run) base image is the Containerfile's pinned
+# base reference, never $DX_IMAGE -- the profile's own image is a local-only
+# tag that does not exist (and cannot be pulled) before dx-create-image.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/lock-acquire-image.log"
+    fake_tool_write "$dir" docker "
+[ \"\$1\" = create ] || { echo UNMATCHED >&2; exit 99; }
+printf '%s\\n' \"\${!#}\" > '$argv_log'
+"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_runtime_docker_lock_acquire >/dev/null || exit 1
+    [ -n "$lock_base_ref" ] && [ "$(cat "$argv_log")" = "$lock_base_ref" ] && [ "$(cat "$argv_log")" != dx-qnap-nixos ]
+)
+[ "$?" -eq 0 ] && test_pass "lock_acquire: the lock container uses the pinned base image reference, not DX_IMAGE" || test_fail "lock_acquire: the lock container uses the pinned base image reference, not DX_IMAGE"
+
+# Acquire for a profile whose own image is absent on the remote daemon: the
+# fake daemon only knows the pinned base image (create of any other image
+# fails like a missing, un-pullable local tag), and the acquire succeeds.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker "
+[ \"\$1\" = create ] || { echo UNMATCHED >&2; exit 99; }
+[ \"\${!#}\" = '$lock_base_ref' ] && exit 0
+echo \"Unable to find image '\${!#}' locally\" >&2; exit 1
+"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-new DX_IMAGE=dx-new-nixos DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    owner="$(dx_runtime_docker_lock_acquire)" && [ -n "$owner" ]
+)
+[ "$?" -eq 0 ] && test_pass "lock_acquire: succeeds for a never-created profile whose DX_IMAGE is absent remotely" || test_fail "lock_acquire: succeeds for a never-created profile whose DX_IMAGE is absent remotely"
+
+# Acquire: a pinned base reference that cannot be read is a configuration
+# error (no guessing, no docker call at all), for a missing Containerfile
+# and for an unset DX_CONTEXT_DIR alike.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    argv_log="$fixture/lock-acquire-noref.log"
+    : > "$argv_log"
+    fake_tool_write "$dir" docker "printf '%s\\n' \"\$*\" >> '$argv_log'; exit 0"
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    empty_ctx="$fixture/empty-context"; mkdir -p "$empty_ctx"
+    out="$(DX_CONTEXT_DIR="$empty_ctx" dx_runtime_docker_lock_acquire 2>&1)"; rc1=$?
+    out2="$(unset DX_CONTEXT_DIR; dx_runtime_docker_lock_acquire 2>&1)"; rc2=$?
+    [ "$rc1" -ne 0 ] && [ "$rc2" -ne 0 ] && [ ! -s "$argv_log" ] \
+        && printf '%s\n' "$out" | stdin_matches -F -- "no Containerfile in $empty_ctx" \
+        && printf '%s\n' "$out2" | stdin_matches "DX_CONTEXT_DIR"
+)
+[ "$?" -eq 0 ] && test_pass "lock_acquire: an unreadable pinned base reference is a configuration error with no docker call" || test_fail "lock_acquire: an unreadable pinned base reference is a configuration error with no docker call"
+
+# Acquire: held case still refuses and prints the owner metadata (directly,
+# not only through dx_lifecycle_lock_acquire).
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" docker '
+case "$1 $2" in
+    "create --name") echo "Error: Conflict. The container name ... is already in use" >&2; exit 1 ;;
+    "container inspect") echo "ghost-host:7:8:20260101T000000Z|2026-01-01T00:00:00Z" ;;
+    *) echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    out="$(dx_runtime_docker_lock_acquire 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "held by ghost-host:7:8:20260101T000000Z since 2026-01-01T00:00:00Z"
+)
+[ "$?" -eq 0 ] && test_pass "lock_acquire: a held lock still refuses and prints the owner metadata" || test_fail "lock_acquire: a held lock still refuses and prints the owner metadata"
+
+# dx for a never-created profile (fake docker that only knows the pinned base
+# image; stub lifecycle children; real lifecycle-lock functions): the lock is
+# acquired BEFORE dx-create-image (WP6.5) and the bring-up still runs
+# dx-create-keys -> ... -> dx-start-container in order, then dx-ssh.
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    flow_log="$fixture/dx-new-profile-flow.log"
+    : > "$flow_log"
+    fake_tool_write "$dir" docker "
+case \"\$1\" in
+    create)
+        [ \"\${!#}\" = '$lock_base_ref' ] || { echo \"Unable to find image '\${!#}' locally\" >&2; exit 1; }
+        printf 'lock-created\\n' >> '$flow_log'; exit 0 ;;
+    container) echo \"true|qnap-dxe__dx-new|lock|\$DXE_LIFECYCLE_LOCK_OWNER\"; exit 0 ;;
+    rm) printf 'lock-released\\n' >> '$flow_log'; exit 0 ;;
+    *) echo \"UNMATCHED: \$*\" >&2; exit 99 ;;
+esac
+"
+    children="$fixture/dx-new-profile-children"
+    mkdir -p "$children"
+    for child in dx-create-keys dx-create-image dx-create-volumes dx-create-container dx-start-container dx-wait-ssh dx-ssh; do
+        printf '#!/bin/bash\nprintf "%%s\\n" "${0##*/}" >> "%s"\n' "$flow_log" > "$children/$child"
+        chmod +x "$children/$child"
+    done
+    PATH="$dir:/usr/bin:/bin"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-new DX_IMAGE=dx-new-nixos DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    dx_require_container_cli() { return 0; }
+    container_system_is_running() { return 0; }
+    container_is_running() { return 1; }
+    dx_connect_or_bring_up "$children" >/dev/null 2>&1 || exit 1
+    [ "$(tr '\n' ' ' < "$flow_log")" = "lock-created dx-create-keys dx-create-image dx-create-volumes dx-create-container dx-start-container dx-wait-ssh lock-released dx-ssh " ]
+)
+[ "$?" -eq 0 ] && test_pass "dx (docker-ssh, never-created profile): locks with the pinned base image, then runs dx-create-keys through dx-start-container in order" || test_fail "dx (docker-ssh, never-created profile): locks with the pinned base image, then runs dx-create-keys through dx-start-container in order"
 
 # Audit: "not held" when absent.
 (

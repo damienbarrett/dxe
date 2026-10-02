@@ -171,7 +171,10 @@ profile. `bin/lib/dx-container.sh`'s `dx_lifecycle_lock_acquire`/
 entrypoint (`dx-create-container`, `dx-start-container`, `dx-stop-container`,
 `dx-destroy-container`, `dx-destroy`, `dx-recreate`, `dx`) now calls before
 its first mutating runtime call, refusing (or, on Apple, waiting briefly)
-rather than issuing any mutation when the lock cannot be claimed.
+rather than issuing any mutation when the lock cannot be claimed. Under
+docker-ssh the lock container is created from the Containerfile's pinned base
+image reference, never `$DX_IMAGE`: `dx` takes the lock before `dx-create-image`,
+so a never-created profile's own image does not exist yet.
 
 **Nested ownership.** An orchestrator that runs a mutating entrypoint as a
 child process — `dx` running `dx-create-container`/`dx-start-container`,

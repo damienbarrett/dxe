@@ -117,7 +117,10 @@ running but the port not open yet (shows the most recent bootstrap-progress
 marker) and the port open but the guest not answering a login shell (shows
 that probe's own error). Under `DX_RUNTIME=docker-ssh` it also shows the
 remote per-profile lock's read-only state; `bin/dx-lock status`/`unlock
---force` manage that lock explicitly (never on elapsed time alone, DQ6).
+--force` manage that lock explicitly (never on elapsed time alone, DQ6). The
+lock is a never-started container built from the Containerfile's pinned base
+image reference (not the profile's own image), so the first `dx` for a
+brand-new profile can take it before `dx-create-image` has made that image.
 
 Commands with no remote parity — refuse immediately, before any mutation,
 naming why (`qnap-dxe-plan.md` DQ8): `dx-mount DIR` (a controller-local
