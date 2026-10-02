@@ -53,7 +53,7 @@ container_owned() {
     printf 'owned:%s:%s\n' "$1" "$2" >> "$QX_TEST_LOG"
     return "${QX_TEST_OWNED_STATUS:-0}"
 }
-dx_lifecycle_lock_acquire() { printf '%s\n' lock >> "$QX_TEST_LOG"; }
+dx_lifecycle_lock_acquire() { printf '%s\n' lock >> "$QX_TEST_LOG"; return "${QX_TEST_LOCK_STATUS:-0}"; }
 dx_lifecycle_lock_release() { printf '%s\n' unlock >> "$QX_TEST_LOG"; }
 LIB
 for entrypoint in dx-create-keys dx-create-image dx-create-volumes dx-create-container dx-start-container dx-wait-ssh dx-ssh; do
@@ -87,14 +87,14 @@ expect_log() {
 run_qx 'printf "%s\n" "two words"' '' '-argument'
 printf '<%s>\n' 'printf "%s\n" "two words"' '' '-argument' > "$fixture/expected-args"
 if [ "$qx_status" -eq 0 ] \
-    && expect_log available system-status running:dx-qnap-contract owned:dx-qnap-contract:connect dx-ssh \
+    && expect_log available system-status running:dx-qnap-contract lock owned:dx-qnap-contract:connect unlock dx-ssh \
     && cmp -s "$fixture/expected-args" "$QX_TEST_ARGS"; then
     test_pass "running canary connects directly with the profile and preserves argument boundaries"
 else
     test_fail "running canary connects directly with the profile and preserves argument boundaries"
 fi
 run_qx
-if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-qnap-contract owned:dx-qnap-contract:connect dx-ssh; then
+if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-qnap-contract lock owned:dx-qnap-contract:connect unlock dx-ssh; then
     test_pass "interactive qx reaches the existing SSH/tmux entrypoint"
 else
     test_fail "interactive qx reaches the existing SSH/tmux entrypoint"
@@ -116,14 +116,21 @@ else
     test_fail "unreachable runtime fails before SSH or lifecycle dispatch"
 fi
 QX_TEST_OWNED_STATUS=17 run_qx 'uname -a'
-if [ "$qx_status" -eq 17 ] && expect_log available system-status running:dx-qnap-contract owned:dx-qnap-contract:connect \
+if [ "$qx_status" -eq 17 ] && expect_log available system-status running:dx-qnap-contract lock owned:dx-qnap-contract:connect unlock \
     && [ ! -e "$QX_TEST_ARGS" ]; then
     test_pass "foreign same-named container is refused before SSH"
 else
     test_fail "foreign same-named container is refused before SSH"
 fi
+QX_TEST_LOCK_STATUS=1 run_qx 'uname -a'
+if [ "$qx_status" -ne 0 ] && expect_log available system-status running:dx-qnap-contract lock \
+    && [ ! -e "$QX_TEST_ARGS" ]; then
+    test_pass "a held lifecycle lock refuses a reconnect before the ownership check, SSH or any lifecycle child"
+else
+    test_fail "a held lifecycle lock refuses a reconnect before the ownership check, SSH or any lifecycle child (status $qx_status)"
+fi
 QX_TEST_COMMAND_STATUS=23 run_qx 'uname -a'
-if [ "$qx_status" -eq 23 ] && expect_log available system-status running:dx-qnap-contract owned:dx-qnap-contract:connect dx-ssh; then
+if [ "$qx_status" -eq 23 ] && expect_log available system-status running:dx-qnap-contract lock owned:dx-qnap-contract:connect unlock dx-ssh; then
     test_pass "SSH failure propagates without trying a lifecycle update"
 else
     test_fail "SSH failure propagates without trying a lifecycle update"
@@ -131,7 +138,7 @@ fi
 
 # The ordinary entrypoint exercises the same path under a different container.
 DX_CONTAINER_NAME=dx-local-contract QX_TEST_ENTRYPOINT=dx run_qx 'uname -a'
-if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-local-contract owned:dx-local-contract:connect dx-ssh; then
+if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-local-contract lock owned:dx-local-contract:connect unlock dx-ssh; then
     test_pass "dx connects directly under its selected container"
 else
     test_fail "dx connects directly under its selected container"
@@ -189,14 +196,14 @@ fi
 mkdir -p "$XDG_CONFIG_HOME/dxe/profiles" "$fixture/override" "$fixture/home/.config/dxe/profiles"
 printf '%s\n' 'DX_CONTAINER_NAME=dx-user-contract' > "$XDG_CONFIG_HOME/dxe/profiles/qnap-canary.env"
 run_qx 'uname -a'
-if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-user-contract owned:dx-user-contract:connect dx-ssh; then
+if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-user-contract lock owned:dx-user-contract:connect unlock dx-ssh; then
     test_pass "qx prefers external XDG user config over the bundled profile"
 else
     test_fail "qx prefers external XDG user config over the bundled profile"
 fi
 printf '%s\n' 'DX_CONTAINER_NAME=dx-override-contract' > "$fixture/override/qnap-canary.env"
 DX_PROFILES_DIR="$fixture/override" run_qx
-if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-override-contract owned:dx-override-contract:connect dx-ssh; then
+if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-override-contract lock owned:dx-override-contract:connect unlock dx-ssh; then
     test_pass "explicit DX_PROFILES_DIR overrides user and bundled profiles"
 else
     test_fail "explicit DX_PROFILES_DIR overrides user and bundled profiles"
@@ -209,7 +216,7 @@ else
 fi
 printf '%s\n' 'DX_CONTAINER_NAME=dx-home-contract' > "$fixture/home/.config/dxe/profiles/qnap-canary.env"
 HOME="$fixture/home" XDG_CONFIG_HOME= run_qx
-if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-home-contract owned:dx-home-contract:connect dx-ssh; then
+if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-home-contract lock owned:dx-home-contract:connect unlock dx-ssh; then
     test_pass "qx uses HOME/.config when XDG_CONFIG_HOME is empty"
 else
     test_fail "qx uses HOME/.config when XDG_CONFIG_HOME is empty"

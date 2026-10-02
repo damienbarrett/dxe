@@ -506,6 +506,8 @@ dxe_wp65_write_lock_held_docker() {
 case \"\$1 \$2\" in
     \"version --format\") echo 27.3.1 ;;
     \"info --format\") echo 'abc123def|qnap-fake|x86_64|linux' ;;
+    # bin/dx's service-readiness probe: a read-only plain docker info.
+    \"info \") exit 0 ;;
     \"container inspect\")
         case \"\$*\" in
             *dxe-lock-*) echo 'someone-else:1:2:20260101T000000Z|2026-01-01T00:00:00Z' ;;

@@ -25,11 +25,16 @@ fi
 # Reconnecting is read-only: bootstrap publication belongs to an explicit
 # start, and a running guest cannot activate newly published code itself.
 if container_is_running "$DX_CONTAINER_NAME"; then
-    container_owned "$DX_CONTAINER_NAME" connect
-    if [ "$lifecycle_locked" = true ]; then
-        dx_lifecycle_lock_release
-        trap - EXIT HUP INT TERM
+    # The lock is held only around the ownership decision (nothing is
+    # created or synced) so a reconnect still refuses, printing the holder,
+    # while another controller owns the lifecycle.
+    if [ "$lifecycle_locked" = false ]; then
+        dx_lifecycle_lock_acquire || exit 1
+        trap dx_lifecycle_lock_release EXIT HUP INT TERM
     fi
+    container_owned "$DX_CONTAINER_NAME" connect
+    dx_lifecycle_lock_release
+    trap - EXIT HUP INT TERM
     exec "$SCRIPT_DIR/dx-ssh" "$@"
 fi
 
