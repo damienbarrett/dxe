@@ -615,5 +615,63 @@ else
 fi
 rm -rf "$ev_dir" "$ev_marker"
 
+# --- Section 4's live tail asserts the guest's own hostname (`cat
+# /etc/hostname` and `uname -n` over dx-ssh) equals DX_CONTAINER_NAME. Only a
+# real guest can answer that, so this proves the CASE: the real section 4 runs
+# under a throwaway fixture profile (non-default name and port, key in a temp
+# dir) with stub container/ssh on PATH, the stub ssh decoding the base64
+# command dx-ssh sends and answering the hostname questions with
+# DXE_STUB_HOSTNAME. A matching name passes both checks; a different name
+# fails both. Nothing real is reachable: the stubs are first on PATH.
+hn_dir="$(mktemp -d -t dxe-hostname-case.XXXXXX)"
+mkdir "$hn_dir/profiles"
+: > "$hn_dir/key"
+{
+    printf 'export DX_CONTAINER_NAME=dxe-hostname-fixture\n'
+    printf 'export DX_IMAGE=dxe-hostname-fixture-image\n'
+    printf 'export DX_SSH_PORT=2398\n'
+    printf 'export DX_NIX_VOLUME=dxe-hostname-fixture-nix\n'
+    printf 'export DX_PERSIST_VOLUME=dxe-hostname-fixture-persist\n'
+    printf 'export DX_BOOTSTRAP_VOLUME=dxe-hostname-fixture-bootstrap\n'
+    printf 'export DX_SSH_KEY=%s/key\n' "$hn_dir"
+    printf 'export DX_SSH_KEY_PUB=%s/key.pub\n' "$hn_dir"
+} > "$hn_dir/profiles/dxe-hostname-fixture.env"
+hn_stub="$hn_dir/bin"
+mkdir "$hn_stub"
+cp "$STUB_DIR/container" "$hn_stub/container"
+cat > "$hn_stub/ssh" <<'HNSTUB'
+#!/bin/bash
+for a in "$@"; do last="$a"; done
+enc="${last#*printf %s }"
+enc="${enc%% |*}"
+cmd="$(printf %s "$enc" | base64 -d 2>/dev/null)"
+case "$cmd" in
+    *"/etc/hostname"*|*"uname -n"*) printf '%s\n' "$DXE_STUB_HOSTNAME" ;;
+esac
+exit 0
+HNSTUB
+chmod +x "$hn_stub/ssh"
+hn_run() {
+    DXE_TEST_RESULTS="" DXE_STUB_MARKER="$hn_dir/marker" DXE_STUB_HOSTNAME="$1" PATH="$hn_stub:$PATH" \
+        SKIP_INTEGRATION=false DX_PROFILES_DIR="$hn_dir/profiles" \
+        "$SCRIPT_DIR/../bin/dx-profile" dxe-hostname-fixture bash "$SCRIPT_DIR/test_section4_ssh.sh" 2>&1 || true
+}
+hn_out="$(hn_run dxe-hostname-fixture)"
+if printf '%s' "$hn_out" | stdin_matches -F 'PASS' && printf '%s' "$hn_out" | stdin_matches -F 'guest /etc/hostname equals DX_CONTAINER_NAME' \
+    && ! printf '%s' "$hn_out" | stdin_matches -F 'FAIL' \
+    && printf '%s' "$hn_out" | stdin_matches -F 'guest uname -n equals DX_CONTAINER_NAME'; then
+    test_pass "section 4's live tail passes when the guest answers its own container name for /etc/hostname and uname -n"
+else
+    test_fail "section 4's live tail passes when the guest answers its own container name (output: $hn_out)"
+fi
+hn_out="$(hn_run some-other-name)"
+if printf '%s' "$hn_out" | stdin_matches -F 'FAIL' && printf '%s' "$hn_out" | stdin_matches -F 'guest /etc/hostname equals DX_CONTAINER_NAME' \
+    && printf '%s' "$hn_out" | stdin_matches -F 'guest uname -n equals DX_CONTAINER_NAME'; then
+    test_pass "section 4's live tail fails both hostname checks when the guest answers a different name"
+else
+    test_fail "section 4's live tail fails both hostname checks when the guest answers a different name (output: $hn_out)"
+fi
+rm -rf "$hn_dir"
+
 print_summary
 exit_with_code

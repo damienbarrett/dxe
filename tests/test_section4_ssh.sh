@@ -78,6 +78,23 @@ if ! live_tail_enabled; then test_skip "SSH live behavior skipped by --skip-inte
         :
     elif "$BASE_DIR/bin/dx-ssh" true; then
         test_pass "key-only SSH live probe succeeds"
+        # Hostname parity, runtime-neutral and behavioural: the guest must
+        # call itself by the name the host knows it by, whichever runtime
+        # (Apple container, docker-ssh) created it. The fake-daemon argv test
+        # of the --hostname flag stays as the unit-level guard; only a real
+        # guest can answer this.
+        guest_etc_hostname="$("$BASE_DIR/bin/dx-ssh" cat /etc/hostname 2>/dev/null || true)"
+        if [ "$guest_etc_hostname" = "$DX_CONTAINER_NAME" ]; then
+            test_pass "guest /etc/hostname equals DX_CONTAINER_NAME"
+        else
+            test_fail "guest /etc/hostname equals DX_CONTAINER_NAME (guest said '$guest_etc_hostname', expected '$DX_CONTAINER_NAME')"
+        fi
+        guest_uname_n="$("$BASE_DIR/bin/dx-ssh" uname -n 2>/dev/null || true)"
+        if [ "$guest_uname_n" = "$DX_CONTAINER_NAME" ]; then
+            test_pass "guest uname -n equals DX_CONTAINER_NAME"
+        else
+            test_fail "guest uname -n equals DX_CONTAINER_NAME (guest said '$guest_uname_n', expected '$DX_CONTAINER_NAME')"
+        fi
     else
         test_fail "key-only SSH live probe succeeds"
     fi
