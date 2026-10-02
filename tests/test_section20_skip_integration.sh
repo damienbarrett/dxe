@@ -537,7 +537,12 @@ if printf '%s' "$lt_out" | stdin_matches -F -x 'probe-rc=0'; then
 else
     test_fail "./bin/dx-profile dx-test tests/run.sh --live reaches the live tail (output: $lt_out)"
 fi
-lt_out="$(DXE_TEST_RESULTS="" DXE_STUB_MARKER="$lt_marker" PATH="$STUB_DIR:$PATH" env -u SKIP_INTEGRATION \
+# "No profile" must mean registry defaults even when THIS suite itself runs
+# under a profile (./bin/dx-profile dx-test tests/run_all_tests.sh --live
+# exports the whole resolved-config snapshot): start from an empty
+# environment, carrying only what the inner run needs.
+lt_out="$(env -i PATH="$STUB_DIR:$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" \
+    DXE_TEST_RESULTS="" DXE_STUB_MARKER="$lt_marker" \
     bash "$SCRIPT_DIR/run.sh" --live --file "$lt_probe" 2>&1)"
 if printf '%s' "$lt_out" | stdin_matches -F -x 'probe-rc=1' && printf '%s' "$lt_out" | stdin_matches -F 'FAIL'; then
     test_pass "tests/run.sh --live without a profile (default guest) is refused"
