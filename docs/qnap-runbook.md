@@ -520,7 +520,12 @@ authentication of its own; the tailnet is the access control. With the field
    and **kills running tmux sessions**; `/persist`, `/nix` and the bootstrap
    volume are kept. Both the second mapping and the guest-visible
    `DX_USAGE_SERVICE` variable are fixed at container creation, so changing
-   either later needs another recreate.
+   either later needs another recreate. The first boot with the service on
+   upgrades the essentials profile (it adds the s6 tools to an existing
+   guest), which needs network access and takes longer than a normal boot; the
+   guest log shows an "Upgrading the essentials profile" line. If the boot cannot
+   complete, `dx` stops waiting once the restart count rises (see its error and
+   the last log lines) instead of polling for the full timeout.
 3. Verify: `./bin/dx-profile <profile> ./bin/dx-usage-service status`, then
    from a tailnet device
    `curl -s http://<NAS tailnet name>:8787/health/live` (200),
@@ -543,9 +548,30 @@ implementations, `bin/agent-stats-rust`, `bin/agent-stats-python`,
 # pinned flake reference (needs repository access from the guest)
 nix build --no-link --print-out-paths \
   github:<OWNER>/agent-stats/<commit>#agent-stats-release
-# or a copied source tree
-nix build --no-link --print-out-paths path:/path/to/tree#agent-stats-release
 ```
+
+**Copying a source tree instead.** The `dx` user's non-interactive `PATH` has
+no `tar`, and `dx-ssh` does not forward stdin, so a tar pipe or `dx-put` of a
+tree does not work. Copy a **git bundle** to the guest's published address and
+build from a clone of it. On the machine that has the source:
+
+```bash
+git bundle create /tmp/agent-stats.bundle --all
+scp -P <SSH port> -i <profile key> /tmp/agent-stats.bundle dx@<guest address>:/tmp/
+```
+
+then, as `dx` inside the guest:
+
+```bash
+git clone /tmp/agent-stats.bundle /tmp/agent-stats-src
+nix build --no-link --print-out-paths \
+  "git+file:///tmp/agent-stats-src?rev=<commit>#agent-stats-release"
+```
+
+`<SSH port>` and `<profile key>` come from your private profile
+(`DX_SSH_PORT`, `DX_SSH_KEY`), and the guest address is the published
+Tailscale address. For the same commit the store path is identical to the one
+the pinned GitHub reference builds.
 
 Register the result as a Nix GC root and select it. Move the old `current`
 target to `previous` first, so a rollback target always exists:

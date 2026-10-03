@@ -272,6 +272,20 @@ if grep -q '^## 10\. Usage service$' "$runbook" \
 else
     test_fail "the QNAP runbook documents enabling, the publication rule, release selection, logs, the Apple URL and the dx-ai hook"
 fi
+# Copying a source tree into the guest: no tar on the dx user's non-interactive
+# PATH and dx-ssh does not forward stdin, so the runbook documents a git bundle.
+if grep -Fq 'git bundle' "$runbook" && grep -Fq 'scp -P <SSH port> -i <profile key>' "$runbook" \
+    && grep -Fq 'git clone' "$runbook" && grep -Fq 'git+file://' "$runbook" && grep -Fq '?rev=<commit>#agent-stats-release' "$runbook" \
+    && grep -Fq 'no `tar`' "$runbook"; then
+    test_pass "the QNAP runbook documents copying a source tree as a git bundle (scp, git clone, git+file build)"
+else
+    test_fail "the QNAP runbook documents copying a source tree as a git bundle (scp, git clone, git+file build)"
+fi
+if grep -Fq 'upgrades the essentials profile' "$runbook" && grep -Fq 'needs network access' "$runbook"; then
+    test_pass "the QNAP runbook says the first service-on boot upgrades the essentials profile (network, slower)"
+else
+    test_fail "the QNAP runbook says the first service-on boot upgrades the essentials profile (network, slower)"
+fi
 if grep -Fq 'Guest usage-service mode' "$BASE_DIR/docs/lifecycle.md" && grep -Fq 's6-svscan' "$BASE_DIR/docs/lifecycle.md"; then
     test_pass "docs/lifecycle.md describes the guest usage-service mode"
 else
