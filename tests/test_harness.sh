@@ -690,6 +690,24 @@ check contains "$ee_out" "2 passed"
 check contains "$ee_out" "outer_lines=1"
 rm -rf "$ee_dir"
 
+# --- (ff) Fail-closed fake-tool directories (fix/fixture-host-alias-fail-closed).
+# fake_tool_dir_create seeds a refusing default for every network-reaching
+# tool, so a fixture that forgot to write one of its fakes fails loudly
+# instead of falling through to a real ssh/docker/... on PATH.
+ff_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+for ff_tool in ssh scp sftp docker tailscale container nix curl; do
+    check test -x "$ff_dir/$ff_tool"
+    ff_err="$("$ff_dir/$ff_tool" some args 2>&1 >/dev/null)" && ff_status=0 || ff_status=$?
+    check test "$ff_status" -eq 99
+    check test "$ff_err" = "fake-tools: no fake for $ff_tool; refusing to reach a real host"
+done
+# A real fake written afterwards overwrites the default at the same path.
+fake_tool_write "$ff_dir" ssh 'echo real-fake'
+check test "$("$ff_dir/ssh")" = "real-fake"
+fake_qnap_ssh_write "$ff_dir"
+check test "$("$ff_dir/ssh" true && echo overwritten)" = "overwritten"
+rm -rf "$ff_dir"
+
 rm -f "$RESULTS"
 
 [ "$failures" -eq 0 ]

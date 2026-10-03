@@ -210,6 +210,7 @@ esac'
     # host that really has /usr/bin/docker (GitHub's ubuntu runners) makes
     # discovery succeed and this refusal never happens.
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
+    rm -f "$dir/docker" # absence is the scenario: drop the fail-closed default from new_tool_dir
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     out="$(dx_runtime_available 2>&1)"; rc=$?
@@ -248,6 +249,7 @@ esac'
     # controller's PATH this used to pass for the wrong reason (discovery
     # took /usr/bin/docker and the glob was never exercised).
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
+    rm -f "$dir/docker" # absence is the scenario: drop the fail-closed default from new_tool_dir
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     DX_RUNTIME_DOCKER_BIN_GLOB="$dir/share/*/.qpkg/container-station/bin/docker" dx_runtime_available &&
@@ -524,6 +526,7 @@ esac'
     link_coreutils_into "$dir" head
     PATH="$dir:/usr/bin:/bin"
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
+    rm -f "$dir/tailscale" # absence is the scenario: drop the fail-closed default from new_tool_dir
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
     unset DXE_RUNTIME_GUEST_SSH_ADDRESS
     DX_RUNTIME_DOCKER_TAILSCALE_BIN_GLOB="$qpkg_dir/tailscale" dx_runtime_guest_ssh_address 2>/dev/null | grep -qx "$(tailnet_fixture_addr 64 9 9)"
@@ -537,6 +540,7 @@ esac'
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
+    rm -f "$dir/tailscale" # absence is the scenario: drop the fail-closed default from new_tool_dir
     fake_tool_write "$dir" ip 'case "$*" in
     "-4 addr show tailscale0") printf "    inet %s.%s.%s.%s/32 scope global tailscale0\n" 100 64 5 5 ;;
     *) exit 1 ;;
@@ -555,6 +559,7 @@ esac'
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
+    rm -f "$dir/tailscale" # absence is the scenario: drop the fail-closed default from new_tool_dir
     fake_tool_write "$dir" ip 'exit 1'
     link_coreutils_into "$dir" awk cut head
     PATH="$dir:/usr/bin:/bin"

@@ -1,9 +1,23 @@
 #!/bin/bash
 # Reusable fake executable helpers. Safe to source.
 
+# Every network-reaching tool a fixture directory refuses by default. A
+# fixture that puts this directory first on PATH but forgets to write one of
+# its fakes would otherwise fall through to the REAL tool and, with a fixture
+# alias that is also a real ssh_config alias, reach a real host (incident
+# 2026-10-03). A fake written afterwards with fake_tool_write replaces the
+# default at the same path.
+FAKE_TOOLS_FAIL_CLOSED_LIST="ssh scp sftp docker tailscale container nix curl"
+
 fake_tool_dir_create() {
-    local parent="${1:-${TMPDIR:-/tmp}}"
-    mktemp -d "$parent/dxe-fake-tools.XXXXXX"
+    local parent="${1:-${TMPDIR:-/tmp}}" directory fake_tool_name
+    directory="$(mktemp -d "$parent/dxe-fake-tools.XXXXXX")" || return 1
+    for fake_tool_name in $FAKE_TOOLS_FAIL_CLOSED_LIST; do
+        fake_tool_write "$directory" "$fake_tool_name" \
+            "echo 'fake-tools: no fake for $fake_tool_name; refusing to reach a real host' >&2
+exit 99"
+    done
+    printf '%s\n' "$directory"
 }
 
 fake_tool_write() {

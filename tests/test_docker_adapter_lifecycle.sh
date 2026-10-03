@@ -234,6 +234,7 @@ echo hi
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
+    rm -f "$dir/tailscale" # absence is the scenario: drop the fail-closed default from new_tool_dir
     create_reached_log="$fixture/refuse-create-reached.log"
     rm -f "$create_reached_log"
     fake_tool_write "$dir" docker "
