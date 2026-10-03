@@ -52,6 +52,9 @@ dx_runtime_apple_container_list_names() {
 # so the writer's later `printf` calls never see a closed pipe.
 dx_runtime_apple_container_exists() { dx_runtime_apple_container_list_names true | grep -F -x -- "$1" >/dev/null; }
 dx_runtime_apple_container_running() { dx_runtime_apple_container_list_names false | grep -F -x -- "$1" >/dev/null; }
+# Apple has no restart policy (dx_runtime_apple_capability restart_policy is
+# false), so a container is never restarted by the runtime: always 0.
+dx_runtime_apple_container_restart_count() { printf '0\n'; }
 dx_runtime_apple_container_list() { container list "$@"; }
 
 dx_runtime_apple_image_exists() {

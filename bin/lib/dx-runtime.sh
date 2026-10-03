@@ -109,6 +109,10 @@ dx_runtime_volume_usage() { dx_runtime_dispatch volume_usage "$@"; }
 # Container: exists, running, list, create, start, stop, kill, delete.
 dx_runtime_container_exists() { dx_runtime_dispatch container_exists "$@"; }
 dx_runtime_container_running() { dx_runtime_dispatch container_running "$@"; }
+# dx_runtime_container_restart_count <name> -- how many times the runtime has
+# restarted the container (docker-ssh: its restart policy; Apple: always 0, it
+# has no restart policy). bin/dx-wait-ssh uses the rise to spot a crash loop.
+dx_runtime_container_restart_count() { dx_runtime_dispatch container_restart_count "$@"; }
 dx_runtime_container_list() { dx_runtime_dispatch container_list "$@"; }
 
 # dx_runtime_container_create's parameter vocabulary is deliberately

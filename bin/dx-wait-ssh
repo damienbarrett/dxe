@@ -28,12 +28,7 @@ print_probe_diagnosis() {
     printf 'Last probe error: %s\n' "$(tail -n 1 "$PROBE_STDERR" 2>/dev/null || true)"
 }
 
-print_container_logs() {
-    local lines="$1"
-    if ! dx_runtime_logs -n "$lines" "$DX_CONTAINER_NAME" 2>&1 | sed 's/^/  /'; then
-        echo "  (container logs unavailable)"
-    fi
-}
+print_container_logs() { dx_container_print_logs "$@"; }
 
 wait_ssh_main() {
 dx_require_container_cli
@@ -67,6 +62,7 @@ trap 'rm -f "$PROBE_STDERR"' EXIT
 # reflects total time actually spent waiting -- including a slow or hanging
 # ssh probe -- rather than only the time we ourselves spent sleeping.
 SECONDS=0
+RESTART_BASELINE="$(dx_container_restart_baseline)"
 # DX_SSH_PROGRESS_INTERVAL_FIRST overrides only the first tick's own
 # threshold, never the recurring PROGRESS_INTERVAL the loop keeps enforcing
 # after it (below). Defaults to PROGRESS_INTERVAL itself, so this is a no-op
@@ -84,12 +80,7 @@ SECONDS=0
 NEXT_PROGRESS="${DX_SSH_PROGRESS_INTERVAL_FIRST:-$PROGRESS_INTERVAL}"
 while ! dx_ssh_probe_login_shell "$PROBE_STDERR"; do
     ELAPSED=$SECONDS
-    if container_exists "$DX_CONTAINER_NAME" && ! container_is_running "$DX_CONTAINER_NAME"; then
-        echo "Error: Container $DX_CONTAINER_NAME stopped before SSH became responsive." >&2
-        echo "Last 80 container log lines:" >&2
-        print_container_logs 80 >&2
-        exit 1
-    fi
+    if dx_container_wait_should_abort "$RESTART_BASELINE"; then exit 1; fi
     if [ "$ELAPSED" -ge "$WAIT_TIMEOUT" ]; then
         echo "Error: Timed out after ${WAIT_TIMEOUT}s waiting for guest SSH service to become responsive." >&2
         print_probe_diagnosis >&2

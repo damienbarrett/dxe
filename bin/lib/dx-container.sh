@@ -64,6 +64,51 @@ dx_container_list_names() {
 # `writer | grep -q` is unsafe under `set -o pipefail` (every caller of these
 # two functions). Redirecting to /dev/null instead keeps grep reading to EOF
 # so the writer's later `printf` calls never see a closed pipe.
+# Indented tail of the container's log through the runtime (neutral across
+# adapters), or a note when the runtime cannot provide it.
+dx_container_print_logs() {
+    local lines="$1"
+    if ! dx_runtime_logs -n "$lines" "$DX_CONTAINER_NAME" 2>&1 | sed 's/^/  /'; then
+        echo "  (container logs unavailable)"
+    fi
+}
+
+# The runtime's restart count for DX_CONTAINER_NAME at the start of a wait (0
+# when the runtime cannot report one).
+dx_container_restart_baseline() {
+    local count
+    count="$(dx_runtime_container_restart_count "$DX_CONTAINER_NAME" 2>/dev/null)" || count=0
+    case "$count" in ""|*[!0-9]*) count=0 ;; esac
+    printf '%s\n' "$count"
+}
+
+# bin/dx-wait-ssh calls this on every failed SSH probe: returns 0 after printing
+# why the wait must stop, 1 to keep waiting. Stops when the container is no
+# longer running, or when the runtime has restarted it twice or more since the
+# wait began (a crash loop under a restart policy keeps "running" between
+# restarts, so polling on would only hide it).
+dx_container_wait_should_abort() {
+    local baseline="$1" count
+    if container_exists "$DX_CONTAINER_NAME" && ! container_is_running "$DX_CONTAINER_NAME"; then
+        {
+            echo "Error: Container $DX_CONTAINER_NAME stopped before SSH became responsive."
+            echo "Last 80 container log lines:"
+            dx_container_print_logs 80
+        } >&2
+        return 0
+    fi
+    count="$(dx_runtime_container_restart_count "$DX_CONTAINER_NAME" 2>/dev/null)" || return 1
+    case "$count" in ""|*[!0-9]*) return 1 ;; esac
+    [ "$((count - baseline))" -ge 2 ] || return 1
+    {
+        echo "Error: Container $DX_CONTAINER_NAME is crash-looping: its restart count rose from $baseline to $count while waiting for SSH."
+        echo "Last 20 container log lines:"
+        dx_container_print_logs 20
+        echo "Check the bootstrap error in those lines and the profile it was created from; after fixing the cause, run dx-recreate (or dx-destroy-container then dx)."
+    } >&2
+    return 0
+}
+
 container_exists() { dx_runtime_container_exists "$1"; }
 container_is_running() { dx_runtime_container_running "$1"; }
 container_image_exists() { dx_runtime_image_exists "$1"; }

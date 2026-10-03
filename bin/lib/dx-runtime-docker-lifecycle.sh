@@ -68,6 +68,12 @@ dx_runtime_docker_container_running() {
     [ "$state" = true ]
 }
 
+dx_runtime_docker_container_restart_count() {
+    local count
+    count="$(dx_runtime_docker_cli container inspect --format '{{.RestartCount}}' "$1" 2>/dev/null)" || return 1
+    printf '%s\n' "$count" | tail -n1 | tr -d '\r'
+}
+
 dx_runtime_docker_container_list() {
     # io.dxe.system is appended as a fourth column, keeping {{.Names}} first
     # so bin/dx-status's own
