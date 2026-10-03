@@ -49,8 +49,8 @@ Every plan document below is listed under exactly one of these.
   coverage metric (WP1.5) landed first. Owner: the user. Revisit trigger:
   stated inside the document, under "Revisit trigger:" at the top. Its
   "Residual obligations" table carries the owned post-Phase-7 items
-  (guest-tree symlink removal, Mac default-key relocation, usage-service
-  DXE half).
+  (guest-tree symlink removal, Mac default-key relocation; the usage-service
+  DXE half landed 2026-10-04).
 - [`declarative-nix-plan-a.md`](declarative-nix-plan-a.md) — Audit proposing
   incremental Bash-to-Nix/Home Manager conversions. It puts Nix evaluation and
   coverage gates first, followed by smaller configuration conversions and the
