@@ -208,7 +208,7 @@ requires_container_reports_running() (
     # (matching this file's own sanity_out/sanity_out_a calls above) keeps
     # the assignment and its one consumer on the same statement instead of a
     # separate one SC2034 would flag as unused.
-    SKIP_INTEGRATION=false DX_SSH_PORT=2399 DX_CONTAINER_NAME="$BIGLIST_TARGET" requires_container >/dev/null 2>&1
+    SKIP_INTEGRATION=false DX_RUNTIME=apple DX_SSH_PORT=2399 DX_CONTAINER_NAME="$BIGLIST_TARGET" requires_container >/dev/null 2>&1
 )
 requires_container_reports_absent() (
     set -o pipefail
@@ -740,6 +740,54 @@ if printf '%s' "$rn_out" | stdin_matches -F -x 'rc=1' && printf '%s' "$rn_out" |
     test_pass "requires_container skips under a docker-ssh profile when the container is not running"
 else
     test_fail "requires_container skips under a docker-ssh profile when the container is not running (output: $rn_out)"
+fi
+
+# --- Hermetic cases must not inherit the operator's profile snapshot. Under
+# `dx-profile <docker-ssh profile> run_all_tests.sh --live` every unit suite
+# inherited DX_RUNTIME=docker-ssh and the rest of the snapshot, so cases built
+# on fake Apple `container` binaries reached the docker adapter (and, with no
+# fake ssh, the real management host). tests/test_helpers.sh now saves and
+# unsets the inherited snapshot at source time, and live_tail_enabled restores
+# it for the live tails only. Same fixture profile and fake management ssh as
+# above; DXE_FAKE_SSH_ARGV_LOG records every management-ssh call.
+rn_snapshot_run() {
+    # $1 = SKIP_INTEGRATION value; prints what the suite shell and a child
+    # that sources the production facade see, then the recorded ssh calls.
+    rm -f "$rn_dir/ssh.argv"
+    env -i PATH="$rn_dir/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" DXE_TEST_RESULTS="" \
+        DXE_RUNTIME_DOCKER_BIN=docker DXE_RUNTIME_GUEST_SSH_ADDRESS="$rn_addr" \
+        DXE_FAKE_SSH_ARGV_LOG="$rn_dir/ssh.argv" \
+        SKIP_INTEGRATION="$1" DX_PROFILES_DIR="$rn_dir/profiles" \
+        "$SCRIPT_DIR/../bin/dx-profile" dxe-runtime-fixture \
+        bash -c 'source "$1/test_helpers.sh" >/dev/null 2>&1
+            echo "suite-runtime=${DX_RUNTIME-unset}"
+            echo "child-runtime=$(source "$1/../bin/dx-lib.sh" >/dev/null 2>&1; echo "$DX_RUNTIME")"
+            ( source "$1/../bin/dx-lib.sh" >/dev/null 2>&1; container_is_running dxe-runtime-fixture ) >/dev/null 2>&1
+            live_tail_enabled >/dev/null 2>&1; echo "after-tail-runtime=${DX_RUNTIME-unset} name=${DX_CONTAINER_NAME}"
+            dxe_enter_hermetic; echo "after-hermetic-runtime=${DX_RUNTIME-unset} name=${DX_CONTAINER_NAME}"
+            DX_RUNTIME=apple; live_tail_enabled >/dev/null 2>&1; echo "declared-config name=${DX_CONTAINER_NAME}"' _ "$SCRIPT_DIR" 2>&1
+    if [ -f "$rn_dir/ssh.argv" ]; then echo "ssh-calls=$(wc -l < "$rn_dir/ssh.argv" | tr -d ' ')"; else echo "ssh-calls=0"; fi
+}
+fake_tool_write "$rn_dir/bin" docker 'echo true'
+rn_out="$(rn_snapshot_run true)"
+if printf '%s' "$rn_out" | stdin_matches -F -x 'suite-runtime=unset' \
+    && printf '%s' "$rn_out" | stdin_matches -F -x 'child-runtime=apple' \
+    && printf '%s' "$rn_out" | stdin_matches -F -x 'ssh-calls=0'; then
+    test_pass "a hermetic case under an exported docker-ssh snapshot sees the registry default runtime and makes no ssh call"
+else
+    test_fail "a hermetic case under an exported docker-ssh snapshot sees the registry default runtime and makes no ssh call (output: $rn_out)"
+fi
+rn_out="$(rn_snapshot_run false)"
+if printf '%s' "$rn_out" | stdin_matches -F -x 'after-tail-runtime=docker-ssh name=dxe-runtime-fixture'; then
+    test_pass "live_tail_enabled restores the operator's docker-ssh snapshot for the live tails"
+    if printf '%s' "$rn_out" | stdin_matches -F -x 'after-hermetic-runtime=unset name=dx-host' \
+        && printf '%s' "$rn_out" | stdin_matches -F -x 'declared-config name=dx-host'; then
+        test_pass "dxe_enter_hermetic drops the restored snapshot again, and a suite that declared its own configuration is not overridden"
+    else
+        test_fail "dxe_enter_hermetic drops the restored snapshot again, and a suite that declared its own configuration is not overridden (output: $rn_out)"
+    fi
+else
+    test_fail "live_tail_enabled restores the operator's docker-ssh snapshot for the live tails (output: $rn_out)"
 fi
 rm -rf "$rn_dir"
 

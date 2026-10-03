@@ -7,6 +7,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 container_dir="$ROOT/container/dx-nixos-26.05"
 failures=0
+# Hermetic against an exported profile snapshot (dx-profile ... --live): this
+# suite sources tests/test_helpers.sh late, so drop an inherited snapshot first.
+# shellcheck source=lib/inherited-config.sh
+source "$ROOT/tests/lib/inherited-config.sh"
+dxe_scrub_inherited_config
 check() { if "$@"; then :; else echo "FAIL: $*" >&2; failures=$((failures + 1)); fi; }
 reject() { ! "$@"; }
 
@@ -38,6 +43,7 @@ libraries+=(
     "$ROOT/tests/lib/fake-tools.sh"
     "$ROOT/tests/lib/tmux-probes.sh"
     "$ROOT/tests/lib/coverage-metric.sh"
+    "$ROOT/tests/lib/inherited-config.sh"
     "$ROOT/tests/test_helpers.sh"
 )
 

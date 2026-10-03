@@ -12,3 +12,12 @@ registry_default() {
     root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
     DX_PROJECT_ROOT="$root" bash -c 'source "$1/bin/lib/dx-config.sh" && dx_config_default "$2"' _ "$root" "$1"
 }
+
+# registry_fields -- every configuration field name in the registry, one per
+# line, read from bin/lib/dx-config.sh's own DXE_CONFIG_FIELDS (never a second
+# copy). Same subshell discipline as registry_default.
+registry_fields() {
+    local root
+    root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+    DX_PROJECT_ROOT="$root" bash -c 'source "$1/bin/lib/dx-config.sh" && printf "%s\n" $DXE_CONFIG_FIELDS' _ "$root"
+}

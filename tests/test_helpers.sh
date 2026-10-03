@@ -114,8 +114,22 @@ SHELL_NIX="$CONTAINER_DIR/home/shell.nix"
 export FLAKE_NIX FLAKE_LOCK NIXVIM_NIX BOOTSTRAP CONTAINERFILE SHELL_NIX
 DX_EXPECTED_NIXOS_RELEASE="${DX_EXPECTED_NIXOS_RELEASE:-26.05}"
 DX_EXPECTED_NIXOS_BRANCH="${DX_EXPECTED_NIXOS_BRANCH:-nixos-$DX_EXPECTED_NIXOS_RELEASE}"
+# Hermetic by default: an inherited profile snapshot is saved and unset here
+# (tests/lib/inherited-config.sh explains why) and restored by live_tail_enabled.
+# shellcheck source=lib/inherited-config.sh
+source "$DXE_TESTS_DIR/lib/inherited-config.sh"
+dxe_scrub_inherited_config
 DX_CONTAINER_NAME="${DX_CONTAINER_NAME:-dx-host}"
 DX_SSH_PORT="${DX_SSH_PORT:-2222}"
+# dxe_enter_hermetic -- for a hermetic block that FOLLOWS a live_tail_enabled
+# call in the same suite (the gate restores the operator's snapshot into the
+# suite's shell): drop the snapshot again and return to the helper's defaults.
+dxe_enter_hermetic() {
+    [ -n "$DXE_LIVE_PROFILE_NAMES" ] || return 0
+    dxe_unset_profile_vars
+    DX_CONTAINER_NAME=dx-host
+    DX_SSH_PORT=2222
+}
 # Fable D4 / WP1.6: this file no longer sources production code (the
 # dx-host-util.sh library) -- tests/test_refactor_contracts.sh asserts
 # that directly (a literal, comment-blind substring check, so this
@@ -259,6 +273,10 @@ test_section() {
 # reach a guest.
 live_tail_enabled() {
     [ "${SKIP_INTEGRATION-}" = false ] || return 1
+    # Restore the operator's profile snapshot (see dxe_scrub_inherited_config)
+    # before anything below reads DX_CONTAINER_NAME / DX_SSH_PORT or a tail
+    # calls dx-ssh; idempotent, and a no-op when the suite declared its own configuration.
+    dxe_restore_profile
     # Enabled: never let it be the user's default guest. The defaults come
     # from the config registry (via lib/registry-defaults.sh), so no
     # second copy of them exists here and no production code is sourced into

@@ -202,6 +202,10 @@ else
 fi
 
 # ---------- Migration helper runtime-client race regression (fake container) ----------
+# The gate above restores the operator's profile snapshot into this shell when
+# one was inherited; this block's fakes are Apple `container` binaries, so it
+# must see registry defaults.
+dxe_enter_hermetic
 #
 # Apple Container's `container run --rm` intermittently reports
 #   Error: no runtime client exists: container is stopped
