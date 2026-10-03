@@ -19,3 +19,15 @@ the production NAS. Three structural layers now prevent a repeat:
 Gates: unit tier and bash 3.2 green on the branch; `tests/test_persist_backup_select.sh`
 5/5 after one load-induced failure; pre-push scan clean. Apple live tier on `dx-test`
 from a clean clone: live tier: 45 suites, 2739 passed, 0 failed, 84 skipped (log kept privately).
+
+## Correction (same day)
+
+The guard scanned the working tree, so an operator's private, git-excluded profile in
+`tests/profiles/` (the documented place for one) failed Section 1 in every checkout that
+held one, and a disposable live-tier profile failed the docker-ssh live tier's Sections 1
+and 20. Commit `d776c79` scans tracked files only (`git ls-files`; a clean export without a
+repository scans the tree, which then contains only tracked files). Red: an untracked
+decoy profile with the real alias failed the old guard and passes the new one; tracked
+literals still fail. Landed on unit-tier gates (unit tier, bash 3.2, ShellCheck 0.10.0,
+pre-push scan); the usage-service branch's live tiers on both runtimes re-exercise Section 1
+on top of it.
