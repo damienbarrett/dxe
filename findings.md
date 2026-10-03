@@ -412,6 +412,18 @@ Every review ID and where it lands.
 - [x] 59dbb4a **WP9.6** Promote or defer the four backlog probes from
   `checkout-consolidation-plan.md` with owners. (Muse D5)
 
+## Residual obligations
+
+Open after Phase 7 and the 2026-10-03 reconciliation. Each has an owner and
+a trigger; the backlog probes and other plan-level items are in `plans.md`
+and `2-oct-plan.md` and are not repeated here.
+
+| Obligation | Owner | Trigger |
+| --- | --- | --- |
+| Remove the git-tracked guest-tree compatibility symlink (the old architecture-named path beside `container/dx-nixos-26.05`) and the `dx_config_validate_cross_fields` warning that names it (WP9.4). | The user; the base-changeover branch performs it. | The next base (NixOS release) changeover. |
+| Optional Mac default-key relocation to `~/.ssh/dxe/`. A user decision is pending; nothing changes until the user decides, and accepting it is a separate scope decision. | The user. | The user's decision. |
+| Usage-service DXE half: a supervised-service mode and a loopback service port in DXE. Requirements are in `usage-stats-qnap-plan.md` section 10 (a file outside this repository; referenced by name only). | The user, to schedule; implemented as its own gated branch. | The user schedules the usage-service work. |
+
 ## Progress log
 
 - **2026-09-29** Plan written; baseline recorded; branch created.

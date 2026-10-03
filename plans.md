@@ -53,8 +53,11 @@ Every plan document below is listed under exactly one of these.
   `docs/reviews/2026-09-29-fable.md`; index at `docs/reviews/README.md`).
   Records decision D-1, which resolves the recorded conflict below between
   `declarative-nix-plan-a.md` #12 and `refactor-v2-final.md` Phase 4: the
-  coverage metric (WP1.5) lands first. Revisit trigger: stated inside the
-  document, under "Revisit trigger:" at the top.
+  coverage metric (WP1.5) landed first. Owner: the user. Revisit trigger:
+  stated inside the document, under "Revisit trigger:" at the top. Its
+  "Residual obligations" table carries the owned post-Phase-7 items
+  (guest-tree symlink removal, Mac default-key relocation, usage-service
+  DXE half).
 - [`declarative-nix-plan-a.md`](declarative-nix-plan-a.md) — Audit proposing
   incremental Bash-to-Nix/Home Manager conversions. It puts Nix evaluation and
   coverage gates first, followed by smaller configuration conversions and the
