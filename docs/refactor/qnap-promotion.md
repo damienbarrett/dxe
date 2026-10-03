@@ -351,14 +351,14 @@ needed no decision.
 | Field | Value | Reasoning |
 | --- | --- | --- |
 | `DX_CONTAINER_NAME` | `dx-qnap` | Already the checked-in `qnap-example.env`'s own value — no change needed there. |
-| `DX_SSH_PORT` | **2223 — DECIDED, explicitly temporary** | Distinct from the canary's 2222 so both run concurrently during the cutover window. Temporary: it is the port for the cutover period only, and the production profile may move back to 2222 once the canary is retired and the port is free again — a later, separate, explicit decision, not automatic. |
+| `DX_SSH_PORT` | **2222** (2223 during the cutover, 2026-09-28 → 2026-10-03) | 2223 was the temporary cutover-period port, distinct from the canary's 2222 so both ran concurrently. The canary was retired on 2026-10-03, the temporary port was given back, and production is on 2222 again. |
 | `DX_CONTAINER_MEMORY`/`DX_CONTAINER_CPUS` | `8G`/`4` | The existing checked-in example's own documented default — unchanged; the canary's 2-CPU choice was explicitly recorded as a per-profile, canary-only choice (user decision 2), not a new default. |
 | `DX_CONTAINER_RESTART_POLICY` | `unless-stopped`, from creation | Carries over the now-doubly-proven (Phase 6 + the canary's own week) evidence for this specific NAS. |
 | Key pair, volumes | `dx-qnap_key`, `dx-qnap-nix`/`-persist`/`-bootstrap` | Already the checked-in example's own values — no change needed. |
 
 `tests/profiles/qnap-example.env`'s `DX_SSH_PORT` line and header
 comment were updated from `2222` to `2223` to match (Increment 2's
-follow-up amendment) — the file documents the production shape
+follow-up amendment; moved back to `2222` on 2026-10-03) — the file documents the production shape
 (`DX_CONTAINER_NAME=dx-qnap`), so it carries the decided value, not a
 placeholder pending the user's word.
 

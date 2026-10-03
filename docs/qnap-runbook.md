@@ -473,11 +473,10 @@ production profile. Identifiers (the user's own decision, not this
 document's — see
 [`tests/profiles/qnap-example.env`](../tests/profiles/qnap-example.env)):
 `DX_CONTAINER_NAME=dx-qnap` (already `qnap-example.env`'s own value),
-**port 2223 — DECIDED (2026-09-28), not merely proposed,** distinct from
-the canary's 2222 so both can run concurrently during the cutover. This
-is **explicitly temporary**: 2223 is the port for the cutover period
-only, and the production profile may move back to 2222 once the canary
-is retired and the port is free again — 8 GB / 4 CPU and
+**port 2222** (since 2026-10-03). During the cutover the production
+guest used the temporary port 2223 (2026-09-28 → 2026-10-03), distinct
+from the canary's 2222 so both could run concurrently; the canary was
+retired on 2026-10-03 and 2223 was given back. 8 GB / 4 CPU and
 `unless-stopped` from creation (both already `qnap-example.env`'s own
 documented values).
 

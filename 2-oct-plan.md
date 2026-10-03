@@ -60,12 +60,12 @@ actual proof and named maintenance windows remain future gates.
 | D4 — Network validation | Use the user's **current restrictive work Wi-Fi**, proving access through Tailscale away from the home/private network. A captures read-only path/status/SSH evidence while it is available. Work Wi-Fi or a tailnet address does not itself prove DERP relay; record the observed path honestly. | **Resolved policy; evidence pending.** No waiting or artificial UDP block selected. |
 | D5 — Maintenance windows | Ask the user to choose named Mac/QNAP windows once final checks pass and exact release, backup plan, generation baseline, disruption and backout are prepared. Do not proceed merely because a guest is idle. | **Resolved policy; concrete windows pending.** |
 | D6 — Mac recreate scope | Include one `dx-host` recreate in the selected maintenance window after verified backup, retaining volumes/keys and verifying the new launcher/healthcheck. | **Resolved scope; execution/window pending.** Do not reask the selected scope. |
-| D7 — Production/default access | `dx-qnap`, 8 GB/4 CPU, `unless-stopped`, tailnet-only temporary port 2223; daily `qx` switches to production after validated cutover. | **Resolved configuration; production acceptance/cutover pending.** |
+| D7 — Production/default access | `dx-qnap`, 8 GB/4 CPU, `unless-stopped`, tailnet-only temporary port 2223 (given back; production is on 2222 since 2026-10-03); daily `qx` switches to production after validated cutover. | **Resolved configuration; production acceptance/cutover pending.** |
 | D8 — Artifacts | Track/index the sanitized authoritative new plan; archive the six original handoffs/plans privately, preserving contents. Sensitive values never enter tracked material. | **Resolved and documented.** Plan indexed; all six original files privately archived and exact bytes verified before original-copy removal. |
 
 Update affected acceptance criteria only if the user later changes a policy.
 Do not reask settled designs/scope, findings landing, the continuing owner,
-shared `dx`/`qx` behavior, port 2223, or the completed key migration. D5's concrete
+shared `dx`/`qx` behavior, the temporary port 2223 (production is on 2222 again since 2026-10-03), or the completed key migration. D5's concrete
 windows and the prepared production acceptance go remain future requests.
 
 ## 3. Settled behavior and private setup
@@ -286,7 +286,7 @@ D7 fixes operating configuration and default access. Review readiness on
 relay, backups/isolation and health. Record which SHA/generation was exercised
 and why it is ready. No minimum additional soak is invented; postpone if evidence
 is incomplete, without automatically resetting a seven-day clock. `dx-qnap` gets distinct keys,
-names/volumes/state, tailnet-only port 2223, verified backup/restore and selected
+names/volumes/state, tailnet-only temporary port 2223 (returned to 2222 on 2026-10-03), verified backup/restore and selected
 resources/policy. Switch daily `qx` to production after validated cutover, keeping
 explicit `QX_PROFILE` selection available. Production creation/cutover needs the
 prepared final acceptance go;

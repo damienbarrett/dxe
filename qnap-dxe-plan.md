@@ -1005,7 +1005,8 @@ defines. Item 6's production profile is **no longer an open question on
 the port**: `DX_SSH_PORT=2223` is DECIDED (2026-09-28), not merely
 proposed — the port for the cutover period, explicitly temporary, may
 move back to 2222 once the canary is retired
-(`tests/profiles/qnap-example.env`, already updated to match). The
+(`tests/profiles/qnap-example.env`, already updated to match; **moved back to
+2222 on 2026-10-03** when the canary retired). The
 production profile itself is still created only after item 1's week
 passes with no unresolved failure and the restore drill (item 3) counts
 as the verified backup. Item 7 (`dx-host` stays intact) is an

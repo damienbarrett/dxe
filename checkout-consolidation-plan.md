@@ -268,7 +268,8 @@ example profile (`tests/profiles/qnap-canary-example.env`) are all on the
 branch. The production port question is resolved: `DX_SSH_PORT=2223`,
 decided by the user, explicitly temporary for the cutover period (may
 move back to 2222 once the canary is retired) --
-`tests/profiles/qnap-example.env` updated to match. Every live step
+`tests/profiles/qnap-example.env` updated to match (**moved back to 2222 on
+2026-10-03**, when the canary retired). Every live step
 against the real NAS is still ahead, each after the user's own go, in
 the pre-approved order `qnap-dxe-plan.md`'s own Phase 7 status records:
 create the canary on landing (its week starting that day), the restore
