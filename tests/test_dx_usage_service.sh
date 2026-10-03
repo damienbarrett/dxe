@@ -27,6 +27,7 @@ source "$BASE_DIR/bin/lib/dx-config.sh"
 source "$BASE_DIR/bin/lib/dx-host-util.sh"
 source "$BASE_DIR/bin/lib/dx-runtime.sh"
 source "$BASE_DIR/bin/lib/dx-container.sh"
+# shellcheck source=../bin/lib/dx-usage-service.sh
 source "$HOSTLIB"
 source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
 source "$BASE_DIR/bin/lib/dx-tunnel.sh"
@@ -56,8 +57,8 @@ run_docker() {
     us_rc=0
     us_out="$( (
         PATH="$dir:/usr/bin:/bin"
-        DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-svc DX_GUEST_SYSTEM=x86_64-linux
-        export DXE_RUNTIME_DOCKER_BIN=docker
+        DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-svc
+        export DX_GUEST_SYSTEM=x86_64-linux DXE_RUNTIME_DOCKER_BIN=docker
         dx_usage_host_main "$@"
     ) 2>&1 )" || us_rc=$?
 }

@@ -51,6 +51,7 @@ us_serve() {
     : > "$US_LOG"
     (
         source "$GUEST_SCRIPTS/lib/dx-keyring.sh"
+        # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-usage-service.sh
         source "$LIB"
         dx_keyring_start() { printf 'keyring-start\n' >> "$US_LOG"; return "${US_KEYRING_STATUS:-0}"; }
         dx_keyring_read_address() { [ "${US_KEYRING_STATUS:-0}" = 0 ] || return 1; printf '%s\n' "$fake_address"; }
@@ -161,6 +162,7 @@ us_watch() {
     : > "$US_LOG"; : > "$US_CURL"; : > "$US_CODES"
     local c; for c in "$@"; do printf '%s\n' "$c" >> "$US_CODES"; done
     (
+        # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-usage-service.sh
         source "$LIB"
         us_sleep() { printf 'sleep:%s\n' "$1" >> "$US_LOG"; }
         PATH="$bin:/usr/bin:/bin"
@@ -219,6 +221,7 @@ for missing in curl s6-svc; do
     for t in "$bin"/*; do [ "${t##*/}" = "$missing" ] || ln -sf "$t" "$hide/${t##*/}"; done
     : > "$US_LOG"
     (
+        # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-usage-service.sh
         source "$LIB"
         us_sleep() { printf 'sleep:%s\n' "$1" >> "$US_LOG"; }
         PATH="$hide"; export DX_USAGE_SLEEP=us_sleep

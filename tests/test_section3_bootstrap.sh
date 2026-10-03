@@ -2949,6 +2949,7 @@ us_main() {
     # $1 = DX_USAGE_SERVICE value ("-" = unset). Output: the ordered log.
     : > "$US_LOG"
     (
+        # shellcheck source=../container/dx-nixos-26.05/bootstrap.sh
         source "$BOOTSTRAP"
         PATH="$us_bin:$PATH"
         bootstrap_phases() { printf 'phases\n' >> "$US_LOG"; }
