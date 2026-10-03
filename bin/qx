@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-# The shared DX entrypoint, using the QNAP canary profile unless QX_PROFILE
-# names another one (an unset or empty QX_PROFILE means the canary).
+# The shared DX entrypoint, using the production QNAP profile (qnap) unless QX_PROFILE
+# names another one (an unset or empty QX_PROFILE means qnap).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/dx-config.sh
 source "$SCRIPT_DIR/lib/dx-config.sh"

@@ -89,8 +89,9 @@ described below; its SSH keys live separately under `~/.ssh/dxe/`.
 ## 3. Normal operation
 
 `./bin/qx` delegates to `dx` with the user profile
-`${XDG_CONFIG_HOME:-$HOME/.config}/dxe/profiles/qnap-canary.env` to
-connect to the QNAP canary and attach to its `dx` tmux session. If the
+`${XDG_CONFIG_HOME:-$HOME/.config}/dxe/profiles/qnap.env` (the default;
+the canary profile is retired) to
+connect to the production QNAP guest and attach to its `dx` tmux session. If the
 container is already running, it connects directly without publishing
 bootstrap changes. If it is stopped or absent, it runs the full `dx`
 bring-up flow first. With `bin/` on your PATH,
@@ -102,7 +103,7 @@ directory and bundled profiles under `tests/profiles/`; user profiles take
 precedence when no explicit directory is supplied.
 
 Bootstrap updates remain an explicit maintenance step: publish with
-`./bin/dx-profile qnap-canary ./bin/dx-sync-bootstrap`, then stop and start
+`./bin/dx-profile qnap ./bin/dx-sync-bootstrap`, then stop and start
 the container under the same profile to activate the update. A restart
 ends running guest processes and tmux sessions, so choose a suitable time.
 

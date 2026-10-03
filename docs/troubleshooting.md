@@ -139,15 +139,15 @@ picks up the edit on its own first boot. See
 `docs/configuration.md`'s `DX_BOOTSTRAP_CONFIRM_TIMEOUT` entry for the bound.
 
 For a named profile, apply it to **both** commands so the restart targets
-the same container. For the QNAP canary:
+the same container. For the production QNAP guest:
 
 ```bash
-./bin/dx-profile qnap-canary ./bin/dx-stop-container && ./bin/dx-profile qnap-canary ./bin/dx-start-container
+./bin/dx-profile qnap ./bin/dx-stop-container && ./bin/dx-profile qnap ./bin/dx-start-container
 ```
 
 To connect to the running guest while postponing that restart, use
-`qx` or `./bin/dx-profile qnap-canary ./bin/dx-ssh`. `qx` reads `QX_PROFILE`
-to use another profile.
+`qx` or `./bin/dx-profile qnap ./bin/dx-ssh`. `qx` defaults to the `qnap` profile and reads `QX_PROFILE`
+to use another one.
 
 ### "profile '<name>' is pinned to <path>; run it from that checkout"
 

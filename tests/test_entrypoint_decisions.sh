@@ -201,11 +201,11 @@ env -i PATH="$PATH" HOME="$fixture/home" bash -c 'source "$1"; DX_PROJECT_ROOT="
 if [ "$bad_status" -eq 2 ]; then test_pass "dx_profile_apply refuses a pin to another checkout with status 2"; else test_fail "dx_profile_apply refuses a pin to another checkout (status $bad_status)"; fi
 
 # --- dx_qx_profile ------------------------------------------------------------
-if [ "$(env -u QX_PROFILE bash -c 'source "$1"; dx_qx_profile' _ "$BASE_DIR/bin/lib/dx-config.sh")" = qnap-canary ] \
-    && [ "$(QX_PROFILE='' bash -c 'source "$1"; dx_qx_profile' _ "$BASE_DIR/bin/lib/dx-config.sh")" = qnap-canary ] \
+if [ "$(env -u QX_PROFILE bash -c 'source "$1"; dx_qx_profile' _ "$BASE_DIR/bin/lib/dx-config.sh")" = qnap ] \
+    && [ "$(QX_PROFILE='' bash -c 'source "$1"; dx_qx_profile' _ "$BASE_DIR/bin/lib/dx-config.sh")" = qnap ] \
     && [ "$(QX_PROFILE=other bash -c 'source "$1"; dx_qx_profile' _ "$BASE_DIR/bin/lib/dx-config.sh")" = other ]; then
-    test_pass "dx_qx_profile defaults to qnap-canary and honours QX_PROFILE"
-else test_fail "dx_qx_profile defaults to qnap-canary and honours QX_PROFILE"; fi
+    test_pass "dx_qx_profile defaults to qnap and honours QX_PROFILE"
+else test_fail "dx_qx_profile defaults to qnap and honours QX_PROFILE"; fi
 qx_status=0
 qx_err="$(QX_PROFILE='bad;name' bash -c 'source "$1"; dx_qx_profile' _ "$BASE_DIR/bin/lib/dx-config.sh" 2>&1)" || qx_status=$?
 if [ "$qx_status" -eq 2 ] && printf '%s\n' "$qx_err" | stdin_matches -F "Error: invalid QX_PROFILE 'bad;name'."; then

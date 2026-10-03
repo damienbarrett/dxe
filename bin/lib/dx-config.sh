@@ -507,9 +507,9 @@ dx_profile_apply() {
     dx_init_config "$DX_PROJECT_ROOT"
 }
 
-# bin/qx's profile: QX_PROFILE, defaulting (also when empty) to qnap-canary.
+# bin/qx's profile: QX_PROFILE, defaulting (also when empty) to qnap.
 dx_qx_profile() {
-    local profile="${QX_PROFILE:-qnap-canary}"
+    local profile="${QX_PROFILE:-qnap}"
     dx_profile_name_valid "$profile" || { echo "Error: invalid QX_PROFILE '$profile'." >&2; return 2; }
     printf '%s\n' "$profile"
 }

@@ -15,7 +15,7 @@ export XDG_CONFIG_HOME="$fixture/config"
 mkdir -p "$fixture/bin/lib" "$fixture/tests/profiles"
 cp "$BASE_DIR/bin/dx" "$BASE_DIR/bin/qx" "$BASE_DIR/bin/dx-profile" "$fixture/bin/"
 cp "$BASE_DIR/bin/lib/dx-config.sh" "$fixture/bin/lib/"
-printf '%s\n' 'DX_CONTAINER_NAME=dx-qnap-contract' > "$fixture/tests/profiles/qnap-canary.env"
+printf '%s\n' 'DX_CONTAINER_NAME=dx-qnap-contract' > "$fixture/tests/profiles/qnap.env"
 export QX_TEST_BASE_DIR="$BASE_DIR"
 cat > "$fixture/bin/dx-lib.sh" <<'LIB'
 source "$QX_TEST_BASE_DIR/bin/lib/dx-host-util.sh"
@@ -89,9 +89,9 @@ printf '<%s>\n' 'printf "%s\n" "two words"' '' '-argument' > "$fixture/expected-
 if [ "$qx_status" -eq 0 ] \
     && expect_log available system-status running:dx-qnap-contract lock owned:dx-qnap-contract:connect unlock dx-ssh \
     && cmp -s "$fixture/expected-args" "$QX_TEST_ARGS"; then
-    test_pass "running canary connects directly with the profile and preserves argument boundaries"
+    test_pass "running production profile connects directly with the profile and preserves argument boundaries"
 else
-    test_fail "running canary connects directly with the profile and preserves argument boundaries"
+    test_fail "running production profile connects directly with the profile and preserves argument boundaries"
 fi
 run_qx
 if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-qnap-contract lock owned:dx-qnap-contract:connect unlock dx-ssh; then
@@ -104,9 +104,9 @@ for state in stopped absent; do
     printf '<%s>\n' 'uname -a' > "$fixture/expected-args"
     if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-qnap-contract lock system-status dx-create-keys dx-create-image dx-create-volumes dx-create-container dx-start-container dx-wait-ssh unlock dx-ssh \
         && cmp -s "$fixture/expected-args" "$QX_TEST_ARGS"; then
-        test_pass "$state canary uses full bring-up and forwards the command"
+        test_pass "$state production profile uses full bring-up and forwards the command"
     else
-        test_fail "$state canary uses full bring-up and forwards the command"
+        test_fail "$state production profile uses full bring-up and forwards the command"
     fi
 done
 QX_TEST_AVAILABLE_STATUS=42 run_qx 'uname -a'
@@ -212,14 +212,14 @@ fi
 # User profiles live outside the checkout, and explicit profile directories
 # remain authoritative for isolated test runs and automation.
 mkdir -p "$XDG_CONFIG_HOME/dxe/profiles" "$fixture/override" "$fixture/home/.config/dxe/profiles"
-printf '%s\n' 'DX_CONTAINER_NAME=dx-user-contract' > "$XDG_CONFIG_HOME/dxe/profiles/qnap-canary.env"
+printf '%s\n' 'DX_CONTAINER_NAME=dx-user-contract' > "$XDG_CONFIG_HOME/dxe/profiles/qnap.env"
 run_qx 'uname -a'
 if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-user-contract lock owned:dx-user-contract:connect unlock dx-ssh; then
     test_pass "qx prefers external XDG user config over the bundled profile"
 else
     test_fail "qx prefers external XDG user config over the bundled profile"
 fi
-printf '%s\n' 'DX_CONTAINER_NAME=dx-override-contract' > "$fixture/override/qnap-canary.env"
+printf '%s\n' 'DX_CONTAINER_NAME=dx-override-contract' > "$fixture/override/qnap.env"
 DX_PROFILES_DIR="$fixture/override" run_qx
 if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-override-contract lock owned:dx-override-contract:connect unlock dx-ssh; then
     test_pass "explicit DX_PROFILES_DIR overrides user and bundled profiles"
@@ -232,14 +232,14 @@ if [ "$qx_status" -eq 1 ] && [ ! -s "$QX_TEST_LOG" ] && [ ! -e "$QX_TEST_ARGS" ]
 else
     test_fail "missing explicit profile never falls back to another target"
 fi
-printf '%s\n' 'DX_CONTAINER_NAME=dx-home-contract' > "$fixture/home/.config/dxe/profiles/qnap-canary.env"
+printf '%s\n' 'DX_CONTAINER_NAME=dx-home-contract' > "$fixture/home/.config/dxe/profiles/qnap.env"
 HOME="$fixture/home" XDG_CONFIG_HOME='' run_qx
 if [ "$qx_status" -eq 0 ] && expect_log available system-status running:dx-home-contract lock owned:dx-home-contract:connect unlock dx-ssh; then
     test_pass "qx uses HOME/.config when XDG_CONFIG_HOME is empty"
 else
     test_fail "qx uses HOME/.config when XDG_CONFIG_HOME is empty"
 fi
-printf '%s\n' 'DX_CONTAINER_NAME=$(false)' > "$XDG_CONFIG_HOME/dxe/profiles/qnap-canary.env"
+printf '%s\n' 'DX_CONTAINER_NAME=$(false)' > "$XDG_CONFIG_HOME/dxe/profiles/qnap.env"
 run_qx 2> "$fixture/invalid-error"
 if [ "$qx_status" -ne 0 ] && [ ! -s "$QX_TEST_LOG" ] && [ ! -e "$QX_TEST_ARGS" ]; then
     test_pass "invalid user profile fails without falling back to bundled configuration"
