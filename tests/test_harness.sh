@@ -708,6 +708,40 @@ fake_qnap_ssh_write "$ff_dir"
 check test "$("$ff_dir/ssh" true && echo overwritten)" = "overwritten"
 rm -rf "$ff_dir"
 
+# --- (gg) The Section 1 fixture-alias guard scans TRACKED files only. An
+# operator's private, git-excluded profile in tests/profiles/ legitimately
+# names the real alias; the guard once walked the working tree and failed
+# Section 1 in every checkout holding one. Run Section 1 inside a throwaway
+# local clone: an untracked decoy must leave both guard cases passing, and
+# the same literal in a TRACKED file must still fail guard (a). DXE_GG_GUARD
+# (optional) names a different test_section1_secrets.sh to drop into the
+# clone, to prove this case bites against an older guard. The alias is
+# assembled from pieces so this file does not spell it.
+gg_alias="$(printf '%s%s' "qnap" "-dxe")"
+gg_name_a="no test file outside tests/qnap and the example profiles names the real NAS alias"
+gg_name_b="every DX_REMOTE_HOST= assignment under tests/ ends in .invalid"
+gg_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-gg.XXXXXX")"
+if git -C "$SCRIPT_DIR/.." clone -q --local "$SCRIPT_DIR/.." "$gg_dir/clone" 2>/dev/null; then
+    if [ -n "${DXE_GG_GUARD:-}" ]; then cp "$DXE_GG_GUARD" "$gg_dir/clone/tests/test_section1_secrets.sh"; fi
+    gg_section1() { (cd "$gg_dir/clone" && SKIP_INTEGRATION=true bash tests/test_section1_secrets.sh 2>&1) || true; }
+    printf 'export DX_REMOTE_HOST=%s\n' "$gg_alias" > "$gg_dir/clone/tests/profiles/zz-private.env"
+    gg_failed() { printf '%s\n' "$gg_out" | grep -a "FAIL" | grep -qF -- "$1"; }
+    gg_out="$(gg_section1)"
+    check contains "$gg_out" "$gg_name_a"
+    check contains "$gg_out" "$gg_name_b"
+    check reject gg_failed "$gg_name_a"
+    check reject gg_failed "$gg_name_b"
+    # Tracked: the same literal now makes both guard cases fail.
+    git -C "$gg_dir/clone" add -f tests/profiles/zz-private.env
+    gg_out="$(gg_section1)"
+    check gg_failed "$gg_name_a"
+    check gg_failed "$gg_name_b"
+else
+    echo "FAIL: could not clone the tree for case (gg)" >&2
+    failures=$((failures + 1))
+fi
+rm -rf "$gg_dir"
+
 rm -f "$RESULTS"
 
 [ "$failures" -eq 0 ]
