@@ -261,7 +261,8 @@ keeping; `dx-destroy-volumes`/`dx-factory-reset` delete it irreversibly.
 
 ## 8. Emergency access when Tailscale is down
 
-Guest SSH publishes to the NAS's Tailscale address only (DQ5) — if
+Guest SSH (and the usage service's port, when enabled — section 10) publishes to
+the NAS's Tailscale address only (DQ5) — if
 Tailscale itself is down, that path is unreachable by design, and there is
 **no fallback LAN or public publish** to reach for instead (that is
 exactly the escape DQ5 forbids). The only supported path is:
@@ -488,3 +489,115 @@ irreplaceable content has a **verified** backup (restored-and-checked —
 section 9.4's drill is the qualifying event). Destroying or retiring
 `dx-host` is never scheduled by this document; it stays the user's own
 separate, later, explicit call.
+
+## 10. Usage service
+
+The guest can run the `agent-stats` collector and its HTTP API (port 8787
+inside the guest) as a supervised service next to sshd, reachable from your
+Apple devices over the tailnet. It is off by default and opt-in per profile.
+Design: [`docs/refactor/usage-service-host.md`](refactor/usage-service-host.md).
+
+### 10.1 The publication rule (DQ5)
+
+Without the service, guest SSH is the only published port. With
+`DX_USAGE_SERVICE=on` the rule reads: **SSH, plus the usage service when
+enabled, both on the NAS's Tailscale address only, never the LAN or
+`0.0.0.0`.** The second mapping is an explicit, opt-in extension of the
+SSH-only rule. It uses the same publish path as SSH (the address is
+discovered at run time and never written to any file). The API has no
+authentication of its own; the tailnet is the access control. With the field
+`off` the create command is byte-identical to a profile that never set it.
+
+### 10.2 Enabling it (maintenance window)
+
+1. In your private profile (never a tracked file) set `DX_USAGE_SERVICE=on`
+   and, only if 8787 is taken or unwanted, `DX_USAGE_SERVICE_HOST_PORT`. The
+   port must differ from `DX_SSH_PORT`; `dx-create-container` refuses `on`
+   otherwise. See the commented lines in
+   [`tests/profiles/qnap-example.env`](../tests/profiles/qnap-example.env).
+2. In a window you have named, recreate the guest under that profile:
+   `./bin/dx-profile <profile> ./bin/dx-recreate`. It takes about two minutes
+   and **kills running tmux sessions**; `/persist`, `/nix` and the bootstrap
+   volume are kept. Both the second mapping and the guest-visible
+   `DX_USAGE_SERVICE` variable are fixed at container creation, so changing
+   either later needs another recreate.
+3. Verify: `./bin/dx-profile <profile> ./bin/dx-usage-service status`, then
+   from a tailnet device
+   `curl -s http://<NAS tailnet name>:8787/health/live` (200),
+   `/health/ready` (503 until the first report, then 200 even when a provider
+   shows an error row) and `/health/progress` (200; 503 only for a stalled
+   collection). Until a release is installed (10.3) the service reports that
+   no usable release exists and retries every 30 seconds.
+
+To turn it off: remove the lines (or set `off`) and recreate. State under
+`/persist/services/agent-stats` is kept.
+
+### 10.3 Installing and selecting a release
+
+Releases are built and linked **as `dx` inside the guest**, for example from
+`dx-enter`. Build the combined output `agent-stats-release` (both
+implementations, `bin/agent-stats-rust`, `bin/agent-stats-python`,
+`bin/check-limits`, `share/agent-stats/*`), from either source:
+
+```bash
+# pinned flake reference (needs repository access from the guest)
+nix build --no-link --print-out-paths \
+  github:<OWNER>/agent-stats/<commit>#agent-stats-release
+# or a copied source tree
+nix build --no-link --print-out-paths path:/path/to/tree#agent-stats-release
+```
+
+Register the result as a Nix GC root and select it. Move the old `current`
+target to `previous` first, so a rollback target always exists:
+
+```bash
+cd /persist/services/agent-stats
+old="$(readlink -f current 2>/dev/null || true)"
+[ -z "$old" ] || nix-store --add-root /persist/services/agent-stats/previous --indirect -r "$old"
+nix-store --add-root /persist/services/agent-stats/current --indirect -r <store path>
+```
+
+then, from the host, `./bin/dx-profile <profile> ./bin/dx-usage-service restart`.
+The launcher never creates or moves either link.
+
+**Rollback:** point `current` back at `previous`'s target
+(`nix-store --add-root /persist/services/agent-stats/current --indirect -r "$(readlink -f /persist/services/agent-stats/previous)"`)
+and restart the service.
+
+### 10.4 Implementation selection
+
+`/persist/services/agent-stats/config/implementation` holds `rust` (the
+default; also when the file is absent or empty) or `python`. Any other value
+is a clear launcher error. Restart the service after changing it.
+
+### 10.5 Where things live
+
+| What | Where |
+| --- | --- |
+| State | `/persist/services/agent-stats/{config,workspace,data,logs}`, owned by `dx`; the service's tmux state is under `workspace/tmux` |
+| Releases | `current` and `previous` in that directory (GC roots) |
+| Logs | `/persist/services/agent-stats/logs/{sshd,agent-stats,agent-stats-watchdog}/current`, bounded (10 files of 1 MB each per service); read with `dx-usage-service logs [N]` |
+| Service tree | `/run/dx-services`, rebuilt on every boot, PID 1 is `s6-svscan` |
+
+In service mode **sshd's `-e` log goes to its persisted s6-log directory
+(`logs/sshd`), not to `docker logs`**; `docker logs` shows only bootstrap
+output. The host health check is unchanged (it reads the lease and readiness
+marker only).
+
+`dx-usage-service start|stop|restart|status|logs [N]` drives only the
+agent-stats service (docker-ssh only; Apple refuses). A guest not in service
+mode answers with how to enable it.
+
+### 10.6 Apple clients
+
+Point the Apple clients at `http://<NAS tailnet name>:8787/` (or your
+`DX_USAGE_SERVICE_HOST_PORT`).
+
+### 10.7 `dx-ai` updates
+
+After a successful `dx-ai` in a guest in service mode, the hook restarts only
+agent-stats (so it sees the new generation's `PATH`) and runs a compatibility
+check. The check is a **stub until the package is installed**: it prints the
+agreed check (`agent-stats-rust --version` succeeding on the new `PATH`) and
+passes. A failed restart or check is reported with "no rollback was
+performed" and never fails `dx-ai`; shared tools are never silently reverted.

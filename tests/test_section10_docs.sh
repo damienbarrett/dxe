@@ -245,6 +245,39 @@ for example in qnap-example qnap-canary-example; do
     fi
 done
 
+# Usage service: both QNAP examples carry the commented (off by default)
+# fields, the runbook states the opt-in publication rule and the release
+# commands, and the lifecycle doc describes the guest service mode.
+for example in qnap-example qnap-canary-example; do
+    example_file="$BASE_DIR/tests/profiles/$example.env"
+    if grep -q '^# export DX_USAGE_SERVICE=on$' "$example_file" \
+        && grep -q '^# export DX_USAGE_SERVICE_HOST_PORT=8787$' "$example_file" \
+        && ! grep -q '^export DX_USAGE_SERVICE' "$example_file" \
+        && grep -Fq 'docs/qnap-runbook.md section 10' "$example_file"; then
+        test_pass "$example shows the usage-service fields commented out with a runbook pointer"
+    else
+        test_fail "$example shows the usage-service fields commented out with a runbook pointer"
+    fi
+done
+runbook="$BASE_DIR/docs/qnap-runbook.md"
+if grep -q '^## 10\. Usage service$' "$runbook" \
+    && grep -Fq 'SSH, plus the usage service when' "$runbook" \
+    && grep -Fq 'explicit, opt-in extension' "$runbook" \
+    && grep -Fq 'nix-store --add-root /persist/services/agent-stats/current --indirect -r' "$runbook" \
+    && grep -Fq 'nix-store --add-root /persist/services/agent-stats/previous --indirect -r' "$runbook" \
+    && grep -Fq 'http://<NAS tailnet name>:8787/' "$runbook" \
+    && grep -Fq 'not to `docker logs`' "$runbook" \
+    && grep -Fq 'stub until the package is installed' "$runbook"; then
+    test_pass "the QNAP runbook documents enabling, the publication rule, release selection, logs, the Apple URL and the dx-ai hook"
+else
+    test_fail "the QNAP runbook documents enabling, the publication rule, release selection, logs, the Apple URL and the dx-ai hook"
+fi
+if grep -Fq 'Guest usage-service mode' "$BASE_DIR/docs/lifecycle.md" && grep -Fq 's6-svscan' "$BASE_DIR/docs/lifecycle.md"; then
+    test_pass "docs/lifecycle.md describes the guest usage-service mode"
+else
+    test_fail "docs/lifecycle.md describes the guest usage-service mode"
+fi
+
 source "$BASE_DIR/bin/lib/dx-config.sh"
 for name in $DXE_CONFIG_FIELDS; do
     if grep -Fq -- "$name" "$CONFIG_DOC"; then test_pass "$name is generated/validated from the config registry"; else test_fail "$name is generated/validated from the config registry"; fi
