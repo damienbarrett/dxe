@@ -7,6 +7,26 @@
 DX_USAGE_HOST_SCAN_DIR=/run/dx-services
 DX_USAGE_HOST_LOG_FILE=/persist/services/agent-stats/logs/agent-stats/current
 
+# bin/dx-create-container: two published host ports cannot be the same port,
+# so DX_USAGE_SERVICE=on with a host port equal to DX_SSH_PORT is refused
+# before the runtime is touched. Off ignores DX_USAGE_SERVICE_HOST_PORT.
+dx_usage_host_create_check() {
+    [ "$DX_USAGE_SERVICE" = on ] && [ "$DX_USAGE_SERVICE_HOST_PORT" = "$DX_SSH_PORT" ] || return 0
+    echo "Error: DX_USAGE_SERVICE_HOST_PORT ($DX_USAGE_SERVICE_HOST_PORT) must differ from DX_SSH_PORT ($DX_SSH_PORT); both are published by the same container." >&2
+    return 1
+}
+
+# Appends the usage service's create items to the caller's CREATE_ARGS array
+# (a global in bin/dx-create-container): a second publication through the SAME
+# neutral vocabulary as SSH -- no bind address; each adapter prepends its own
+# (Apple loopback, docker-ssh the discovered Tailscale address) -- plus the
+# env token the guest reads. Off appends nothing, so the rendered create argv
+# is byte-identical to before.
+dx_usage_host_create_args() {
+    [ "$DX_USAGE_SERVICE" = on ] || return 0
+    CREATE_ARGS+=(--publish "$DX_USAGE_SERVICE_HOST_PORT:8787" --env "DX_USAGE_SERVICE=on")
+}
+
 dx_usage_host_usage() {
     cat <<'USAGE'
 Usage: dx-usage-service <start|stop|restart|status|logs [N]>

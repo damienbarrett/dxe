@@ -3,6 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+# Sourced here, not in dx-lib.sh's facade: only this entrypoint and
+# bin/dx-usage-service use it, and the facade's order is a tested contract.
+# shellcheck source=lib/dx-usage-service.sh
+source "$SCRIPT_DIR/lib/dx-usage-service.sh"
 
 release_pending_claim() {
     [ "${claim_pending:-false}" != true ] || dx_nix_volume_claim_release "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME" || true
@@ -10,12 +14,7 @@ release_pending_claim() {
 }
 
 create_container_main() {
-# Two published host ports cannot be the same port; refuse before touching the
-# runtime. Off ignores DX_USAGE_SERVICE_HOST_PORT entirely.
-if [ "$DX_USAGE_SERVICE" = on ] && [ "$DX_USAGE_SERVICE_HOST_PORT" = "$DX_SSH_PORT" ]; then
-    echo "Error: DX_USAGE_SERVICE_HOST_PORT ($DX_USAGE_SERVICE_HOST_PORT) must differ from DX_SSH_PORT ($DX_SSH_PORT); both are published by the same container." >&2
-    exit 1
-fi
+dx_usage_host_create_check || exit 1
 dx_require_container_cli
 
 if container_exists "$DX_CONTAINER_NAME"; then
@@ -137,14 +136,8 @@ CREATE_ARGS=(
     --health-retries 3
 )
 
-# Usage service (DX_USAGE_SERVICE=on only): a second publication through the
-# SAME neutral vocabulary as SSH above -- no bind address; each adapter
-# prepends its own (Apple loopback, docker-ssh the discovered Tailscale
-# address) -- plus the env token the guest reads. Off adds nothing, so the
-# rendered create argv is byte-identical to before.
-if [ "$DX_USAGE_SERVICE" = on ]; then
-    CREATE_ARGS+=(--publish "$DX_USAGE_SERVICE_HOST_PORT:8787" --env "DX_USAGE_SERVICE=on")
-fi
+# Usage service items (on only; off appends nothing): see bin/lib/dx-usage-service.sh.
+dx_usage_host_create_args
 
 if [ -n "$DX_GIT_MOUNT_SOURCE" ]; then
     if [ "$DX_CONTAINER_NAME" = "dx-host" ]; then

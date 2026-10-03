@@ -67,6 +67,29 @@ expect_calls() {
     cmp -s "$fixture/expected" "$US_DOCKER_LOG"
 }
 
+# --- bin/dx-create-container's two moved steps (also proven end to end on the
+# Apple argv in test_runtime_boundary_characterisation.sh) ----------------------
+if ( DX_USAGE_SERVICE=on DX_USAGE_SERVICE_HOST_PORT=2222 DX_SSH_PORT=2222; dx_usage_host_create_check ) 2>"$fixture/check.err"; then
+    test_fail "create_check refuses on with the usage port equal to the SSH port"
+elif grep -qF "DX_USAGE_SERVICE_HOST_PORT (2222) must differ from DX_SSH_PORT (2222)" "$fixture/check.err"; then
+    test_pass "create_check refuses on with the usage port equal to the SSH port"
+else
+    test_fail "create_check refuses with the documented message (got: $(cat "$fixture/check.err"))"
+fi
+if ( DX_USAGE_SERVICE=on DX_USAGE_SERVICE_HOST_PORT=8787 DX_SSH_PORT=2222; dx_usage_host_create_check ) \
+    && ( DX_USAGE_SERVICE=off DX_USAGE_SERVICE_HOST_PORT=2222 DX_SSH_PORT=2222; dx_usage_host_create_check ); then
+    test_pass "create_check accepts distinct ports, and ignores the port entirely when off"
+else
+    test_fail "create_check accepts distinct ports, and ignores the port entirely when off"
+fi
+us_args_on="$( DX_USAGE_SERVICE=on DX_USAGE_SERVICE_HOST_PORT=18799; CREATE_ARGS=(--name x); dx_usage_host_create_args; printf '%s|' "${CREATE_ARGS[@]}" )"
+us_args_off="$( DX_USAGE_SERVICE=off DX_USAGE_SERVICE_HOST_PORT=18799; CREATE_ARGS=(--name x); dx_usage_host_create_args; printf '%s|' "${CREATE_ARGS[@]}" )"
+if [ "$us_args_on" = "--name|x|--publish|18799:8787|--env|DX_USAGE_SERVICE=on|" ] && [ "$us_args_off" = "--name|x|" ]; then
+    test_pass "create_args appends exactly the neutral publish item and env token when on, and nothing when off"
+else
+    test_fail "create_args appends the publish item and env token when on, nothing when off (on: $us_args_on; off: $us_args_off)"
+fi
+
 # --- docker-ssh argv per subcommand -------------------------------------------
 probe="exec|dx-svc|test|-d|$SVC"
 for pair in "start:-u" "stop:-d" "restart:-r"; do

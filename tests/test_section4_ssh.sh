@@ -60,7 +60,7 @@ assert_file_contains_literal "$SYSTEM" 'dx ALL=(ALL) NOPASSWD:ALL' "passwordless
 # in the --publish VALUE it passes (a prose comment nearby is allowed to
 # mention 127.0.0.1 -- it names what the Apple ADAPTER does elsewhere).
 assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '--publish "$DX_SSH_PORT:2222"' "guest SSH publish spec carries no bind address (each runtime adapter supplies its own)"
-assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '--publish "$DX_USAGE_SERVICE_HOST_PORT:8787"' "usage-service publish spec carries no bind address either (same neutral vocabulary as SSH)"
+assert_file_contains_literal "$BASE_DIR/bin/lib/dx-usage-service.sh" '--publish "$DX_USAGE_SERVICE_HOST_PORT:8787"' "usage-service publish spec carries no bind address either (same neutral vocabulary as SSH)"
 
 # The guest's host identity is persisted on the dx-persist volume rather than
 # regenerated onto the ephemeral rootfs each boot. Behavior for restore, the

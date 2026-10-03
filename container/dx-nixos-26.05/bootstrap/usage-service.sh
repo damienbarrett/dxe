@@ -76,3 +76,12 @@ dx_bootstrap_exec_usage_service() {
     echo "Guest bootstrap complete. Starting s6-svscan supervising sshd, agent-stats and agent-stats-watchdog..."
     exec "$(command -v s6-svscan)" "$scan_dir"
 }
+
+# bootstrap_main's one call: returns 0 (nothing done) unless DX_USAGE_SERVICE is
+# exactly "on" -- anything else is off, so a typo can never keep SSH from coming
+# up. When on, builds the tree and execs s6-svscan; a failure to build it (a
+# missing s6) aborts the boot here, before any exec.
+dx_bootstrap_usage_service_dispatch() {
+    [ "${DX_USAGE_SERVICE:-off}" = on ] || return 0
+    dx_bootstrap_exec_usage_service || exit 1
+}
