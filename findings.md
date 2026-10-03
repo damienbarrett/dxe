@@ -118,6 +118,27 @@ Every review ID and where it lands.
   two-number metric (WP1.5) lands first; v2 Phase 4 re-measures those two
   numbers. Rationale: Fable's argument that v2's own gates add tests, which
   the current ratio reports as regressions.
+- **D-1 outcome (2026-10-03).** Executed as decided: WP1.5's two-number
+  metric landed first and `tests/coverage/ratchet.env` is its record. Advice
+  elsewhere to "finish v2 on the current ratio, then change the metric" is
+  superseded and has been removed or annotated.
+- **Q7 resolved item by item (2026-10-03),** per D-1 and `2-oct-plan.md`
+  ("Keep Q7's unadopted large proposals ... deferred"). The owner of every
+  deferred line below is the user; accepting any of them is a separate scope
+  decision, never an automatic follow-on.
+  - Bootstrap refactor v2: **adopted** Phases 0-2 and Contract 5 (WP8.1);
+    Phase 3, the production split of `base-and-storage.sh`, and Phase 5 are
+    **not adopted** (reasons under WP8.1); its test-split half was delivered
+    by WP8.4. Remaining file stays Open only for those unadopted lines.
+  - Declarative Nix audit (`declarative-nix-plan-a.md`): **adopted** as
+    individual items, not as a programme -- #12 (coverage metric, WP1.5),
+    #16 (`homeConfigurations` evaluated, WP2.1) and the typed-option items
+    folded into WP7.3-WP7.8. **Deferred**, owner the user, trigger: the next
+    NixOS release bump touching `flake.nix` (the audit's own trigger): every
+    item not named above, including the TOML merger (#8), persistence links
+    (#9), the theme git-clone (#10) and the root-flake and release-pin items (#14, #15).
+    None is rejected; none is scheduled.
+  - QNAP runtime: **adopted** and complete (Phase 7 accepted 2026-10-03).
 - **D-2 Reviews live under `docs/reviews/`.** Root `*.md` stays reserved for
   plans indexed by `plans.md`; reviews are evidence and are indexed by
   `docs/reviews/README.md`.
@@ -330,11 +351,28 @@ Every review ID and where it lands.
 
 ### WP8 — Structural splits
 
-- [~] a1f9b2b..327f6bb (Phases 0-2 + C5) **WP8.1** `refactor-v2-final.md` Phases 0–4 with Fable B6's seven
-  corrections (three-mode record incl. `in-place`, fourth positional for
-  image-store identity, durable-identity contract, owner resolved once, dead
-  `setup_nix_volume` deleted, line refs refreshed); Phase 4 split per the B6
-  matrix. (Muse B1, B2, Fable B6)
+- [x] a1f9b2b..327f6bb (Phases 0-2 + C5) **WP8.1** `refactor-v2-final.md` Phases 0-2 with
+  Fable B6's corrections (three-mode record incl. `in-place`, fourth positional
+  for image-store identity, durable-identity contract, owner resolved once,
+  dead `setup_nix_volume` deleted, line refs refreshed). (Muse B1, B2, Fable
+  B6) Reconciled 2026-10-03: `[x]` covers exactly what was done. **Not
+  adopted** (the item no longer carries them; nothing is silently complete):
+  - **Phase 3, one claim cleanup path** -- not adopted. Host-side
+    (`dx_lock_acquire`, the claim acquire path), outside the guest-side scope
+    of this work item; the lock-leak risk it targeted was met differently by
+    WP6.5 (operation-level lifecycle lock) and the WP8.3 lock split. Reopen
+    only on a claim/lock defect. Claim extraction to a `dx-claims.sh` (WP8.3
+    step 4) is likewise not done.
+  - **Phase 4, production split of `base-and-storage.sh`** and its
+    definition-move matrix -- not adopted. The plan itself calls it "decide
+    with evidence"; no evidence of need has appeared, and the coverage gate
+    it waited on (D-1) was satisfied by the two-number metric. Its test-split
+    half was delivered by WP8.4a/b instead.
+  - **Phase 5, `run_bootstrap_phase` timing helper and typed marker
+    consolidation** -- not adopted. The helper would change observable
+    bootstrap output, which this plan keeps byte-identical
+    (`Bootstrap phase:` lines), and no marker defect motivates the
+    consolidation.
 - [x] 2cd212b..c156c0f **WP8.2** `dx-ai.sh` split into `scripts/lib/dx-ai-{lock,generation,
   pin,cache-policy,post-install}.sh`; `dx_ai_run_locked`;
   `dx_ai_load_library`; `dx_persist_relocate_dir` shared by gh/herdr/opencode/

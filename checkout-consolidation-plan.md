@@ -453,8 +453,10 @@ For each proposal:
 
 **Coverage metric conflict:** only relevant if you accept both v2 and the Nix
 audit's item #12. That item replaces the coverage ratio with a ceiling on
-uncovered lines; v2's Phase 4 measures the old ratio. Recommendation: finish
-v2 on the current metric, then change the metric separately.
+uncovered lines; v2's Phase 4 measures the old ratio. *(Superseded 2026-10-03:
+`findings.md` D-1 decided the opposite order and executed it -- the metric
+landed first; the original recommendation was to finish v2 on the current
+metric, then change the metric separately.)*
 
 ### Defaults assumed (tell me if any are wrong)
 

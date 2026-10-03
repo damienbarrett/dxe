@@ -61,23 +61,20 @@ Every plan document below is listed under exactly one of these.
   larger Herdr TOML merger. It is tracked in Git; its recommendations have not
   been adopted as an implementation plan.
 
-  **Recorded conflict — #12 vs. `refactor-v2-final.md` A1/Phase 4.** #12
-  proposes replacing the coverage-ratchet ratio with a ceiling on uncovered
-  production shell. `refactor-v2-final.md`'s A1 review finding was closed
-  against that ratio's measurement at `7ffa66b`, and its Phase 4 gate
-  re-measures the same ratio. If #12 lands first, both are against a metric
-  shape that no longer exists. Undecided which lands first; no owner named
-  for either document. The ordering is decided in `findings.md` D-1: the
-  metric lands first.
-- [`refactor-v2-final.md`](refactor-v2-final.md) — Follow-on bootstrap
-  refactor plan. Its identity/publication threading, explicit Nix-volume state,
-  and claim-cleanup phases remain open; the proposed sourceable-test split and
-  possible production-module split are also not complete. The current source
-  still uses the environment variables this plan proposes to remove.
 
-  **Recorded conflict.** Phase 4's coverage-ratchet gate vs.
-  `declarative-nix-plan-a.md` #12 remains live — see that entry above. The
-  ordering is decided in `findings.md` D-1: the metric lands first.
+  **Conflict resolved.** The old conflict between #12 and
+  `refactor-v2-final.md` Phase 4 was decided by `findings.md` D-1 and
+  executed: the two-number coverage metric landed first. Q7 is reconciled
+  item by item in `findings.md`: adopted items landed (#12, #16, the typed
+  Home Manager items); everything else is deferred, owner the user, trigger
+  as stated in the audit's Status.
+- [`refactor-v2-final.md`](refactor-v2-final.md) — Follow-on bootstrap
+  refactor plan. Phases 0-2 and Contract 5 landed (`findings.md` WP8.1);
+  its test split was delivered by WP8.4. Open only for what was **not
+  adopted**: Phase 3 (claim cleanup), the production split of
+  `base-and-storage.sh`, and Phase 5 (timing helper, marker consolidation),
+  with reasons in `findings.md`. Owner: the user. Its coverage-ratchet
+  conflict with the Nix audit is closed by D-1 (the metric landed first).
 - **Backlog probes from the consolidation plan** — Four small, specified
   probes `checkout-consolidation-plan.md`'s own "Open follow-ups" section
   tracked without a branch (Muse D5): a live tmux-resurrect restore probe

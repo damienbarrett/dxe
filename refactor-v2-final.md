@@ -17,8 +17,12 @@ This plan changes no production behavior. It makes state flow explicit, and it
 must not alter bootstrap ordering, persistence formats, marker formats, retry
 behavior, or public CLI behavior.
 
-**Revisit trigger:** when Phase 1 (identity and publication threading) is
-next scheduled, or when the coverage ratchet is next re-measured.
+**Revisit trigger:** when a claim/lock defect appears (Phase 3), or when
+`base-and-storage.sh` shows evidence it needs splitting (Phase 4 production
+split), or when bootstrap phase timing output is next changed (Phase 5).
+Reconciled 2026-10-03: Phases 0-2 and Contract 5 landed; Phases 3 and 5 and
+the production half of Phase 4 are **not adopted** (`findings.md` WP8.1 has
+the reasons); the test split was delivered by WP8.4. Owner: the user.
 
 **2026-09-30 update (WP8.1):** Phases 0–2 landed against the seven
 corrections in `docs/reviews/2026-09-29-fable.md` "B6", plus Contract 5
@@ -388,11 +392,9 @@ failure; Bash 3.2 and Linux behavior agree.
 
 1. The coverage ratchet is re-measured against the tree at the point Phases
    1–3 land — read `tests/coverage/ratchet.env` for the live baseline and its
-   full history, not a number fixed here. **Recorded conflict —
-   `declarative-nix-plan-a.md` #12** proposes replacing the ratio this gate
-   re-measures with a ceiling on uncovered production shell; if that reform
-   lands first, re-measure against whatever `ratchet.env` defines at that
-   point, not this ratio. Undecided which lands first.
+   full history, not a number fixed here. This gate is now defined by the
+   two-number metric (`tests/lib/coverage-metric.sh`): `findings.md` D-1
+   decided that the metric lands first, and it did (WP1.5).
 2. A written **definition-move matrix** naming every function's destination
    module and its dependencies, including the cases the original categories left
    ambiguous: durable identity, essentials installation, default-profile

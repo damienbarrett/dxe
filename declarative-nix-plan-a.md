@@ -15,6 +15,12 @@ the end.
 Open. Tracked in Git; its recommendations have not been adopted as an
 implementation plan.
 
+**Reconciled 2026-10-03 (`findings.md` Q7):** adopted item by item rather
+than as a programme. #12 (coverage metric) landed first per D-1 as the
+two-number metric; #16 landed as WP2.1; the typed-option items landed within
+WP7.3-WP7.8. Every other item is deferred, owner the user, same revisit
+trigger below.
+
 **Revisit trigger:** before the next NixOS release bump touches `flake.nix`,
 or when Tier 0's CI gates are next considered; at that point the audit is
 either adopted (Tier 0 + Tier 1) or archived, not left in a third state.
