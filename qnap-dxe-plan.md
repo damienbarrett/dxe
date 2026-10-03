@@ -1033,6 +1033,18 @@ the two that are code defects — directory modes on restore, and
 docker-ssh execution-lease pruning keyed on the host kernel's boot id —
 go to a follow-up branch, not into the acceptance week.
 
+**Status update (2026-10-03, day 5 — accepted):** the user signed off
+the acceptance period on day 5 (relay-fallback check waived, recorded as
+not met) and the production profile `dx-qnap` was created from `main`
+`5b8d4f3` (port 2223 temporary, 8 GB / 4 CPU, `unless-stopped`, own keys
+and volumes), then populated from the canary by the cross-profile restore
+(2,040 files, verified identical, directory modes preserved) with `dx-ai`
+completing inside it; see `docs/evidence/20260928/qnap-promotion.md`
+"Day 5". Item 7 held throughout (`dx-host` intact, promotion #9 only).
+Left for the user: switching daily `qx` to `qnap`, retiring the canary,
+returning production to port 2222. WP9.1 (retiring the consolidation
+narrative) may now proceed.
+
 ### Exit gate
 
 All definition-of-done items below are satisfied and no temporary compatibility

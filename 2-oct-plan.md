@@ -293,6 +293,13 @@ prepared final acceptance go;
 choosing policy while drafting does not schedule it. Keep `dx-host` intact.
 Canary retirement and moving production back to port 2222 are later decisions.
 
+**Production (2026-10-03 evening):** D3 closed early by the user's
+sign-off on day 5 (relay waived, recorded as not met); D7 executed —
+`dx-qnap` created, populated from the canary by the cross-profile restore
+and verified, `dx-ai` live inside it; the canary remains the fallback. The
+user's `qx` switch (`QX_PROFILE=qnap`) and the canary's retirement are the
+remaining operator steps.
+
 ## 6. Document disposition, residual work and completion
 
 **Backlog status (2026-10-03):** the cosmetic items, the behavioural

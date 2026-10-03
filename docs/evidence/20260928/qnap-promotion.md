@@ -344,3 +344,38 @@ With this, every item the plan's D2 required before real-guest
 publication has both its gates and its live proof, and the canary's own
 restart earlier the same evening showed the same lease behaviour on the
 real guest.
+
+### Day 5 — sign-off and the production profile (2026-10-03)
+
+The user signed off the acceptance period on day 5 rather than day 7
+(decision D3 was the owner's to revise): the canary had run the final
+release for about 42 hours with restart count 0 and no drift, both
+runtimes had passed their full live tiers that day
+(`docs/evidence/20261003/live-tier-both-runtimes.md`), the backup was
+verified by the restore drill, and the relay-fallback check was waived by
+the user on 2026-10-03 ("working on the public networks that are most
+important to me; revisit later if needed") — recorded here as **waived,
+not met**. Soak note: the canary soaked `main` `00b67d0`; production was
+created from `main` `5b8d4f3`, whose only guest-affecting additions (the
+docker-ssh hostname and lock-image fixes) had been proven live on
+disposable spikes the same day.
+
+**Production profile `dx-qnap`** (decision D7): SSH on the NAS's Tailscale
+address at port **2223** (temporary, may move back to 2222 once the canary
+is retired), `unless-stopped` from creation, 8 GB / 4 CPU, its own key pair
+and volumes, hostname `dx-qnap`, the private profile pinned to the user's
+main-only checkout.
+
+| Step | Result |
+| --- | --- |
+| first `dx` of the never-created profile | lock acquired, image from the cached base, up in 147 s; `/etc/hostname` = `dx-qnap`; running, restart count 0, `unless-stopped`, 4 CPU / 8 GB, `healthy`, bound to `<tailnet address>:2223` only |
+| first `dx-backup` (fresh guest) | 3 files into a generation-shaped mirror with `dirs.tsv`; dry-run clean |
+| cutover: fresh canary backup | 498 files / 39 MiB; the canary's own dry-run 2,039 identical |
+| cross-profile restore `dx-restore --source-container=dx-qnap-canary --force` under `qnap` | banner printed; 2,040 files restored in 44 s (`--force` for the bootstrap-seeded herdr configuration, as the drill predicted) |
+| verification | dry-run 2,042 identical, 0 would create, 0 directory-mode conflicts; no entry under `/persist` outside root-owned `/persist/etc` that is not `dx:dx`; spot-checked modes equal to the canary's, including `.local/state/dx` at 700 — the directory-mode fix observed in production; both git repositories present |
+| `dx-ai` in production | completed in 64 s (the x86_64 binary cache had caught up with `herdr-0.9.1`); D-Bus and the keyring started, `live`; `agy`, `claude`, `codex` resolve |
+| final state | `dx-qnap` running = published `20261003T043128Z`, healthy; `dx-qnap-canary` healthy, untouched, kept as the fallback until the user retires it |
+
+Remaining under D7: switch the user's daily `qx` to the production profile
+(operator shell setting), and, later, the user's decisions on retiring the
+canary and returning production to port 2222.
