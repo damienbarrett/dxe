@@ -202,7 +202,7 @@ if [ "$qx_status" -eq 1 ] && expect_log available system-status lock system-stat
 else
     test_fail "service-readiness timeout releases its lock without connecting or bringing up the guest"
 fi
-DX_RUNTIME=docker-ssh DX_NIX_STORAGE_MODE=direct-volume DX_REMOTE_HOST=qnap QX_TEST_SERVICE_STATE=stopped run_qx
+DX_RUNTIME=docker-ssh DX_NIX_STORAGE_MODE=direct-volume DX_REMOTE_HOST=qnap.invalid QX_TEST_SERVICE_STATE=stopped run_qx
 if [ "$qx_status" -eq 1 ] && expect_log available system-status lock system-status system-start unlock && [ ! -e "$QX_TEST_ARGS" ]; then
     test_pass "QNAP adapter still refuses automatic Container Station service startup"
 else

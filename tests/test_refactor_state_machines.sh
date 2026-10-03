@@ -455,6 +455,8 @@ fi
     dx_parse_config_file "$BASE_DIR/tests/profiles/qnap-example.env"
 ) && test_pass "tests/profiles/qnap-example.env parses under the config data grammar" || test_fail "tests/profiles/qnap-example.env parses under the config data grammar"
 example_root="$fixture/qnap-example-root"
+# The profile's own alias, read from the file so this suite never spells it.
+example_remote_host="$(sed -n 's/^export DX_REMOTE_HOST=//p' "$BASE_DIR/tests/profiles/qnap-example.env")"
 mkdir -p "$example_root"
 (
     for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field" "DXE_PARSED_$field"; done
@@ -469,7 +471,7 @@ mkdir -p "$example_root"
     # Branch 11 / Phase 4 user decision (2026-09-27): the QNAP guest is
     # 8 GB / 4 CPU, smaller than Apple's 12G/4 default -- see
     # docs/refactor/arch-neutral-guest.md section 8.
-    [ "$DX_RUNTIME" = docker-ssh ] && [ "$DX_REMOTE_HOST" = qnap-dxe ] && [ "$DX_GUEST_SYSTEM" = x86_64-linux ] && [ "$DX_NIX_STORAGE_MODE" = direct-volume ] \
+    [ "$DX_RUNTIME" = docker-ssh ] && [ "$DX_REMOTE_HOST" = "$example_remote_host" ] && [ "$DX_GUEST_SYSTEM" = x86_64-linux ] && [ "$DX_NIX_STORAGE_MODE" = direct-volume ] \
         && [ "$DX_CONTAINER_MEMORY" = 8G ] && [ "$DX_CONTAINER_CPUS" = 4 ]
 ) && test_pass "tests/profiles/qnap-example.env resolves a valid docker-ssh configuration" || test_fail "tests/profiles/qnap-example.env resolves a valid docker-ssh configuration"
 

@@ -65,9 +65,8 @@ fi
 # --- NAS-identifying / key-material leak scan --------------------------
 #
 # qnap-dxe-plan.md's Phase 0 talks to a real, production QNAP NAS from this
-# PUBLIC repository. Only the ssh_config alias (DXE_QNAP_HOST, e.g.
-# "qnap-dxe") may ever appear in a tracked file -- never its Tailscale
-# MagicDNS name, tailnet address, storage-pool/dataset name, or any key
+# PUBLIC repository. Only the ssh_config alias (DXE_QNAP_HOST) may ever
+# appear in a tracked file -- never its Tailscale MagicDNS name, tailnet address, storage-pool/dataset name, or any key
 # material. These are generic shape detectors (not specific to this one
 # NAS), so they also catch the equivalent leak for any future host this
 # repository talks to the same way.
@@ -153,6 +152,41 @@ done <<<"$fixture_cases"
 
 rm -rf "$FIXTURE_DIR"
 trap - EXIT
+
+# --- Fixture host alias guard (fix/fixture-host-alias-fail-closed) ------
+#
+# The production NAS's real ssh_config alias must never be a fixture host:
+# a hermetic suite that names it and loses its fake ssh reaches the real
+# machine (incident 2026-10-03). Fixtures use *.invalid, which never
+# resolves. The alias is assembled from pieces so this file does not spell
+# it either. tests/qnap/ (operator scripts that use the real alias by
+# design) and the example profiles are the only exclusions.
+real_alias="$(printf '%s%s' "qnap" "-dxe")"
+alias_hits="$(grep -rIn --exclude-dir=qnap --exclude='*example.env' --exclude-dir=out -- "$real_alias" "$SCRIPT_DIR" | grep -v -- "${real_alias}-plan" || true)"
+if [ -z "$alias_hits" ]; then
+    test_pass "no test file outside tests/qnap and the example profiles names the real NAS alias"
+else
+    test_fail "no test file outside tests/qnap and the example profiles names the real NAS alias (hits: $alias_hits)"
+fi
+
+host_assign_hits="$(grep -rIhoE --exclude-dir=qnap --exclude='*example.env' --exclude-dir=out -- 'DX_REMOTE_HOST=[A-Za-z0-9._-]+' "$SCRIPT_DIR" | grep -v -- '\.invalid$' || true)"
+if [ -z "$host_assign_hits" ]; then
+    test_pass "every DX_REMOTE_HOST= assignment under tests/ ends in .invalid"
+else
+    test_fail "every DX_REMOTE_HOST= assignment under tests/ ends in .invalid (offending: $host_assign_hits)"
+fi
+
+fake_tools_lib="$SCRIPT_DIR/lib/fake-tools.sh"
+fail_closed_ok=true
+grep -qF -- 'fake-tools: no fake for $fake_tool_name; refusing to reach a real host' "$fake_tools_lib" || fail_closed_ok=false
+for fail_closed_tool in ssh scp sftp docker tailscale container nix curl; do
+    grep -E -- '^FAKE_TOOLS_FAIL_CLOSED_LIST=' "$fake_tools_lib" | grep -qw -- "$fail_closed_tool" || fail_closed_ok=false
+done
+if $fail_closed_ok; then
+    test_pass "tests/lib/fake-tools.sh keeps the fail-closed default list and refusal message"
+else
+    test_fail "tests/lib/fake-tools.sh keeps the fail-closed default list and refusal message"
+fi
 
 print_summary
 exit_with_code

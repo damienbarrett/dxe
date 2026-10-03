@@ -433,7 +433,7 @@ case "$1 $2" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-a
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-a.invalid
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     id_a="$(dx_runtime_host_identity)"
     dir2="$(new_tool_dir)"
@@ -444,7 +444,7 @@ case "$1 $2" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir2:/usr/bin:/bin"
-    DX_REMOTE_HOST=qnap-b
+    DX_REMOTE_HOST=qnap-b.invalid
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     id_b="$(dx_runtime_host_identity)"
     [ "$id_a" != "$id_b" ]

@@ -883,7 +883,7 @@ esac"
     dxe_s33t_container="dxe-transcript-demo"
     dxe_s33t_volume="dxe-transcript-vol"
     DX_RUNTIME=docker-ssh
-    DX_REMOTE_HOST=dxe-transcript-host
+    DX_REMOTE_HOST=dxe-transcript-host.invalid
     DX_CONTAINER_NAME=dxe-transcript-container
     DX_GUEST_SYSTEM=x86_64-linux
     DX_SSH_CONNECT_TIMEOUT=15
@@ -909,7 +909,7 @@ esac"
     # round trip per call, all three sharing this SAME key (identical
     # container name and format every time), proving this profile owns
     # dxe-transcript-demo so start/stop/kill each still reach the real verb.
-    fake_respond ssh "$(dxe_s33t_remote_key "$dxe_s33t_bin" container inspect --format '{{index .Config.Labels "io.dxe.managed"}}|{{index .Config.Labels "io.dxe.schema"}}|{{index .Config.Labels "io.dxe.profile"}}|{{index .Config.Labels "io.dxe.role"}}|{{index .Config.Labels "io.dxe.system"}}' "$dxe_s33t_container")" "true|1|dxe-transcript-host__dxe-transcript-container|container|x86_64-linux"
+    fake_respond ssh "$(dxe_s33t_remote_key "$dxe_s33t_bin" container inspect --format '{{index .Config.Labels "io.dxe.managed"}}|{{index .Config.Labels "io.dxe.schema"}}|{{index .Config.Labels "io.dxe.profile"}}|{{index .Config.Labels "io.dxe.role"}}|{{index .Config.Labels "io.dxe.system"}}' "$dxe_s33t_container")" "true|1|dxe-transcript-host.invalid__dxe-transcript-container|container|x86_64-linux"
     fake_respond ssh "$(dxe_s33t_remote_key "$dxe_s33t_bin" container inspect --format '{{index .Config.Labels "io.dxe.owner"}}|{{.Created}}' "$(dx_runtime_docker_lock_name)")" "owner-token|2026-09-30T00:00:00Z"
 
     # Drive: discover the docker binary, run the full daemon-discovery

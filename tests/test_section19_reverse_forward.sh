@@ -123,7 +123,7 @@ EOF
     unset XDG_STATE_HOME
     HOME="$dxe_s19_home"
     DX_RUNTIME=docker-ssh
-    DX_REMOTE_HOST=s19-fake-host
+    DX_REMOTE_HOST=s19-fake-host.invalid
     DX_CONTAINER_NAME=dx-s19-fake
     DX_NIX_STORAGE_MODE=direct-volume
     export PATH HOME DX_RUNTIME DX_REMOTE_HOST DX_CONTAINER_NAME DX_NIX_STORAGE_MODE

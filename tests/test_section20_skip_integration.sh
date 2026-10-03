@@ -696,7 +696,7 @@ mkdir "$rn_dir/profiles" "$rn_dir/bin"
 : > "$rn_dir/key"
 {
     printf 'export DX_RUNTIME=docker-ssh\n'
-    printf 'export DX_REMOTE_HOST=dxe-fixture-remote\n'
+    printf 'export DX_REMOTE_HOST=dxe-fixture-remote.invalid\n'
     printf 'export DX_GUEST_SYSTEM=x86_64-linux\n'
     printf 'export DX_NIX_STORAGE_MODE=direct-volume\n'
     printf 'export DX_CONTAINER_NAME=dxe-runtime-fixture\n'

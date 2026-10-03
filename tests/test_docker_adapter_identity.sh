@@ -538,18 +538,18 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
     container_exists() { [ "$existing" = "$1" ]; }
     claim_home="$fixture/wp65-daemon-claim-home"
     HOME="$claim_home"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=hostA DXE_RUNTIME_DOCKER_DAEMON_ID=daemonA
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=hostA.invalid DXE_RUNTIME_DOCKER_DAEMON_ID=daemonA
     export DX_RUNTIME DX_REMOTE_HOST DXE_RUNTIME_DOCKER_DAEMON_ID
     dx_nix_volume_claim_acquire shared-vol containerA
     rc1=$?
     dirA="$(dx_nix_volume_claim_dir)"
-    DX_REMOTE_HOST=hostB DXE_RUNTIME_DOCKER_DAEMON_ID=daemonB
+    DX_REMOTE_HOST=hostB.invalid DXE_RUNTIME_DOCKER_DAEMON_ID=daemonB
     # Same $HOME, same volume name, a DIFFERENT daemon -- must succeed
     # independently rather than colliding with hostA's own claim above.
     dx_nix_volume_claim_acquire shared-vol containerB
     rc2=$?
     dirB="$(dx_nix_volume_claim_dir)"
-    DX_REMOTE_HOST=hostA DXE_RUNTIME_DOCKER_DAEMON_ID=daemonA
+    DX_REMOTE_HOST=hostA.invalid DXE_RUNTIME_DOCKER_DAEMON_ID=daemonA
     # Back on hostA's own identity: a second, distinct container contending
     # for the SAME volume while containerA still (per the stub above)
     # exists is correctly refused -- proving hostA's own scope is a real
@@ -590,14 +590,14 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "info --format" ] && echo "aaa111|host-a|x86_64|linux"'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-a DX_CONTAINER_NAME=dx-qnap
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-a.invalid DX_CONTAINER_NAME=dx-qnap
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     key_a="$(dx_tunnel_key forward 8080)"
     dir2="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir2"
     fake_tool_write "$dir2" docker '[ "$1 $2" = "info --format" ] && echo "bbb222|host-b|x86_64|linux"'
     PATH="$dir2:/usr/bin:/bin"
-    DX_REMOTE_HOST=qnap-b
+    DX_REMOTE_HOST=qnap-b.invalid
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     key_b="$(dx_tunnel_key forward 8080)"
     [ "$key_a" != "$key_b" ]
