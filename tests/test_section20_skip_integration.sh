@@ -208,12 +208,19 @@ requires_container_reports_running() (
     # (matching this file's own sanity_out/sanity_out_a calls above) keeps
     # the assignment and its one consumer on the same statement instead of a
     # separate one SC2034 would flag as unused.
-    SKIP_INTEGRATION=false DX_RUNTIME=apple DX_SSH_PORT=2399 DX_CONTAINER_NAME="$BIGLIST_TARGET" requires_container >/dev/null 2>&1
+    # The helper records its own pass/fail/skip outcome; point that at a
+    # private file so the suite's tally holds only this case's own
+    # test_pass/test_fail line (a recorded-but-uncaptured outcome would make
+    # the count disagree with the printed lines). Port and runtime are
+    # declared explicitly: the default guest port is refused by design.
+    DXE_TEST_RESULTS="$(mktemp -t dxe-biglist-results.XXXXXX)" DXE_TEST_RESULTS_OWNER=$$ \
+        SKIP_INTEGRATION=false DX_RUNTIME=apple DX_SSH_PORT=2399 DX_CONTAINER_NAME="$BIGLIST_TARGET" requires_container >/dev/null 2>&1
 )
 requires_container_reports_absent() (
     set -o pipefail
     PATH="$BIGLIST_STUB_DIR:$PATH"
-    DX_CONTAINER_NAME="$BIGLIST_ABSENT" requires_container >/dev/null 2>&1
+    DXE_TEST_RESULTS="$(mktemp -t dxe-biglist-results.XXXXXX)" DXE_TEST_RESULTS_OWNER=$$ \
+        SKIP_INTEGRATION=false DX_RUNTIME=apple DX_SSH_PORT=2399 DX_CONTAINER_NAME="$BIGLIST_ABSENT" requires_container >/dev/null 2>&1
 )
 
 if requires_container_reports_running; then
@@ -790,6 +797,19 @@ else
     test_fail "live_tail_enabled restores the operator's docker-ssh snapshot for the live tails (output: $rn_out)"
 fi
 rm -rf "$rn_dir"
+
+# --- A recorded failure must never go unseen. A case that calls a helper with
+# its output discarded (live_tail_enabled's default-guest refusal inside
+# `... >/dev/null`) used to be counted in the results file but never printed,
+# giving "1 failed" with no FAIL line. print_summary now names every recorded
+# failure again from the results file the count comes from.
+hid_out="$(env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" bash -c 'source "$1/test_helpers.sh"; test_fail "hidden-case-label" >/dev/null 2>&1; print_summary; exit_with_code' _ "$SCRIPT_DIR" 2>&1)" || hid_rc=$?
+if [ "${hid_rc:-0}" -ne 0 ] && printf '%s' "$hid_out" | stdin_matches -F 'Failed cases' \
+    && printf '%s' "$hid_out" | stdin_matches -F 'FAIL' && printf '%s' "$hid_out" | stdin_matches -F 'hidden-case-label'; then
+    test_pass "print_summary names a recorded failure whose own output was discarded, and the suite still exits non-zero"
+else
+    test_fail "print_summary names a recorded failure whose own output was discarded (rc ${hid_rc:-0}; output: $hid_out)"
+fi
 
 print_summary
 exit_with_code

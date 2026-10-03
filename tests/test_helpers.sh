@@ -468,6 +468,18 @@ print_summary() {
 
     if [ "$failed" -gt 0 ]; then
         GLOBAL_FAILED=1
+        # A failure counted in the results file must never go unseen: a case
+        # that calls a helper with its output captured or discarded (for
+        # example live_tail_enabled's default-guest refusal inside
+        # `$(...) >/dev/null`) records the failure without printing it. Name
+        # every recorded failure again here, from the file the count itself
+        # comes from, so the tally and the visible lines cannot disagree.
+        echo "Failed cases (from the results file):"
+        local kind label
+        while IFS=$'\t' read -r kind label; do
+            [ "$kind" = fail ] || continue
+            echo -e "  ${RED}✗ FAIL${NC}: $label"
+        done < "$DXE_TEST_RESULTS"
     fi
 }
 
