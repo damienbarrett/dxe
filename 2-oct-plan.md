@@ -295,6 +295,15 @@ Canary retirement and moving production back to port 2222 are later decisions.
 
 ## 6. Document disposition, residual work and completion
 
+**Backlog status (2026-10-03):** the cosmetic items, the behavioural
+hostname check, the live-tail guards and the hermetic-isolation fixes are
+landed (`docs/evidence/20261003/`), and the harness now runs the full live
+tier on both runtimes — Apple on `dx-test`, docker-ssh on a disposable
+spike — with the unit files' live tails included. Remaining residual work
+is the post-Phase-7 plan housekeeping named below and the optional Mac key
+relocation.
+
+
 D8's artifact policy is settled: this sanitized `2-oct-plan.md` is indexed once
 under **Partially complete** in `plans.md`. The six originals
 (`1-oct-a.md`, `1-oct-b.md`, `1-oct-c.md`, `1-oct-plan-a.md`,
