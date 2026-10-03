@@ -13,7 +13,7 @@ test_section "Section 3: Sourceable Guest Bootstrap"
 
 assert_file_exists "$BOOTSTRAP" "bootstrap orchestrator exists"
 assert_file_exists "$CONTAINER_DIR/scripts/lib/dx-guest-system.sh" "the shared guest-system helper exists"
-for module in common base-and-storage system persistence activation; do
+for module in common base-and-storage system persistence activation usage-service; do
     assert_file_exists "$BOOTSTRAP_DIR/$module.sh" "bootstrap $module phase exists"
     if output="$(bash -c 'before=$-; source "$1"; [ "$before" = "$-" ]' _ "$BOOTSTRAP_DIR/$module.sh" 2>&1)" && [ -z "$output" ]; then
         test_pass "bootstrap $module phase is side-effect-free when sourced"
@@ -28,7 +28,8 @@ source "$BOOTSTRAP_DIR/base-and-storage.sh"
 source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded dx_bootstrap_scratch_dir dx_persist_durable_identity_record dx_read_durable_identity_record dx_write_nix_volume_record dx_read_nix_volume_record dx_parse_nix_volume_record dx_persist_image_default_profile_target dx_read_image_default_profile_target essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id dx_parse_durable_identity_record create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_as_dx_argv dx_nix_root_writable_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system; do
+source "$BOOTSTRAP_DIR/usage-service.sh"
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded dx_bootstrap_scratch_dir dx_persist_durable_identity_record dx_read_durable_identity_record dx_write_nix_volume_record dx_read_nix_volume_record dx_parse_nix_volume_record dx_persist_image_default_profile_target dx_read_image_default_profile_target essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id dx_parse_durable_identity_record create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_as_dx_argv dx_nix_root_writable_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system dx_usage_service_write_run dx_usage_service_build_tree dx_bootstrap_exec_usage_service; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -2920,6 +2921,165 @@ else
 fi
 
 rm -rf "$p19_fixture"
+
+# =============================================================================
+# Usage service mode (docs/refactor/usage-service-host.md design item 3):
+# bootstrap_main reads DX_USAGE_SERVICE after the readiness marker. Off (or
+# anything but "on") keeps the exact `exec sshd -D -e -p 2222`; on builds an
+# s6 service tree and execs s6-svscan as PID 1 over sshd, agent-stats and
+# agent-stats-watchdog. Fake sshd/s6 binaries record their argv; nothing here
+# starts a real service.
+# =============================================================================
+us_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-usage-service.XXXXXX")"
+us_bin="$us_fixture/bin"; mkdir -p "$us_bin"
+us_write_fake() {
+    # $1 = tool name; records "name: argv" (one arg per field) to $US_LOG.
+    printf '#!/bin/bash\nprintf "%%s:" "%s" >> "$US_LOG"\nprintf " <%%s>" "$@" >> "$US_LOG"\nprintf "\\n" >> "$US_LOG"\n%s\n' "$1" "${2:-}" > "$us_bin/$1"
+    chmod +x "$us_bin/$1"
+}
+us_write_fake sshd
+us_write_fake setpriv
+us_write_fake s6-log
+# The fake s6-svscan also dumps the service tree it was given.
+us_write_fake s6-svscan 'for f in $(cd "$1" && find . -type f | sort); do printf "FILE %s\n" "$f" >> "$US_LOG"; done'
+export US_LOG="$us_fixture/log"
+
+# --- bootstrap_main dispatch ---------------------------------------------
+us_main() {
+    # $1 = DX_USAGE_SERVICE value ("-" = unset). Output: the ordered log.
+    : > "$US_LOG"
+    (
+        source "$BOOTSTRAP"
+        PATH="$us_bin:$PATH"
+        bootstrap_phases() { printf 'phases\n' >> "$US_LOG"; }
+        dx_bootstrap_publish_ready_marker() { printf 'marker\n' >> "$US_LOG"; }
+        dx_bootstrap_exec_usage_service() { printf 'usage-service-mode\n' >> "$US_LOG"; exit 0; }
+        if [ "$1" = "-" ]; then unset DX_USAGE_SERVICE; else export DX_USAGE_SERVICE="$1"; fi
+        bootstrap_main serve gen boot start
+    ) >/dev/null 2>&1 || true
+    cat "$US_LOG"
+}
+us_off_expected="phases
+marker
+sshd: <-D> <-e> <-p> <2222>"
+for us_value in - off ''; do
+    if [ "$(us_main "$us_value")" = "$us_off_expected" ]; then
+        test_pass "bootstrap_main with DX_USAGE_SERVICE='${us_value:-<empty>}' publishes the marker then execs sshd -D -e -p 2222 and starts no s6 mode"
+    else
+        test_fail "bootstrap_main with DX_USAGE_SERVICE='${us_value:-<empty>}' keeps today's sshd tail (got: $(us_main "$us_value"))"
+    fi
+done
+if [ "$(us_main on)" = "phases
+marker
+usage-service-mode" ]; then
+    test_pass "bootstrap_main with DX_USAGE_SERVICE=on enters the usage-service mode after the readiness marker and never execs sshd directly"
+else
+    test_fail "bootstrap_main with DX_USAGE_SERVICE=on enters the usage-service mode after the readiness marker (got: $(us_main on))"
+fi
+if [ "$(us_main maybe)" = "$us_off_expected" ]; then
+    test_pass "bootstrap_main treats any DX_USAGE_SERVICE value other than on as off (SSH must come up)"
+else
+    test_fail "bootstrap_main treats any DX_USAGE_SERVICE value other than on as off (got: $(us_main maybe))"
+fi
+
+# --- the service tree ------------------------------------------------------
+us_scan="$us_fixture/scan"; us_root="$us_fixture/persist/services/agent-stats"
+us_run_exec() {
+    # Runs the real function in a subshell; install is shadowed (no dx user).
+    : > "$US_LOG"
+    (
+        source "$BOOTSTRAP_DIR/usage-service.sh"
+        install() { mkdir -p "${@: -1}"; }
+        PATH="$us_bin:$PATH"; export DX_BOOTSTRAP_ROOT=/guest-bootstrap-fixture
+        dx_bootstrap_exec_usage_service "$us_scan" "$us_root"
+    ) > "$us_fixture/exec.out" 2>&1 || true
+}
+us_run_exec
+if grep -qxF "s6-svscan: <$us_scan>" "$US_LOG"; then
+    test_pass "usage-service mode execs s6-svscan over exactly the service directory"
+else
+    test_fail "usage-service mode execs s6-svscan over exactly the service directory (log: $(cat "$US_LOG"); out: $(cat "$us_fixture/exec.out"))"
+fi
+us_tree_expected="FILE ./agent-stats-watchdog/log/run
+FILE ./agent-stats-watchdog/run
+FILE ./agent-stats/log/run
+FILE ./agent-stats/run
+FILE ./sshd/log/run
+FILE ./sshd/run"
+if [ "$(grep '^FILE' "$US_LOG")" = "$us_tree_expected" ]; then
+    test_pass "the service tree holds exactly sshd, agent-stats and agent-stats-watchdog, each with a log/run"
+else
+    test_fail "the service tree holds exactly sshd, agent-stats and agent-stats-watchdog, each with a log/run (got: $(grep '^FILE' "$US_LOG"))"
+fi
+us_all_exec=true
+for us_f in sshd agent-stats agent-stats-watchdog; do
+    [ -x "$us_scan/$us_f/run" ] && [ -x "$us_scan/$us_f/log/run" ] || us_all_exec=false
+done
+if [ "$us_all_exec" = true ]; then test_pass "every run script is executable"; else test_fail "every run script is executable"; fi
+if grep -qF "$us_bin/sshd -D -e -p 2222" "$us_scan/sshd/run" && grep -qxF 'exec 2>&1' "$us_scan/sshd/run"; then
+    test_pass "sshd/run execs the same sshd argv as the off path (-D -e -p 2222) with stderr on the log pipe"
+else
+    test_fail "sshd/run execs the same sshd argv as the off path (got: $(cat "$us_scan/sshd/run" 2>&1))"
+fi
+if grep -qF -- "--reuid=dx" "$us_scan/agent-stats/run" && grep -qF "/guest-bootstrap-fixture/scripts/dx-usage-service.sh serve" "$us_scan/agent-stats/run"; then
+    test_pass "agent-stats/run drops to the dx user and runs the launcher in serve mode"
+else
+    test_fail "agent-stats/run drops to the dx user and runs the launcher in serve mode (got: $(cat "$us_scan/agent-stats/run" 2>&1))"
+fi
+if ! grep -qF -- "--reuid" "$us_scan/agent-stats-watchdog/run" && grep -qF "/guest-bootstrap-fixture/scripts/dx-usage-service.sh watchdog" "$us_scan/agent-stats-watchdog/run"; then
+    test_pass "agent-stats-watchdog/run stays root (it drives s6-svc) and runs the launcher in watchdog mode"
+else
+    test_fail "agent-stats-watchdog/run stays root and runs the launcher in watchdog mode (got: $(cat "$us_scan/agent-stats-watchdog/run" 2>&1))"
+fi
+us_logs_ok=true
+for us_f in sshd agent-stats agent-stats-watchdog; do
+    grep -qF "$us_bin/s6-log n10 s1000000 T $us_root/logs/$us_f" "$us_scan/$us_f/log/run" || us_logs_ok=false
+done
+if [ "$us_logs_ok" = true ] && [ -d "$us_root/logs" ]; then
+    test_pass "each service logs through a bounded s6-log (10 files of at most 1 MB) into its own directory under the persisted logs root"
+else
+    test_fail "each service logs through a bounded s6-log into the persisted logs root (got: $(cat "$us_scan/sshd/log/run" 2>&1))"
+fi
+# Repeat run: a stale tree from a previous boot is replaced, never merged.
+mkdir -p "$us_scan/stale-service"; printf x > "$us_scan/stale-service/run"
+us_run_exec
+if [ ! -e "$us_scan/stale-service" ] && [ "$(grep '^FILE' "$US_LOG")" = "$us_tree_expected" ]; then
+    test_pass "a repeat run rebuilds the service directory from scratch (no stale service survives)"
+else
+    test_fail "a repeat run rebuilds the service directory from scratch (got: $(grep '^FILE' "$US_LOG"))"
+fi
+
+# --- missing s6 refuses before any exec or tree --------------------------
+for us_missing in s6-svscan s6-log; do
+    rm -rf "$us_scan"; : > "$US_LOG"
+    us_hide="$us_fixture/bin-without-$us_missing"; mkdir -p "$us_hide"
+    for us_t in "$us_bin"/*; do [ "${us_t##*/}" = "$us_missing" ] || ln -sf "$us_t" "$us_hide/${us_t##*/}"; done
+    us_status=0
+    us_out="$(
+        source "$BOOTSTRAP_DIR/usage-service.sh"
+        install() { mkdir -p "${@: -1}"; }
+        PATH="$us_hide:/usr/bin:/bin"; export DX_BOOTSTRAP_ROOT=/guest-bootstrap-fixture
+        dx_bootstrap_exec_usage_service "$us_scan" "$us_root" 2>&1
+    )" || us_status=$?
+    if [ "$us_status" -ne 0 ] && [ ! -s "$US_LOG" ] && [ ! -e "$us_scan" ] \
+        && printf '%s\n' "$us_out" | grep -qF "'$us_missing'" && printf '%s\n' "$us_out" | grep -qF "bootstrapEssentials"; then
+        test_pass "usage-service mode with $us_missing missing fails clearly (naming it and the flake package) before any exec or tree"
+    else
+        test_fail "usage-service mode with $us_missing missing fails clearly before any exec or tree (status $us_status, log: $(cat "$US_LOG"), out: $us_out)"
+    fi
+done
+# An unusable service directory argument is refused outright.
+if ( source "$BOOTSTRAP_DIR/usage-service.sh"; PATH="$us_bin:$PATH"; dx_usage_service_build_tree / "$us_root" ) >/dev/null 2>&1; then
+    test_fail "the service directory '/' is refused"
+else
+    test_pass "the service directory '/' is refused"
+fi
+rm -rf "$us_fixture"
+
+# The pre-sshd closure ships the s6 tools (guest flake, system tools only).
+assert_file_contains_literal "$CONTAINER_DIR/flake.nix" "            s6" "bootstrapEssentials includes s6 (the system closure, not the dx user's guest-tools.nix)"
+assert_file_not_contains "$CONTAINER_DIR/guest-tools.nix" "s6" "guest-tools.nix (the dx user's profile) does not list s6"
+assert_file_contains_literal "$BOOTSTRAP" 'exec "$(command -v sshd)" -D -e -p 2222' "the off-path foreground sshd line is unchanged"
 
 print_summary
 exit_with_code

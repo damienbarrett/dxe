@@ -205,7 +205,8 @@ bootstrap_declares() {
 for pair in useradd:shadow groupadd:shadow usermod:shadow ssh-keygen:openssh \
     sshd:openssh tar:gnutar mount:util-linux sed:gnused grep:gnugrep \
     chown:coreutils mktemp:coreutils stat:coreutils mkfs.btrfs:btrfs-progs \
-    mkfs.ext4:e2fsprogs bash:bashInteractive; do
+    mkfs.ext4:e2fsprogs bash:bashInteractive \
+    s6-svscan:s6 s6-log:s6; do
     check bootstrap_declares "${pair##*:}"
     check bootstrap_invokes "${pair%%:*}"
 done

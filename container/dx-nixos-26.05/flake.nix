@@ -147,6 +147,7 @@
             util-linux
             btrfs-progs
             e2fsprogs
+            s6
           ];
 
           # Antigravity CLI (`agy`) — Google's agentic coding tool. The nixpkgs

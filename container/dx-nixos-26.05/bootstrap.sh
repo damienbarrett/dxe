@@ -69,6 +69,14 @@ bootstrap_main() {
     dx_bootstrap_publish_ready_marker "$dx_lease_generation" "$dx_lease_boot_id" "$dx_lease_start" "$$" \
         || echo "Warning: could not publish the bootstrap readiness marker; the container healthcheck will report unhealthy despite sshd starting." >&2
 
+    # Opt-in usage-service mode (docs/refactor/usage-service-host.md): only the
+    # exact value "on" leaves the plain sshd path; anything else is off, so a
+    # typo can never keep SSH from coming up. Failing to build the service tree
+    # (a missing s6) aborts here, before any exec.
+    if [ "${DX_USAGE_SERVICE:-off}" = on ]; then
+        dx_bootstrap_exec_usage_service || exit 1
+    fi
+
     echo "Guest bootstrap complete. Starting sshd in foreground..."
     exec "$(command -v sshd)" -D -e -p 2222
 }
@@ -85,5 +93,6 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     source "$DX_BOOTSTRAP_ROOT/bootstrap/persistence.sh"
     source "$DX_BOOTSTRAP_ROOT/bootstrap/herdr-config.sh"
     source "$DX_BOOTSTRAP_ROOT/bootstrap/activation.sh"
+    source "$DX_BOOTSTRAP_ROOT/bootstrap/usage-service.sh"
     bootstrap_main "$@"
 fi
