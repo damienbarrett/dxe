@@ -20,13 +20,10 @@
 # shell that runs the script; stderr joins stdout so the service's own log pipe
 # (s6-svscan connects <service>/log) carries both.
 dx_usage_service_write_run() {
-    local file="$1" interpreter="$2" word
+    local file="$1" interpreter="$2" word body
     shift 2
-    {
-        printf '#!%s\nexec 2>&1\nexec' "$interpreter"
-        for word in "$@"; do printf ' %q' "$word"; done
-        printf '\n'
-    } > "$file" || return 1
+    body="$(printf '#!%s\nexec 2>&1\nexec' "$interpreter"; for word in "$@"; do printf ' %q' "$word"; done)"
+    printf '%s\n' "$body" > "$file" || return 1
     chmod 0755 "$file"
 }
 

@@ -234,6 +234,23 @@ for missing in curl s6-svc; do
     fi
 done
 
+# Any other HTTP status (a proxy answer, a 404 from a mismatched package) is
+# neither healthy nor a restart trigger: it resets the unreachable count.
+us_watch 8 000 000 000 000 000 404 000 000 || true
+! grep -q '^s6-svc' "$US_LOG" \
+    && test_pass "an unexpected status resets the unreachable count and never restarts"  \
+    || test_fail "an unexpected status resets the unreachable count and never restarts (log: $(cat "$US_LOG"))"
+# In-process dispatch (the subprocess runs below are not line-traced).
+for args in "bogus" "serve extra" "watchdog extra" ""; do
+    # shellcheck disable=SC2086
+    ( source "$LIB"; dx_usage_service_main $args ) >/dev/null 2>&1 && rc=0 || rc=$?
+    [ "$rc" -eq 64 ] && test_pass "dx_usage_service_main refuses '${args:-<none>}' with status 64" \
+        || test_fail "dx_usage_service_main refuses '${args:-<none>}' with status 64 (got $rc)"
+done
+( source "$LIB"; dx_usage_service_serve() { echo served; }; dx_usage_service_watchdog() { echo watched; }
+  [ "$(dx_usage_service_main serve)" = served ] && [ "$(dx_usage_service_main watchdog)" = watched ] ) \
+    && test_pass "dx_usage_service_main dispatches serve and watchdog" || test_fail "dx_usage_service_main dispatches serve and watchdog"
+
 # --- dx-ai hook (scripts/lib/dx-ai-post-install.sh) ---------------------------------
 # A failing restart or compatibility check is reported loudly, never rolled back
 # and never turned into a dx-ai failure (the AI update itself succeeded).
