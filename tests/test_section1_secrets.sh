@@ -167,7 +167,7 @@ trap - EXIT
 # is scanned. Candidate paths are NUL-separated; tests/qnap/, the example
 # profiles and coverage output are skipped.
 guard_files="$(mktemp "${TMPDIR:-/tmp}/dxe-secrets-guard.XXXXXX")"
-if [ "$(git -C "$BASE_DIR" rev-parse --show-toplevel 2>/dev/null)" = "$BASE_DIR" ]; then
+if [ "$(git -C "$BASE_DIR" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$BASE_DIR" && pwd -P)" ]; then
     git -C "$BASE_DIR" ls-files -z -- tests > "$guard_files"
 else
     (cd "$BASE_DIR" && find tests -type f -print0) > "$guard_files"
