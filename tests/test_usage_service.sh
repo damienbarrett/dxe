@@ -84,7 +84,7 @@ grep -qx "tmux=$root/workspace/tmux" "$US_LOG" && [ -d "$root/workspace/tmux" ] 
     && grep -qx 'recorder=unset' "$US_LOG" \
     && test_pass "serve namespaces any tmux state under the workspace (TMUX_TMPDIR) and never sets AGENT_STATS_RECORDER_PATH" \
     || test_fail "serve namespaces tmux state under the workspace and leaves AGENT_STATS_RECORDER_PATH alone (log: $(cat "$US_LOG"))"
-all_dirs=true; for d in config workspace data logs; do [ -d "$root/$d" ] || all_dirs=false; done
+all_dirs=true; for d in config workspace data logs control; do [ -d "$root/$d" ] || all_dirs=false; done
 [ "$all_dirs" = true ] && test_pass "serve creates config, workspace, data and logs under the service root" || test_fail "serve creates config, workspace, data and logs"
 [ "$(cat "$root/config/implementation")" = rust ] \
     && test_pass "serve seeds config/implementation with rust when absent" \
@@ -254,37 +254,141 @@ done
     && test_pass "dx_usage_service_main dispatches serve and watchdog" || test_fail "dx_usage_service_main dispatches serve and watchdog"
 
 # --- dx-ai hook (scripts/lib/dx-ai-post-install.sh) ---------------------------------
-# A failing restart or compatibility check is reported loudly, never rolled back
-# and never turned into a dx-ai failure (the AI update itself succeeded).
+# No sudo anywhere: the hook (as dx) leaves $root/control/restart, which the root
+# watchdog consumes. A failed request or check is reported loudly, never rolled
+# back and never turned into a dx-ai failure (the AI update itself succeeded).
 hook_scan="$fx/hook-scan"; mkdir -p "$hook_scan/agent-stats"
+hook_root="$fx/hook-root"; mkdir -p "$hook_root"
+write_tool curl 'printf "%s\n" "$*" >> "$US_CURL"
+code="$(head -n 1 "$US_CODES" 2>/dev/null)"; [ -n "$code" ] || code=200
+sed -i.bak 1d "$US_CODES" 2>/dev/null; rm -f "$US_CODES.bak"
+printf "%s" "$code"
+[ "$code" != 000 ] || exit 7'
 run_hook() {
-    : > "$US_LOG"
+    # $1 = what the fake sleep does: "consume" removes the restart file (as the
+    # watchdog would) on its first call; "keep" never consumes it. Rest = command.
+    local mode="$1"; shift
+    : > "$US_LOG"; : > "$US_CURL"
     (
+        # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-ai-post-install.sh
         source "$GUEST_SCRIPTS/lib/dx-ai-post-install.sh"
-        sudo() { printf 'sudo:%s\n' "$*" >> "$US_LOG"; return "${US_SUDO_RC:-0}"; }
-        export DX_USAGE_SCAN_DIR="$hook_scan"
+        sudo() { printf 'sudo:%s\n' "$*" >> "$US_LOG"; }
+        hook_sleep() { printf 'sleep:%s\n' "$1" >> "$US_LOG"; [ "$mode" != consume ] || rm -f "$hook_root/control/restart"; }
+        dx_ai_usage_service_compat_check() { printf 'compat:%s\n' "$1" >> "$US_LOG"; }
+        PATH="${US_HOOK_PATH:-$bin:/usr/bin:/bin}"
+        export DX_USAGE_SCAN_DIR="$hook_scan" DX_USAGE_SERVICE_ROOT="$hook_root" DX_USAGE_SLEEP=hook_sleep
         "$@"
     ) > "$fx/hook.out" 2>&1
 }
-US_SUDO_RC=1 run_hook dx_ai_usage_service_hook "$fx/state" && h=0 || h=$?
-if [ "$h" -eq 0 ] && [ "$(grep -c '^sudo:' "$US_LOG")" -eq 1 ] && grep -qF "restart" "$fx/hook.out" && grep -qF "no rollback" "$fx/hook.out"; then
-    test_pass "a failed restart is reported (no rollback) without failing dx-ai"
+rm -rf "$hook_root/control"
+printf '000\n000\n200\n' > "$US_CODES"
+run_hook consume dx_ai_usage_service_hook "$fx/state"; h=$?
+if [ "$h" -eq 0 ] && grep -qx 'sleep:2' "$US_LOG" && ! grep -q '^sudo:' "$US_LOG" \
+    && [ ! -e "$hook_root/control/restart" ] && [ -d "$hook_root/control" ] \
+    && grep -qF "restart requested" "$fx/hook.out" && grep -qx "compat:$fx/state/current" "$US_LOG"; then
+    test_pass "the hook requests a restart through the control file (no sudo), waits for it to be picked up and the service to answer, then runs the compatibility check"
 else
-    test_fail "a failed restart is reported (no rollback) without failing dx-ai (rc $h; out: $(cat "$fx/hook.out"))"
+    test_fail "the hook requests a restart through the control file and then checks compatibility (rc $h; log: $(cat "$US_LOG"); out: $(cat "$fx/hook.out"))"
 fi
-run_hook dx_ai_usage_service_compat_check "$fx/state" && h=0 || h=$?
+# While nobody consumes the request, the file is the proof of the request.
+rm -rf "$hook_root/control"; printf '200\n' > "$US_CODES"
+run_hook keep dx_ai_usage_service_hook "$fx/state"; h=$?
+if [ "$h" -eq 0 ] && [ -f "$hook_root/control/restart" ] && [ "$(grep -c '^sleep:2$' "$US_LOG")" -eq 30 ] \
+    && ! grep -q '^compat:' "$US_LOG" && grep -qF "did not come back" "$fx/hook.out" && grep -qF "no rollback" "$fx/hook.out"; then
+    test_pass "an unpicked request or a service that does not return within 60 s is reported (no rollback), skips the compatibility check and still succeeds"
+else
+    test_fail "an unpicked request is reported after 60 s (rc $h; sleeps: $(grep -c '^sleep:2$' "$US_LOG"); out: $(cat "$fx/hook.out"))"
+fi
+# Picked up, but the service never answers.
+rm -rf "$hook_root/control"; : > "$US_CODES"; for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31; do echo 000 >> "$US_CODES"; done
+run_hook consume dx_ai_usage_service_hook "$fx/state"; h=$?
+if [ "$h" -eq 0 ] && ! grep -q '^compat:' "$US_LOG" && grep -qF "did not come back" "$fx/hook.out"; then
+    test_pass "a service that never answers /health/live is reported and skips the compatibility check"
+else
+    test_fail "a service that never answers is reported (rc $h; out: $(cat "$fx/hook.out"))"
+fi
+# No curl: skip the wait, say so, still run the check.
+rm -rf "$hook_root/control"; no_curl="$fx/bin-no-curl-hook"; mkdir -p "$no_curl"; for t in bash mkdir mktemp mv rm cat; do ln -sf "$(command -v $t)" "$no_curl/$t"; done
+US_HOOK_PATH="$no_curl" run_hook keep dx_ai_usage_service_hook "$fx/state"; h=$?
+if [ "$h" -eq 0 ] && [ -f "$hook_root/control/restart" ] && grep -qF "curl is not available" "$fx/hook.out" && grep -qx "compat:$fx/state/current" "$US_LOG" && ! grep -q '^sleep:' "$US_LOG"; then
+    test_pass "without curl the hook skips the wait, says so, and still runs the compatibility check"
+else
+    test_fail "without curl the hook skips the wait (rc $h; log: $(cat "$US_LOG"); out: $(cat "$fx/hook.out"))"
+fi
+# The control directory cannot be created: reported, no rollback, dx-ai unaffected.
+rm -rf "$hook_root/control"; : > "$hook_root/control"
+run_hook consume dx_ai_usage_service_hook "$fx/state"; h=$?
+if [ "$h" -eq 0 ] && grep -qF "could not request" "$fx/hook.out" && grep -qF "no rollback" "$fx/hook.out" && ! grep -q '^compat:' "$US_LOG"; then
+    test_pass "a control directory that cannot be written is reported (no rollback) without failing dx-ai"
+else
+    test_fail "an unwritable control directory is reported (rc $h; out: $(cat "$fx/hook.out"))"
+fi
+rm -f "$hook_root/control"
+# Outside service mode: nothing at all.
+mkdir -p "$fx/no-service-scan"
+: > "$US_LOG"
+( # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-ai-post-install.sh
+  source "$GUEST_SCRIPTS/lib/dx-ai-post-install.sh"; DX_USAGE_SCAN_DIR="$fx/no-service-scan" DX_USAGE_SERVICE_ROOT="$hook_root" dx_ai_usage_service_hook "$fx/state" ) > "$fx/hook.out" 2>&1; h=$?
+[ "$h" -eq 0 ] && [ ! -s "$fx/hook.out" ] && [ ! -e "$hook_root/control" ] \
+    && test_pass "outside service mode the hook prints nothing and creates nothing" \
+    || test_fail "outside service mode the hook prints nothing and creates nothing (rc $h; out: $(cat "$fx/hook.out"))"
+( # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-ai-post-install.sh
+  source "$GUEST_SCRIPTS/lib/dx-ai-post-install.sh"; dx_ai_usage_service_compat_check "$fx/state" ) > "$fx/hook.out" 2>&1; h=$?
 if [ "$h" -eq 0 ] && grep -qF "agent-stats-rust --version" "$fx/hook.out"; then
     test_pass "the compatibility check is a stub that names the agreed check (agent-stats-rust --version on the new PATH)"
 else
     test_fail "the compatibility check is a stub naming the agreed check (rc $h; out: $(cat "$fx/hook.out"))"
 fi
-hook_with_failing_check() { dx_ai_usage_service_compat_check() { return 3; }; dx_ai_usage_service_hook "$1"; }
-run_hook hook_with_failing_check "$fx/state" && h=0 || h=$?
+hook_failing_check() {
+    # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-ai-post-install.sh
+    source "$GUEST_SCRIPTS/lib/dx-ai-post-install.sh"
+    dx_ai_usage_service_compat_check() { return 3; }
+    DX_USAGE_SCAN_DIR="$hook_scan" DX_USAGE_SERVICE_ROOT="$hook_root" DX_USAGE_SLEEP=hook_sleep2 dx_ai_usage_service_hook "$1"
+}
+hook_sleep2() { rm -f "$hook_root/control/restart"; }
+printf '200\n' > "$US_CODES"; rm -rf "$hook_root/control"
+( PATH="$bin:/usr/bin:/bin"; hook_failing_check "$fx/state" ) > "$fx/hook.out" 2>&1; h=$?
 if [ "$h" -eq 0 ] && grep -qF "compatibility check failed" "$fx/hook.out" && grep -qF "no rollback" "$fx/hook.out"; then
     test_pass "a failed compatibility check is reported loudly with no rollback, and dx-ai still succeeds"
 else
     test_fail "a failed compatibility check is reported loudly with no rollback (rc $h; out: $(cat "$fx/hook.out"))"
 fi
+
+# --- watchdog consumes the control file --------------------------------------------
+rm -rf "$fx/wroot"; mkdir -p "$fx/wroot/control"; : > "$fx/wroot/control/restart"
+us_watch_root() {
+    local iterations="$1"; shift
+    : > "$US_LOG"; : > "$US_CURL"; : > "$US_CODES"
+    local c; for c in "$@"; do printf '%s\n' "$c" >> "$US_CODES"; done
+    (
+        # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-usage-service.sh
+        source "$LIB"
+        us_sleep() { printf 'sleep:%s\n' "$1" >> "$US_LOG"; }
+        PATH="$bin:/usr/bin:/bin"
+        export DX_USAGE_SLEEP=us_sleep DX_USAGE_WATCHDOG_MAX_ITERATIONS="$iterations" DX_USAGE_SCAN_DIR="$fx/scan" DX_USAGE_SERVICE_ROOT="$fx/wroot"
+        dx_usage_service_watchdog
+    ) > "$fx/watch.out" 2>&1
+}
+us_watch_root 1 || true
+if [ ! -e "$fx/wroot/control/restart" ] && [ "$(grep -c '^s6-svc' "$US_LOG")" -eq 1 ] \
+    && grep -qxF "s6-svc: <-r> <$fx/scan/agent-stats>" "$US_LOG" && [ ! -s "$US_CURL" ] \
+    && [ "$(grep '^sleep:' "$US_LOG" | tr '\n' ' ')" = "sleep:30 " ]; then
+    test_pass "the watchdog consumes control/restart: file removed, s6-svc -r on agent-stats once, no probe and no cooldown that iteration"
+else
+    test_fail "the watchdog consumes control/restart (log: $(cat "$US_LOG"); curl: $(cat "$US_CURL"))"
+fi
+# A requested restart is not a watchdog restart: the next real one still gets the first (60 s) cooldown.
+: > "$fx/wroot/control/restart"
+us_watch_root 2 503 || true
+if [ "$(grep '^sleep:' "$US_LOG" | tr '\n' ' ')" = "sleep:30 sleep:60 " ] && [ "$(grep -c '^s6-svc' "$US_LOG")" -eq 2 ]; then
+    test_pass "a requested restart is not counted for the watchdog's back-off"
+else
+    test_fail "a requested restart is not counted for the back-off (log: $(cat "$US_LOG"))"
+fi
+# No request file: unchanged behaviour (covered above); a missing control directory is fine.
+rm -rf "$fx/wroot"
+us_watch_root 1 200 || true
+! grep -q '^s6-svc' "$US_LOG" && test_pass "without a control directory the watchdog behaves exactly as before" || test_fail "without a control directory the watchdog behaves as before"
 
 # --- dispatcher ---------------------------------------------------------------------
 for args in "" "bogus" "serve extra"; do

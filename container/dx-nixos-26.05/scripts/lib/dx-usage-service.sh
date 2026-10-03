@@ -48,7 +48,7 @@ dx_usage_service_implementation() {
 # never created here.
 dx_usage_service_prepare_state() {
     local root="$1" d
-    for d in config workspace data logs workspace/tmux; do mkdir -p "$root/$d" || return 1; done
+    for d in config workspace data logs control workspace/tmux; do mkdir -p "$root/$d" || return 1; done
     [ -e "$root/config/implementation" ] || printf 'rust\n' > "$root/config/implementation" || return 1
 }
 
@@ -97,6 +97,7 @@ dx_usage_service_probe() {
 # is alive but not serving). /health/ready and provider errors never matter.
 dx_usage_service_watchdog() {
     local scan_dir="${DX_USAGE_SCAN_DIR:-/run/dx-services}" max="${DX_USAGE_WATCHDOG_MAX_ITERATIONS:-0}"
+    local control_file="${DX_USAGE_SERVICE_ROOT:-/persist/services/agent-stats}/control/restart"
     local tool code iteration=0 down=0 restarts=0 wait cooldown
     for tool in curl s6-svc; do
         command -v "$tool" >/dev/null 2>&1 || {
@@ -106,6 +107,17 @@ dx_usage_service_watchdog() {
     done
     while [ "$max" -eq 0 ] || [ "$iteration" -lt "$max" ]; do
         iteration=$((iteration + 1))
+        # A restart requested by the dx-ai hook (as dx, who cannot run s6-svc):
+        # consume it and restart agent-stats at once. It is not a health failure,
+        # so no probe, no cooldown and no back-off count this iteration.
+        if [ -e "$control_file" ]; then
+            rm -f "$control_file"
+            echo "Watchdog: restart requested through $control_file; restarting agent-stats." >&2
+            s6-svc -r "$scan_dir/agent-stats" || echo "Warning: s6-svc -r failed." >&2
+            down=0
+            dx_usage_service_sleep "$DX_USAGE_PROBE_INTERVAL"
+            continue
+        fi
         code="$(dx_usage_service_probe)"
         wait="$DX_USAGE_PROBE_INTERVAL"
         case "$code" in

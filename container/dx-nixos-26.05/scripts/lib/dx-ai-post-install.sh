@@ -69,20 +69,40 @@ dx_ai_setup_credentials() {
 }
 
 # After a successful dx-ai in a guest in usage-service mode (the s6 service
-# directory exists), restart ONLY agent-stats so it picks up the new
-# generation's PATH, then check it still works with it. Outside service mode
-# this is a silent no-op. The AI update itself already succeeded, so a failed
-# restart or check is reported loudly but never fails dx-ai, and nothing is
-# rolled back: shared tools are never silently reverted. s6-svc needs root,
-# hence sudo, and the absolute path through the service directory's .s6-bin
-# link (the essentials profile is not on dx's PATH).
+# directory exists), ask for a restart of ONLY agent-stats so it picks up the
+# new generation's PATH, then check it still works with it. Outside service mode
+# this is a silent no-op. The guest has no usable sudo and s6-svc needs root,
+# so the request is a control file: $root/control/restart, written atomically
+# (temp file, then mv) as dx; the root watchdog consumes it within one probe
+# interval and runs s6-svc -r. The hook then waits (bounded, 60 s in total) for
+# the request to be picked up and /health/live to answer again before running
+# the compatibility check; without curl it skips the wait and says so. The AI
+# update itself already succeeded, so a failure here is reported loudly but
+# never fails dx-ai, and nothing is rolled back: shared tools are never
+# silently reverted.
 dx_ai_usage_service_hook() {
     local state="$1" scan="${DX_USAGE_SCAN_DIR:-/run/dx-services}"
+    local root="${DX_USAGE_SERVICE_ROOT:-/persist/services/agent-stats}" control tmp polls=0 back=false
+    local live="${DX_USAGE_LIVE_URL:-http://127.0.0.1:8787/health/live}"
     [ -d "$scan/agent-stats" ] || return 0
-    echo "Restarting the usage service (agent-stats) on the new AI generation..."
-    if ! sudo -n "$scan/.s6-bin/s6-svc" -r "$scan/agent-stats"; then
-        echo "Warning: could not restart agent-stats; it keeps running on the previous PATH (no rollback was performed). Try: dx-usage-service restart" >&2
+    control="$root/control"
+    if ! { mkdir -p "$control" && tmp="$(mktemp "$control/.restart.XXXXXX")" && printf 'requested by dx-ai\n' > "$tmp" && mv -f "$tmp" "$control/restart"; }; then
+        echo "Warning: could not request an agent-stats restart (cannot write $control); it keeps running on the previous PATH (no rollback was performed). Try: dx-usage-service restart" >&2
         return 0
+    fi
+    echo "Usage service (agent-stats) restart requested on the new AI generation; the watchdog applies it within about 30 seconds."
+    if command -v curl >/dev/null 2>&1; then
+        while [ "$polls" -lt 30 ]; do
+            if [ ! -e "$control/restart" ] && [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$live" 2>/dev/null)" = 200 ]; then back=true; break; fi
+            "${DX_USAGE_SLEEP:-sleep}" 2
+            polls=$((polls + 1))
+        done
+        if [ "$back" != true ]; then
+            echo "Warning: the usage service did not come back within 60 seconds of the restart request; skipping the compatibility check (no rollback was performed). Inspect with: dx-usage-service status, dx-usage-service logs" >&2
+            return 0
+        fi
+    else
+        echo "curl is not available; not waiting for the usage service to come back."
     fi
     dx_ai_usage_service_compat_check "$state/current" || echo "Warning: the usage service compatibility check failed against the new AI generation; no rollback was performed. Inspect with: dx-usage-service logs" >&2
     return 0

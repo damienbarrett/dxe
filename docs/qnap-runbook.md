@@ -574,7 +574,7 @@ is a clear launcher error. Restart the service after changing it.
 
 | What | Where |
 | --- | --- |
-| State | `/persist/services/agent-stats/{config,workspace,data,logs}`, owned by `dx`; the service's tmux state is under `workspace/tmux` |
+| State | `/persist/services/agent-stats/{config,workspace,data,logs,control}`, owned by `dx` (`control` carries the dx-ai restart request); the service's tmux state is under `workspace/tmux` |
 | Releases | `current` and `previous` in that directory (GC roots) |
 | Logs | `/persist/services/agent-stats/logs/{sshd,agent-stats,agent-stats-watchdog}/current`, bounded (10 files of 1 MB each per service); read with `dx-usage-service logs [N]` |
 | Service tree | `/run/dx-services`, rebuilt on every boot, PID 1 is `s6-svscan` |
@@ -595,9 +595,17 @@ Point the Apple clients at `http://<NAS tailnet name>:8787/` (or your
 
 ### 10.7 `dx-ai` updates
 
-After a successful `dx-ai` in a guest in service mode, the hook restarts only
-agent-stats (so it sees the new generation's `PATH`) and runs a compatibility
-check. The check is a **stub until the package is installed**: it prints the
-agreed check (`agent-stats-rust --version` succeeding on the new `PATH`) and
-passes. A failed restart or check is reported with "no rollback was
-performed" and never fails `dx-ai`; shared tools are never silently reverted.
+After a successful `dx-ai` in a guest in service mode, the hook asks for a
+restart of only agent-stats (so it sees the new generation's `PATH`). The guest
+has no usable `sudo`, so there is none involved: the hook, running as `dx`,
+writes `/persist/services/agent-stats/control/restart` atomically, and the
+root watchdog consumes that file and runs `s6-svc -r` on agent-stats, picking it
+up within one watchdog interval (about 30 seconds) and without any back-off. The
+hook waits up to 60 seconds for the request to be picked up and `/health/live`
+to answer again (without `curl` it skips the wait and says so), then runs a
+compatibility check. The check is a **stub until the package is installed**: it
+prints the agreed check (`agent-stats-rust --version` succeeding on the new
+`PATH`) and passes. A failed request, a service that does not come back, or a
+failed check is reported with "no rollback was performed" and never fails
+`dx-ai`; shared tools are never silently reverted. To restart by hand at any
+time, use `dx-usage-service restart` from the host.

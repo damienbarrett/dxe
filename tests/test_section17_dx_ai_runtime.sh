@@ -1385,27 +1385,34 @@ dx_guest_resolve_system() { printf '%s\n' aarch64-linux; }
 
 # Usage-service hook (docs/refactor/usage-service-host.md design item 5): in a
 # guest in service mode (the s6 service directory exists) a successful dx-ai
-# restarts only agent-stats and runs the compatibility check; in any other
-# guest dx-ai's behaviour is untouched -- same output, same status, no sudo.
+# requests an agent-stats restart and runs the compatibility check; in any other
+# guest dx-ai's behaviour is untouched -- same output, same status, no control
+# file. The restart is requested through $root/control/restart (no sudo: the
+# guest has none); the root watchdog consumes it.
 us_scan="$ai_fixture/us-scan"; us_hook_log="$ai_fixture/us-hook.log"
+us_root="$ai_fixture/us-root"
 sudo() { printf 'sudo:%s\n' "$*" >> "$us_hook_log"; }
+curl() { printf '200'; }
+us17_sleep() { rm -f "$us_root/control/restart"; }
+export DX_USAGE_SERVICE_ROOT="$us_root" DX_USAGE_SLEEP=us17_sleep
 dx_ai_usage_service_compat_check() { printf 'compat:%s\n' "$1" >> "$us_hook_log"; }
 : > "$us_hook_log"
 us_off_out="$(DX_USAGE_SCAN_DIR="$us_scan" DX_AI_BOOTSTRAP_ROOT="$f8_published" DX_AI_STATE_ROOT="$ai_fixture/us-off-state" dx_ai_main 2>&1)"; us_off_rc=$?
-if [ "$us_off_rc" -eq 0 ] && [ ! -s "$us_hook_log" ] && ! printf '%s\n' "$us_off_out" | grep -qi 'agent-stats\|usage'; then
+if [ "$us_off_rc" -eq 0 ] && [ ! -s "$us_hook_log" ] && [ ! -e "$us_root/control" ] && ! printf '%s\n' "$us_off_out" | grep -qi 'agent-stats\|usage'; then
     test_pass "dx_ai_main outside service mode runs no usage-service step (no sudo, no compatibility check, no extra output)"
 else
     test_fail "dx_ai_main outside service mode runs no usage-service step (rc $us_off_rc; log: $(cat "$us_hook_log"); out: $us_off_out)"
 fi
 mkdir -p "$us_scan/agent-stats"; : > "$us_hook_log"
 us_on_out="$(DX_USAGE_SCAN_DIR="$us_scan" DX_AI_BOOTSTRAP_ROOT="$f8_published" DX_AI_STATE_ROOT="$ai_fixture/us-on-state" dx_ai_main 2>&1)"; us_on_rc=$?
-if [ "$us_on_rc" -eq 0 ] && [ "$(cat "$us_hook_log")" = "sudo:-n $us_scan/.s6-bin/s6-svc -r $us_scan/agent-stats
-compat:$ai_fixture/us-on-state/current" ]; then
-    test_pass "dx_ai_main in service mode restarts only agent-stats (sudo -n s6-svc -r) and then runs the compatibility check on the new generation"
+if [ "$us_on_rc" -eq 0 ] && [ "$(cat "$us_hook_log")" = "compat:$ai_fixture/us-on-state/current" ] \
+    && [ -d "$us_root/control" ] && [ ! -e "$us_root/control/restart" ] && printf '%s\n' "$us_on_out" | grep -qF "restart requested"; then
+    test_pass "dx_ai_main in service mode requests an agent-stats restart through the control file (no sudo) and then runs the compatibility check on the new generation"
 else
     test_fail "dx_ai_main in service mode restarts only agent-stats then checks compatibility (rc $us_on_rc; log: $(cat "$us_hook_log"); out: $us_on_out)"
 fi
-unset -f sudo dx_ai_usage_service_compat_check
+unset -f sudo curl us17_sleep dx_ai_usage_service_compat_check
+unset DX_USAGE_SERVICE_ROOT DX_USAGE_SLEEP
 
 f8_path_before="$PATH"
 DX_AI_BOOTSTRAP_ROOT="$f8_published" DX_AI_STATE_ROOT="$f8_state" dx_ai_main
