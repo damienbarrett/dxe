@@ -243,10 +243,12 @@ us_watch 8 000 000 000 000 000 404 000 000 || true
 # In-process dispatch (the subprocess runs below are not line-traced).
 for args in "bogus" "serve extra" "watchdog extra" ""; do
     # shellcheck disable=SC2086
+    # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-usage-service.sh
     ( source "$LIB"; dx_usage_service_main $args ) >/dev/null 2>&1 && rc=0 || rc=$?
     [ "$rc" -eq 64 ] && test_pass "dx_usage_service_main refuses '${args:-<none>}' with status 64" \
         || test_fail "dx_usage_service_main refuses '${args:-<none>}' with status 64 (got $rc)"
 done
+# shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-usage-service.sh
 ( source "$LIB"; dx_usage_service_serve() { echo served; }; dx_usage_service_watchdog() { echo watched; }
   [ "$(dx_usage_service_main serve)" = served ] && [ "$(dx_usage_service_main watchdog)" = watched ] ) \
     && test_pass "dx_usage_service_main dispatches serve and watchdog" || test_fail "dx_usage_service_main dispatches serve and watchdog"
