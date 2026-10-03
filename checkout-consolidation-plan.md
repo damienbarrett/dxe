@@ -1,5 +1,15 @@
 # DXE consolidation plan
 
+> **Status: Complete 2026-10-03.** Branches 1-12 and 14-17 landed; Branch 13
+> (the two large proposals, Q7) was resolved item by item in `findings.md`
+> (WP8.1 and Q7 reconciliation) rather than executed as a branch. Phase 7 of
+> the QNAP plan is accepted (the user signed off the canary week on day 5;
+> production QNAP guest live). The text below is **history retained, not
+> live work**. Its surviving obligations moved: open items to `findings.md`
+> (progress log and "Residual obligations"), the QNAP promotion to
+> `qnap-dxe-plan.md` Phase 7 and `docs/evidence/20260928/qnap-promotion.md`,
+> and everything forward-looking to `2-oct-plan.md`.
+
 Moved into the repository on 2026-09-26. Prepared 2026-09-25; rewritten
 2026-09-26 against the repository objectives; **trimmed to remaining work
 only on 2026-09-27**, per this plan's own retirement step ("After Branch 6

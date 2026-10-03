@@ -4,10 +4,19 @@ Plan created: 2026-09-21.
 
 ## Status
 
-Open. Phase 0 is complete apart from its maintenance-window restarts;
-Phases 1-7 have not started. Accepted for implementation on 2026-09-26 and
-sequenced after the start-generation fix and the `/persist` backup (see
-`checkout-consolidation-plan.md`, Branch 11).
+**Complete 2026-10-03.** All phases 0-7 are done and the production guest
+(`dx-qnap`) is live and holds the user's data. The user signed off the canary
+week on day 5; the relay-fallback observation was waived by the user and is
+recorded as waived. The canary is retired and production is back on port 2222.
+The evidence record is `docs/evidence/20260928/qnap-promotion.md`. The text
+below is kept as the design and history of the work; surviving obligations
+live in `findings.md` and `2-oct-plan.md`. The original status paragraph
+follows.
+
+Original status (2026-09-26): Open. Phase 0 is complete apart from its
+maintenance-window restarts; Phases 1-7 have not started. Accepted for
+implementation on 2026-09-26 and sequenced after the start-generation fix and
+the `/persist` backup (see `checkout-consolidation-plan.md`, Branch 11).
 
 **Phase 0 outcome (2026-09-26).** The read-only inventory and the disposable
 spike have both run against the target over Tailscale. Inventory: the native

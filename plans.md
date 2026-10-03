@@ -33,24 +33,6 @@ Every plan document below is listed under exactly one of these.
   acceptance/production cutover. Agent A coordinates; original notes are
   privately archived. Revisit trigger: a candidate/gate changes or an execution
   milestone completes.
-- [`checkout-consolidation-plan.md`](checkout-consolidation-plan.md) —
-  Sequencing plan for the remaining consolidation work. Priority 1 (a
-  complete, green, buildable `main`, proven on a guest) and almost all of
-  Priorities 2-3 are done: Branches 1-10 and 14-17 have landed, CI green,
-  live-verified on `dx-test`; QNAP's Phase 0 (inventory/spike) and Phase 1
-  (runtime-boundary extraction) have also landed. `dx-host` (the primary
-  guest) is promoted through `main` `122258c` (Branches 1-15, including
-  OpenCode and persist-backup); Branches 16 and 17 land at its next
-  promotion. Of the seven decisions, Q1-Q6 and the QNAP part of Q7 are
-  resolved; only the rest of Q7 (the two large refactor proposals) remains
-  open and is not urgent. Trimmed to remaining work only on 2026-09-27, per
-  the plan's own retirement step (history: `git log` and `docs/evidence/`).
-  Remaining: Branch 11 Phase 7's live steps (promotion to a real QNAP
-  profile -- its code landed 2026-09-28; the canary week, restore drill,
-  spike lifecycle, canary recreate and production profile follow) and
-  Branch 13 (the two large proposals, Q7). Branch 12
-  (`fix/store-trust`) and the four small follow-ups (`fix/test-hardening`)
-  landed 2026-09-28.
 - [`store-trust-plan.md`](store-trust-plan.md) — **Resolved on
   `fix/store-trust` (Branch 12), landed on `main` 2026-09-28.** Both problems
   it tracked (a same-store-path/different-content collision at an image-pin
@@ -65,23 +47,6 @@ Every plan document below is listed under exactly one of these.
 
 ## Open plans
 
-- [`qnap-dxe-plan.md`](qnap-dxe-plan.md) — Implementation plan for a
-  Tailscale-reached, QNAP-hosted DXE controlled through Docker Engine over SSH.
-  It preserves the Apple runtime as the default, adds an explicit remote-Docker
-  adapter and direct `/nix` volume mode, handles native ARM64/x86_64 selection,
-  and defines isolated live, reboot, backup/restore, and destructive gates.
-  Phases 0-6 have landed on `main` (Phase 6 on 2026-09-28: its own
-  maintenance window proved the reboot/restart behaviour and settled the
-  restart-ordering decision against the real NAS); Phase 7 (promotion)
-  landed its code on `main` 2026-09-28, with every live step against the
-  real NAS following in the pre-approved order.
-  Accepted for implementation on
-  2026-09-26 (see `checkout-consolidation-plan.md`, Branch 11), and sequenced
-  after the start-generation fix and the `/persist` backup land. Revisit
-  trigger: when Phase 7 lands and its live steps (canary creation, the
-  restore drill, the disposable-spike destructive-lifecycle
-  reaffirmation, the canary's own rebuild + recreate, and the production
-  profile) complete.
 - [`findings.md`](findings.md) — Consolidated findings plan, combining three
   independent reviews of the repository at `4e8c5cc` dated 2026-09-29
   (`docs/reviews/2026-09-29-astra.md`, `docs/reviews/2026-09-29-muse.md`,
@@ -133,3 +98,20 @@ Every plan document below is listed under exactly one of these.
   Section 27 stdin) is fixed and proven stable across three consecutive
   live runs, and when `findings.md` WP6.9 lands, closing the restore item
   here too.
+
+## Historical
+
+- [`checkout-consolidation-plan.md`](checkout-consolidation-plan.md) —
+  **Complete 2026-10-03.** The sequencing plan that took the repository from
+  several divergent checkouts to one green, buildable `main` (Branches 1-17,
+  trimmed to remaining work on 2026-09-27). Kept for its decision history
+  (Q1-Q7). Surviving obligations moved: open items to
+  `findings.md`, the QNAP promotion to
+  `qnap-dxe-plan.md` Phase 7, forward work to
+  `2-oct-plan.md`.
+- [`qnap-dxe-plan.md`](qnap-dxe-plan.md) — **Complete 2026-10-03.** The
+  Tailscale-reached, QNAP-hosted DXE plan: phases 0-7 are done and the
+  production guest is live (evidence:
+  `docs/evidence/20260928/qnap-promotion.md`). Kept as the design record;
+  its remaining operator steps are recorded in
+  `2-oct-plan.md`.

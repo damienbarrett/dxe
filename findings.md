@@ -353,9 +353,12 @@ Every review ID and where it lands.
 
 ### WP9 — Docs and retirement
 
-- [ ] **WP9.1** Retire `checkout-consolidation-plan.md` after Phase 7 live
+- [x] **WP9.1** Retire `checkout-consolidation-plan.md` after Phase 7 live
   steps; resolve Q7 per D-1; every Open plan carries an owner for its
-  revisit trigger. (Muse F1)
+  revisit trigger. (Muse F1) Closed 2026-10-03: the consolidation and QNAP
+  plans carry dated closing statuses and are indexed as Historical; Q7 is
+  reconciled under WP8.1 below; owners and triggers are under "Residual
+  obligations".
 - [x] 267dcc0 **WP9.2** `docs/README.md` map (entry points → operating docs →
   decisions → evidence → reviews); stale cross-reference sweep; section 10
   flags `plans.md`-indexed but removed files. (Muse F2, F3)
