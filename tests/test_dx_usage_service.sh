@@ -82,8 +82,8 @@ if ( DX_USAGE_SERVICE=on DX_USAGE_SERVICE_HOST_PORT=8787 DX_SSH_PORT=2222; dx_us
 else
     test_fail "create_check accepts distinct ports, and ignores the port entirely when off"
 fi
-us_args_on="$( DX_USAGE_SERVICE=on DX_USAGE_SERVICE_HOST_PORT=18799; CREATE_ARGS=(--name x); dx_usage_host_create_args; printf '%s|' "${CREATE_ARGS[@]}" )"
-us_args_off="$( DX_USAGE_SERVICE=off DX_USAGE_SERVICE_HOST_PORT=18799; CREATE_ARGS=(--name x); dx_usage_host_create_args; printf '%s|' "${CREATE_ARGS[@]}" )"
+us_args_on="$( export DX_USAGE_SERVICE=on DX_USAGE_SERVICE_HOST_PORT=18799; CREATE_ARGS=(--name x); dx_usage_host_create_args; printf '%s|' "${CREATE_ARGS[@]}" )"
+us_args_off="$( export DX_USAGE_SERVICE=off DX_USAGE_SERVICE_HOST_PORT=18799; CREATE_ARGS=(--name x); dx_usage_host_create_args; printf '%s|' "${CREATE_ARGS[@]}" )"
 if [ "$us_args_on" = "--name|x|--publish|18799:8787|--env|DX_USAGE_SERVICE=on|" ] && [ "$us_args_off" = "--name|x|" ]; then
     test_pass "create_args appends exactly the neutral publish item and env token when on, and nothing when off"
 else

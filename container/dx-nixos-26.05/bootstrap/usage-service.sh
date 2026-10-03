@@ -70,6 +70,9 @@ dx_usage_service_build_tree() {
 
 # Builds the tree and replaces this process with s6-svscan over it. Only
 # returns (non-zero) when the tree could not be built, i.e. before any exec.
+# Production passes no arguments (the defaults apply); the tests pass fixture
+# paths, which is why ShellCheck sees parameters nobody passes.
+# shellcheck disable=SC2120
 dx_bootstrap_exec_usage_service() {
     local scan_dir="${1:-/run/dx-services}"
     dx_usage_service_build_tree "$scan_dir" "${2:-/persist/services/agent-stats}" || return 1
