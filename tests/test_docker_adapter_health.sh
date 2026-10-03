@@ -153,6 +153,18 @@ tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
     dx_runtime_capability container_healthcheck
 )
 [ "$?" -eq 0 ] && test_pass "capability: container_healthcheck is yes for docker-ssh (unlike apple)" || test_fail "capability: container_healthcheck is yes for docker-ssh (unlike apple)"
+# Usage service (bin/dx-usage-service): docker-ssh only. Apple answers a
+# recognised "no" (exactly 1), never the unknown-capability 2.
+(
+    DX_RUNTIME=docker-ssh
+    dx_runtime_capability usage_service
+)
+[ "$?" -eq 0 ] && test_pass "capability: usage_service is yes for docker-ssh" || test_fail "capability: usage_service is yes for docker-ssh"
+(
+    DX_RUNTIME=apple
+    dx_runtime_capability usage_service >/dev/null 2>&1
+)
+[ "$?" -eq 1 ] && test_pass "capability: usage_service is a recognised no (1) for apple" || test_fail "capability: usage_service is a recognised no (1) for apple"
 (
     DX_RUNTIME=apple
     dx_runtime_capability container_healthcheck

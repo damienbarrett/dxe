@@ -50,6 +50,11 @@ dx_usage_service_build_tree() {
 
     install -d -o dx -g dx -m 0755 "$services_root" "$services_root/logs" || return 1
     rm -rf "$scan_dir" || return 1
+    mkdir -p "$scan_dir" || return 1
+    # Where the s6 tools live, for root callers whose PATH lacks the essentials
+    # profile (bin/dx-usage-service via exec, the dx-ai hook via sudo). A dot
+    # entry, so s6-svscan ignores it.
+    ln -s "$(dirname "$(command -v s6-svscan)")" "$scan_dir/.s6-bin" || return 1
     for name in sshd agent-stats agent-stats-watchdog; do
         mkdir -p "$scan_dir/$name/log" || return 1
         # 10 archived files of at most 1 MB each per service, ISO 8601 stamps.

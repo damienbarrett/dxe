@@ -628,6 +628,9 @@ dx_runtime_docker_capability() {
         host_filesystem_reclamation) return 1 ;;
         raw_nix_disk) return 1 ;;
         container_healthcheck) return 0 ;;
+        # bin/dx-usage-service drives the guest's s6 tree (DX_USAGE_SERVICE=on)
+        # through exec; Apple has no such mode, so it answers no.
+        usage_service) return 0 ;;
         *) echo "Error: unknown runtime capability '$1'." >&2; return 2 ;;
     esac
 }

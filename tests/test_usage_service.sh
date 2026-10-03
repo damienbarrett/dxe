@@ -231,6 +231,39 @@ for missing in curl s6-svc; do
     fi
 done
 
+# --- dx-ai hook (scripts/lib/dx-ai-post-install.sh) ---------------------------------
+# A failing restart or compatibility check is reported loudly, never rolled back
+# and never turned into a dx-ai failure (the AI update itself succeeded).
+hook_scan="$fx/hook-scan"; mkdir -p "$hook_scan/agent-stats"
+run_hook() {
+    : > "$US_LOG"
+    (
+        source "$GUEST_SCRIPTS/lib/dx-ai-post-install.sh"
+        sudo() { printf 'sudo:%s\n' "$*" >> "$US_LOG"; return "${US_SUDO_RC:-0}"; }
+        export DX_USAGE_SCAN_DIR="$hook_scan"
+        "$@"
+    ) > "$fx/hook.out" 2>&1
+}
+US_SUDO_RC=1 run_hook dx_ai_usage_service_hook "$fx/state" && h=0 || h=$?
+if [ "$h" -eq 0 ] && [ "$(grep -c '^sudo:' "$US_LOG")" -eq 1 ] && grep -qF "restart" "$fx/hook.out" && grep -qF "no rollback" "$fx/hook.out"; then
+    test_pass "a failed restart is reported (no rollback) without failing dx-ai"
+else
+    test_fail "a failed restart is reported (no rollback) without failing dx-ai (rc $h; out: $(cat "$fx/hook.out"))"
+fi
+run_hook dx_ai_usage_service_compat_check "$fx/state" && h=0 || h=$?
+if [ "$h" -eq 0 ] && grep -qF "agent-stats-rust --version" "$fx/hook.out"; then
+    test_pass "the compatibility check is a stub that names the agreed check (agent-stats-rust --version on the new PATH)"
+else
+    test_fail "the compatibility check is a stub naming the agreed check (rc $h; out: $(cat "$fx/hook.out"))"
+fi
+hook_with_failing_check() { dx_ai_usage_service_compat_check() { return 3; }; dx_ai_usage_service_hook "$1"; }
+run_hook hook_with_failing_check "$fx/state" && h=0 || h=$?
+if [ "$h" -eq 0 ] && grep -qF "compatibility check failed" "$fx/hook.out" && grep -qF "no rollback" "$fx/hook.out"; then
+    test_pass "a failed compatibility check is reported loudly with no rollback, and dx-ai still succeeds"
+else
+    test_fail "a failed compatibility check is reported loudly with no rollback (rc $h; out: $(cat "$fx/hook.out"))"
+fi
+
 # --- dispatcher ---------------------------------------------------------------------
 for args in "" "bogus" "serve extra"; do
     # shellcheck disable=SC2086

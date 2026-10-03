@@ -226,7 +226,8 @@ dx_ai_main() {
     # Herdr is optional, so a missing or unhappy integration is reported but
     # never fails an otherwise successful AI update.
     dx_ai_install_herdr_integrations
-    dx_ai_verify "$state/current"
+    dx_ai_verify "$state/current" || return
+    dx_ai_usage_service_hook "$state"
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then set -euo pipefail; dx_ai_main "$@"; fi

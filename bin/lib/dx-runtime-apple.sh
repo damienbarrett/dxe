@@ -277,7 +277,7 @@ dx_runtime_apple_guest_ssh_address() { printf '%s\n' 127.0.0.1; }
 dx_runtime_apple_capability() {
     case "$1" in
         direct_named_volume_mounts|bind_mounts|host_filesystem_reclamation|raw_nix_disk) return 0 ;;
-        restart_policy|container_healthcheck) return 1 ;;
+        restart_policy|container_healthcheck|usage_service) return 1 ;;
         *) echo "Error: unknown runtime capability '$1'." >&2; return 2 ;;
     esac
 }

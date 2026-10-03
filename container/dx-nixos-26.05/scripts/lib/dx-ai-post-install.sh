@@ -68,6 +68,35 @@ dx_ai_setup_credentials() {
     fi
 }
 
+# After a successful dx-ai in a guest in usage-service mode (the s6 service
+# directory exists), restart ONLY agent-stats so it picks up the new
+# generation's PATH, then check it still works with it. Outside service mode
+# this is a silent no-op. The AI update itself already succeeded, so a failed
+# restart or check is reported loudly but never fails dx-ai, and nothing is
+# rolled back: shared tools are never silently reverted. s6-svc needs root,
+# hence sudo, and the absolute path through the service directory's .s6-bin
+# link (the essentials profile is not on dx's PATH).
+dx_ai_usage_service_hook() {
+    local state="$1" scan="${DX_USAGE_SCAN_DIR:-/run/dx-services}"
+    [ -d "$scan/agent-stats" ] || return 0
+    echo "Restarting the usage service (agent-stats) on the new AI generation..."
+    if ! sudo -n "$scan/.s6-bin/s6-svc" -r "$scan/agent-stats"; then
+        echo "Warning: could not restart agent-stats; it keeps running on the previous PATH (no rollback was performed). Try: dx-usage-service restart" >&2
+        return 0
+    fi
+    dx_ai_usage_service_compat_check "$state/current" || echo "Warning: the usage service compatibility check failed against the new AI generation; no rollback was performed. Inspect with: dx-usage-service logs" >&2
+    return 0
+}
+
+# STUB until the package is installed. The agreed check: with the new
+# generation's profile/bin first on PATH, `agent-stats-rust --version` (from
+# /persist/services/agent-stats/current/bin) must succeed, as dx. Returns 0 so
+# the hook is complete and testable; replace the body with that check.
+dx_ai_usage_service_compat_check() {
+    echo "Usage service compatibility check not implemented yet (agreed check: agent-stats-rust --version succeeds on the new PATH under $1/profile/bin)."
+    return 0
+}
+
 dx_ai_ensure_keyring() {
     local address_file=/persist/home/dx/.local/state/dx/keyring-address
     dx_ai_load_keyring || return 1

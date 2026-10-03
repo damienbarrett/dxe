@@ -3040,6 +3040,14 @@ if [ "$us_logs_ok" = true ] && [ -d "$us_root/logs" ]; then
 else
     test_fail "each service logs through a bounded s6-log into the persisted logs root (got: $(cat "$us_scan/sshd/log/run" 2>&1))"
 fi
+# The host lifecycle command and the dx-ai hook run as root over an exec whose
+# PATH does not include the essentials profile, so the tree publishes where the
+# s6 tools live: a dot-entry (ignored by s6-svscan) naming their directory.
+if [ -L "$us_scan/.s6-bin" ] && [ "$(readlink "$us_scan/.s6-bin")" = "$us_bin" ]; then
+    test_pass "the service directory publishes the s6 tools' directory as .s6-bin (for s6-svc/s6-svstat callers)"
+else
+    test_fail "the service directory publishes the s6 tools' directory as .s6-bin (got: $(readlink "$us_scan/.s6-bin" 2>&1))"
+fi
 # Repeat run: a stale tree from a previous boot is replaced, never merged.
 mkdir -p "$us_scan/stale-service"; printf x > "$us_scan/stale-service/run"
 us_run_exec
