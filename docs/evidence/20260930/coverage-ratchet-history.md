@@ -1316,3 +1316,24 @@ Verbatim rebaseline history from `tests/coverage/ratchet.env` before the ratio m
 # landed tip (296ba37) with tests/run-coverage-linux.sh's own
 # computation.
 ```
+
+## 2026-10-03: usage service (feat/usage-service-host)
+
+`unscoped_prod_exec_lines_ceiling` 2635 -> 2650 (+15). The first measurement of
+the branch was 2656 (+21); every movable line was then moved into covered
+libraries (`bin/lib/dx-usage-service.sh`: the port-collision check and the
+create items; `bootstrap/usage-service.sh`: the dispatch), leaving only the
+new entrypoints and single call lines:
+
+| File | Base | Head | Growth |
+| --- | --- | --- | --- |
+| `bin/dx-usage-service` | 0 | 6 | +6 |
+| `container/dx-nixos-26.05/scripts/dx-usage-service.sh` | 0 | 3 | +3 |
+| `bin/dx-create-container` | 81 | 84 | +3 (source, check call, args call) |
+| `container/dx-nixos-26.05/bootstrap.sh` | 51 | 53 | +2 (dispatch call, source) |
+| `container/dx-nixos-26.05/scripts/dx-ai.sh` | 132 | 133 | +1 (hook call) |
+
+`bin/dx-usage-service` keeps its `usage_service_main` wrapper because the
+entrypoint contract in `tests/test_refactor_contracts.sh` requires it. Scope
+floor is unaffected (it only rose). Measured with `tests/lib/coverage-metric.sh`
+on clean `git archive` exports of `origin/main` and the branch tip.
