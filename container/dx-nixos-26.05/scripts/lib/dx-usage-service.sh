@@ -67,6 +67,10 @@ dx_usage_service_serve() {
         return 1
     }
 
+    # The active dx-ai generation's tools (dbus-daemon, the keyring, the provider
+    # CLIs) are not in dx's own profile, so its profile/bin goes on PATH before
+    # the keyring starts, not after.
+    [ ! -d "$ai_state/current/profile/bin" ] || export PATH="$ai_state/current/profile/bin:$PATH"
     # The keyring is shared with dx-ai; a failure is reported but must not keep
     # the service down (provider rows show the missing secrets instead).
     if dx_keyring_start "$address_file" >&2 && address="$(dx_keyring_read_address "$address_file")"; then
@@ -74,7 +78,6 @@ dx_usage_service_serve() {
     else
         echo "Warning: the keyring is unavailable; providers that need it will report errors." >&2
     fi
-    [ ! -d "$ai_state/current/profile/bin" ] || export PATH="$ai_state/current/profile/bin:$PATH"
     # Any tmux the package starts is namespaced under its own workspace, so
     # stopping the service can never reach another tmux server.
     export TMUX_TMPDIR="$root/workspace/tmux"

@@ -53,7 +53,7 @@ us_serve() {
         source "$GUEST_SCRIPTS/lib/dx-keyring.sh"
         # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-usage-service.sh
         source "$LIB"
-        dx_keyring_start() { printf 'keyring-start\n' >> "$US_LOG"; return "${US_KEYRING_STATUS:-0}"; }
+        dx_keyring_start() { printf 'keyring-start\n' >> "$US_LOG"; printf 'dbus-daemon-resolves=%s\n' "$(command -v dbus-daemon || echo none)" >> "$US_LOG"; return "${US_KEYRING_STATUS:-0}"; }
         dx_keyring_read_address() { [ "${US_KEYRING_STATUS:-0}" = 0 ] || return 1; printf '%s\n' "$fake_address"; }
         us_sleep() { printf 'sleep:%s\n' "$1" >> "$US_LOG"; }
         export DX_USAGE_SLEEP=us_sleep DX_USAGE_SERVICE_ROOT="$1" DX_AI_STATE_ROOT="$ai_state" DX_KEYRING_ADDRESS_FILE="$fx/keyring-address"
@@ -92,6 +92,26 @@ all_dirs=true; for d in config workspace data logs control; do [ -d "$root/$d" ]
 [ ! -e "$root/previous" ] && [ ! -L "$root/previous" ] \
     && test_pass "serve never creates the previous link (release selection owns both links)" \
     || test_fail "serve never creates the previous link"
+
+# The keyring tools live in the active dx-ai generation, not dx's own profile:
+# serve must put that generation's profile/bin on PATH BEFORE starting the keyring.
+printf '#!/bin/sh\nexit 0\n' > "$ai_state/current/profile/bin/dbus-daemon"; chmod +x "$ai_state/current/profile/bin/dbus-daemon"
+us_serve "$root" || true
+if grep -qx "dbus-daemon-resolves=$ai_state/current/profile/bin/dbus-daemon" "$US_LOG" && grep -qx "dbus=$fake_address" "$US_LOG" && grep -qx 'exe=agent-stats-rust' "$US_LOG"; then
+    test_pass "serve finds dbus-daemon in the active dx-ai generation (PATH set before the keyring starts), exports the bus address and starts the service"
+else
+    test_fail "serve resolves dbus-daemon from the active generation before starting the keyring (log: $(cat "$US_LOG"))"
+fi
+rm -f "$ai_state/current/profile/bin/dbus-daemon"
+# No generation at all: the keyring cannot start, the service still does.
+mv "$ai_state/current" "$ai_state/current.off"
+US_KEYRING_STATUS=1 us_serve "$root" || true
+if grep -qx 'dbus-daemon-resolves=none' "$US_LOG" && grep -qx 'exe=agent-stats-rust' "$US_LOG" && grep -qF "keyring is unavailable" "$fx/serve.out"; then
+    test_pass "with no dx-ai generation the keyring warning is printed and the service still starts"
+else
+    test_fail "with no dx-ai generation the service still starts with a warning (log: $(cat "$US_LOG"); out: $(cat "$fx/serve.out"))"
+fi
+mv "$ai_state/current.off" "$ai_state/current"
 
 # --- serve: repeat run, config respected -------------------------------------
 printf 'python\n' > "$root/config/implementation"
