@@ -1337,3 +1337,14 @@ new entrypoints and single call lines:
 entrypoint contract in `tests/test_refactor_contracts.sh` requires it. Scope
 floor is unaffected (it only rose). Measured with `tests/lib/coverage-metric.sh`
 on clean `git archive` exports of `origin/main` and the branch tip.
+
+## 2026-10-04: crash-loop abort moved into bin/lib (fix/essentials-upgrade-on-boot)
+
+`unscoped_prod_exec_lines_ceiling` 2650 -> 2641 (-9), tightening the ceiling to
+the measured value. `bin/dx-wait-ssh` replaced its six-line "container stopped"
+abort block with one call to `dx_container_wait_should_abort`, delegated its
+five-line log helper to `dx_container_print_logs`, and gained one baseline line;
+the logic (including the new restart-count abort) lives in the covered
+`bin/lib/dx-container.sh`. Measured on a clean export at `c1beafa` with
+`tests/run-coverage-linux.sh`: `scope_exec_lines=4402`,
+`unscoped_prod_exec_lines=2641`, scope coverage 100%.
