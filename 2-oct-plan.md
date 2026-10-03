@@ -1,6 +1,6 @@
 # DXE unified plan — 2 October 2026
 
-**Status: partially complete; all eight user policies recorded, ready for handoff.**
+**Status: complete (2026-10-03). All eight policies executed; production `dx-qnap` live on port 2222; the canary retired. Residual obligations: `findings.md`.**
 This is the single forward plan consolidating `1-oct-plan-a.md`,
 `1-oct-plan-b.md`, and `1-oct-plan-c.md`. Original plans and handoffs are
 preserved. It supersedes their pending landing steps with the recorded landing
@@ -300,6 +300,15 @@ and verified, `dx-ai` live inside it; the canary remains the fallback. The
 user's `qx` now lands on production (`QX_PROFILE=qnap`, 2026-10-03 evening);
 the canary's retirement and the port-2222 return are the remaining operator
 decisions.
+
+**D7 complete (2026-10-03, late evening):** the canary `dx-qnap-canary` was
+retired (final backup kept as an archive mirror, `dx-factory-reset` through
+the ownership plan, its profiles and keys archived privately) and production
+`dx-qnap` was recreated on **port 2222** (volumes and keys kept; healthy,
+running = published, hostname `dx-qnap`); the user's `qx` reaches it. The
+temporary port 2223 is given back. All eight decisions D1–D8 are executed;
+this plan is complete apart from the residual obligations table in
+`findings.md`.
 
 ## 6. Document disposition, residual work and completion
 
