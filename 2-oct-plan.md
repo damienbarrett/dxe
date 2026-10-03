@@ -297,8 +297,9 @@ Canary retirement and moving production back to port 2222 are later decisions.
 sign-off on day 5 (relay waived, recorded as not met); D7 executed —
 `dx-qnap` created, populated from the canary by the cross-profile restore
 and verified, `dx-ai` live inside it; the canary remains the fallback. The
-user's `qx` switch (`QX_PROFILE=qnap`) and the canary's retirement are the
-remaining operator steps.
+user's `qx` now lands on production (`QX_PROFILE=qnap`, 2026-10-03 evening);
+the canary's retirement and the port-2222 return are the remaining operator
+decisions.
 
 ## 6. Document disposition, residual work and completion
 

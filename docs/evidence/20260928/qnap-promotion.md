@@ -376,6 +376,8 @@ main-only checkout.
 | `dx-ai` in production | completed in 64 s (the x86_64 binary cache had caught up with `herdr-0.9.1`); D-Bus and the keyring started, `live`; `agy`, `claude`, `codex` resolve |
 | final state | `dx-qnap` running = published `20261003T043128Z`, healthy; `dx-qnap-canary` healthy, untouched, kept as the fallback until the user retires it |
 
-Remaining under D7: switch the user's daily `qx` to the production profile
-(operator shell setting), and, later, the user's decisions on retiring the
+The user's daily `qx` was switched to the production profile the same
+evening (`QX_PROFILE=qnap` in the shell configuration; a fresh login shell's
+`qx` reaches `dx-qnap`, and `QX_PROFILE=qnap-canary qx` still reaches the
+fallback). Remaining under D7: the user's later decisions on retiring the
 canary and returning production to port 2222.

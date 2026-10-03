@@ -1041,8 +1041,8 @@ and volumes), then populated from the canary by the cross-profile restore
 (2,040 files, verified identical, directory modes preserved) with `dx-ai`
 completing inside it; see `docs/evidence/20260928/qnap-promotion.md`
 "Day 5". Item 7 held throughout (`dx-host` intact, promotion #9 only).
-Left for the user: switching daily `qx` to `qnap`, retiring the canary,
-returning production to port 2222. WP9.1 (retiring the consolidation
+Daily `qx` was switched to `qnap` the same evening. Left for the user:
+retiring the canary and returning production to port 2222. WP9.1 (retiring the consolidation
 narrative) may now proceed.
 
 ### Exit gate
