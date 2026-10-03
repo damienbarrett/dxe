@@ -47,6 +47,8 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_TUNNEL_LOCK_TIMEOUT` | `5` | Maximum seconds to wait for a per-tunnel state-transition lock. |
 | `DX_BACKUP_DIR` | `$HOME/Backups/dxe-persist` | Base host directory for `dx-backup`/`dx-restore`. The actual per-container mirror always lives at `$DX_BACKUP_DIR/$DX_CONTAINER_NAME`, even when overridden, so `dx-host` and `dx-test` never share one. See ["Backing up and restoring /persist"](lifecycle.md#backing-up-and-restoring-persist). |
 | `DX_PROFILE_ROOT` | (empty) | Optional pin, set in a profile only: an absolute path to the one checkout that may run that profile, e.g. `/absolute/path/to/checkout`. `bin/dx-profile` compares the canonical (symlink-resolved) path of its own checkout with the canonical pin and refuses with exit status 2, before running anything, when they differ or the pin does not resolve. Empty means no pin. Keep the real value in your private profile, never in a tracked file. |
+| `DX_USAGE_SERVICE` | `off` | `off` or `on`. Opt-in supervised usage-service mode. When `on`, `dx-create-container` adds one more published port (see `DX_USAGE_SERVICE_HOST_PORT`) through the same neutral publish vocabulary SSH uses and passes `DX_USAGE_SERVICE=on` into the container environment, where the guest reads it. It takes effect when the container is created, so recreate the container to change it. `off` adds nothing: the create command is byte-identical to a profile that never sets the field. |
+| `DX_USAGE_SERVICE_HOST_PORT` | `8787` | Host port (1-65535) published to container port 8787 when `DX_USAGE_SERVICE=on`; ignored when `off`. Published exactly as SSH is: on the Mac's loopback for the Apple runtime, and on the NAS's discovered Tailscale address (never the LAN or `0.0.0.0`) for docker-ssh. Must differ from `DX_SSH_PORT`: `dx-create-container` refuses `on` otherwise. |
 
 `DX_NIX_VOLUME` exists because the Nix store is large, persistent, and lives on
 its own writable filesystem. Apple Container creates and mounts the volume at
@@ -118,6 +120,8 @@ registry that validates it.
 | `DX_TUNNEL_LOCK_TIMEOUT` | `5` |
 | `DX_BACKUP_DIR` | `$HOME/Backups/dxe-persist` |
 | `DX_PROFILE_ROOT` | (empty) |
+| `DX_USAGE_SERVICE` | `off` |
+| `DX_USAGE_SERVICE_HOST_PORT` | `8787` |
 
 ### Mounting a Host Checkout (`dx-mount`)
 

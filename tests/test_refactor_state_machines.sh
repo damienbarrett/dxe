@@ -286,6 +286,20 @@ expect_ok "DX_CONTAINER_RESTART_POLICY accepts no" dx_config_validate_value DX_C
 expect_ok "DX_CONTAINER_RESTART_POLICY accepts unless-stopped" dx_config_validate_value DX_CONTAINER_RESTART_POLICY unless-stopped
 expect_reject "DX_CONTAINER_RESTART_POLICY rejects an unknown value" dx_config_validate_value DX_CONTAINER_RESTART_POLICY always
 
+# Usage-service fields (plan Phase 3): opt-in supervised mode, default off,
+# and the host port published to the guest's fixed port 8787 (tailnet side).
+expect_ok "DX_USAGE_SERVICE is a registered config field" dx_config_is_field DX_USAGE_SERVICE
+[ "$(dx_config_default DX_USAGE_SERVICE)" = off ] && test_pass "DX_USAGE_SERVICE defaults to off" || test_fail "DX_USAGE_SERVICE defaults to off"
+expect_ok "DX_USAGE_SERVICE accepts off" dx_config_validate_value DX_USAGE_SERVICE off
+expect_ok "DX_USAGE_SERVICE accepts on" dx_config_validate_value DX_USAGE_SERVICE on
+expect_reject "DX_USAGE_SERVICE rejects an unknown value" dx_config_validate_value DX_USAGE_SERVICE yes
+expect_reject "DX_USAGE_SERVICE rejects an empty value" dx_config_validate_value DX_USAGE_SERVICE ''
+expect_ok "DX_USAGE_SERVICE_HOST_PORT is a registered config field" dx_config_is_field DX_USAGE_SERVICE_HOST_PORT
+[ "$(dx_config_default DX_USAGE_SERVICE_HOST_PORT)" = 8787 ] && test_pass "DX_USAGE_SERVICE_HOST_PORT defaults to 8787" || test_fail "DX_USAGE_SERVICE_HOST_PORT defaults to 8787"
+expect_ok "DX_USAGE_SERVICE_HOST_PORT accepts 8787" dx_config_validate_value DX_USAGE_SERVICE_HOST_PORT 8787
+expect_reject "DX_USAGE_SERVICE_HOST_PORT rejects port 0" dx_config_validate_value DX_USAGE_SERVICE_HOST_PORT 0
+expect_reject "DX_USAGE_SERVICE_HOST_PORT rejects port 65536" dx_config_validate_value DX_USAGE_SERVICE_HOST_PORT 65536
+
 # Fable A5: dx_config_validate_value has no default arm, so a typo'd or
 # unknown field name is silently ACCEPTED today. dx_config_set_resolved is
 # the only production caller that checks dx_config_is_field first --
@@ -504,9 +518,9 @@ registry_actual_count=0
     done
 ) > "$registry_actual"
 for registry_name in $DXE_CONFIG_FIELDS; do registry_actual_count=$((registry_actual_count + 1)); done
-[ "$registry_actual_count" -eq 40 ] \
-    && test_pass "the config registry has exactly 40 fields" \
-    || test_fail "the config registry has exactly 40 fields (got $registry_actual_count)"
+[ "$registry_actual_count" -eq 42 ] \
+    && test_pass "the config registry has exactly 42 fields" \
+    || test_fail "the config registry has exactly 42 fields (got $registry_actual_count)"
 if diff -q "$registry_fixture" "$registry_actual" >/dev/null 2>&1; then
     test_pass "the heredoc registry's dx_config_kind/dx_config_default per field match the pre-refactor fixture"
 else

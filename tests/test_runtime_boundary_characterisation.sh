@@ -866,6 +866,62 @@ if printf '%s\n' "$got" | stdin_matches -F -- "$cc_git_src:/workspace:rw" \
 else
     test_fail "dx-create-container's optional git-mount volume and pub-key env still reach the Apple create argv (got: $got)"
 fi
+# Usage service (design decision 1B): on adds exactly one more publish
+# mapping, through the same neutral vocabulary SSH uses (Apple renders the
+# loopback literal for both), plus one env token, placed right after the SSH
+# mapping. DX_USAGE_SERVICE=off is the byte-identical proof above (the field
+# defaults to off there); an explicit off must match it too.
+cc_usage_env() {
+    env PATH="$cc_fixture/bin:/usr/bin:/bin" \
+        HOME="$(fresh_home "$cc_fixture/home-usage-$1")" \
+        DX_CONTAINER_NAME=dxe-rtb-create-usage \
+        DX_IMAGE=dxe-rtb-image \
+        DX_NIX_VOLUME=dxe-rtb-nix-usage \
+        DX_PERSIST_VOLUME=dxe-rtb-persist-usage \
+        DX_BOOTSTRAP_VOLUME=dxe-rtb-bootstrap-usage \
+        DX_GIT_MOUNT_SOURCE='' \
+        DX_SSH_PORT=2222 \
+        DX_SSH_KEY_PUB="$cc_fixture/no-such-key.pub" \
+        DX_FAKE_ARGV_LOG="$cc_log" \
+        "${@:2}" \
+        "$BASE_DIR/bin/dx-create-container"
+}
+: > "$cc_log"
+cc_usage_env on DX_USAGE_SERVICE=on DX_USAGE_SERVICE_HOST_PORT=18799 >/dev/null 2>&1
+got="$(cat "$cc_log")"
+if printf '%s\n' "$got" | tr '\n' ' ' | stdin_matches -F -- "-p 127.0.0.1:2222:2222 -p 127.0.0.1:18799:8787 -e DX_USAGE_SERVICE=on dxe-rtb-image " \
+    && [ "$(printf '%s\n' "$got" | grep -c -F -- 'DX_USAGE_SERVICE=on')" -eq 1 ] \
+    && [ "$(printf '%s\n' "$got" | grep -c -F -- ':8787')" -eq 1 ]; then
+    test_pass "dx-create-container with DX_USAGE_SERVICE=on adds one publish mapping (HOST_PORT:8787) and the DX_USAGE_SERVICE env token after the SSH mapping (Apple argv)"
+else
+    test_fail "dx-create-container with DX_USAGE_SERVICE=on adds one publish mapping and the env token (Apple argv) (got: $got)"
+fi
+: > "$cc_log"
+cc_usage_env off DX_USAGE_SERVICE=off DX_USAGE_SERVICE_HOST_PORT=18799 >/dev/null 2>&1
+cc_off_explicit="$(cat "$cc_log")"
+: > "$cc_log"
+cc_usage_env default >/dev/null 2>&1
+if [ -n "$cc_off_explicit" ] && [ "$cc_off_explicit" = "$(cat "$cc_log")" ] \
+    && ! printf '%s\n' "$cc_off_explicit" | stdin_matches -F -- 'DX_USAGE_SERVICE' \
+    && ! printf '%s\n' "$cc_off_explicit" | stdin_matches -F -- ':8787'; then
+    test_pass "dx-create-container with DX_USAGE_SERVICE=off renders the same argv as the default, with no usage-service publish or env (Apple argv)"
+else
+    test_fail "dx-create-container with DX_USAGE_SERVICE=off renders the same argv as the default (got: $cc_off_explicit)"
+fi
+# A host port equal to the SSH port is refused when on, before any container
+# call; when off the same port value is ignored (never validated against SSH).
+: > "$cc_log"
+cc_collide_err="$(cc_usage_env collide DX_USAGE_SERVICE=on DX_USAGE_SERVICE_HOST_PORT=2222 2>&1 >/dev/null)" && cc_collide_status=0 || cc_collide_status=$?
+if [ "$cc_collide_status" -ne 0 ] && [ ! -s "$cc_log" ] \
+    && printf '%s\n' "$cc_collide_err" | stdin_matches -F -- "DX_USAGE_SERVICE_HOST_PORT (2222) must differ from DX_SSH_PORT"; then
+    test_pass "dx-create-container refuses DX_USAGE_SERVICE=on when DX_USAGE_SERVICE_HOST_PORT equals DX_SSH_PORT, before any create"
+else
+    test_fail "dx-create-container refuses DX_USAGE_SERVICE=on when the usage port equals DX_SSH_PORT (status $cc_collide_status, got: $cc_collide_err)"
+fi
+: > "$cc_log"
+cc_usage_env offsame DX_USAGE_SERVICE=off DX_USAGE_SERVICE_HOST_PORT=2222 >/dev/null 2>&1 && [ -s "$cc_log" ] \
+    && test_pass "DX_USAGE_SERVICE=off ignores a usage port equal to DX_SSH_PORT" \
+    || test_fail "DX_USAGE_SERVICE=off ignores a usage port equal to DX_SSH_PORT"
 rm -rf "$cc_fixture"
 
 print_summary

@@ -206,6 +206,61 @@ echo hi
 --
 /guest-bootstrap" && test_pass "container_create passes the post-image entrypoint argv through completely unexamined" || test_fail "container_create passes the post-image entrypoint argv through completely unexamined"
 
+# Usage service (design decision 1B): a second neutral --publish HOSTPORT:8787
+# item is rendered exactly like SSH's -- on the discovered Tailscale address,
+# never loopback; without it the argv is exactly today's single mapping.
+ul_off_log="$fixture/create-argv-usage-off.log"
+ul_on_log="$fixture/create-argv-usage-on.log"
+for ul_mode in off on; do
+(
+    dir="$(new_tool_dir)"
+    fake_qnap_ssh_write "$dir"
+    fake_tool_write "$dir" tailscale 'case "$*" in
+    "ip -4") printf "%s.%s.%s.%s\n" 100 64 1 2 ;;
+    *) echo "UNMATCHED: $*" >&2; exit 99 ;;
+esac'
+    ul_log="$ul_off_log"; ul_extra=()
+    if [ "$ul_mode" = on ]; then ul_log="$ul_on_log"; ul_extra=(--publish 8787:8787 --env DX_USAGE_SERVICE=on); fi
+    fake_tool_write "$dir" docker "
+[ \"\$1\" = create ] || { echo UNMATCHED >&2; exit 99; }
+shift
+printf '%s\n' \"\$@\" > '$ul_log'
+"
+    PATH="$dir:/usr/bin:/bin"
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
+    export DXE_RUNTIME_DOCKER_BIN=docker
+    unset DXE_RUNTIME_GUEST_SSH_ADDRESS
+    dx_runtime_container_create \
+        --name dx-qnap --image dx-qnap-nixos \
+        --volume nix:dx-qnap-nix:rw \
+        --volume persist:dx-qnap-persist:/persist:rw \
+        --memory 12G --cpus 4 --publish 2222:2222 ${ul_extra[@]+"${ul_extra[@]}"} \
+        --restart-policy unless-stopped \
+        --entrypoint-cmd 'echo hi' --entrypoint-arg /guest-bootstrap
+)
+done
+ul_off="$(cat "$ul_off_log" 2>/dev/null)"
+ul_on="$(cat "$ul_on_log" 2>/dev/null)"
+ul_addr="$(tailnet_fixture_addr 64 1 2)"
+printf '%s\n' "$ul_on" | stdin_matches -F -- "$ul_addr:8787:8787" \
+    && printf '%s\n' "$ul_on" | stdin_matches -F -- "$ul_addr:2222:2222" \
+    && [ "$(printf '%s\n' "$ul_on" | grep -c -F -- ':8787:8787')" -eq 1 ] \
+    && test_pass "container_create (docker-ssh) renders the usage-service --publish on the discovered Tailscale address beside the SSH mapping" \
+    || test_fail "container_create (docker-ssh) renders the usage-service --publish on the discovered Tailscale address beside the SSH mapping (got: $ul_on)"
+printf '%s\n' "$ul_on" | stdin_matches -F -- "127.0.0.1" \
+    && test_fail "container_create (docker-ssh) never renders the usage-service publication on loopback" \
+    || test_pass "container_create (docker-ssh) never renders the usage-service publication on loopback"
+printf '%s\n' "$ul_on" | stdin_matches -F -- "DX_USAGE_SERVICE=on" \
+    && test_pass "container_create (docker-ssh) passes the DX_USAGE_SERVICE env token" \
+    || test_fail "container_create (docker-ssh) passes the DX_USAGE_SERVICE env token (got: $ul_on)"
+printf '%s\n' "$ul_off" | stdin_matches -F -- "8787" \
+    && test_fail "container_create (docker-ssh) without the usage-service items adds no 8787 mapping" \
+    || test_pass "container_create (docker-ssh) without the usage-service items adds no 8787 mapping"
+ul_on_without="$(printf '%s\n' "$ul_on" | awk '$0=="-p"{getline nxt; if (nxt ~ /:8787:8787$/) next; print; print nxt; next} $0=="-e"{getline nxt; if (nxt=="DX_USAGE_SERVICE=on") next; print; print nxt; next} {print}')"
+[ -n "$ul_off" ] && [ "$ul_on_without" = "$ul_off" ] \
+    && test_pass "container_create (docker-ssh): removing the usage-service mapping and env from the on-argv yields exactly the off-argv" \
+    || test_fail "container_create (docker-ssh): removing the usage-service mapping and env from the on-argv yields exactly the off-argv"
+
 # container_create: an unrecognized parameter fails closed rather than
 # guessing (protects against a future bin/dx-create-container change that
 # forgets to update both adapters).
