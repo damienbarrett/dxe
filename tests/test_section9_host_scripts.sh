@@ -1101,8 +1101,11 @@ printf '%s\n' 'DX_CONTAINER_NAME=decoy-user-profile' > "$runner_fixture/decoy/dx
     printf '#!/bin/bash\n# %s: unit\n# %s: yes\n' tier bash32
     printf '"%s/bin/dx-profile" dx-test printenv DX_CONTAINER_NAME\n' "$BASE_DIR"
 } > "$runner_fixture/tests/test_probe.sh"
+# Start each inner run from a clean SKIP_INTEGRATION: under `run_all_tests.sh --live`
+# this suite itself runs with SKIP_INTEGRATION=false exported, which an inner
+# run.sh without --live refuses (by design, exit 2).
 runner_status=0
-runner_out="$(env -u DX_PROFILES_DIR XDG_CONFIG_HOME="$runner_fixture/decoy" bash "$runner_fixture/tests/run.sh" --file "$runner_fixture/tests/test_probe.sh" 2>&1)" || runner_status=$?
+runner_out="$(env -u SKIP_INTEGRATION -u DX_PROFILES_DIR XDG_CONFIG_HOME="$runner_fixture/decoy" bash "$runner_fixture/tests/run.sh" --file "$runner_fixture/tests/test_probe.sh" 2>&1)" || runner_status=$?
 if [ "$runner_status" -eq 0 ] && printf '%s\n' "$runner_out" | stdin_matches -x 'bundled-fixture' \
     && ! printf '%s\n' "$runner_out" | stdin_matches -F 'decoy-user-profile'; then
     test_pass "the runner resolves dx-test from tests/profiles even with a decoy user profile"
@@ -1110,7 +1113,7 @@ else
     test_fail "the runner resolves dx-test from tests/profiles even with a decoy user profile (status $runner_status, got '$runner_out')"
 fi
 runner_status=0
-runner_out="$(DX_PROFILES_DIR="$runner_fixture/decoy/dxe/profiles" bash "$runner_fixture/tests/run.sh" --file "$runner_fixture/tests/test_probe.sh" 2>&1)" || runner_status=$?
+runner_out="$(env -u SKIP_INTEGRATION DX_PROFILES_DIR="$runner_fixture/decoy/dxe/profiles" bash "$runner_fixture/tests/run.sh" --file "$runner_fixture/tests/test_probe.sh" 2>&1)" || runner_status=$?
 if [ "$runner_status" -eq 0 ] && printf '%s\n' "$runner_out" | stdin_matches -x 'bundled-fixture' \
     && ! printf '%s\n' "$runner_out" | stdin_matches -F 'decoy-user-profile'; then
     test_pass "the runner overrides a caller-set DX_PROFILES_DIR with its own fixture directory"
@@ -1119,7 +1122,7 @@ else
 fi
 mv "$runner_fixture/tests/profiles" "$runner_fixture/tests/profiles.gone"
 runner_status=0
-runner_out="$(env -u DX_PROFILES_DIR XDG_CONFIG_HOME="$runner_fixture/decoy" bash "$runner_fixture/tests/run.sh" --file "$runner_fixture/tests/test_probe.sh" 2>&1)" || runner_status=$?
+runner_out="$(env -u SKIP_INTEGRATION -u DX_PROFILES_DIR XDG_CONFIG_HOME="$runner_fixture/decoy" bash "$runner_fixture/tests/run.sh" --file "$runner_fixture/tests/test_probe.sh" 2>&1)" || runner_status=$?
 if [ "$runner_status" -eq 2 ] && ! printf '%s\n' "$runner_out" | stdin_matches -F 'decoy-user-profile' \
     && ! printf '%s\n' "$runner_out" | stdin_matches -F 'Running:'; then
     test_pass "a missing fixture profile directory fails the runner closed before any suite runs"

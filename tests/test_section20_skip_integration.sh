@@ -295,7 +295,7 @@ run_section_under_skip "$SCRIPT_DIR/test_section17_dx_ai_runtime.sh" "section 17
 # THIS suite's results file, and --section=1 really does dispatch a whole
 # suite (unlike --section=nonexistent, which errors out before sourcing
 # test_helpers.sh at all) that would otherwise inherit and delete it.
-unknown_output="$(DXE_TEST_RESULTS="" "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=nonexistent 2>&1)"
+unknown_output="$(DXE_TEST_RESULTS="" env -u SKIP_INTEGRATION "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=nonexistent 2>&1)"
 unknown_status=$?
 if [ "$unknown_status" -ne 0 ] && ! printf '%s' "$unknown_output" | stdin_matches 'All tests PASSED'; then
     test_pass "unknown --section fails instead of reporting an empty success"
@@ -304,7 +304,7 @@ else
 fi
 
 # The guard must not reject sections the runner really does dispatch.
-if DXE_TEST_RESULTS="" "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=1 >/dev/null 2>&1; then
+if DXE_TEST_RESULTS="" env -u SKIP_INTEGRATION "$SCRIPT_DIR/run_all_tests.sh" --skip-integration --section=1 >/dev/null 2>&1; then
     test_pass "a dispatchable --section still runs"
 else
     test_fail "a dispatchable --section still runs"
