@@ -90,22 +90,18 @@ dx_container_restart_baseline() {
 dx_container_wait_should_abort() {
     local baseline="$1" count
     if container_exists "$DX_CONTAINER_NAME" && ! container_is_running "$DX_CONTAINER_NAME"; then
-        {
-            echo "Error: Container $DX_CONTAINER_NAME stopped before SSH became responsive."
-            echo "Last 80 container log lines:"
-            dx_container_print_logs 80
-        } >&2
+        echo "Error: Container $DX_CONTAINER_NAME stopped before SSH became responsive." >&2
+        echo "Last 80 container log lines:" >&2
+        dx_container_print_logs 80 >&2
         return 0
     fi
     count="$(dx_runtime_container_restart_count "$DX_CONTAINER_NAME" 2>/dev/null)" || return 1
     case "$count" in ""|*[!0-9]*) return 1 ;; esac
     [ "$((count - baseline))" -ge 2 ] || return 1
-    {
-        echo "Error: Container $DX_CONTAINER_NAME is crash-looping: its restart count rose from $baseline to $count while waiting for SSH."
-        echo "Last 20 container log lines:"
-        dx_container_print_logs 20
-        echo "Check the bootstrap error in those lines and the profile it was created from; after fixing the cause, run dx-recreate (or dx-destroy-container then dx)."
-    } >&2
+    echo "Error: Container $DX_CONTAINER_NAME is crash-looping: its restart count rose from $baseline to $count while waiting for SSH." >&2
+    echo "Last 20 container log lines:" >&2
+    dx_container_print_logs 20 >&2
+    echo "Check the bootstrap error in those lines and the profile it was created from; after fixing the cause, run dx-recreate (or dx-destroy-container then dx)." >&2
     return 0
 }
 
