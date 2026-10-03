@@ -161,15 +161,36 @@ trap - EXIT
 # resolves. The alias is assembled from pieces so this file does not spell
 # it either. tests/qnap/ (operator scripts that use the real alias by
 # design) and the example profiles are the only exclusions.
+# Only tracked files are scanned: an operator's private, git-excluded profile
+# in tests/profiles/ legitimately names the real alias. A clean export has no
+# git repository (and contains only tracked files), so there the tree itself
+# is scanned. Candidate paths are NUL-separated; tests/qnap/, the example
+# profiles and coverage output are skipped.
+guard_files="$(mktemp "${TMPDIR:-/tmp}/dxe-secrets-guard.XXXXXX")"
+if [ "$(git -C "$BASE_DIR" rev-parse --show-toplevel 2>/dev/null)" = "$BASE_DIR" ]; then
+    git -C "$BASE_DIR" ls-files -z -- tests > "$guard_files"
+else
+    (cd "$BASE_DIR" && find tests -type f -print0) > "$guard_files"
+fi
+guard_scan_list="$(mktemp "${TMPDIR:-/tmp}/dxe-secrets-guard-list.XXXXXX")"
+while IFS= read -r -d '' guard_path; do
+    case "$guard_path" in
+        tests/qnap/* | tests/coverage/out/* | *example.env) continue ;;
+    esac
+    [ -f "$BASE_DIR/$guard_path" ] && printf '%s\0' "$BASE_DIR/$guard_path"
+done < "$guard_files" > "$guard_scan_list"
+rm -f "$guard_files"
+
 real_alias="$(printf '%s%s' "qnap" "-dxe")"
-alias_hits="$(grep -rIn --exclude-dir=qnap --exclude='*example.env' --exclude-dir=out -- "$real_alias" "$SCRIPT_DIR" | grep -v -- "${real_alias}-plan" || true)"
+alias_hits="$(xargs -0 grep -In -- "$real_alias" /dev/null < "$guard_scan_list" | grep -v -- "${real_alias}-plan" || true)"
 if [ -z "$alias_hits" ]; then
     test_pass "no test file outside tests/qnap and the example profiles names the real NAS alias"
 else
     test_fail "no test file outside tests/qnap and the example profiles names the real NAS alias (hits: $alias_hits)"
 fi
 
-host_assign_hits="$(grep -rIhoE --exclude-dir=qnap --exclude='*example.env' --exclude-dir=out -- 'DX_REMOTE_HOST=[A-Za-z0-9._-]+' "$SCRIPT_DIR" | grep -v -- '\.invalid$' || true)"
+host_assign_hits="$(xargs -0 grep -IhoE -- 'DX_REMOTE_HOST=[A-Za-z0-9._-]+' /dev/null < "$guard_scan_list" | grep -v -- '\.invalid$' || true)"
+rm -f "$guard_scan_list"
 if [ -z "$host_assign_hits" ]; then
     test_pass "every DX_REMOTE_HOST= assignment under tests/ ends in .invalid"
 else
