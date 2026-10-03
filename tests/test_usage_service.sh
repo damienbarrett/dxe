@@ -106,7 +106,10 @@ rm -f "$ai_state/current/profile/bin/dbus-daemon"
 # No generation at all: the keyring cannot start, the service still does.
 mv "$ai_state/current" "$ai_state/current.off"
 US_KEYRING_STATUS=1 us_serve "$root" || true
-if grep -qx 'dbus-daemon-resolves=none' "$US_LOG" && grep -qx 'exe=agent-stats-rust' "$US_LOG" && grep -qF "keyring is unavailable" "$fx/serve.out"; then
+# Portable: a runner may have a real dbus-daemon on PATH, so only require that it
+# does NOT come from the (absent) generation, not that nothing resolves.
+if ! grep -q "dbus-daemon-resolves=$ai_state" "$US_LOG" && grep -q '^dbus-daemon-resolves=' "$US_LOG" \
+    && grep -qx 'exe=agent-stats-rust' "$US_LOG" && grep -qF "keyring is unavailable" "$fx/serve.out"; then
     test_pass "with no dx-ai generation the keyring warning is printed and the service still starts"
 else
     test_fail "with no dx-ai generation the service still starts with a warning (log: $(cat "$US_LOG"); out: $(cat "$fx/serve.out"))"
