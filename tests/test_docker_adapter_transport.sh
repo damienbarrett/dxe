@@ -180,7 +180,7 @@ case "$1 $2" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     dx_runtime_available
 )
@@ -192,7 +192,7 @@ esac'
     dir="$(new_tool_dir)"
     fake_tool_write "$dir" ssh 'exit 255'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     out="$(dx_runtime_available 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "cannot reach"
@@ -211,7 +211,7 @@ esac'
     # discovery succeed and this refusal never happens.
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
     rm -f "$dir/docker" # absence is the scenario: drop the fail-closed default from new_tool_dir
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     out="$(dx_runtime_available 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "could not discover the Docker CLI"
@@ -250,7 +250,7 @@ esac'
     # took /usr/bin/docker and the glob was never exercised).
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
     rm -f "$dir/docker" # absence is the scenario: drop the fail-closed default from new_tool_dir
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     DX_RUNTIME_DOCKER_BIN_GLOB="$dir/share/*/.qpkg/container-station/bin/docker" dx_runtime_available &&
         [ "$DXE_RUNTIME_DOCKER_BIN" = "$qpkg_dir/docker" ]
@@ -265,7 +265,7 @@ esac'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "UNMATCHED: $*" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=aarch64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=aarch64-linux
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     out="$(dx_runtime_available 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "does not match configured DX_GUEST_SYSTEM"
@@ -279,7 +279,7 @@ esac'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" uname 'case "$1" in -m) echo armv7l ;; esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     out="$(dx_runtime_available 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "unsupported architecture"
@@ -298,7 +298,7 @@ case "$1 $2" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     out="$(dx_runtime_available 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "failed or printed no server version"
@@ -318,7 +318,7 @@ case "$1 $2" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     dx_runtime_available >/dev/null 2>&1 && [ -n "$DXE_RUNTIME_DOCKER_DAEMON_ID" ]
 )
@@ -343,7 +343,7 @@ case "$1 $2" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     dx_runtime_available >/dev/null 2>&1
     first_calls="$(wc -l < "$call_log" | tr -d ' ')"
@@ -365,7 +365,7 @@ case "$1 $2" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     dx_runtime_available >/dev/null 2>&1
     bash -c '[ -n "$DXE_RUNTIME_DOCKER_BIN" ] && [ -n "$DXE_RUNTIME_DOCKER_DAEMON_ID" ]'
@@ -378,7 +378,7 @@ esac'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = info ] && [ "$#" -eq 1 ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     dx_runtime_system_running
 )
@@ -388,7 +388,7 @@ esac'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     dx_runtime_system_running
 )
@@ -400,7 +400,7 @@ esac'
     dir="$(new_tool_dir)"
     fake_tool_write "$dir" ssh 'echo "ssh should never be called" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     out="$(dx_runtime_system_start 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "App Center" && ! printf '%s\n' "$out" | stdin_matches "ssh should never be called"
 )
@@ -416,9 +416,9 @@ case "$1 $2" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
-    [ "$(dx_runtime_host_identity)" = "docker-ssh:qnap-dxe:abc123def" ]
+    [ "$(dx_runtime_host_identity)" = "docker-ssh:dxe-fixture-nas.invalid:abc123def" ]
 )
 [ "$?" -eq 0 ] && test_pass "host_identity: docker-ssh:<alias>:<daemon-id>" || test_fail "host_identity: docker-ssh:<alias>:<daemon-id>"
 
@@ -504,7 +504,7 @@ esac'
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     unset DXE_RUNTIME_GUEST_SSH_ADDRESS
     [ "$(dx_runtime_guest_ssh_address)" = "$(tailnet_fixture_addr 64 1 2)" ]
 )
@@ -527,7 +527,7 @@ esac'
     PATH="$dir:/usr/bin:/bin"
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
     rm -f "$dir/tailscale" # absence is the scenario: drop the fail-closed default from new_tool_dir
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     unset DXE_RUNTIME_GUEST_SSH_ADDRESS
     DX_RUNTIME_DOCKER_TAILSCALE_BIN_GLOB="$qpkg_dir/tailscale" dx_runtime_guest_ssh_address 2>/dev/null | grep -qx "$(tailnet_fixture_addr 64 9 9)"
 )
@@ -547,7 +547,7 @@ esac'
 esac'
     link_coreutils_into "$dir" awk cut head
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     unset DXE_RUNTIME_GUEST_SSH_ADDRESS
     [ "$(dx_runtime_guest_ssh_address)" = "$(tailnet_fixture_addr 64 5 5)" ]
 )
@@ -563,7 +563,7 @@ esac'
     fake_tool_write "$dir" ip 'exit 1'
     link_coreutils_into "$dir" awk cut head
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     unset DXE_RUNTIME_GUEST_SSH_ADDRESS
     out="$(dx_runtime_guest_ssh_address 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "the NAS has no Tailscale address; DQ5 forbids publishing on the LAN or 0.0.0.0."
@@ -577,10 +577,10 @@ esac'
     dir="$(new_tool_dir)"
     fake_tool_write "$dir" ssh 'case "$*" in *DXE_TAILSCALE_BIN*) exit 255 ;; *) exit 0 ;; esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     unset DXE_RUNTIME_GUEST_SSH_ADDRESS
     out="$(dx_runtime_guest_ssh_address 2>&1)"; rc=$?
-    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "could not reach qnap-dxe to discover its Tailscale address"
+    [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "could not reach dxe-fixture-nas.invalid to discover its Tailscale address"
 )
 [ "$?" -eq 0 ] && test_pass "guest_ssh_address (docker-ssh): a failed ssh round trip during discovery is reported distinctly from NOTFOUND" \
     || test_fail "guest_ssh_address (docker-ssh): a failed ssh round trip during discovery is reported distinctly from NOTFOUND"
@@ -601,7 +601,7 @@ esac'
 esac'
     link_coreutils_into "$dir" head
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     unset DXE_RUNTIME_GUEST_SSH_ADDRESS
     raw="$(dx_runtime_docker_ssh_raw "$(dx_runtime_docker_guest_ssh_address_discovery_script)" | tail -n1 | tr -d '\r')"
     out="$(dx_runtime_guest_ssh_address 2>&1)"; rc=$?
@@ -643,7 +643,7 @@ eval \"\$last\"
 esac'
     link_coreutils_into "$dir" head
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     unset DXE_RUNTIME_GUEST_SSH_ADDRESS
     # The first call is a direct statement, never a "$(...)" substitution:
     # a command substitution forks a subshell, and the cache this proves is
@@ -693,7 +693,7 @@ known_hosts_render_real_state_before="$(dx_real_ssh_known_hosts_snapshot)"
     home_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts.XXXXXX")"
     unset XDG_STATE_HOME
     export HOME="$home_dir"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap
     # shellcheck disable=SC2034
     # Read by dx_ssh_common_options (bin/lib/dx-ssh-common.sh), a function
     # in a separately sourced file ShellCheck cannot trace into -- these
@@ -701,7 +701,7 @@ known_hosts_render_real_state_before="$(dx_real_ssh_known_hosts_snapshot)"
     DX_SSH_KEY=/tmp/dxe-fixture-key DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=15
     DXE_RUNTIME_DOCKER_DAEMON_ID=fixturedaemonid
     out="$(dx_ssh_common_options)"
-    expected_dir="$home_dir/.local/state/dxe/dx-qnap/docker-ssh_qnap-dxe_fixturedaemonid"
+    expected_dir="$home_dir/.local/state/dxe/dx-qnap/docker-ssh_dxe-fixture-nas.invalid_fixturedaemonid"
     printf '%s\n' "$out" | stdin_matches -F -x "StrictHostKeyChecking=accept-new" \
         && printf '%s\n' "$out" | stdin_matches -F -x "UserKnownHostsFile=$expected_dir/known_hosts" \
         && ! printf '%s\n' "$out" | stdin_matches -F -x "UserKnownHostsFile=/dev/null" \
@@ -724,8 +724,8 @@ known_hosts_symlink_real_state_before="$(dx_real_ssh_known_hosts_snapshot)"
     export HOME="$home_dir"
     mkdir -p "$home_dir/.local/state/dxe/dx-qnap"
     elsewhere="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts-elsewhere.XXXXXX")"
-    ln -s "$elsewhere" "$home_dir/.local/state/dxe/dx-qnap/docker-ssh_qnap-dxe_fixturedaemonid"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    ln -s "$elsewhere" "$home_dir/.local/state/dxe/dx-qnap/docker-ssh_dxe-fixture-nas.invalid_fixturedaemonid"
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap
     # shellcheck disable=SC2034
     # Read by dx_ssh_common_options (bin/lib/dx-ssh-common.sh), a function
     # in a separately sourced file ShellCheck cannot trace into -- these
@@ -765,7 +765,7 @@ eval \"\$dx_fake_last\"
 "
     fake_tool_write "$dir" docker 'case "$1" in exec) exit 0 ;; *) echo "UNMATCHED: $*" >&2; exit 99 ;; esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_docker_exec -it dx-qnap bash -l >/dev/null 2>&1
     printf 'x' | dx_runtime_docker_exec -i dx-qnap sh -c 'cat' >/dev/null 2>&1
@@ -798,7 +798,7 @@ case "$1 $2" in
 esac
 case "$1" in exec) exit 0 ;; *) echo "UNMATCHED: $*" >&2; exit 99 ;; esac'
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     "$BASE_DIR/bin/dx-enter" true </dev/null >/dev/null 2>&1
     grep -qx -- '-tt' "$ssh_argv_log"
@@ -811,7 +811,7 @@ case "$1" in exec) exit 0 ;; *) echo "UNMATCHED: $*" >&2; exit 99 ;; esac'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = logs ] && [ "$2" = -n ] && [ "$3" = 40 ] && [ "$4" = dx-qnap ] && printf "line1\nline2\n"'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     export DXE_RUNTIME_DOCKER_BIN=docker
     [ "$(dx_runtime_logs -n 40 dx-qnap)" = "$(printf 'line1\nline2')" ]
 )
@@ -822,7 +822,7 @@ case "$1" in exec) exit 0 ;; *) echo "UNMATCHED: $*" >&2; exit 99 ;; esac'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = export ] && [ "$2" = dx-qnap ] && printf "tarbytes"'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     export DXE_RUNTIME_DOCKER_BIN=docker
     [ "$(dx_runtime_export dx-qnap)" = tarbytes ]
 )
@@ -833,7 +833,7 @@ case "$1" in exec) exit 0 ;; *) echo "UNMATCHED: $*" >&2; exit 99 ;; esac'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = run ] && [ "$2" = --rm ] && [ "$3" = dx-qnap-nixos ] && printf "ran"'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     export DXE_RUNTIME_DOCKER_BIN=docker
     [ "$(dx_runtime_run_ephemeral --rm dx-qnap-nixos)" = ran ]
 )
@@ -885,7 +885,7 @@ case "$1" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID DXE_RUNTIME_GUEST_SSH_ADDRESS
     put_source="$fixture/put-source.txt"
     printf 'fixture contents\n' > "$put_source"
@@ -917,7 +917,7 @@ printf "%s\n" "$@" >> "'"$bk_log"'"
 case "$*" in *"sh -c"*) cat > /dev/null ;; esac
 exit 0'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     host_list="$(mktemp "${TMPDIR:-/tmp}/dxe-bk-hostlist.XXXXXX")"
     printf 'persist/one\n' > "$host_list"
@@ -944,7 +944,7 @@ printf "\f\n" >> "'"$bk_log"'"
 tar -cf - -T /dev/null
 exit 0'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     fetch_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bk-fetch.XXXXXX")"
     fetch_lines="$fetch_dir/lines.tsv"

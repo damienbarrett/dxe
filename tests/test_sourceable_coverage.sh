@@ -523,7 +523,7 @@ fi
     mkdir -p "$home_dir"
     HOME="$home_dir"
     unset XDG_STATE_HOME
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dxe-coverage
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dxe-coverage
     DXE_RUNTIME_DOCKER_DAEMON_ID=coveragefixture
     DX_SSH_KEY="$fixture/ssh-common-key2"; : > "$DX_SSH_KEY"
     DX_SSH_PORT=2222 DX_SSH_CONNECT_TIMEOUT=1
@@ -553,7 +553,7 @@ fi
 # container-kind branch does make, consistent with every other
 # external-command fake in this file -- no real connection is attempted.
 (
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dxe-coverage
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dxe-coverage
     DXE_RUNTIME_DOCKER_BIN=docker
     ssh() { case "$*" in *"container inspect"*) return 1 ;; *) return 0 ;; esac; }
     out="$(dx_runtime_docker_destructive_plan_and_verify container:dxe-coverage-missing:container 2>&1)"

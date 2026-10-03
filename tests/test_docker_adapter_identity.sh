@@ -132,7 +132,7 @@ tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "image inspect" ] && [ "$3" = dx-qnap-nixos ] && exit 0; exit 1'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_image_exists dx-qnap-nixos
 )
@@ -142,7 +142,7 @@ tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_image_exists missing-image
 )
@@ -176,7 +176,7 @@ esac
 echo "REPOSITORY	TAG	IMAGE ID	CREATED	SIZE"
 echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_image_list | grep -q "^dx-qnap-nixos[[:space:]]"
 )
@@ -187,7 +187,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = volume ] && [ "$2" = inspect ] && [ "$3" = dx-qnap-nix ] && exit 0; exit 1'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_volume_exists dx-qnap-nix
 )
@@ -197,7 +197,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_volume_exists missing-volume
 )
@@ -208,7 +208,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = container ] && [ "$2" = inspect ] && [ "$3" = dx-qnap ] && exit 0; exit 1'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_exists dx-qnap
 )
@@ -218,7 +218,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_exists missing-container
 )
@@ -229,7 +229,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$5" = dx-qnap ] && echo true'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_running dx-qnap
 )
@@ -239,7 +239,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$5" = dx-qnap ] && echo false'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_running dx-qnap
 )
@@ -249,7 +249,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_running absent-container
 )
@@ -264,7 +264,7 @@ case "$*" in *"-a"*) ;; *) echo "expected -a to pass through" >&2; exit 98 ;; es
 echo "NAMES	IMAGE	STATUS"
 echo "dx-qnap	dx-qnap-nixos	Up 2 hours"'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_list -a | grep -q "^dx-qnap[[:space:]]"
 )
@@ -279,11 +279,11 @@ echo "dx-qnap	dx-qnap-nixos	Up 2 hours"'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
-    "container inspect") echo "true|1|qnap-dxe__dx-qnap|container|x86_64-linux" ;;
+    "container inspect") echo "true|1|dxe-fixture-nas.invalid__dx-qnap|container|x86_64-linux" ;;
     *) [ "$1" = rm ] && [ "$2" = --force ] && [ "$3" = dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_delete --force dx-qnap
 )
@@ -300,7 +300,7 @@ case "$1 $2" in
     *) echo "docker rm should never run" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_container_delete dx-qnap 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
@@ -317,7 +317,7 @@ case "$1 $2" in
     *) echo "docker rm should never run" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_container_delete dx-qnap 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
@@ -329,7 +329,7 @@ esac'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = image ] && [ "$2" = rm ] && [ "$3" = dx-qnap-nixos ] && exit 0; exit 1'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_image_delete dx-qnap-nixos
 )
@@ -346,11 +346,11 @@ shift 2
 printf '%s\n' \"\$@\" > '$argv_log'
 "
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix DX_GUEST_SYSTEM=x86_64-linux
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_volume_create dx-qnap-nix
     got="$(cat "$argv_log")"
-    printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.role=nix" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.profile=qnap-dxe__dx-qnap" && printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-nix"
+    printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.role=nix" && printf '%s\n' "$got" | stdin_matches -F -- "io.dxe.profile=dxe-fixture-nas.invalid__dx-qnap" && printf '%s\n' "$got" | stdin_matches -F -- "dx-qnap-nix"
 )
 [ "$?" -eq 0 ] && test_pass "volume_create: role derived from the configured name, DQ6 labels attached" || test_fail "volume_create: role derived from the configured name, DQ6 labels attached"
 (
@@ -363,7 +363,7 @@ shift 2
 printf '%s\n' \"\$@\" > '$argv_log'
 "
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix DX_GUEST_SYSTEM=x86_64-linux
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_volume_create dx-qnap-nix
     printf '%s\n' "$(cat "$argv_log")" | stdin_matches -F -- "io.dxe.system=x86_64-linux"
@@ -377,7 +377,7 @@ printf '%s\n' \"\$@\" > '$argv_log'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_volume_create some-other-volume 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "not one of the configured DXE volumes"
@@ -390,11 +390,11 @@ printf '%s\n' \"\$@\" > '$argv_log'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
-    "volume inspect") echo "true|1|qnap-dxe__dx-qnap|nix|x86_64-linux" ;;
+    "volume inspect") echo "true|1|dxe-fixture-nas.invalid__dx-qnap|nix|x86_64-linux" ;;
     *) [ "$1" = volume ] && [ "$2" = rm ] && [ "$3" = dx-qnap-nix ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix DX_GUEST_SYSTEM=x86_64-linux
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_volume_delete dx-qnap-nix
 )
@@ -410,7 +410,7 @@ case "$1 $2" in
     *) echo "docker volume rm should never run" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_NIX_VOLUME=dx-qnap-nix
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_volume_delete dx-qnap-nix 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
@@ -423,7 +423,7 @@ esac'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_volume_delete some-other-volume 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "not one of the configured DXE volumes"
@@ -449,7 +449,7 @@ echo UNMATCHED: \"\$*\" >&2
 exit 99
 "
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_image_build -t dx-qnap-nixos "$containerfile_root"
 )
@@ -463,7 +463,7 @@ printf 'FROM docker.io/library/debian@sha256:%040d\nRUN echo hi\n' 2 > "$contain
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_image_build -t dx-qnap-nixos "$containerfile_multi" 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "significant line"
@@ -478,7 +478,7 @@ printf 'RUN echo hi\n' > "$containerfile_norun/Containerfile"
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_image_build -t dx-qnap-nixos "$containerfile_norun" 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "not a FROM instruction"
@@ -493,7 +493,7 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = pull ] || [ "$1" = tag ] || { echo UNMATCHED >&2; exit 99; }; exit 0'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_image_build -t dx-qnap-nixos "$containerfile_comments"
 )
@@ -504,7 +504,7 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_image_build --bogus-shape 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "only supports"
@@ -576,10 +576,10 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "info --format" ] && echo "abc123def|qnap-fake|x86_64|linux"'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     export DXE_RUNTIME_DOCKER_BIN=docker
-    [ "$(dx_tunnel_key forward 8080)" = "forward:dx-qnap:8080:docker-ssh:qnap-dxe:abc123def" ]
+    [ "$(dx_tunnel_key forward 8080)" = "forward:dx-qnap:8080:docker-ssh:dxe-fixture-nas.invalid:abc123def" ]
 )
 [ "$?" -eq 0 ] && test_pass "dx_tunnel_key: docker-ssh gains a runtime+daemon-ID segment" || test_fail "dx_tunnel_key: docker-ssh gains a runtime+daemon-ID segment"
 
@@ -618,9 +618,9 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "info --format" ] && echo "abc123def|qnap-fake|x86_64|linux"'
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_BACKUP_DIR=/tmp/dxe-rtb-backups
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_BACKUP_DIR=/tmp/dxe-rtb-backups
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
-    [ "$(dx_backup_resolve_dir)" = "/tmp/dxe-rtb-backups/dx-qnap/docker-ssh_qnap-dxe_abc123def" ]
+    [ "$(dx_backup_resolve_dir)" = "/tmp/dxe-rtb-backups/dx-qnap/docker-ssh_dxe-fixture-nas.invalid_abc123def" ]
 )
 [ "$?" -eq 0 ] && test_pass "dx_backup_resolve_dir: docker-ssh gains a runtime+daemon-ID path segment, never mixing two NASs' backups" || test_fail "dx_backup_resolve_dir: docker-ssh gains a runtime+daemon-ID path segment, never mixing two NASs' backups"
 
@@ -645,9 +645,9 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "info --format" ] && echo "abc123def|qnap-fake|x86_64|linux"'
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap-b DX_BACKUP_DIR=/tmp/dxe-rtb-backups
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap-b DX_BACKUP_DIR=/tmp/dxe-rtb-backups
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
-    [ "$(dx_backup_resolve_dir dx-qnap-canary)" = "/tmp/dxe-rtb-backups/dx-qnap-canary/docker-ssh_qnap-dxe_abc123def" ]
+    [ "$(dx_backup_resolve_dir dx-qnap-canary)" = "/tmp/dxe-rtb-backups/dx-qnap-canary/docker-ssh_dxe-fixture-nas.invalid_abc123def" ]
 )
 [ "$?" -eq 0 ] && test_pass "dx_backup_resolve_dir: an override argument replaces only the container-name segment; the identity segment still comes from the CURRENT profile" || test_fail "dx_backup_resolve_dir: an override argument replaces only the container-name segment; the identity segment still comes from the CURRENT profile"
 
@@ -669,7 +669,7 @@ out="$(
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2 $3 $4" = "image inspect --format {{.Id}}" ] && [ "$5" = dx-qnap-nixos ] && echo sha256:abc123def456 || exit 1'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_image_identity dx-qnap-nixos
 )"
@@ -679,7 +679,7 @@ out="$(
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_image_identity missing-image
 )
@@ -756,7 +756,7 @@ for a in \"\$@\"; do
 done
 "
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_container_list -a >/dev/null
     rc=$?
@@ -785,7 +785,7 @@ case "$*" in *"-a"*) ;; *) echo "expected -a to pass through" >&2; exit 98 ;; es
 echo "NAMES	IMAGE	STATUS"
 echo "dx-qnap-all	dx-qnap-nixos	Up 2 hours"'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_container_list_names true | grep -q -x -- dx-qnap-all
 )
@@ -800,7 +800,7 @@ case "$*" in *"-a"*) echo "expected no -a for the running-only form" >&2; exit 9
 echo "NAMES	IMAGE	STATUS"
 echo "dx-qnap-running	dx-qnap-nixos	Up 2 hours"'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
     dx_container_list_names false | grep -q -x -- dx-qnap-running
 )
@@ -856,7 +856,7 @@ echo "dx-qnap-running	dx-qnap-nixos	Up 2 hours"'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_docker_resource_owned bogus-kind some-name container use 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "dx_runtime_docker_resource_owned: unknown kind 'bogus-kind'"

@@ -138,9 +138,9 @@ tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
 (
     dir="$(new_tool_dir)"
     fake_qnap_ssh_write "$dir"
-    fake_tool_write "$dir" docker '[ "$1" = create ] && [ "$2" = --name ] && [ "$3" = dxe-lock-qnap-dxe__dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99'
+    fake_tool_write "$dir" docker '[ "$1" = create ] && [ "$2" = --name ] && [ "$3" = dxe-lock-dxe-fixture-nas.invalid__dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     owner="$(dx_runtime_docker_lock_acquire)"
     [ -n "$owner" ] && printf '%s\n' "$owner" | stdin_matches ":"
@@ -160,7 +160,7 @@ shift
 printf '%s\n' \"\$@\" > '$argv_log'
 "
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_docker_lock_acquire >/dev/null
     got="$(cat "$argv_log")"
@@ -182,7 +182,7 @@ shift
 printf '%s\n' \"\$@\" > '$argv_log'
 "
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_docker_lock_acquire >/dev/null
     [ -s "$argv_log" ] && ! stdin_matches -F -- "--hostname" < "$argv_log"
@@ -195,7 +195,7 @@ printf '%s\n' \"\$@\" > '$argv_log'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "Error: Conflict. The container name ... is already in use" >&2; exit 1'
     PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_docker_lock_acquire 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "may already be held"
@@ -214,7 +214,7 @@ printf '%s\n' \"\$@\" > '$argv_log'
 printf '%s\\n' \"\${!#}\" > '$argv_log'
 "
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_docker_lock_acquire >/dev/null || exit 1
     [ -n "$lock_base_ref" ] && [ "$(cat "$argv_log")" = "$lock_base_ref" ] && [ "$(cat "$argv_log")" != dx-qnap-nixos ]
@@ -233,7 +233,7 @@ printf '%s\\n' \"\${!#}\" > '$argv_log'
 echo \"Unable to find image '\${!#}' locally\" >&2; exit 1
 "
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-new DX_IMAGE=dx-new-nixos DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-new DX_IMAGE=dx-new-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     owner="$(dx_runtime_docker_lock_acquire)" && [ -n "$owner" ]
 )
@@ -249,7 +249,7 @@ echo \"Unable to find image '\${!#}' locally\" >&2; exit 1
     : > "$argv_log"
     fake_tool_write "$dir" docker "printf '%s\\n' \"\$*\" >> '$argv_log'; exit 0"
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     empty_ctx="$fixture/empty-context"; mkdir -p "$empty_ctx"
     out="$(DX_CONTEXT_DIR="$empty_ctx" dx_runtime_docker_lock_acquire 2>&1)"; rc1=$?
@@ -272,7 +272,7 @@ case "$1 $2" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_docker_lock_acquire 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "held by ghost-host:7:8:20260101T000000Z since 2026-01-01T00:00:00Z"
@@ -293,7 +293,7 @@ case \"\$1\" in
     create)
         [ \"\${!#}\" = '$lock_base_ref' ] || { echo \"Unable to find image '\${!#}' locally\" >&2; exit 1; }
         printf 'lock-created\\n' >> '$flow_log'; exit 0 ;;
-    container) echo \"true|qnap-dxe__dx-new|lock|\$DXE_LIFECYCLE_LOCK_OWNER\"; exit 0 ;;
+    container) echo \"true|dxe-fixture-nas.invalid__dx-new|lock|\$DXE_LIFECYCLE_LOCK_OWNER\"; exit 0 ;;
     rm) printf 'lock-released\\n' >> '$flow_log'; exit 0 ;;
     *) echo \"UNMATCHED: \$*\" >&2; exit 99 ;;
 esac
@@ -305,7 +305,7 @@ esac
         chmod +x "$children/$child"
     done
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-new DX_IMAGE=dx-new-nixos DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-new DX_IMAGE=dx-new-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_require_container_cli() { return 0; }
     container_system_is_running() { return 0; }
@@ -321,7 +321,7 @@ esac
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap
     export DXE_RUNTIME_DOCKER_BIN=docker
     [ "$(dx_runtime_docker_lock_audit)" = "not held" ]
 )
@@ -333,7 +333,7 @@ esac
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "container inspect" ] && echo "somehost:123:456:20260927T000000Z|2026-09-27T00:00:00Z"'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_docker_lock_audit)"
     printf '%s\n' "$out" | stdin_matches -F -- "held by somehost:123:456:20260927T000000Z since 2026-09-27T00:00:00Z"
@@ -350,11 +350,11 @@ esac
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
-    "container inspect") echo "true|qnap-dxe__dx-qnap|lock|owner-x" ;;
-    *) [ "$1" = rm ] && [ "$2" = dxe-lock-qnap-dxe__dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
+    "container inspect") echo "true|dxe-fixture-nas.invalid__dx-qnap|lock|owner-x" ;;
+    *) [ "$1" = rm ] && [ "$2" = dxe-lock-dxe-fixture-nas.invalid__dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_runtime_docker_lock_release ""
 )
@@ -370,7 +370,7 @@ case "$1 $2" in
     *) echo "docker rm should never run" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_docker_lock_release "" 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "collision, not an adoption candidate"
@@ -383,11 +383,11 @@ esac'
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
-    "container inspect") echo "true|qnap-dxe__dx-qnap|lock|owner-real" ;;
+    "container inspect") echo "true|dxe-fixture-nas.invalid__dx-qnap|lock|owner-real" ;;
     *) echo "docker rm should never run" >&2; exit 99 ;;
 esac'
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_runtime_docker_lock_release owner-expected-but-different 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "held by a different owner"
@@ -417,7 +417,7 @@ case "$1 $2" in
     *) echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" status 2>&1)"; rc=$?
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" status 2>&1)"; rc=$?
     [ "$rc" -eq 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "not held"
 )
 [ "$?" -eq 0 ] && test_pass "bin/dx-lock status reports 'not held' end to end" || test_fail "bin/dx-lock status reports 'not held' end to end"
@@ -436,7 +436,7 @@ case "$1 $2" in
     *) echo "docker rm should never run without --force" >&2; exit 99 ;;
 esac'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" unlock 2>&1)"; rc=$?
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" unlock 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && printf '%s\n' "$out" | stdin_matches "Refusing to unlock without --force" && printf '%s\n' "$out" | stdin_matches -F -- "somehost:1:2:20260927T000000Z"
 )
 [ "$?" -eq 0 ] && test_pass "bin/dx-lock unlock without --force shows owner metadata and refuses" || test_fail "bin/dx-lock unlock without --force shows owner metadata and refuses"
@@ -454,14 +454,14 @@ case "$1 $2" in
     "info --format") echo "abc123def|qnap-fake|x86_64|linux" ;;
     "container inspect")
         case "$*" in
-            *"io.dxe.managed"*) echo "true|qnap-dxe__dx-qnap|lock|somehost:1:2:20260927T000000Z" ;;
+            *"io.dxe.managed"*) echo "true|dxe-fixture-nas.invalid__dx-qnap|lock|somehost:1:2:20260927T000000Z" ;;
             *) echo "somehost:1:2:20260927T000000Z|2026-09-27T00:00:00Z" ;;
         esac
         ;;
-    *) [ "$1" = rm ] && [ "$2" = dxe-lock-qnap-dxe__dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
+    *) [ "$1" = rm ] && [ "$2" = dxe-lock-dxe-fixture-nas.invalid__dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99 ;;
 esac'
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" unlock --force 2>&1)"; rc=$?
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-lock" unlock --force 2>&1)"; rc=$?
     [ "$rc" -eq 0 ] && printf '%s\n' "$out" | stdin_matches -F -- "Lock released."
 )
 [ "$?" -eq 0 ] && test_pass "bin/dx-lock unlock --force removes the lock end to end" || test_fail "bin/dx-lock unlock --force removes the lock end to end"
@@ -484,13 +484,13 @@ esac'
     fake_tool_write "$dir" docker "
 case \"\$1 \$2\" in
     \"create --name\") printf 'create\\n' >> '$argv_log'; exit 0 ;;
-    \"container inspect\") echo \"true|qnap-dxe__dx-qnap|lock|\$DXE_LIFECYCLE_LOCK_OWNER\" ;;
-    \"rm dxe-lock-qnap-dxe__dx-qnap\") printf 'rm\\n' >> '$argv_log'; exit 0 ;;
+    \"container inspect\") echo \"true|dxe-fixture-nas.invalid__dx-qnap|lock|\$DXE_LIFECYCLE_LOCK_OWNER\" ;;
+    \"rm dxe-lock-dxe-fixture-nas.invalid__dx-qnap\") printf 'rm\\n' >> '$argv_log'; exit 0 ;;
     *) echo \"UNMATCHED: \$*\" >&2; exit 99 ;;
 esac
 "
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     [ -z "${DXE_LIFECYCLE_LOCK_OWNER:-}" ] || exit 1
     dx_lifecycle_lock_acquire || exit 1
@@ -514,12 +514,12 @@ esac
 case \"\$1 \$2\" in
     \"create --name\") printf 'create-attempt\\n' >> '$argv_log'; echo 'Error: Conflict. The container name ... is already in use' >&2; exit 1 ;;
     \"container inspect\") printf 'audit\\n' >> '$argv_log'; echo 'ghost-host:999999:1:20260101T000000Z|2026-01-01T00:00:00Z' ;;
-    \"rm dxe-lock-qnap-dxe__dx-qnap\") printf 'rm\\n' >> '$argv_log'; exit 0 ;;
+    \"rm dxe-lock-dxe-fixture-nas.invalid__dx-qnap\") printf 'rm\\n' >> '$argv_log'; exit 0 ;;
     *) echo \"UNMATCHED: \$*\" >&2; exit 99 ;;
 esac
 "
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     out="$(dx_lifecycle_lock_acquire 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && [ -z "${DXE_LIFECYCLE_LOCK_OWNER:-}" ] \
@@ -542,7 +542,7 @@ esac
     argv_log="$fixture/lifecycle-lock-nested.log"
     fake_tool_write "$dir" docker "printf '%s\\n' \"\$*\" >> '$argv_log'; exit 99"
     PATH="$dir:/usr/bin:/bin"
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     export DXE_LIFECYCLE_LOCK_OWNER=inherited-owner-token
     dx_lifecycle_lock_acquire; acquire_rc=$?
@@ -567,13 +567,13 @@ esac
     fake_tool_write "$dir" docker "
 case \"\$1 \$2\" in
     \"create --name\") printf 'create\\n' >> '$argv_log'; exit 0 ;;
-    \"container inspect\") echo \"true|qnap-dxe__dx-qnap|lock|\$DXE_LIFECYCLE_LOCK_OWNER\" ;;
-    \"rm dxe-lock-qnap-dxe__dx-qnap\") printf 'rm\\n' >> '$argv_log'; exit 0 ;;
+    \"container inspect\") echo \"true|dxe-fixture-nas.invalid__dx-qnap|lock|\$DXE_LIFECYCLE_LOCK_OWNER\" ;;
+    \"rm dxe-lock-dxe-fixture-nas.invalid__dx-qnap\") printf 'rm\\n' >> '$argv_log'; exit 0 ;;
     *) echo \"UNMATCHED: \$*\" >&2; exit 99 ;;
 esac
 "
     export PATH="$dir:/usr/bin:/bin"
-    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
+    export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos DX_GUEST_SYSTEM=x86_64-linux
     export DXE_RUNTIME_DOCKER_BIN=docker
     dx_lifecycle_lock_acquire || exit 1
     bash -c '
@@ -673,7 +673,7 @@ esac
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/wp65-create-container-lock-held.log"
     dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 0 1
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-create-container" 2>&1)"; rc=$?
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-create-container" 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && [ ! -s "$argv_log" ] \
         && printf '%s\n' "$out" | stdin_matches -F -- "someone-else:1:2:20260101T000000Z"
 )
@@ -687,7 +687,7 @@ esac
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/wp65-start-container-lock-held.log"
     dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 1 1
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-start-container" 2>&1)"; rc=$?
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-start-container" 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && [ ! -s "$argv_log" ] \
         && printf '%s\n' "$out" | stdin_matches -F -- "someone-else:1:2:20260101T000000Z"
 )
@@ -701,7 +701,7 @@ esac
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/wp65-stop-container-lock-held.log"
     dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 1 1
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-stop-container" 2>&1)"; rc=$?
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-stop-container" 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && [ ! -s "$argv_log" ] \
         && printf '%s\n' "$out" | stdin_matches -F -- "someone-else:1:2:20260101T000000Z"
 )
@@ -715,7 +715,7 @@ esac
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/wp65-destroy-container-lock-held.log"
     dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 1 1
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-destroy-container" 2>&1)"; rc=$?
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-destroy-container" 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && [ ! -s "$argv_log" ] \
         && printf '%s\n' "$out" | stdin_matches -F -- "someone-else:1:2:20260101T000000Z"
 )
@@ -731,7 +731,7 @@ esac
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/wp65-recreate-lock-held.log"
     dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 0 1
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-recreate" 2>&1)"; rc=$?
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx-recreate" 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && [ ! -s "$argv_log" ] \
         && printf '%s\n' "$out" | stdin_matches -F -- "someone-else:1:2:20260101T000000Z" \
         && ! printf '%s\n' "$out" | stdin_matches -F -- "nothing to destroy" \
@@ -748,7 +748,7 @@ esac
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/wp65-dx-lock-held.log"
     dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 0 1
-    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx" 2>&1)"; rc=$?
+    out="$(DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap DX_IMAGE=dx-qnap-nixos PATH="$dir:/usr/bin:/bin" "$BASE_DIR/bin/dx" 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && [ ! -s "$argv_log" ] \
         && printf '%s\n' "$out" | stdin_matches -F -- "someone-else:1:2:20260101T000000Z" \
         && ! printf '%s\n' "$out" | stdin_matches -F -- "Starting container" \

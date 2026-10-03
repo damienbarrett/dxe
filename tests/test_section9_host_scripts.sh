@@ -856,7 +856,7 @@ esac
         endpoint_proof_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-endpoint-proof-home.XXXXXX")"
         export HOME="$endpoint_proof_home"
         unset XDG_STATE_HOME
-        DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_CONTAINER_NAME=dxe-fixture-endpoint-proof
+        DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dxe-fixture-endpoint-proof
         # shellcheck disable=SC2034
         # Read by dx_ssh_common_options (bin/lib/dx-ssh-common.sh), a
         # function in a separately sourced file ShellCheck cannot trace
@@ -1551,7 +1551,7 @@ fake_tool_write "$docker_status_fixture" uname 'case "$1" in -m) echo aarch64 ;;
 fake_tool_write "$docker_status_fixture" docker '
 case "$1" in
     version) [ "$2" = --format ] && echo "27.0.0" ;;
-    info)    [ "$2" = --format ] && echo "sha256:fake|qnap-dxe|aarch64|linux" ;;
+    info)    [ "$2" = --format ] && echo "sha256:fake|dxe-fixture-nas.invalid|aarch64|linux" ;;
     image)
         case "$2" in
             inspect) exit 0 ;;
@@ -1631,7 +1631,7 @@ run_docker_status() {
         # dx_config_validate_cross_fields now requires it alongside
         # DX_RUNTIME=docker-ssh; unrelated to this fixture's own
         # Image/Container column-shape assertions.
-        export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_NIX_STORAGE_MODE=direct-volume DXE_RUNTIME_DOCKER_BIN=docker
+        export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_NIX_STORAGE_MODE=direct-volume DXE_RUNTIME_DOCKER_BIN=docker
         export DX_CONTAINER_NAME=dxe-status-fixture DX_IMAGE=dx-qnap-spike-nixos
         "$BASE_DIR/bin/dx-status"
     )
@@ -1702,7 +1702,7 @@ fake_tool_write "$thirdstate_fixture" uname 'case "$1" in -m) echo aarch64 ;; es
 fake_tool_write "$thirdstate_fixture" docker '
 case "$1" in
     version) [ "$2" = --format ] && echo "27.0.0" ;;
-    info)    [ "$2" = --format ] && echo "sha256:fake|qnap-dxe|aarch64|linux" ;;
+    info)    [ "$2" = --format ] && echo "sha256:fake|dxe-fixture-nas.invalid|aarch64|linux" ;;
     image)
         case "$2" in
             inspect) exit 0 ;;
@@ -1779,7 +1779,7 @@ run_thirdstate_status() {
         # dx_config_validate_cross_fields now requires it alongside
         # DX_RUNTIME=docker-ssh; unrelated to this fixture's own
         # bootstrap-progress/login-shell assertions.
-        export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_NIX_STORAGE_MODE=direct-volume DXE_RUNTIME_DOCKER_BIN=docker
+        export DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_NIX_STORAGE_MODE=direct-volume DXE_RUNTIME_DOCKER_BIN=docker
         export DX_CONTAINER_NAME=dxe-status-fixture DX_IMAGE=dx-qnap-thirdstate
         DXE_RUNTIME_GUEST_SSH_ADDRESS="$(printf '%s.%s.%s.%s' 100 64 1 3)"
         export DXE_RUNTIME_GUEST_SSH_ADDRESS

@@ -259,13 +259,13 @@ expect_reject "DX_RUNTIME rejects an empty value" dx_config_validate_value DX_RU
 expect_ok "DX_REMOTE_HOST is a registered config field" dx_config_is_field DX_REMOTE_HOST
 [ "$(dx_config_default DX_REMOTE_HOST)" = '' ] && test_pass "DX_REMOTE_HOST defaults to empty" || test_fail "DX_REMOTE_HOST defaults to empty"
 expect_ok "DX_REMOTE_HOST accepts empty at the per-field level" dx_config_validate_value DX_REMOTE_HOST ''
-expect_ok "DX_REMOTE_HOST accepts a plain ssh alias" dx_config_validate_value DX_REMOTE_HOST qnap-dxe
+expect_ok "DX_REMOTE_HOST accepts a plain ssh alias" dx_config_validate_value DX_REMOTE_HOST dxe-fixture-nas.invalid
 expect_ok "DX_REMOTE_HOST accepts an alias with digits and underscores" dx_config_validate_value DX_REMOTE_HOST qnap_2
-expect_reject "DX_REMOTE_HOST rejects a leading dot" dx_config_validate_value DX_REMOTE_HOST .qnap-dxe
-expect_reject "DX_REMOTE_HOST rejects a leading hyphen" dx_config_validate_value DX_REMOTE_HOST -qnap-dxe
+expect_reject "DX_REMOTE_HOST rejects a leading dot" dx_config_validate_value DX_REMOTE_HOST .dxe-fixture-nas.invalid
+expect_reject "DX_REMOTE_HOST rejects a leading hyphen" dx_config_validate_value DX_REMOTE_HOST -dxe-fixture-nas.invalid
 expect_reject "DX_REMOTE_HOST rejects whitespace" dx_config_validate_value DX_REMOTE_HOST 'qnap dxe'
 expect_reject "DX_REMOTE_HOST rejects shell metacharacters" dx_config_validate_value DX_REMOTE_HOST 'qnap;dxe'
-expect_reject "DX_REMOTE_HOST rejects a user@host shape (alias only, not arbitrary ssh target text)" dx_config_validate_value DX_REMOTE_HOST 'user@qnap-dxe'
+expect_reject "DX_REMOTE_HOST rejects a user@host shape (alias only, not arbitrary ssh target text)" dx_config_validate_value DX_REMOTE_HOST 'user@dxe-fixture-nas.invalid'
 
 expect_ok "DX_GUEST_SYSTEM is a registered config field" dx_config_is_field DX_GUEST_SYSTEM
 [ "$(dx_config_default DX_GUEST_SYSTEM)" = aarch64-linux ] && test_pass "DX_GUEST_SYSTEM defaults to aarch64-linux" || test_fail "DX_GUEST_SYSTEM defaults to aarch64-linux"
@@ -342,13 +342,13 @@ mkdir -p "$cross_root"
     unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
     # DX_NIX_STORAGE_MODE=direct-volume (Astra F10, Muse C1): the runtime/
     # storage-mode compatibility matrix below requires it for docker-ssh.
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_NIX_STORAGE_MODE=direct-volume
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_NIX_STORAGE_MODE=direct-volume
     dx_init_config "$cross_root" >/dev/null 2>&1
 ) && test_pass "DX_RUNTIME=docker-ssh with a valid DX_REMOTE_HOST resolves" || test_fail "DX_RUNTIME=docker-ssh with a valid DX_REMOTE_HOST resolves"
 (
     for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
     unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
-    DX_RUNTIME=apple DX_REMOTE_HOST=qnap-dxe
+    DX_RUNTIME=apple DX_REMOTE_HOST=dxe-fixture-nas.invalid
     dx_init_config "$cross_root" >/dev/null 2>&1
 ) && test_fail "DX_RUNTIME=apple with a non-empty DX_REMOTE_HOST refuses to resolve" || test_pass "DX_RUNTIME=apple with a non-empty DX_REMOTE_HOST refuses to resolve"
 (
@@ -372,7 +372,7 @@ mkdir -p "$astra_f10_root"
 (
     for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
     unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=apple-image
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=apple-image
     dx_init_config "$astra_f10_root" >/dev/null 2>&1
 ) && test_fail "DX_RUNTIME=docker-ssh with DX_NIX_STORAGE_MODE=apple-image refuses to resolve (Astra F10)" \
     || test_pass "DX_RUNTIME=docker-ssh with DX_NIX_STORAGE_MODE=apple-image refuses to resolve (Astra F10)"
@@ -380,7 +380,7 @@ mkdir -p "$astra_f10_root"
 cross_fields_rejection="$(
     for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
     unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
-    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-dxe DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=apple-image
+    DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux DX_NIX_STORAGE_MODE=apple-image
     DX_NIX_VOLUME=dx-nix DX_PERSIST_VOLUME=dx-persist DX_BOOTSTRAP_VOLUME=dx-bootstrap
     dx_config_validate_cross_fields 2>&1 1>/dev/null || true
 )"
