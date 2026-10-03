@@ -31,3 +31,13 @@ decoy profile with the real alias failed the old guard and passes the new one; t
 literals still fail. Landed on unit-tier gates (unit tier, bash 3.2, ShellCheck 0.10.0,
 pre-push scan); the usage-service branch's live tiers on both runtimes re-exercise Section 1
 on top of it.
+
+## Second correction and the permanent test (same day)
+
+While making the untracked-file behaviour a permanent harness case, the case found that the
+tracked-only guard compared git's physical repository root with the logical checkout path, so
+under a symlinked path (macOS temporary directories) it fell back to scanning the whole tree
+and untracked private profiles failed Section 1 again. The comparison is now physical on both
+sides. The harness case runs Section 1 in a throwaway local clone: an untracked private
+profile with the real alias must leave both guard cases passing, and the same file once
+tracked must fail them; it fails against both earlier guard versions and passes now.
