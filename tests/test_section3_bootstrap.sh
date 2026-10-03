@@ -653,6 +653,7 @@ es_up() {
     (
         nix() { printf 'nix %s\n' "$*" >> "$fixture/es-nix.log"; case "$*" in *"profile remove"*) return "$remove_rc" ;; esac; return 0; }
         install_essential_packages() { printf 'install_essential_packages\n' >> "$fixture/es-nix.log"; return "$install_rc"; }
+        # shellcheck disable=SC2034 # read by upgrade_essential_packages, which ShellCheck cannot see
         DX_NIX_FEAT_OPTS=(--extra-experimental-features "nix-command flakes")
         upgrade_essential_packages
     ) >/dev/null 2>&1

@@ -128,5 +128,27 @@ else
     test_fail "an unavailable restart count never aborts the wait (rc $ws_rc; out: $ws_out)"
 fi
 
+# --- the library functions directly (baseline fallbacks and unusable counts) ----
+(
+    export DX_CONTAINER_NAME=dx-wait
+    container_exists() { return 0; }
+    container_is_running() { return 0; }
+    dx_runtime_container_restart_count() { return 1; }
+    [ "$(dx_container_restart_baseline)" = 0 ] || exit 1
+    dx_container_wait_should_abort 0 && exit 2
+    dx_runtime_container_restart_count() { echo "not-a-number"; }
+    [ "$(dx_container_restart_baseline)" = 0 ] || exit 3
+    dx_container_wait_should_abort 0 && exit 4
+    dx_runtime_container_restart_count() { echo 7; }
+    [ "$(dx_container_restart_baseline)" = 7 ] || exit 5
+    dx_container_wait_should_abort 7 && exit 6
+    dx_runtime_logs() { return 1; }
+    dx_container_print_logs 3 | grep -qF "(container logs unavailable)" || exit 7
+    exit 0
+)
+rc=$?
+if [ "$rc" -eq 0 ]; then test_pass "an unreadable or non-numeric restart count falls back to 0 and never aborts; a flat count does not abort; missing logs are noted"
+else test_fail "restart-count fallbacks (exit $rc)"; fi
+
 print_summary
 exit_with_code
