@@ -605,6 +605,12 @@ is a clear launcher error. Restart the service after changing it.
 | Logs | `/persist/services/agent-stats/logs/{sshd,agent-stats,agent-stats-watchdog}/current`, bounded (10 files of 1 MB each per service); read with `dx-usage-service logs [N]` |
 | Service tree | `/run/dx-services`, rebuilt on every boot, PID 1 is `s6-svscan` |
 
+The service logs are owned by `dx` like the rest of that tree (`s6-log` runs as
+`dx`), so `dx-backup`, which runs as `dx`, reads and mirrors them; each boot in
+service mode re-owns the logs directory, which repairs a guest whose earlier
+boots left root-owned log directories (a symptom was `dx-backup` failing on
+`logs/agent-stats-watchdog: Permission denied`).
+
 In service mode **sshd's `-e` log goes to its persisted s6-log directory
 (`logs/sshd`), not to `docker logs`**; `docker logs` shows only bootstrap
 output. The host health check is unchanged (it reads the lease and readiness

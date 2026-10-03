@@ -3122,10 +3122,12 @@ us_run_exec() {
     (
         source "$BOOTSTRAP_DIR/usage-service.sh"
         install() { mkdir -p "${@: -1}"; }
+        chown() { printf 'chown:%s\n' "$*" >> "$us_fixture/chown.log"; }
         PATH="$us_bin:$PATH"; export DX_BOOTSTRAP_ROOT=/guest-bootstrap-fixture
         dx_bootstrap_exec_usage_service "$us_scan" "$us_root"
     ) > "$us_fixture/exec.out" 2>&1 || true
 }
+rm -f "$us_fixture/chown.log"
 us_run_exec
 if grep -qxF "s6-svscan: <$us_scan>" "$US_LOG"; then
     test_pass "usage-service mode execs s6-svscan over exactly the service directory"
@@ -3171,6 +3173,45 @@ if [ "$us_logs_ok" = true ] && [ -d "$us_root/logs" ]; then
     test_pass "each service logs through a bounded s6-log (10 files of at most 1 MB) into its own directory under the persisted logs root"
 else
     test_fail "each service logs through a bounded s6-log into the persisted logs root (got: $(cat "$us_scan/sshd/log/run" 2>&1))"
+fi
+# s6-log must not run as root: its directories would be root:root 0700 inside the
+# dx-owned services tree and dx-backup (as dx) would fail closed on them.
+us_setpriv_ok=true
+for us_f in sshd agent-stats agent-stats-watchdog; do
+    grep -qF "exec $us_bin/setpriv --reuid=dx --regid=dx --init-groups $us_bin/s6-log n10 s1000000 T $us_root/logs/$us_f" "$us_scan/$us_f/log/run" || us_setpriv_ok=false
+done
+if [ "$us_setpriv_ok" = true ]; then
+    test_pass "every log/run execs s6-log as dx (setpriv --reuid=dx --regid=dx --init-groups before s6-log)"
+else
+    test_fail "every log/run execs s6-log as dx (got: $(cat "$us_scan/sshd/log/run" 2>&1))"
+fi
+# Guard: no writer into the services root runs as root -- every run script that
+# names a path under it goes through setpriv --reuid=dx.
+us_writer_ok=true; us_writers=0
+for us_script in "$us_scan"/*/run "$us_scan"/*/log/run; do
+    if grep -qF "$us_root" "$us_script"; then
+        us_writers=$((us_writers + 1))
+        grep -qF -- "--reuid=dx" "$us_script" || { us_writer_ok=false; echo "root writer: $us_script" >&2; }
+    fi
+done
+if [ "$us_writer_ok" = true ] && [ "$us_writers" -ge 3 ]; then
+    test_pass "every run script that writes under the services root runs through setpriv as dx (guard, $us_writers writers)"
+else
+    test_fail "every run script that writes under the services root runs as dx ($us_writers writers found)"
+fi
+# Boot-time repair: a guest whose earlier boots left root-owned log directories
+# is fixed by re-owning exactly the logs subtree; repeat runs change nothing.
+if [ "$(cat "$us_fixture/chown.log" 2>/dev/null)" = "chown:-R dx:dx $us_root/logs" ]; then
+    test_pass "build_tree re-owns only the logs subtree (chown -R dx:dx <services root>/logs) before writing the tree"
+else
+    test_fail "build_tree re-owns only the logs subtree (got: $(cat "$us_fixture/chown.log" 2>&1))"
+fi
+us_first_tree="$(cd "$us_scan" && find . | sort | tr '\n' ' ')"
+rm -f "$us_fixture/chown.log"; us_run_exec
+if [ "$(cat "$us_fixture/chown.log")" = "chown:-R dx:dx $us_root/logs" ] && [ "$(cd "$us_scan" && find . | sort | tr '\n' ' ')" = "$us_first_tree" ]; then
+    test_pass "a repeat run repeats the same single ownership repair and leaves the tree unchanged"
+else
+    test_fail "a repeat run is idempotent (chown log: $(cat "$us_fixture/chown.log" 2>&1))"
 fi
 # The host lifecycle command and the dx-ai hook run as root over an exec whose
 # PATH does not include the essentials profile, so the tree publishes where the

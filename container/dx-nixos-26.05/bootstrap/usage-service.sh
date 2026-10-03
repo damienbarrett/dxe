@@ -46,6 +46,10 @@ dx_usage_service_build_tree() {
     scripts="${DX_BOOTSTRAP_ROOT:-/guest-bootstrap}/scripts"
 
     install -d -o dx -g dx -m 0755 "$services_root" "$services_root/logs" || return 1
+    # Earlier boots ran s6-log as root, leaving root:root 0700 log directories
+    # inside the dx-owned tree (dx-backup, running as dx, then fails closed on
+    # them); re-own exactly the logs subtree. Idempotent.
+    chown -R dx:dx "$services_root/logs" || return 1
     rm -rf "$scan_dir" || return 1
     mkdir -p "$scan_dir" || return 1
     # Where the s6 tools live, for root callers whose PATH lacks the essentials
@@ -54,8 +58,11 @@ dx_usage_service_build_tree() {
     ln -s "$(dirname "$(command -v s6-svscan)")" "$scan_dir/.s6-bin" || return 1
     for name in sshd agent-stats agent-stats-watchdog; do
         mkdir -p "$scan_dir/$name/log" || return 1
-        # 10 archived files of at most 1 MB each per service, ISO 8601 stamps.
+        # 10 archived files of at most 1 MB each per service, ISO 8601 stamps. As
+        # dx, so the directories s6-log creates are dx-owned like the rest of
+        # the services tree.
         dx_usage_service_write_run "$scan_dir/$name/log/run" "$bash_bin" \
+            "$setpriv_bin" --reuid=dx --regid=dx --init-groups \
             "$s6_log" n10 s1000000 T "$services_root/logs/$name" || return 1
     done
     dx_usage_service_write_run "$scan_dir/sshd/run" "$bash_bin" "$sshd_bin" -D -e -p 2222 || return 1

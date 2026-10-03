@@ -272,6 +272,12 @@ if grep -q '^## 10\. Usage service$' "$runbook" \
 else
     test_fail "the QNAP runbook documents enabling, the publication rule, release selection, logs, the Apple URL and the dx-ai hook"
 fi
+# Service logs are dx-owned (s6-log runs as dx), so dx-backup can read them; boot repairs old ownership.
+if grep -Fq 'owned by `dx`' "$runbook" && grep -Fq 'dx-backup' "$runbook" && grep -Fq 're-owns the logs directory' "$runbook"; then
+    test_pass "the QNAP runbook says service logs are dx-owned, readable by dx-backup, and repaired at boot"
+else
+    test_fail "the QNAP runbook says service logs are dx-owned, readable by dx-backup, and repaired at boot"
+fi
 # Copying a source tree into the guest: no tar on the dx user's non-interactive
 # PATH and dx-ssh does not forward stdin, so the runbook documents a git bundle.
 if grep -Fq 'git bundle' "$runbook" && grep -Fq 'scp -P <SSH port> -i <profile key>' "$runbook" \
