@@ -144,6 +144,14 @@ fi
     dx_container_wait_should_abort 7 && exit 6
     dx_runtime_logs() { return 1; }
     dx_container_print_logs 3 | grep -qF "(container logs unavailable)" || exit 7
+    # In-process runs of both abort branches (the subprocess runs above are not line-traced).
+    dx_runtime_logs() { echo "log line"; }
+    dx_runtime_container_restart_count() { echo 9; }
+    abort_out="$(dx_container_wait_should_abort 7 2>&1)" || exit 8
+    printf '%s\n' "$abort_out" | grep -qF "crash-looping" && printf '%s\n' "$abort_out" | grep -qF "log line" || exit 9
+    container_is_running() { return 1; }
+    abort_out="$(dx_container_wait_should_abort 7 2>&1)" || exit 10
+    printf '%s\n' "$abort_out" | grep -qF "stopped before SSH became responsive" || exit 11
     exit 0
 )
 rc=$?
