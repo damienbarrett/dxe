@@ -37,3 +37,25 @@ live tier: 47 suites, 2858 passed, 1 failed, 89 skipped (the one failure is Sect
 Production enablement (decision 3A) is recorded in `docs/evidence/20260928/qnap-promotion.md`
 when done. The dx-ai compatibility check stays a stub until the package's version
 command is confirmed; the hook's restart path was exercised by fakes only.
+
+## Production enablement incident and the upgrade-path fix (2026-10-04)
+
+The first enablement of the service on production `dx-qnap` (profile on, `dx-recreate`) failed
+closed: the existing guest's essentials profile had never received `s6`, because the bootstrap
+installed that profile only on a fresh guest. The guest crash-looped under `unless-stopped` and
+was unreachable for about two hours (03:59 to 06:01 NZDT) until it was recreated with the
+service off; data intact, release link kept. The disposable spike had passed because it was
+fresh.
+
+Fix (`fix/essentials-upgrade-on-boot`): the bootstrap gates the essentials install on the
+tools the configured boot needs (the shadow tools, plus `s6-svscan` and `s6-log` when the
+service is on) and upgrades the profile from the current bootstrap flake when one is missing,
+re-registering the closure; the start-and-wait path fails fast when the container stops
+running or its restart count climbs, printing the container's last log lines; the runbook
+documents the git-bundle copy over `scp` and the slower first boot.
+
+Upgrade-path proof on a disposable `dx-qnap-spike8`: created from `main` `a71fb8d` with the
+service off, then synced and recreated from the fix branch with the service on. The boot
+upgraded the essentials profile, PID 1 became `s6-svscan`, the health check went green, the
+restart count stayed at or below one; live tier live tier: 48 suites, 2886 passed, 1 failed, 89 skipped (recorded on the first spike8 run against the same tree d033f60; the failure is the class D dx-ai case) (the one failure is Section 17's dx-ai live case: the source-build guard refused on binary-cache lag for one package, the documented remedy is to wait; unrelated to the service); the release built to the same
+store path and answered over the tailnet. Apple regression tier: live tier: 48 suites, 2917 passed, 0 failed, 84 skipped.

@@ -381,3 +381,13 @@ evening (`QX_PROFILE=qnap` in the shell configuration; a fresh login shell's
 `qx` reaches `dx-qnap`, and `QX_PROFILE=qnap-canary qx` still reaches the
 fallback). Remaining under D7: the user's later decisions on retiring the
 canary and returning production to port 2222.
+
+## 2026-10-04 incident: usage-service enablement crash loop, rolled back
+
+Enabling the usage service on production (`DX_USAGE_SERVICE=on` + `dx-recreate`) crash-looped
+the guest for about two hours (03:59 to 06:01 NZDT): the bootstrap never upgraded an existing
+guest's essentials profile, so `s6` was missing and the service-on boot failed closed. Rolled
+back by recreating with the service off (volumes and keys kept; data verified against the
+backup taken minutes earlier). Root cause, fix and upgrade-path proof:
+`docs/evidence/20261004/usage-service-host.md`. Lesson recorded: changes to the guest's
+essentials closure are proven on an upgrade-path spike, not only a fresh one.
