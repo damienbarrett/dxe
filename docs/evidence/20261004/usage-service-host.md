@@ -59,3 +59,12 @@ service off, then synced and recreated from the fix branch with the service on. 
 upgraded the essentials profile, PID 1 became `s6-svscan`, the health check went green, the
 restart count stayed at or below one; live tier live tier: 48 suites, 2886 passed, 1 failed, 89 skipped (recorded on the first spike8 run against the same tree d033f60; the failure is the class D dx-ai case) (the one failure is Section 17's dx-ai live case: the source-build guard refused on binary-cache lag for one package, the documented remedy is to wait; unrelated to the service); the release built to the same
 store path and answered over the tailnet. Apple regression tier: live tier: 48 suites, 2917 passed, 0 failed, 84 skipped.
+
+## Follow-up: launcher PATH order (2026-10-04, after enablement)
+
+Production's first service-on boot logged "dbus-daemon is unavailable; the keyring service
+cannot start": the launcher started the keyring before putting the active dx-ai generation's
+`profile/bin` on PATH, and dbus and the keyring tools live in that generation. The order is
+reversed (`fix/usage-launcher-path-before-keyring`), covered by a fake generation that holds
+the only dbus-daemon. Applied to production by `dx-sync-bootstrap` and
+`dx-usage-service restart` (the service only; the guest was not recreated).
