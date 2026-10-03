@@ -88,9 +88,9 @@ all_dirs=true; for d in config workspace data logs; do [ -d "$root/$d" ] || all_
 [ "$(cat "$root/config/implementation")" = rust ] \
     && test_pass "serve seeds config/implementation with rust when absent" \
     || test_fail "serve seeds config/implementation with rust when absent"
-[ -L "$root/previous" ] && [ "$(readlink "$root/previous")" = "$(readlink "$root/current")" ] \
-    && test_pass "serve seeds a missing previous link with the current release" \
-    || test_fail "serve seeds a missing previous link with the current release"
+[ ! -e "$root/previous" ] && [ ! -L "$root/previous" ] \
+    && test_pass "serve never creates the previous link (release selection owns both links)" \
+    || test_fail "serve never creates the previous link"
 
 # --- serve: repeat run, config respected -------------------------------------
 printf 'python\n' > "$root/config/implementation"

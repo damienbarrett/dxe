@@ -43,20 +43,13 @@ dx_usage_service_implementation() {
     esac
 }
 
-# Creates the state directories and seeds config defaults only when absent. A
-# missing `current` link is never created: only a release selection can supply
-# its target.
+# Creates the state directories and seeds config defaults only when absent. The
+# `current` and `previous` links belong to release selection (runbook) and are
+# never created here.
 dx_usage_service_prepare_state() {
     local root="$1" d
     for d in config workspace data logs workspace/tmux; do mkdir -p "$root/$d" || return 1; done
     [ -e "$root/config/implementation" ] || printf 'rust\n' > "$root/config/implementation" || return 1
-}
-
-# A missing `previous` link gets the current release so rollback has a target
-# from the first start. Called only once `current` is known to be usable.
-dx_usage_service_seed_previous() {
-    local root="$1"
-    [ -e "$root/previous" ] || [ -L "$root/previous" ] || ln -s "$(readlink "$root/current")" "$root/previous"
 }
 
 # Launcher: runs as dx, ends in `exec` of the selected wrapper in the foreground.
@@ -73,8 +66,6 @@ dx_usage_service_serve() {
         dx_usage_service_fail "no usable agent-stats release: $executable is missing or not executable. Link a release at $root/current first."
         return 1
     }
-
-    dx_usage_service_seed_previous "$root" || { dx_usage_service_fail "could not seed $root/previous."; return 1; }
 
     # The keyring is shared with dx-ai; a failure is reported but must not keep
     # the service down (provider rows show the missing secrets instead).
