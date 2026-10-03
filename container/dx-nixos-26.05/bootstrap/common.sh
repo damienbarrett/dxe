@@ -287,6 +287,44 @@ install_essential_packages() {
     nix profile install --profile /nix/var/nix/profiles/per-user/root/profile "$bootstrap_root#bootstrap-essentials" --no-update-lock-file "${DX_NIX_FEAT_OPTS[@]}" "${DX_NIX_NET_OPTS[@]}"
 }
 
+# True when the root essentials profile install_essential_packages targets
+# already exists (a previous boot, or an earlier image layer, installed into
+# it). The base image's own default profile is deliberately not counted.
+essentials_profile_installed() {
+    [ -e "${DX_ESSENTIALS_ROOT:-}/nix/var/nix/profiles/per-user/root/profile" ]
+}
+
+# The first tool the configured boot needs from the essentials profile that is
+# not on PATH, or failure when none is missing. useradd stands for the shadow
+# tools (they always arrive together); the s6 tools are needed only when
+# DX_USAGE_SERVICE is exactly "on" (bootstrap/usage-service.sh), so a service-off
+# boot decides exactly as it always did.
+essentials_first_missing_tool() {
+    local tool
+    for tool in useradd $([ "${DX_USAGE_SERVICE:-off}" != on ] || printf '%s ' s6-svscan s6-log); do
+        command -v "$tool" >/dev/null 2>&1 || { printf '%s\n' "$tool"; return 0; }
+    done
+    return 1
+}
+
+# Replaces the bootstrap-essentials element of an EXISTING root profile with the
+# current bootstrap flake's output. A plain `nix profile install` over it can
+# conflict with its own earlier contents (the same output at an older revision
+# provides the same files), so the old element is removed first and the install
+# is rolled back to the previous profile generation when it fails; nothing is
+# rolled back when there was nothing to remove. The previously installed tools
+# are all part of the new output, so they stay present.
+upgrade_essential_packages() {
+    local profile=/nix/var/nix/profiles/per-user/root/profile removed=false status=0
+    if nix profile remove --profile "$profile" bootstrap-essentials "${DX_NIX_FEAT_OPTS[@]}"; then removed=true; fi
+    install_essential_packages || status=$?
+    if [ "$status" -ne 0 ] && [ "$removed" = true ]; then
+        echo "Warning: the essentials upgrade failed (exit $status); restoring the previous profile generation." >&2
+        nix profile rollback --profile "$profile" "${DX_NIX_FEAT_OPTS[@]}" || true
+    fi
+    return "$status"
+}
+
 # The bootstrap essentials closure is bounded, so verify its content as well
 # as registration on every boot.  `--no-contents` trusts a registered but
 # truncated executable, which is precisely the SIGBUS failure this guards.

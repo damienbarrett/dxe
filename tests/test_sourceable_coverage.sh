@@ -643,8 +643,10 @@ dx_tunnel_stop forward 6500 >/dev/null
 # Bootstrap base/storage branches run with external mutation commands replaced.
 (
     essentials_profile_path() { printf '%s\n' "$fixture/essentials/bin"; }
-    nix() { :; }
-    command() { [ "${1:-}" = -v ] && [ "${2:-}" = useradd ] && return 1; builtin command "$@"; }
+    # The fake install makes useradd resolvable, as the real one does (the phase
+    # now fails when a required tool is still missing afterwards).
+    nix() { installed=yes; }
+    command() { [ "${1:-}" = -v ] && [ "${2:-}" = useradd ] && [ "${installed:-}" != yes ] && return 1; builtin command "$@"; }
     install_essentials
 )
 install_essentials

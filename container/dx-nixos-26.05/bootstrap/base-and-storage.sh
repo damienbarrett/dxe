@@ -16,26 +16,48 @@ install_essentials() {
     if [ -n "$essentials_path" ]; then
         export PATH="$essentials_path:$PATH"
     fi
-    # Only install if shadow tools (like useradd) aren't available
-    if ! command -v useradd >/dev/null 2>&1; then
-        echo "Installing essential tools..."
-        # Install tools needed for the bootstrap itself into the root profile.
-        # util-linux/btrfs-progs/e2fsprogs provide mount/umount/mkfs for the
-        # dedicated /nix volume managed in prepare_nix_volume (§2). The download
-        # options mirror run_home_manager_activation so a stalled substituter
-        # fetch aborts and retries instead of hanging the whole bootstrap.
-        if install_essential_packages; then
-            :
+    # Install (or upgrade) only when a tool this boot needs is missing: the
+    # shadow tools (useradd), plus s6-svscan and s6-log when DX_USAGE_SERVICE is
+    # "on". An EXISTING guest's profile never receives packages added to
+    # bootstrapEssentials later unless this notices them.
+    local missing reason=""
+    if missing="$(essentials_first_missing_tool)"; then
+        if essentials_profile_installed; then
+            case "$missing" in s6-*) reason=" (needed because DX_USAGE_SERVICE=on)" ;; esac
+            echo "Upgrading the essentials profile: '$missing' is missing from the installed profile$reason..."
+            if upgrade_essential_packages; then
+                :
+            else
+                status=$?
+                echo "Bootstrap phase: essentials installation failed after $((SECONDS - phase_started))s (exit $status)." >&2
+                return "$status"
+            fi
         else
-            status=$?
-            echo "Bootstrap phase: essentials installation failed after $((SECONDS - phase_started))s (exit $status)." >&2
-            return "$status"
+            echo "Installing essential tools..."
+            # Install tools needed for the bootstrap itself into the root profile.
+            # util-linux/btrfs-progs/e2fsprogs provide mount/umount/mkfs for the
+            # dedicated /nix volume managed in prepare_nix_volume (§2). The download
+            # options mirror run_home_manager_activation so a stalled substituter
+            # fetch aborts and retries instead of hanging the whole bootstrap.
+            if install_essential_packages; then
+                :
+            else
+                status=$?
+                echo "Bootstrap phase: essentials installation failed after $((SECONDS - phase_started))s (exit $status)." >&2
+                return "$status"
+            fi
         fi
         # The install just created or extended a profile; resolve it (again)
         # so the freshly installed tools are on PATH for the rest of bootstrap.
         essentials_path="$(essentials_profile_path)"
         if [ -n "$essentials_path" ]; then
             export PATH="$essentials_path:$PATH"
+        fi
+        hash -r 2>/dev/null || true
+        if missing="$(essentials_first_missing_tool)"; then
+            echo "Error: the essentials profile still lacks '$missing' after installing the current bootstrap-essentials output." >&2
+            echo "Bootstrap phase: essentials installation failed after $((SECONDS - phase_started))s." >&2
+            return 1
         fi
     fi
     echo "Bootstrap phase: essentials installation completed in $((SECONDS - phase_started))s."

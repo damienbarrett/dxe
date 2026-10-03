@@ -29,7 +29,7 @@ source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
 source "$BOOTSTRAP_DIR/usage-service.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded dx_bootstrap_scratch_dir dx_persist_durable_identity_record dx_read_durable_identity_record dx_write_nix_volume_record dx_read_nix_volume_record dx_parse_nix_volume_record dx_persist_image_default_profile_target dx_read_image_default_profile_target essentials_profile_path essentials_profile_store_path install_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id dx_parse_durable_identity_record create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_as_dx_argv dx_nix_root_writable_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system dx_usage_service_write_run dx_usage_service_build_tree dx_bootstrap_exec_usage_service dx_bootstrap_usage_service_dispatch; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded dx_bootstrap_scratch_dir dx_persist_durable_identity_record dx_read_durable_identity_record dx_write_nix_volume_record dx_read_nix_volume_record dx_parse_nix_volume_record dx_persist_image_default_profile_target dx_read_image_default_profile_target essentials_profile_path essentials_profile_store_path essentials_profile_installed essentials_first_missing_tool install_essential_packages upgrade_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id dx_parse_durable_identity_record create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_as_dx_argv dx_nix_root_writable_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system dx_usage_service_write_run dx_usage_service_build_tree dx_bootstrap_exec_usage_service dx_bootstrap_usage_service_dispatch; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -584,6 +584,111 @@ if printf '%s\n' "$p_ie_output" | stdin_matches -F 'Bootstrap phase: essentials 
 else
     test_fail "install_essentials reports elapsed time on completion (output: $p_ie_output)"
 fi
+
+# --- install_essentials gates on the tools the configured boot needs --------
+# (docs: an existing guest never received packages added to bootstrapEssentials,
+# because the gate looked at useradd alone: s6 for DX_USAGE_SERVICE=on). Fakes:
+# `command -v` answers from $ES_PRESENT, install/upgrade log and succeed.
+es_root="$fixture/es-root"; mkdir -p "$es_root"
+es_run() {
+    # $1 = DX_USAGE_SERVICE ("-" unset), $2 = present tools, $3 = profile "yes"/"no",
+    # $4 = status of the install/upgrade stubs. Prints the ordered log + output.
+    local usage="$1" present="$2" profile="$3" rc="${4:-0}"
+    rm -rf "$es_root"; mkdir -p "$es_root"
+    [ "$profile" != yes ] || { mkdir -p "$es_root/nix/var/nix/profiles/per-user/root/gen-1"; ln -s gen-1 "$es_root/nix/var/nix/profiles/per-user/root/profile"; }
+    (
+        ES_PRESENT="$present"; ES_RC="$rc"
+        command() { if [ "${1:-}" = -v ]; then case " $ES_PRESENT " in *" $2 "*) printf '/bin/%s\n' "$2"; return 0 ;; *) return 1 ;; esac; fi; builtin command "$@"; }
+        essentials_profile_path() { printf '%s\n' /es/new/bin; }
+        install_essential_packages() { echo "CALL install"; [ -n "${ES_NOOP:-}" ] || ES_PRESENT="$ES_PRESENT useradd s6-svscan s6-log"; return "$ES_RC"; }
+        upgrade_essential_packages() { echo "CALL upgrade"; [ -n "${ES_NOOP:-}" ] || ES_PRESENT="$ES_PRESENT useradd s6-svscan s6-log"; return "$ES_RC"; }
+        export DX_ESSENTIALS_ROOT="$es_root"
+        if [ "$usage" = - ]; then unset DX_USAGE_SERVICE; else export DX_USAGE_SERVICE="$usage"; fi
+        install_essentials
+        echo "PATH=$PATH"
+    ) 2>&1
+}
+es_has() { printf '%s\n' "$1" | grep -qF -- "$2"; }
+es_out="$(es_run - "useradd s6-svscan s6-log" yes)"
+if ! es_has "$es_out" "CALL" && es_has "$es_out" "Bootstrap phase: essentials installation completed in"; then
+    test_pass "install_essentials (service off, tools present) runs no install and no upgrade"
+else test_fail "install_essentials (service off, tools present) runs no install ($es_out)"; fi
+es_out="$(es_run off "useradd" yes)"
+if ! es_has "$es_out" "CALL"; then test_pass "install_essentials (service off) does not require s6, so an existing guest without it is left alone"
+else test_fail "install_essentials (service off) must not require s6 ($es_out)"; fi
+es_out="$(es_run - "" no)"
+if es_has "$es_out" "CALL install" && ! es_has "$es_out" "CALL upgrade" && es_has "$es_out" "Installing essential tools..."; then
+    test_pass "install_essentials (shadow tools missing, no essentials profile yet) installs exactly as before"
+else test_fail "install_essentials (shadow tools missing, no profile) installs as before ($es_out)"; fi
+es_out="$(es_run on "useradd s6-svscan s6-log" yes)"
+if ! es_has "$es_out" "CALL"; then test_pass "install_essentials (service on, all tools present) runs no install and no upgrade"
+else test_fail "install_essentials (service on, all tools present) runs nothing ($es_out)"; fi
+for es_missing in "useradd s6-log:s6-svscan" "useradd s6-svscan:s6-log"; do
+    es_out="$(es_run on "${es_missing%%:*}" yes)"
+    if es_has "$es_out" "CALL upgrade" && ! es_has "$es_out" "CALL install" \
+        && es_has "$es_out" "Upgrading the essentials profile: '${es_missing##*:}' is missing" \
+        && es_has "$es_out" "DX_USAGE_SERVICE=on" && es_has "$es_out" "PATH=/es/new/bin:"; then
+        test_pass "install_essentials (service on, ${es_missing##*:} missing, profile present) upgrades the profile, names the tool and re-resolves PATH"
+    else test_fail "install_essentials (service on, ${es_missing##*:} missing) upgrades and names it ($es_out)"; fi
+done
+es_out="$(es_run on "s6-svscan s6-log" yes)"
+if es_has "$es_out" "CALL upgrade" && es_has "$es_out" "'useradd' is missing"; then
+    test_pass "install_essentials (service on, shadow tool missing, profile present) upgrades rather than re-installing over the profile"
+else test_fail "install_essentials upgrades when a shadow tool is missing from an existing profile ($es_out)"; fi
+es_rc=0; es_out="$(es_run on "useradd" yes 9)" || es_rc=$?
+if es_has "$es_out" "CALL upgrade" && es_has "$es_out" "essentials installation failed" && ! es_has "$es_out" "completed in"; then
+    test_pass "a failed upgrade fails the phase with the existing failure line"
+else test_fail "a failed upgrade fails the phase ($es_out)"; fi
+
+es_rc=0; es_out="$(ES_NOOP=1 es_run on "useradd" yes)" || es_rc=$?
+if es_has "$es_out" "CALL upgrade" && es_has "$es_out" "still lacks 's6-svscan'" && ! es_has "$es_out" "completed in"; then
+    test_pass "an upgrade that succeeds but still leaves a required tool missing fails the phase instead of booting on"
+else test_fail "an upgrade that leaves a tool missing fails the phase ($es_out)"; fi
+
+# upgrade_essential_packages itself: replace the element, roll back on failure.
+es_up() {
+    # $1 = remove status, $2 = install status, $3 = nix profile list "listed"/"unlisted"
+    : > "$fixture/es-nix.log"
+    local remove_rc="$1" install_rc="$2"
+    (
+        nix() { printf 'nix %s\n' "$*" >> "$fixture/es-nix.log"; case "$*" in *"profile remove"*) return "$remove_rc" ;; esac; return 0; }
+        install_essential_packages() { printf 'install_essential_packages\n' >> "$fixture/es-nix.log"; return "$install_rc"; }
+        DX_NIX_FEAT_OPTS=(--extra-experimental-features "nix-command flakes")
+        upgrade_essential_packages
+    ) >/dev/null 2>&1
+}
+es_up 0 0 && es_rc=0 || es_rc=$?
+if [ "$es_rc" -eq 0 ] && [ "$(sed -n 1p "$fixture/es-nix.log")" = "nix profile remove --profile /nix/var/nix/profiles/per-user/root/profile bootstrap-essentials --extra-experimental-features nix-command flakes" ] \
+    && [ "$(sed -n 2p "$fixture/es-nix.log")" = install_essential_packages ] && [ "$(wc -l < "$fixture/es-nix.log" | tr -d ' ')" -eq 2 ]; then
+    test_pass "upgrade_essential_packages removes the old bootstrap-essentials element, then installs the current output"
+else test_fail "upgrade_essential_packages removes then installs (rc $es_rc; $(cat "$fixture/es-nix.log"))"; fi
+es_up 0 5 && es_rc=0 || es_rc=$?
+if [ "$es_rc" -eq 5 ] && grep -qF "nix profile rollback --profile /nix/var/nix/profiles/per-user/root/profile" "$fixture/es-nix.log"; then
+    test_pass "a failed install after the removal rolls the profile back to its previous generation and fails with the install's status"
+else test_fail "a failed install rolls the profile back (rc $es_rc; $(cat "$fixture/es-nix.log"))"; fi
+es_up 1 0 && es_rc=0 || es_rc=$?
+if [ "$es_rc" -eq 0 ] && ! grep -q rollback "$fixture/es-nix.log" && grep -q '^install_essential_packages$' "$fixture/es-nix.log"; then
+    test_pass "a profile with no bootstrap-essentials element to remove is installed into without a rollback"
+else test_fail "no element to remove: install proceeds, no rollback (rc $es_rc; $(cat "$fixture/es-nix.log"))"; fi
+es_up 1 5 && es_rc=0 || es_rc=$?
+if [ "$es_rc" -eq 5 ] && ! grep -q rollback "$fixture/es-nix.log"; then
+    test_pass "an install that fails when nothing was removed is not rolled back"
+else test_fail "no rollback when nothing was removed (rc $es_rc; $(cat "$fixture/es-nix.log"))"; fi
+
+# Registration: the upgraded profile's new generation is what the verifier reads.
+es_reg="$fixture/es-reg"; mkdir -p "$es_reg/nix/var/nix/profiles/per-user/root/old-1/bin" "$es_reg/nix/var/nix/profiles/per-user/root/new-2/bin"
+ln -s old-1 "$es_reg/nix/var/nix/profiles/per-user/root/profile"
+es_before="$(DX_ESSENTIALS_ROOT="$es_reg" essentials_profile_store_path)"
+ln -sfn new-2 "$es_reg/nix/var/nix/profiles/per-user/root/profile"
+es_after="$(DX_ESSENTIALS_ROOT="$es_reg" essentials_profile_store_path)"
+es_verified="$( (
+    DX_ESSENTIALS_ROOT="$es_reg"
+    run_as_dx() { printf '%s\n' "$1" > "$fixture/es-verify.cmd"; }
+    ensure_essentials_valid >/dev/null 2>&1; cat "$fixture/es-verify.cmd" ) )"
+if [ "$es_before" != "$es_after" ] && case "$es_after" in */new-2) true ;; *) false ;; esac \
+    && printf '%s\n' "$es_verified" | grep -qF "$es_after"; then
+    test_pass "after an upgrade the next verification reads and verifies the new generation without a repair"
+else test_fail "verification follows the upgraded generation (before $es_before, after $es_after, verified: $es_verified)"; fi
 
 p_pnv_output="$({
     export DX_BOOTSTRAP_SCRATCH_DIR="$fixture/p-pnv-scratch"
@@ -3096,7 +3201,8 @@ for us_missing in s6-svscan s6-log; do
         dx_bootstrap_exec_usage_service "$us_scan" "$us_root" 2>&1
     )" || us_status=$?
     if [ "$us_status" -ne 0 ] && [ ! -s "$US_LOG" ] && [ ! -e "$us_scan" ] \
-        && printf '%s\n' "$us_out" | grep -qF "'$us_missing'" && printf '%s\n' "$us_out" | grep -qF "bootstrapEssentials"; then
+        && printf '%s\n' "$us_out" | grep -qF "'$us_missing'" && printf '%s\n' "$us_out" | grep -qF "bootstrapEssentials" \
+        && printf '%s\n' "$us_out" | grep -qF "that upgrade failed"; then
         test_pass "usage-service mode with $us_missing missing fails clearly (naming it and the flake package) before any exec or tree"
     else
         test_fail "usage-service mode with $us_missing missing fails clearly before any exec or tree (status $us_status, log: $(cat "$US_LOG"), out: $us_out)"

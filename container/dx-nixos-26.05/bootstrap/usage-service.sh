@@ -37,7 +37,7 @@ dx_usage_service_build_tree() {
     case "$scan_dir" in ""|/) echo "Error: refusing to build the usage-service directory at '$scan_dir'." >&2; return 1 ;; esac
     for tool in s6-svscan s6-log sshd setpriv env bash; do
         command -v "$tool" >/dev/null 2>&1 || {
-            echo "Error: DX_USAGE_SERVICE=on needs '$tool' on PATH but it is missing (s6 comes from the guest flake's bootstrapEssentials); refusing to start the service tree." >&2
+            echo "Error: DX_USAGE_SERVICE=on needs '$tool' on PATH but it is missing (s6 comes from the guest flake's bootstrapEssentials, and bootstrap upgrades an existing guest's essentials profile before this point, so reaching here means that upgrade failed or did not provide it); refusing to start the service tree." >&2
             return 1
         }
     done
