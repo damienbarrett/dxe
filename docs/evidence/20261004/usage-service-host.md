@@ -68,3 +68,15 @@ cannot start": the launcher started the keyring before putting the active dx-ai 
 reversed (`fix/usage-launcher-path-before-keyring`), covered by a fake generation that holds
 the only dbus-daemon. Applied to production by `dx-sync-bootstrap` and
 `dx-usage-service restart` (the service only; the guest was not recreated).
+
+## Follow-up: service logs owned by dx (2026-10-04)
+
+After enablement `dx-backup` failed on production: each service's `s6-log` ran as root and created
+root-only directories under `/persist/services/agent-stats/logs`, and the backup (running as dx)
+refuses an unreadable directory during repository discovery. No backup was taken from 10:41 to
+12:23 NZDT; backups were restored at 12:23 by handing the directories to dx, and the last good
+backup before that was from 10:40. Fix (`fix/usage-logs-owned-by-dx`): every `s6-log` runs as dx,
+and the boot hands the logs subtree back to dx before starting the tree. Proven on a disposable
+spike that took production's path: created on the previous `main` with the service on (root-owned
+log directories, backup failing), then synced and restarted from the fix tree (directories and
+`s6-log` processes owned by dx, backup succeeding with a new mirror generation).
