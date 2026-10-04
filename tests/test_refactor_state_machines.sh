@@ -473,29 +473,29 @@ mkdir -p "$volume_collision_root"
 ) && test_fail "duplicate DX_NIX_VOLUME/DX_PERSIST_VOLUME names refuse to resolve" \
     || test_pass "duplicate DX_NIX_VOLUME/DX_PERSIST_VOLUME names refuse to resolve"
 
-# WP9.4 (Muse B5) compatibility: dx_config_validate_cross_fields warns
-# (stderr, not an error -- the git-tracked symlink shim still makes the
-# path resolve) when DX_CONTEXT_DIR or DX_BOOTSTRAP_SOURCE names the guest
-# tree's old, renamed directory
-# (container/aarch64-darwin-apple-container-dx-nixos-26.05, now
-# container/dx-nixos-26.05), so a real external profile still pointing at
-# the old name is not silently trusted forever.
+# WP9.4 (Muse B5) kept a deprecation warning in dx_config_validate_cross_fields for a
+# configured path that still named the guest tree's old, architecture-named directory,
+# next to a git-tracked symlink at that path. The symlink and the warning were removed
+# together (2026-10-04): a path is now just a path here (it is never checked for
+# existence at resolution time, so an external profile that still names the old
+# directory is not warned about -- it fails where the directory is used, at the image
+# build). The old name is spelled in two pieces so this file does not name it
+# (tests/test_section10_docs.sh's contract).
+old_guest_dir_name="aarch64-darwin-apple-container-""dx-nixos-26.05"
 old_guest_dir_stderr="$(
     for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
     unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
     DX_RUNTIME=apple DX_NIX_STORAGE_MODE=apple-image
     DX_NIX_VOLUME=dx-nix DX_PERSIST_VOLUME=dx-persist DX_BOOTSTRAP_VOLUME=dx-bootstrap
-    DX_CONTEXT_DIR="$BASE_DIR/container/aarch64-darwin-apple-container-dx-nixos-26.05"
+    DX_CONTEXT_DIR="$BASE_DIR/container/$old_guest_dir_name"
     DX_BOOTSTRAP_SOURCE="$DX_CONTEXT_DIR"
     dx_config_validate_cross_fields 2>&1 1>/dev/null
     echo "exit:$?"
 )"
-if printf '%s\n' "$old_guest_dir_stderr" | stdin_matches -F -- "exit:0" \
-    && printf '%s\n' "$old_guest_dir_stderr" | stdin_matches -F -- "Warning:" \
-    && printf '%s\n' "$old_guest_dir_stderr" | stdin_matches -F -- "aarch64-darwin-apple-container-dx-nixos-26.05"; then
-    test_pass "dx_config_validate_cross_fields warns (not errors) when a configured path names the old guest directory"
+if [ "$old_guest_dir_stderr" = "exit:0" ]; then
+    test_pass "dx_config_validate_cross_fields no longer warns about the removed old guest directory name (a path is just a path)"
 else
-    test_fail "dx_config_validate_cross_fields warns (not errors) when a configured path names the old guest directory (got: $old_guest_dir_stderr)"
+    test_fail "dx_config_validate_cross_fields no longer warns about the removed old guest directory name (got: $old_guest_dir_stderr)"
 fi
 
 no_old_guest_dir_stderr="$(

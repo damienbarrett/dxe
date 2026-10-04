@@ -27,55 +27,50 @@ while IFS= read -r markdown_file; do
 done < <(find "$BASE_DIR" -maxdepth 4 -type f -name '*.md' -not -path '*/.git/*' | sort)
 if [ -z "$broken_links" ]; then test_pass "local Markdown links resolve"; else test_fail "local Markdown links resolve:$broken_links"; fi
 
-# --- no tracked file names the old, renamed guest directory (WP9.4, Muse
-# B5) ---
+# --- the old, renamed guest directory is gone, and nothing names it (WP9.4, Muse
+# B5; compatibility symlink removed 2026-10-04, branch fix/residuals-20261004) ---
 #
-# The guest tree used to live at
-# container/aarch64-darwin-apple-container-dx-nixos-26.05/ even though the
-# flake is architecture-neutral (`supportedSystems = [ "aarch64-linux"
-# "x86_64-linux" ]`) and the QNAP guest that boots it is x86_64 -- the old
-# name actively misled. It is now container/dx-nixos-26.05/, with a
-# git-tracked symlink left at the old path for one release so an external
-# profile that still sets DX_CONTEXT_DIR/DX_BOOTSTRAP_SOURCE to the old
-# name keeps working (dx_config_validate_cross_fields warns on stderr when
-# it sees one, section 21). A symlink's own tracked path name is not file
-# CONTENT, so it needs no exemption from this content scan. docs/evidence/
-# and docs/reviews/ are historical records of what the repository looked
-# like on the day they were written -- exempted so their prose can keep
-# naming the directory that existed then; every other tracked file must
-# not. Scoped to `git ls-files` (tracked files only, current tree) rather
-# than a raw filesystem walk, so this never reads git HISTORY -- a past
-# commit's diff naming the old directory is not this file's concern.
-OLD_GUEST_DIR_NAME="aarch64-darwin-apple-container-dx-nixos-26.05"
+# The guest tree used to live at an architecture-named directory under
+# container/ even though the flake is architecture-neutral (`supportedSystems =
+# [ "aarch64-linux" "x86_64-linux" ]`) and the QNAP guest that boots it is x86_64
+# -- the old name actively misled. It is container/dx-nixos-26.05/ now; WP9.4 left
+# a git-tracked symlink at the old path, a deprecation warning in
+# dx_config_validate_cross_fields and live documentation of both for one release,
+# and all three were removed together. This contract keeps them removed: no
+# tracked PATH may carry the old name, no tracked file's TEXT may name it, and
+# the name is spelled below in two pieces so that this file does not name it
+# either -- the only exemptions are docs/evidence/ and docs/reviews/, which are
+# historical records of what the repository looked like on the day they were
+# written (and no plan file needs one: none names the directory). Scoped to
+# `git ls-files` (tracked files only, current tree), never git HISTORY.
+OLD_GUEST_DIR_PREFIX="aarch64-darwin-apple-container-""dx-nixos"
 stale_old_name_hits=""
 while IFS= read -r tracked_rel; do
     [ -n "$tracked_rel" ] || continue
     case "$tracked_rel" in
         docs/evidence/*|docs/reviews/*) continue ;;
-        # This file's own OLD_GUEST_DIR_NAME literal, above, is the pattern
-        # being searched for, not a stale reference to fix. bin/lib/
-        # dx-config.sh's dx_config_validate_cross_fields deliberately keeps
-        # the same literal, permanently, as the pattern its section 21
-        # deprecation warning matches against; test_refactor_state_machines.sh
-        # deliberately sets a DX_CONTEXT_DIR fixture value naming the old
-        # directory to exercise that same warning. docs/configuration.md and
-        # docs/release-maintenance.md name the old directory in their own
-        # deprecation notices (WP9.4) -- intentional documentation of the
-        # alias, due to be removed together with the symlink shim at the
-        # next base changeover, not a stale reference to fix now.
-        tests/test_section10_docs.sh|bin/lib/dx-config.sh|tests/test_refactor_state_machines.sh|docs/configuration.md|docs/release-maintenance.md) continue ;;
+    esac
+    case "$tracked_rel" in
+        *"$OLD_GUEST_DIR_PREFIX"*) stale_old_name_hits="$stale_old_name_hits$tracked_rel (the path itself)
+"; continue ;;
     esac
     tracked_file="$BASE_DIR/$tracked_rel"
-    [ -f "$tracked_file" ] || continue
-    if grep -qF -- "$OLD_GUEST_DIR_NAME" "$tracked_file" 2>/dev/null; then
+    [ -f "$tracked_file" ] || [ -L "$tracked_file" ] || continue
+    if [ -L "$tracked_file" ]; then
+        # A tracked symlink's target text is its content too (and a symlink at an old path is the thing being removed).
+        case "$(readlink "$tracked_file")" in *"$OLD_GUEST_DIR_PREFIX"*) stale_old_name_hits="$stale_old_name_hits$tracked_rel (symlink target)
+" ;; esac
+        continue
+    fi
+    if grep -qF -- "$OLD_GUEST_DIR_PREFIX" "$tracked_file" 2>/dev/null; then
         stale_old_name_hits="$stale_old_name_hits$tracked_rel
 "
     fi
 done < <(cd "$BASE_DIR" && git ls-files)
-if [ -z "$stale_old_name_hits" ]; then
-    test_pass "no tracked file outside docs/evidence/ and docs/reviews/ names the old guest directory"
+if [ -z "$stale_old_name_hits" ] && [ ! -e "$BASE_DIR/container/$OLD_GUEST_DIR_PREFIX-26.05" ] && [ ! -L "$BASE_DIR/container/$OLD_GUEST_DIR_PREFIX-26.05" ]; then
+    test_pass "no tracked path or file outside docs/evidence/ and docs/reviews/ names the old guest directory, and the compatibility symlink is gone"
 else
-    test_fail "no tracked file outside docs/evidence/ and docs/reviews/ names the old guest directory:
+    test_fail "no tracked path or file outside docs/evidence/ and docs/reviews/ names the old guest directory, and the compatibility symlink is gone:
 $stale_old_name_hits"
 fi
 

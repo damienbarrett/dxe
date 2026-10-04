@@ -49,16 +49,14 @@ bootstrap essentials follow the checked-in
 flake lock through the `bootstrap-essentials` output, so this document does not
 rely on the global flake registry for their provenance.
 
-**Deprecated directory alias.** The context directory was renamed in WP9.4
-from `container/aarch64-darwin-apple-container-dx-nixos-26.05` (the flake
-is architecture-neutral, and the QNAP guest it also boots is x86_64, not
-darwin/apple/aarch64) to `container/dx-nixos-26.05`. A git-tracked symlink
-at the old path keeps a real profile that still sets
-`DX_CONTEXT_DIR`/`DX_BOOTSTRAP_SOURCE` to the old name working for one
-release (`dx_config_validate_cross_fields` prints a one-line deprecation
-warning to stderr, not an error, when it sees one). The old-path symlink is
-a deprecated alias, removed at the next base changeover — update any
-external profile still naming it before then.
+**Directory name.** The context directory is `container/dx-nixos-<release>`: the
+flake is architecture-neutral (the same tree builds the Apple arm64 and the QNAP
+x86_64 guest), so the name carries no architecture. The earlier
+architecture-named directory, its compatibility symlink and the deprecation
+warning that went with them were removed on 2026-10-04; an external profile that
+still sets `DX_CONTEXT_DIR`/`DX_BOOTSTRAP_SOURCE` to that old directory must be
+pointed at `container/dx-nixos-<release>` (nothing warns about it any more, and
+the image build fails on the missing directory).
 
 A release bump is therefore:
 
@@ -409,14 +407,14 @@ encodes the change: flip the failing test first (`test_helpers.sh`'s
 `DX_EXPECTED_NIXOS_RELEASE`, `test_section2_containerfile.sh`'s exact `FROM`
 line), watch it fail against OLD, then make it pass.
 
-- `git mv container/aarch64-darwin-apple-container-dx-nixos-OLD container/aarch64-darwin-apple-container-dx-nixos-NEW`
+- `git mv container/dx-nixos-OLD container/dx-nixos-NEW`
 - `flake.nix` inputs → the three NEW branches (`nixpkgs-unstable` stays on
   `master`).
 - Regenerate `flake.lock` — targeted, in a throwaway container bind-mounting
   the renamed context dir:
 
   ```bash
-  container run --rm -v "$PWD/container/aarch64-darwin-apple-container-dx-nixos-NEW:/ctx" "$IMG" \
+  container run --rm -v "$PWD/container/dx-nixos-NEW:/ctx" "$IMG" \
       nix --extra-experimental-features 'nix-command flakes' \
       flake update nixpkgs nixvim home-manager --flake /ctx
   ```
@@ -444,7 +442,7 @@ line), watch it fail against OLD, then make it pass.
   # s=2 also match 20.
   for s in 0 1 2 3 5 9 10 18 20; do bash tests/test_section${s}_*.sh || break; done
   container run --rm --memory 8g --cpus 4 \
-      -v "$PWD/container/aarch64-darwin-apple-container-dx-nixos-NEW:/ctx" "$NEW_IMG" \
+      -v "$PWD/container/dx-nixos-NEW:/ctx" "$NEW_IMG" \
       nix --extra-experimental-features 'nix-command flakes' \
       flake check --no-write-lock-file /ctx        # must end: all checks passed!
   ```
