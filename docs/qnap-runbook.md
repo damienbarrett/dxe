@@ -635,9 +635,16 @@ root watchdog consumes that file and runs `s6-svc -r` on agent-stats, picking it
 up within one watchdog interval (about 30 seconds) and without any back-off. The
 hook waits up to 60 seconds for the request to be picked up and `/health/live`
 to answer again (without `curl` it skips the wait and says so), then runs a
-compatibility check. The check is a **stub until the package is installed**: it
-prints the agreed check (`agent-stats-rust --version` succeeding on the new
-`PATH`) and passes. A failed request, a service that does not come back, or a
-failed check is reported with "no rollback was performed" and never fails
-`dx-ai`; shared tools are never silently reverted. To restart by hand at any
+compatibility check, as `dx`, with the new generation's `profile/bin` first on
+`PATH`. The package has no `--version`, so the check runs the wrapper that
+`config/implementation` selects (`rust` by default, or `python`),
+`/persist/services/agent-stats/current/bin/agent-stats-<implementation> --help`,
+which must exit 0 within 10 seconds (it prints usage and touches no network),
+and confirms that the provider CLIs the collector uses (`claude`, `codex`,
+`agy`) resolve on that `PATH`. Each problem is its own warning line: no
+`current` release (the line names the link), an unusable or failing wrapper
+(with its first output line), an unknown `config/implementation`, or a missing
+provider CLI (the line names it). A failed request, a service that does not
+come back, or a failed check is reported with "no rollback was performed" and
+never fails `dx-ai`; shared tools are never silently reverted. To restart by hand at any
 time, use `dx-usage-service restart` from the host.

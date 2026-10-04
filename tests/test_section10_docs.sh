@@ -267,7 +267,9 @@ if grep -q '^## 10\. Usage service$' "$runbook" \
     && grep -Fq 'nix-store --add-root /persist/services/agent-stats/previous --indirect -r' "$runbook" \
     && grep -Fq 'http://<NAS tailnet name>:8787/' "$runbook" \
     && grep -Fq 'not to `docker logs`' "$runbook" \
-    && grep -Fq 'stub until the package is installed' "$runbook"; then
+    && grep -Fq 'agent-stats-<implementation> --help' "$runbook" \
+    && grep -Fq 'resolve on that `PATH`' "$runbook" \
+    && ! grep -Fq 'stub until the package is installed' "$runbook"; then
     test_pass "the QNAP runbook documents enabling, the publication rule, release selection, logs, the Apple URL and the dx-ai hook"
 else
     test_fail "the QNAP runbook documents enabling, the publication rule, release selection, logs, the Apple URL and the dx-ai hook"

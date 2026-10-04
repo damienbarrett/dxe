@@ -104,17 +104,63 @@ dx_ai_usage_service_hook() {
     else
         echo "curl is not available; not waiting for the usage service to come back."
     fi
-    dx_ai_usage_service_compat_check "$state/current" || echo "Warning: the usage service compatibility check failed against the new AI generation; no rollback was performed. Inspect with: dx-usage-service logs" >&2
+    dx_ai_usage_service_compat_check "$state/current" "$root" || echo "Warning: the usage service compatibility check failed against the new AI generation; no rollback was performed. Inspect with: dx-usage-service logs" >&2
     return 0
 }
 
-# STUB until the package is installed. The agreed check: with the new
-# generation's profile/bin first on PATH, `agent-stats-rust --version` (from
-# /persist/services/agent-stats/current/bin) must succeed, as dx. Returns 0 so
-# the hook is complete and testable; replace the body with that check.
+# The provider CLIs the agent-stats collector shells out to (the keyring-backed
+# ones among DX_AI_TOOLS; herdr and opencode are not collector inputs), and the
+# bound on the wrapper's own `--help`. Both are file-level so the one place that
+# uses them (the check below) reads them next to its documentation.
+DX_USAGE_PROVIDER_CLIS="claude codex agy"
+DX_USAGE_COMPAT_TIMEOUT=${DX_USAGE_COMPAT_TIMEOUT:-10}
+
+# Compatibility check of the installed agent-stats release against a new AI
+# generation ($1: the generation link, $2: the service root), run as dx.
+# The launcher's library is sourced from this file's own directory: every
+# loader candidate (checkout lib/, ~/.local/lib/dx, the bootstrap volume's
+# scripts/lib) installs the whole scripts/lib set side by side, so a sibling
+# source needs no dx-ai.sh wrapper (which would also grow the exempt entrypoint
+# set past its coverage-ratchet ceiling).
+# The package has no `--version`; both wrappers answer `--help` (usage, exit 0,
+# no network), so the check is: the wrapper config/implementation selects
+# ($root/current/bin/agent-stats-<rust|python>, parsed by the launcher's own
+# dx_usage_service_implementation) answers `--help` within the bound with the
+# new generation's profile/bin first on PATH, and every provider CLI in
+# DX_USAGE_PROVIDER_CLIS resolves on that same PATH. Independent failures are
+# separate warning lines, each saying "no rollback was performed"; any failure
+# makes the function return non-zero (the hook then adds its own warning and
+# still returns 0, so dx-ai never fails because of it). Only the first line of
+# the wrapper's output is kept.
 dx_ai_usage_service_compat_check() {
-    echo "Usage service compatibility check not implemented yet (agreed check: agent-stats-rust --version succeeds on the new PATH under $1/profile/bin)."
-    return 0
+    local generation="$1" root="$2" library implementation executable tool output status failed=0
+    local bound="$DX_USAGE_COMPAT_TIMEOUT" path="$generation/profile/bin:$PATH"
+    local prefix="Warning: usage service compatibility:" note="no rollback was performed"
+    library="${BASH_SOURCE[0]%/*}/dx-usage-service.sh"
+    # shellcheck source=dx-usage-service.sh
+    if [ -r "$library" ]; then source "$library"; else echo "$prefix the usage-service library is unavailable: $library ($note)." >&2; return 1; fi
+    if ! implementation="$(dx_usage_service_implementation "$root" 2>&1)"; then
+        echo "$prefix ${implementation#Error: } ($note)." >&2; failed=1
+    elif [ ! -e "$root/current" ]; then
+        echo "$prefix no release is linked at $root/current ($note)." >&2; failed=1
+    else
+        executable="$root/current/bin/agent-stats-$implementation"
+        if [ ! -f "$executable" ] || [ ! -x "$executable" ]; then
+            echo "$prefix $executable is missing or not executable ($note)." >&2; failed=1
+        else
+            output="$(PATH="$path" timeout "$bound" "$executable" --help 2>&1)" && status=0 || status=$?
+            if [ "$status" -ne 0 ]; then
+                [ "$status" -ne 124 ] || output="no answer within ${bound}s"
+                echo "$prefix '$executable --help' failed (exit $status: ${output%%$'\n'*}) ($note)." >&2; failed=1
+            fi
+        fi
+    fi
+    for tool in $DX_USAGE_PROVIDER_CLIS; do
+        PATH="$path" command -v "$tool" >/dev/null 2>&1 \
+            || { echo "$prefix provider CLI '$tool' does not resolve on the new generation's PATH ($note)." >&2; failed=1; }
+    done
+    [ "$failed" -eq 0 ] || return 1
+    echo "Usage service compatibility check passed: agent-stats-$implementation --help answers and $DX_USAGE_PROVIDER_CLIS resolve on the new generation's PATH."
 }
 
 dx_ai_ensure_keyring() {

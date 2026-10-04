@@ -297,7 +297,7 @@ run_hook() {
         source "$GUEST_SCRIPTS/lib/dx-ai-post-install.sh"
         sudo() { printf 'sudo:%s\n' "$*" >> "$US_LOG"; }
         hook_sleep() { printf 'sleep:%s\n' "$1" >> "$US_LOG"; [ "$mode" != consume ] || rm -f "$hook_root/control/restart"; }
-        dx_ai_usage_service_compat_check() { printf 'compat:%s\n' "$1" >> "$US_LOG"; }
+        dx_ai_usage_service_compat_check() { printf 'compat:%s\ncompat-root:%s\n' "$1" "${2:-}" >> "$US_LOG"; }
         PATH="${US_HOOK_PATH:-$bin:/usr/bin:/bin}"
         export DX_USAGE_SCAN_DIR="$hook_scan" DX_USAGE_SERVICE_ROOT="$hook_root" DX_USAGE_SLEEP=hook_sleep
         "$@"
@@ -355,13 +355,145 @@ mkdir -p "$fx/no-service-scan"
 [ "$h" -eq 0 ] && [ ! -s "$fx/hook.out" ] && [ ! -e "$hook_root/control" ] \
     && test_pass "outside service mode the hook prints nothing and creates nothing" \
     || test_fail "outside service mode the hook prints nothing and creates nothing (rc $h; out: $(cat "$fx/hook.out"))"
-( # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-ai-post-install.sh
-  source "$GUEST_SCRIPTS/lib/dx-ai-post-install.sh"; dx_ai_usage_service_compat_check "$fx/state" ) > "$fx/hook.out" 2>&1; h=$?
-if [ "$h" -eq 0 ] && grep -qF "agent-stats-rust --version" "$fx/hook.out"; then
-    test_pass "the compatibility check is a stub that names the agreed check (agent-stats-rust --version on the new PATH)"
+# --- dx-ai compatibility check (dx_ai_usage_service_compat_check) ---------------------
+# The check sources the launcher's library (dx_usage_service_implementation) from its
+# own directory, so these runs use the real parser. The package and the provider
+# CLIs are fakes: the wrappers record argv and PATH, the providers record any run
+# (they must only ever be RESOLVED, never executed), and `timeout` is a fake that
+# records its bound and can answer 124. Nothing reaches a network or a real guest.
+cc_state="$fx/cc-state"; cc_prof="$cc_state/current/profile/bin"; cc_root="$fx/cc-root"; cc_rel="$fx/cc-release"
+cc_bin="$fx/cc-bin"; mkdir -p "$cc_prof" "$cc_root/config" "$cc_rel/bin" "$cc_bin"
+ln -sf "$(command -v cat)" "$cc_bin/cat"
+cat > "$cc_bin/timeout" <<'TMO'
+#!/bin/bash
+[ -z "${US_TIMEOUT_RC:-}" ] || exit "$US_TIMEOUT_RC"
+printf 'timeout:%s\n' "$1" >> "$US_LOG"
+shift
+exec "$@"
+TMO
+chmod +x "$cc_bin/timeout"
+for impl in rust python; do
+    cat > "$cc_rel/bin/agent-stats-$impl" <<'PKG'
+#!/bin/bash
+printf 'exe=%s argv=%s path=%s\n' "${0##*/}" "$*" "$PATH" >> "$US_LOG"
+printf 'Usage: agent-stats\nsecond help line\n'
+exit "$(cat "$US_HELP_RC" 2>/dev/null || echo 0)"
+PKG
+    chmod +x "$cc_rel/bin/agent-stats-$impl"
+done
+cc_providers() { # $@ = provider names to (re)create in the new generation's profile/bin
+    rm -f "$cc_prof"/claude "$cc_prof"/codex "$cc_prof"/agy
+    local n; for n in "$@"; do printf '#!/bin/bash\nprintf "provider-ran:%%s\\n" "${0##*/}" >> "$US_LOG"\n' > "$cc_prof/$n"; chmod +x "$cc_prof/$n"; done
+}
+export US_HELP_RC="$fx/help-rc"
+run_cc() { # runs the check against $cc_state/$cc_root; output in $fx/cc.out
+    : > "$US_LOG"
+    (
+        # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-ai-post-install.sh
+        source "$GUEST_SCRIPTS/lib/dx-ai-post-install.sh"
+        PATH="$cc_bin"
+        dx_ai_usage_service_compat_check "$cc_state/current" "$cc_root"
+    ) > "$fx/cc.out" 2>&1 && cc_rc=0 || cc_rc=$?
+}
+ln -sfn "$cc_rel" "$cc_root/current"; cc_providers claude codex agy; rm -f "$US_HELP_RC"
+run_cc
+if [ "$cc_rc" -eq 0 ] && grep -qx 'timeout:10' "$US_LOG" && grep -q "^exe=agent-stats-rust argv=--help path=$cc_prof:" "$US_LOG" \
+    && ! grep -q '^provider-ran:' "$US_LOG" && [ "$(wc -l < "$fx/cc.out" | tr -d ' ')" -eq 1 ] && grep -qF "passed" "$fx/cc.out"; then
+    test_pass "the compatibility check runs current/bin/agent-stats-rust --help (bounded, new generation's profile/bin first on PATH), resolves the provider CLIs without running them, and prints one line"
 else
-    test_fail "the compatibility check is a stub naming the agreed check (rc $h; out: $(cat "$fx/hook.out"))"
+    test_fail "the compatibility check passes with a good release (rc $cc_rc; log: $(cat "$US_LOG"); out: $(cat "$fx/cc.out"))"
 fi
+printf 'python\n' > "$cc_root/config/implementation"
+run_cc
+if [ "$cc_rc" -eq 0 ] && grep -q '^exe=agent-stats-python argv=--help' "$US_LOG" && ! grep -q '^exe=agent-stats-rust' "$US_LOG"; then
+    test_pass "the compatibility check follows config/implementation (python selects agent-stats-python)"
+else
+    test_fail "the compatibility check follows config/implementation (rc $cc_rc; log: $(cat "$US_LOG"); out: $(cat "$fx/cc.out"))"
+fi
+: > "$cc_root/config/implementation"; run_cc; empty_rc=$cc_rc; empty_log="$(cat "$US_LOG")"
+rm -f "$cc_root/config/implementation"; run_cc
+if [ "$empty_rc" -eq 0 ] && [ "$cc_rc" -eq 0 ] && printf '%s\n' "$empty_log" | grep -q '^exe=agent-stats-rust ' && grep -q '^exe=agent-stats-rust ' "$US_LOG"; then
+    test_pass "an empty or absent config/implementation means rust in the compatibility check"
+else
+    test_fail "an empty or absent config/implementation means rust (rc $empty_rc/$cc_rc; log: $(cat "$US_LOG"))"
+fi
+printf 'ruby\n' > "$cc_root/config/implementation"
+run_cc
+if [ "$cc_rc" -ne 0 ] && grep -qF "'ruby'" "$fx/cc.out" && grep -qF "no rollback was performed" "$fx/cc.out" && ! grep -q '^exe=' "$US_LOG"; then
+    test_pass "an unknown implementation fails the compatibility check with a warning (no rollback) and runs no package"
+else
+    test_fail "an unknown implementation fails the compatibility check (rc $cc_rc; out: $(cat "$fx/cc.out"))"
+fi
+rm -f "$cc_root/config/implementation"
+printf '1\n' > "$US_HELP_RC"; run_cc
+if [ "$cc_rc" -ne 0 ] && grep -qF "agent-stats-rust --help" "$fx/cc.out" && grep -qF "exit 1" "$fx/cc.out" && grep -qF "no rollback was performed" "$fx/cc.out" \
+    && grep -qF "Usage: agent-stats" "$fx/cc.out" && ! grep -qF "second help line" "$fx/cc.out"; then
+    test_pass "a wrapper whose --help exits 1 fails the check with a warning (no rollback) that keeps only the first output line"
+else
+    test_fail "a failing --help is reported with one output line (rc $cc_rc; out: $(cat "$fx/cc.out"))"
+fi
+rm -f "$US_HELP_RC"
+US_TIMEOUT_RC=124 run_cc
+if [ "$cc_rc" -ne 0 ] && grep -qF "no answer within 10s" "$fx/cc.out" && grep -qF "no rollback was performed" "$fx/cc.out"; then
+    test_pass "a --help that does not answer within the bound fails the check with a warning (no rollback)"
+else
+    test_fail "a --help that times out is reported (rc $cc_rc; out: $(cat "$fx/cc.out"))"
+fi
+chmod -x "$cc_rel/bin/agent-stats-rust"; run_cc; chmod +x "$cc_rel/bin/agent-stats-rust"
+if [ "$cc_rc" -ne 0 ] && grep -qF "$cc_root/current/bin/agent-stats-rust is missing or not executable" "$fx/cc.out" && grep -qF "no rollback was performed" "$fx/cc.out" && ! grep -q '^exe=' "$US_LOG"; then
+    test_pass "a release whose wrapper is not executable fails the check with a warning naming it (no rollback)"
+else
+    test_fail "a non-executable wrapper is reported (rc $cc_rc; out: $(cat "$fx/cc.out"))"
+fi
+rm -f "$cc_root/current"; run_cc; absent_rc=$cc_rc; absent_out="$(cat "$fx/cc.out")"
+ln -sfn "$fx/cc-no-such-release" "$cc_root/current"; run_cc
+if [ "$absent_rc" -ne 0 ] && [ "$cc_rc" -ne 0 ] && [ "$(printf '%s\n' "$absent_out" | grep -c "$cc_root/current")" -eq 1 ] \
+    && [ "$(grep -c "$cc_root/current" "$fx/cc.out")" -eq 1 ] && grep -qF "no release is linked at $cc_root/current" "$fx/cc.out" \
+    && printf '%s\n' "$absent_out" | grep -qF "no release is linked at $cc_root/current" && grep -qF "no rollback was performed" "$fx/cc.out" && [ "$(wc -l < "$fx/cc.out" | tr -d ' ')" -eq 1 ]; then
+    test_pass "no current release (absent or dangling link) gives one warning naming the link (no rollback)"
+else
+    test_fail "no current release gives one warning naming the link (rc $absent_rc/$cc_rc; out: $absent_out | $(cat "$fx/cc.out"))"
+fi
+ln -sfn "$cc_rel" "$cc_root/current"
+for missing in claude codex agy; do
+    others=""; for n in claude codex agy; do [ "$n" = "$missing" ] || others="$others $n"; done
+    # shellcheck disable=SC2086
+    cc_providers $others; run_cc
+    if [ "$cc_rc" -ne 0 ] && [ "$(grep -c "provider CLI" "$fx/cc.out")" -eq 1 ] && grep -qF "'$missing'" "$fx/cc.out" && grep -qF "no rollback was performed" "$fx/cc.out"; then
+        test_pass "a missing $missing fails the check with one warning naming it (no rollback)"
+    else
+        test_fail "a missing $missing is reported (rc $cc_rc; out: $(cat "$fx/cc.out"))"
+    fi
+done
+cc_providers; run_cc
+if [ "$cc_rc" -ne 0 ] && [ "$(grep -c "provider CLI" "$fx/cc.out")" -eq 3 ] && grep -qF "'claude'" "$fx/cc.out" && grep -qF "'codex'" "$fx/cc.out" && grep -qF "'agy'" "$fx/cc.out"; then
+    test_pass "each missing provider CLI is its own warning line"
+else
+    test_fail "each missing provider CLI is its own warning line (rc $cc_rc; out: $(cat "$fx/cc.out"))"
+fi
+# A provider found only further down the PATH than the new generation still counts
+# (the new generation's profile/bin goes FIRST, it does not replace the rest).
+mkdir -p "$fx/cc-extra"; printf '#!/bin/bash\nexit 0\n' > "$fx/cc-extra/agy"; chmod +x "$fx/cc-extra/agy"
+cc_providers claude codex
+( source "$GUEST_SCRIPTS/lib/dx-ai-post-install.sh"; PATH="$cc_bin:$fx/cc-extra"; : > "$US_LOG"; dx_ai_usage_service_compat_check "$cc_state/current" "$cc_root" ) > "$fx/cc.out" 2>&1 && cc_rc=0 || cc_rc=$?
+[ "$cc_rc" -eq 0 ] && test_pass "a provider CLI further down the PATH still resolves (the new generation goes first, not alone)" \
+    || test_fail "a provider CLI further down the PATH resolves (rc $cc_rc; out: $(cat "$fx/cc.out"))"
+# The library that supplies the implementation parser must be next to the check, or it says so
+# (the copy in cc-lone-lib has no sibling dx-usage-service.sh).
+cc_providers claude codex agy
+mkdir -p "$fx/cc-lone-lib"; cp "$GUEST_SCRIPTS/lib/dx-ai-post-install.sh" "$fx/cc-lone-lib/"
+( source "$fx/cc-lone-lib/dx-ai-post-install.sh"; PATH="$cc_bin"; dx_ai_usage_service_compat_check "$cc_state/current" "$cc_root" ) > "$fx/cc.out" 2>&1 && cc_rc=0 || cc_rc=$?
+if [ "$cc_rc" -ne 0 ] && grep -qF "usage-service library is unavailable" "$fx/cc.out" && grep -qF "no rollback was performed" "$fx/cc.out"; then
+    test_pass "an unloadable usage-service library fails the check with a warning (no rollback)"
+else
+    test_fail "an unloadable usage-service library is reported (rc $cc_rc; out: $(cat "$fx/cc.out"))"
+fi
+# The hook hands the check the generation link and the service root.
+rm -rf "$hook_root/control"; printf '200\n' > "$US_CODES"
+run_hook consume dx_ai_usage_service_hook "$fx/state"
+grep -qx "compat-root:$hook_root" "$US_LOG" \
+    && test_pass "the hook passes the service root to the compatibility check" \
+    || test_fail "the hook passes the service root to the compatibility check (log: $(cat "$US_LOG"))"
 hook_failing_check() {
     # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-ai-post-install.sh
     source "$GUEST_SCRIPTS/lib/dx-ai-post-install.sh"
