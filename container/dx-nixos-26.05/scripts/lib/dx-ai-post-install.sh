@@ -108,8 +108,8 @@ dx_ai_usage_service_hook() {
     return 0
 }
 
-# The provider CLIs the agent-stats collector shells out to (the keyring-backed
-# ones among DX_AI_TOOLS; herdr and opencode are not collector inputs), and the
+# The provider CLIs the agent-stats collector runs (a subset of DX_AI_TOOLS:
+# herdr and opencode are not collector inputs), and the
 # bound on the wrapper's own `--help`. Both are file-level so the one place that
 # uses them (the check below) reads them next to its documentation.
 DX_USAGE_PROVIDER_CLIS="claude codex agy"
