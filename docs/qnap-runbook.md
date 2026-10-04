@@ -33,7 +33,7 @@ described below; its SSH keys live separately under `~/.ssh/dxe/`.
    Keep personal profiles outside the checkout and set `DX_SSH_KEY` and
    `DX_SSH_KEY_PUB` to absolute paths under `~/.ssh/dxe/`; the profile stores
    paths, never key material. Create that key directory with mode `700`.
-   Profiles do not expand `~` or `$HOME`, so write your actual home path. Set
+   Profiles do not expand `~` or a bare `$HOME`: write your actual home path (or `${HOME}/.ssh/dxe/...`). Set
    `DX_REMOTE_HOST` to your alias name; set `DX_PROFILE_ROOT` to the absolute
    path of the one checkout allowed to drive this profile (kept only in your
    private profile, never in a tracked file), so a second checkout cannot

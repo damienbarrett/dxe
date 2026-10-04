@@ -299,6 +299,34 @@ dx_config_validate_cross_fields() {
     fi
 }
 
+# The two data placeholders a path field's value may carry, ${DX_PROJECT_ROOT}
+# and ${HOME} (exact literal text, anywhere in the value, mixable): prints the
+# expanded value, or on failure prints the reason (dx_parse_config_file adds
+# the file and line) and returns 1. Refused for any non-path field; HOME must
+# be set to an absolute path (a relative or empty HOME would silently turn a
+# key path into a path under the current directory); any other `$` left once
+# the placeholders are removed is the same "variable expansion" error as
+# anywhere else in the data grammar. Only the resolved value is validated
+# afterwards, by the field's own kind, like every other value.
+dx_config_expand_placeholders() {
+    local name="$1" value="$2" placeholder rest
+    for placeholder in DX_PROJECT_ROOT HOME; do
+        case "$value" in *'${'"$placeholder"'}'*) ;; *) continue ;; esac
+        dx_config_path_field "$name" || { printf "%s placeholder is not allowed for '%s'" "$placeholder" "$name"; return 1; }
+    done
+    rest=${value//'${DX_PROJECT_ROOT}'/}
+    rest=${rest//'${HOME}'/}
+    case "$rest" in *'$'*) printf 'variable expansion is not allowed'; return 1 ;; esac
+    case "$value" in
+        *'${HOME}'*)
+            case "${HOME:-}" in /*) ;; *) printf 'HOME must be set to an absolute path to use the ${HOME} placeholder'; return 1 ;; esac
+            ;;
+    esac
+    value=${value//'${DX_PROJECT_ROOT}'/$DX_PROJECT_ROOT}
+    value=${value//'${HOME}'/$HOME}
+    printf '%s' "$value"
+}
+
 dx_config_parse_error() {
     echo "Error: $1:$2: $3" >&2
     return 1
@@ -330,18 +358,12 @@ dx_parse_config_file() {
         case "$value" in
             *\\*|*\'*|*\"*|*\;*|*\&*|*\|*|*\<*|*\>*|*'$('*) dx_config_parse_error "$file" "$number" "quotes, escapes, substitutions, and control operators are not allowed"; return 1 ;;
         esac
-        if [ "$value" = '${DX_PROJECT_ROOT}' ]; then
-            dx_config_path_field "$name" || { dx_config_parse_error "$file" "$number" "DX_PROJECT_ROOT placeholder is not allowed for '$name'"; return 1; }
-            value="$DX_PROJECT_ROOT"
-        else
-            case "$value" in
-                *'${DX_PROJECT_ROOT}'*)
-                    dx_config_path_field "$name" || { dx_config_parse_error "$file" "$number" "DX_PROJECT_ROOT placeholder is not allowed for '$name'"; return 1; }
-                    value=${value//'${DX_PROJECT_ROOT}'/$DX_PROJECT_ROOT}
-                    ;;
-                *'$'*) dx_config_parse_error "$file" "$number" "variable expansion is not allowed"; return 1 ;;
-            esac
-        fi
+        case "$value" in
+            *'${DX_PROJECT_ROOT}'*|*'${HOME}'*)
+                value="$(dx_config_expand_placeholders "$name" "$value")" || { dx_config_parse_error "$file" "$number" "$value"; return 1; }
+                ;;
+            *'$'*) dx_config_parse_error "$file" "$number" "variable expansion is not allowed"; return 1 ;;
+        esac
         dx_config_validate_value "$name" "$value" || { dx_config_parse_error "$file" "$number" "invalid value for '$name'"; return 1; }
         parsed_name="DXE_PARSED_$name"
         printf -v "$parsed_name" '%s' "$value"; done < "$file"

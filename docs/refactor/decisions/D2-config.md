@@ -16,8 +16,9 @@ masquerading as a behavior-preserving move.
   names;
 - the right-hand side is data, not shell: there is no command, parameter, quote,
   backslash, or tilde evaluation;
-- the sole expansion is an exact `${DX_PROJECT_ROOT}` placeholder in fields
-  whose schema permits a host path.
+- the sole expansions are the exact `${DX_PROJECT_ROOT}` placeholder and, since
+  2026-10-04, the exact `${HOME}` placeholder (HOME must be an absolute path),
+  in fields whose schema permits a host path.
 
 A migration checker rejects shell constructs whose meaning would change —
 including command substitution, general `$VAR` expansion, control operators,

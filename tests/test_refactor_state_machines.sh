@@ -52,6 +52,12 @@ for hostile in \
     'DX_CONTAINER_NAME=$HOME' \
     'DX_CONTAINER_NAME=one && id' \
     'DX_CONTAINER_NAME=one || id' \
+    'DX_SSH_KEY=$HOME/key' \
+    'DX_SSH_KEY=~/key' \
+    'DX_SSH_KEY=${HOME' \
+    'DX_SSH_KEY=${HOME:-/tmp}/key' \
+    'DX_SSH_KEY=${home}/key' \
+    'DX_SSH_KEY=${HOME}/$OTHER' \
     'DX_SSH_KEY=/tmp/key&touch' \
     'DX_SSH_KEY=/tmp/key|touch' \
     'DX_SSH_KEY=/tmp/key>file' \
@@ -67,6 +73,8 @@ printf '%s\n' 'DX_CONTAINER_NAME=${DX_PROJECT_ROOT}' > "$config_root/placeholder
 expect_reject "project-root placeholder is restricted to path fields" dx_parse_config_file "$config_root/placeholder.env"
 printf '%s\n' 'export DX_SSH_KEY=${DX_PROJECT_ROOT}/key' > "$config_root/export.env"
 export DX_PROJECT_ROOT=$config_root
+printf '%s\n' 'DX_SSH_KEY=${DX_PROJECT_ROOT}/$OTHER' > "$config_root/stray-var.env"
+expect_reject "a stray variable expansion beside a \${DX_PROJECT_ROOT} placeholder is rejected" dx_parse_config_file "$config_root/stray-var.env"
 expect_ok "migration export prefix and project-root path placeholder are accepted" dx_parse_config_file "$config_root/export.env"
 [ "$DXE_PARSED_DX_SSH_KEY" = "$config_root/key" ] && test_pass "project-root placeholder resolves as data" || test_fail "project-root placeholder resolves as data"
 printf '%s\n' 'DX_SSH_KEY=${DX_PROJECT_ROOT}' > "$config_root/root-only.env"
@@ -74,6 +82,53 @@ expect_ok "a bare \${DX_PROJECT_ROOT} placeholder (no suffix) is accepted" dx_pa
 [ "$DXE_PARSED_DX_SSH_KEY" = "$config_root" ] && test_pass "a bare \${DX_PROJECT_ROOT} placeholder resolves to the project root alone" || test_fail "a bare \${DX_PROJECT_ROOT} placeholder resolves to the project root alone (got '$DXE_PARSED_DX_SSH_KEY')"
 dx_parse_config_file "$config_root/absent.env"
 [ "${DXE_PARSED_DX_SSH_KEY+x}" != x ] && test_pass "an absent data file clears prior parser output" || test_fail "an absent data file clears prior parser output"
+
+# The ${HOME} placeholder: symmetric with ${DX_PROJECT_ROOT} (same host-path
+# fields, same kind validation), plus the one thing only it can get wrong --
+# HOME itself must be set and absolute. A literal $HOME or ~ stays rejected
+# (the hostile list above).
+home_root="$fixture/home-placeholder"
+mkdir -p "$home_root"
+printf '%s\n' 'export DX_SSH_KEY=${HOME}/.ssh/dxe/dx-test_key' 'DX_SSH_KEY_PUB=${HOME}/.ssh/dxe/dx-test_key.pub' > "$home_root/home.env"
+( HOME="$home_root/h"; dx_parse_config_file "$home_root/home.env" && [ "$DXE_PARSED_DX_SSH_KEY" = "$home_root/h/.ssh/dxe/dx-test_key" ] && [ "$DXE_PARSED_DX_SSH_KEY_PUB" = "$home_root/h/.ssh/dxe/dx-test_key.pub" ] ) \
+    && test_pass "a \${HOME} placeholder in path fields resolves to HOME (with and without the export prefix)" \
+    || test_fail "a \${HOME} placeholder in path fields resolves to HOME (with and without the export prefix)"
+printf '%s\n' 'DX_SSH_KEY=${HOME}' > "$home_root/home-only.env"
+( HOME="$home_root/h"; dx_parse_config_file "$home_root/home-only.env" && [ "$DXE_PARSED_DX_SSH_KEY" = "$home_root/h" ] ) \
+    && test_pass "a bare \${HOME} placeholder (no suffix) resolves to HOME alone" \
+    || test_fail "a bare \${HOME} placeholder (no suffix) resolves to HOME alone"
+printf '%s\n' 'DX_SSH_KEY=${HOME}/a${DX_PROJECT_ROOT}/b' > "$home_root/mixed.env"
+( HOME="$home_root/h"; dx_parse_config_file "$home_root/mixed.env" && [ "$DXE_PARSED_DX_SSH_KEY" = "$home_root/h/a$DX_PROJECT_ROOT/b" ] ) \
+    && test_pass "\${HOME} and \${DX_PROJECT_ROOT} may be mixed in one value and both expand" \
+    || test_fail "\${HOME} and \${DX_PROJECT_ROOT} may be mixed in one value and both expand"
+# DX_IMAGE's class accepts `/`, so an expanded HOME would VALIDATE there: only the
+# placeholder's own path-field restriction can refuse it (same for the project root).
+for restricted in 'DX_CONTAINER_NAME=${HOME}' 'DX_IMAGE=${HOME}/x' 'DX_SSH_PORT=${HOME}/x' 'DX_IMAGE=${DX_PROJECT_ROOT}/x'; do
+    printf '%s\n' "$restricted" > "$home_root/restricted.env"
+    ( HOME="$home_root/h"; dx_parse_config_file "$home_root/restricted.env" ) >/dev/null 2>&1 \
+        && test_fail "a placeholder is restricted to path fields: $restricted" \
+        || test_pass "a placeholder is restricted to path fields: $restricted"
+done
+parse_with_home() {
+    # $1 = unset | empty | relative: the kind of unusable HOME to parse home.env under.
+    # (A function, not an inline case in $(...): Bash 3.2 mis-parses `)` case patterns there.)
+    case "$1" in unset) unset HOME ;; empty) HOME="" ;; relative) HOME="relative/home" ;; esac
+    dx_parse_config_file "$home_root/home.env" 2>&1 && echo "accepted"
+}
+for bad_home in unset empty relative; do
+    home_err="$(parse_with_home "$bad_home")" || true
+    if printf '%s\n' "$home_err" | stdin_matches -F -- "HOME" && printf '%s\n' "$home_err" | stdin_matches -F -- "absolute" \
+        && ! printf '%s\n' "$home_err" | stdin_matches -F -- "accepted" && printf '%s\n' "$home_err" | stdin_matches -F -- "home.env:1:"; then
+        test_pass "a \${HOME} placeholder with an $bad_home HOME is refused with a file-and-line error naming HOME"
+    else
+        test_fail "a \${HOME} placeholder with an $bad_home HOME is refused with a file-and-line error naming HOME (got: $home_err)"
+    fi
+done
+# A profile without any placeholder never needs HOME at all.
+printf '%s\n' 'DX_SSH_KEY=/tmp/plain-key' > "$home_root/plain.env"
+( unset HOME; dx_parse_config_file "$home_root/plain.env" && [ "$DXE_PARSED_DX_SSH_KEY" = /tmp/plain-key ] ) \
+    && test_pass "a profile with no \${HOME} placeholder does not need HOME" \
+    || test_fail "a profile with no \${HOME} placeholder does not need HOME"
 
 # WP8.4 (Fable D8): migrated from tests/test_sourceable_coverage.sh's
 # `f >/dev/null 2>&1 || true` config-parser probes -- those executed these

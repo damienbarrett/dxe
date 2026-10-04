@@ -206,7 +206,8 @@ DX_SSH_KEY=/absolute/path/to/.ssh/dxe/qnap-canary
 DX_SSH_KEY_PUB=/absolute/path/to/.ssh/dxe/qnap-canary.pub
 ```
 
-Use your actual home path: profiles do not expand `~`, `$HOME`, or
+Write your actual home path, or `${HOME}/.ssh/dxe/...` (the `${HOME}` placeholder
+is the only home-relative form): profiles do not expand `~`, a bare `$HOME`, or
 `$XDG_CONFIG_HOME`. Moving an existing key preserves the controller's SSH
 identity and access to the guest;
 generating a replacement key would require changing the guest's authorized
@@ -223,8 +224,12 @@ The accepted grammar is deliberately bounded: blank lines, full-line comments,
 an optional literal `export ` prefix, and one allowlisted `NAME=value` record
 per line. Names cannot repeat. Values are data: quoting, backslashes, command
 substitution, general variable expansion, control operators, and continuations
-are rejected with file-and-line diagnostics. The only expansion is a literal
-`${DX_PROJECT_ROOT}` placeholder in host-path fields.
+are rejected with file-and-line diagnostics. The only expansions are the literal
+`${DX_PROJECT_ROOT}` and `${HOME}` placeholders in host-path fields (they may be
+mixed in one value; each must be spelled exactly, braces included). `${HOME}`
+requires `HOME` to be set to an absolute path, otherwise the profile is refused
+with a file-and-line error; a bare `$HOME`, `~`, or any other variable is still
+rejected. Both placeholders are refused for fields that are not host paths.
 
 Migration examples:
 
@@ -234,6 +239,7 @@ export DX_SSH_KEY="$DX_PROJECT_ROOT/dx-test_key"
 
 # bounded data syntax
 export DX_SSH_KEY=${DX_PROJECT_ROOT}/dx-test_key
+export DX_SSH_KEY=${HOME}/.ssh/dxe/dx-test_key
 ```
 
 Precedence is command flags/immutable plans, inherited or profile environment,
