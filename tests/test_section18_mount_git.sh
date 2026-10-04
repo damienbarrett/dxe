@@ -69,7 +69,10 @@ if dx_mount_manifest_publish_new "$v2" >/dev/null 2>&1; then test_fail "first pu
 # old place ($DX_PROJECT_ROOT/dx_key[.pub]) keep working through the legacy fallback, so
 # the guard must refuse BOTH. Explicit environment values make the plan resolve the key
 # from the environment instead of deriving a private one.
-guard_home="$state/guard-home"; mkdir -p "$guard_home"
+# The fixture HOME holds the new-default pair, so the legacy fallback (which applies only to
+# a MISSING key, and would repoint it at this checkout's own dx_key if it has one) can never
+# change what is being refused: the outcome does not depend on the checkout running the test.
+guard_home="$state/guard-home"; mkdir -p "$guard_home/.ssh/dxe"; : > "$guard_home/.ssh/dxe/dx_key"; : > "$guard_home/.ssh/dxe/dx_key.pub"
 for guard_pair in "DX_SSH_KEY=$guard_home/.ssh/dxe/dx_key" "DX_SSH_KEY=$BASE_DIR/dx_key" \
     "DX_SSH_KEY_PUB=$guard_home/.ssh/dxe/dx_key.pub" "DX_SSH_KEY_PUB=$BASE_DIR/dx_key.pub"; do
     guard_out="$(env -u DX_CONTAINER_NAME -u DX_NIX_VOLUME -u DX_PERSIST_VOLUME -u DX_BOOTSTRAP_VOLUME -u DX_SSH_KEY -u DX_SSH_KEY_PUB -u DX_SSH_PORT \

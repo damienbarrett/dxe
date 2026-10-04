@@ -183,13 +183,16 @@ rm -f "$dxe_s19_tunnel_result"
 # --stop/--list/unknown-option argument-handling error messages and exit
 # codes. Container-free: every path here fails argument validation
 # before ever touching a container, SSH, or the real tunnel state
-# directory (isolated below via DX_TUNNEL_STATE_DIR regardless).
+# directory (isolated below via DX_TUNNEL_STATE_DIR regardless). The key
+# paths are isolated too: a checkout that still holds its key pair at the
+# root (the legacy location, see dx_config_legacy_key_fallback) prints one
+# note line on every command, which these exact-output cases must not see.
 dxe_s19_cli_state="$(mktemp -d "$CALLER_TMPDIR/dxe-s19-cli-state.XXXXXX")"
 
 dxe_s19_check() {
     local desc="$1" expected_out="$2" expected_rc="$3" out rc
     shift 3
-    out="$(DX_TUNNEL_STATE_DIR="$dxe_s19_cli_state" "$@" 2>&1)"; rc=$?
+    out="$(DX_TUNNEL_STATE_DIR="$dxe_s19_cli_state" DX_SSH_KEY="$dxe_s19_cli_state/key" DX_SSH_KEY_PUB="$dxe_s19_cli_state/key.pub" "$@" 2>&1)"; rc=$?
     if [ "$out" = "$expected_out" ] && [ "$rc" -eq "$expected_rc" ]; then
         test_pass "$desc"
     else
