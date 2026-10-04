@@ -40,6 +40,7 @@ refuse_default_destroy DX_CONTAINER_NAME "$DX_CONTAINER_NAME" dx-host
 refuse_default_destroy DX_NIX_VOLUME "$DX_NIX_VOLUME" dx-nix
 refuse_default_destroy DX_PERSIST_VOLUME "$DX_PERSIST_VOLUME" dx-persist
 refuse_default_destroy DX_BOOTSTRAP_VOLUME "$DX_BOOTSTRAP_VOLUME" dx-bootstrap
+refuse_default_destroy DX_SSH_KEY "$DX_SSH_KEY" "$(dx_config_default DX_SSH_KEY)"
 refuse_default_destroy DX_SSH_KEY "$DX_SSH_KEY" "$PROJECT_ROOT/dx_key"
 
 fail() {

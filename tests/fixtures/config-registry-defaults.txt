@@ -6,8 +6,8 @@ DX_CONTAINER_RESTART_POLICY	enum:no,unless-stopped	no
 DX_CONTAINER_NAME	name	dx-host
 DX_IMAGE	image	dx-nixos-26.05
 DX_SSH_PORT	port	2222
-DX_SSH_KEY	abspath	/fixture-root/dx_key
-DX_SSH_KEY_PUB	abspath	/fixture-root/dx_key.pub
+DX_SSH_KEY	abspath	/fixture-home/.ssh/dxe/dx_key
+DX_SSH_KEY_PUB	abspath	/fixture-home/.ssh/dxe/dx_key.pub
 DX_SSH_CONNECT_TIMEOUT	posint	15
 DX_SYSTEM_WAIT_TIMEOUT	posint	30
 DX_CONTEXT_DIR	abspath	/fixture-root/container/dx-nixos-26.05

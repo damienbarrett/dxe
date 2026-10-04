@@ -14,8 +14,8 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_CONTAINER_NAME` | `dx-host` | Apple container name. Change this to create a separate container without touching the default DXE instance. |
 | `DX_IMAGE` | `dx-nixos-26.05` | Image name used by `dx-create-image` and `dx-create-container`. |
 | `DX_SSH_PORT` | `2222` | Host port forwarded to guest SSH port `2222`. Use a different port for a second running container. |
-| `DX_SSH_KEY` | `$DX_PROJECT_ROOT/dx_key` | Host private key used for SSH into the guest. |
-| `DX_SSH_KEY_PUB` | `$DX_PROJECT_ROOT/dx_key.pub` | Host public key provisioned into the guest on create. |
+| `DX_SSH_KEY` | `$HOME/.ssh/dxe/dx_key` | Host private key used for SSH into the guest. Outside any checkout since 2026-10 (it used to be `$DX_PROJECT_ROOT/dx_key`); `dx-create-keys` creates `~/.ssh/dxe` with mode `700` when it generates the pair there. A checkout that still holds `dx_key`/`dx_key.pub` at its root keeps working: see "Where the default key pair lives" below. |
+| `DX_SSH_KEY_PUB` | `$HOME/.ssh/dxe/dx_key.pub` | Host public key provisioned into the guest on create. Same location and legacy fallback as `DX_SSH_KEY`. |
 | `DX_SSH_CONNECT_TIMEOUT` | `15` | Host-side SSH connection timeout in seconds for `dx-ssh`. |
 | `DX_SYSTEM_WAIT_TIMEOUT` | `30` | Seconds to wait for container-service readiness after starting the local Apple service. Startup failure or timeout stops `dx` before guest checks; QNAP service startup remains manual. |
 | `DX_CONTEXT_DIR` | `container/dx-nixos-26.05` | Directory used as the image build context and default bootstrap source. Renamed from `container/aarch64-darwin-apple-container-dx-nixos-26.05` in WP9.4 (the flake is architecture-neutral; the QNAP guest is x86_64). A git-tracked symlink at the old path keeps a profile that still names it working for one release; `dx_config_validate_cross_fields` prints a one-line deprecation warning to stderr when it sees the old name. The old path is removed at the next base changeover (see `docs/release-maintenance.md`). |
@@ -88,8 +88,8 @@ registry that validates it.
 | `DX_CONTAINER_NAME` | `dx-host` |
 | `DX_IMAGE` | `dx-nixos-26.05` |
 | `DX_SSH_PORT` | `2222` |
-| `DX_SSH_KEY` | `$DX_PROJECT_ROOT/dx_key` |
-| `DX_SSH_KEY_PUB` | `$DX_PROJECT_ROOT/dx_key.pub` |
+| `DX_SSH_KEY` | `$HOME/.ssh/dxe/dx_key` |
+| `DX_SSH_KEY_PUB` | `$HOME/.ssh/dxe/dx_key.pub` |
 | `DX_SSH_CONNECT_TIMEOUT` | `15` |
 | `DX_SYSTEM_WAIT_TIMEOUT` | `30` |
 | `DX_CONTEXT_DIR` | `$DX_PROJECT_ROOT/container/dx-nixos-26.05` |
@@ -161,8 +161,9 @@ How it behaves:
 - `--destroy` removes the derived side container, private volumes, private key
   pair, and mount identity marker. It does not remove the shared `dx-nixos-26.05` image.
   It also refuses to destroy default dx-host resources (`dx-nix`, `dx-persist`,
-  `dx-bootstrap`, `dx_key`) even if your environment leaks those names into the
-  cleanup.
+  `dx-bootstrap`, and the primary guest's key pair at its default location, or
+  at the legacy checkout-root location) even if your environment leaks those
+  names into the cleanup.
 
 Example isolated lifecycle create:
 
@@ -242,6 +243,32 @@ export DX_SSH_KEY=${DX_PROJECT_ROOT}/dx-test_key
 export DX_SSH_KEY=${HOME}/.ssh/dxe/dx-test_key
 ```
 
+### Where the default key pair lives
+
+The primary guest's key pair is `~/.ssh/dxe/dx_key` and `~/.ssh/dxe/dx_key.pub`
+(`dx-create-keys` creates `~/.ssh/dxe` with mode `700`, never overwrites an
+existing private key, and leaves an existing directory's mode alone). Until
+2026-10 the default was inside the checkout (`dx_key` and `dx_key.pub` at the
+repository root, git-ignored), where removing a worktree or re-cloning could
+destroy the only key that authorizes access to the guest.
+
+A checkout that still has its pair at the old place keeps working: when a
+configured key path is directly under `$HOME/.ssh/dxe/`, does not exist, and a
+file with the same name exists at the checkout root, that file is used (the
+private key and the public key are decided independently) and one line names
+the exact commands that finish the move, for example:
+
+```text
+Note: the SSH key is still at its legacy location in the checkout; to adopt the default location run: mkdir -p ~/.ssh/dxe && mv /path/to/checkout/dx_key /path/to/checkout/dx_key.pub ~/.ssh/dxe/
+```
+
+Moving the files preserves the guest's authorized key (generating a new pair
+would not). The fallback applies once, where the configuration is resolved, so
+every command (`dx-ssh`, `dx-wait-ssh`, `dx-create-container`, `dx-herdr`,
+backups, tunnels, the `docker-ssh` runtime) sees the same effective path.
+Explicit key paths elsewhere (a profile's own `${DX_PROJECT_ROOT}/..._key`, a
+`dx-mount` side container's derived key) are never touched.
+
 Precedence is command flags/immutable plans, inherited or profile environment,
 command-specific derived values, root `.env`, then defaults. Resolution records
 an origin for every field and exports one complete versioned snapshot. Children
@@ -255,4 +282,7 @@ Shipped profiles:
 - `tests/profiles/dx-test.env` — fully isolated `dx-test` environment. Test
   container, image, volumes, and SSH key all live in a `dx-test*` namespace
   alongside the primary `dx-host` resources, on port `2299` so both can run
-  simultaneously.
+  simultaneously. Its key pair is `${HOME}/.ssh/dxe/dx-test_key[.pub]`, so a
+  removed worktree can no longer take the guest's only key with it; a clone
+  that still holds `dx-test_key` in its checkout root keeps working through the
+  legacy fallback below.

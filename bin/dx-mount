@@ -207,7 +207,10 @@ if [ "$destroy" = true ] || [ "$print_plan" = true ]; then
     refuse_default_destroy DX_NIX_VOLUME "$DX_NIX_VOLUME" dx-nix
     refuse_default_destroy DX_PERSIST_VOLUME "$DX_PERSIST_VOLUME" dx-persist
     refuse_default_destroy DX_BOOTSTRAP_VOLUME "$DX_BOOTSTRAP_VOLUME" dx-bootstrap
+    # The primary guest's pair: the registry default and, for checkouts still on the legacy fallback, the old checkout-root location.
+    refuse_default_destroy DX_SSH_KEY "$DX_SSH_KEY" "$(dx_config_default DX_SSH_KEY)"
     refuse_default_destroy DX_SSH_KEY "$DX_SSH_KEY" "$DX_PROJECT_ROOT/dx_key"
+    refuse_default_destroy DX_SSH_KEY_PUB "$DX_SSH_KEY_PUB" "$(dx_config_default DX_SSH_KEY_PUB)"
     refuse_default_destroy DX_SSH_KEY_PUB "$DX_SSH_KEY_PUB" "$DX_PROJECT_ROOT/dx_key.pub"
     [ "$print_plan" = false ] || { print_destroy_plan; exit 0; }
     dx_require_container_cli

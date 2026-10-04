@@ -19,7 +19,9 @@ A lightweight, persistent, guest-driven development environment hosted on macOS 
    ./bin/dx
    ```
    `dx` is a state-driven entrypoint: on first run it generates the SSH
-   keypair, builds the image, creates persistent volumes, creates and starts
+   keypair (`~/.ssh/dxe/dx_key`; see
+   [Where the default key pair lives](docs/configuration.md#where-the-default-key-pair-lives)),
+   builds the image, creates persistent volumes, creates and starts
    the container, syncs the bootstrap payload as part of container start,
    waits for SSH, and connects.
    It first checks the container service, starts the local Apple service if

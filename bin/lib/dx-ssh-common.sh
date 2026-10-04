@@ -49,6 +49,24 @@ dx_ssh_known_hosts_prepare() {
     chmod 0700 "$dir"
 }
 
+# dx-create-keys' whole job (kept here, in a covered library, so the entrypoint is one
+# call): generate an ed25519 pair at $1 unless the private key already exists (never
+# overwritten). A missing $HOME/.ssh/dxe -- the default key directory -- is created
+# private (0700), and so is a missing ~/.ssh; an existing directory keeps its mode, and a
+# key path anywhere else makes no directories.
+dx_ssh_key_generate() {
+    local key="$1" dir="${1%/*}"
+    if [ -f "$key" ]; then
+        echo "SSH key $key already exists; skipping generation."
+        return 0
+    fi
+    if [ "$dir" = "${HOME:-}/.ssh/dxe" ] && [ ! -d "$dir" ]; then
+        { [ -d "$HOME/.ssh" ] || mkdir -m 700 "$HOME/.ssh"; } && mkdir -m 700 "$dir" || return 1
+    fi
+    echo "Generating SSH keypair at $key..."
+    ssh-keygen -t ed25519 -f "$key" -N ""
+}
+
 # Single source of truth for the SSH connection options shared by every DX SSH
 # entry point: dx-ssh's interactive branch, its argument branch, dx-herdr
 # (F10), dx-wait-ssh, and dx-tunnel.sh (Branch 11 / Phase 5). Bash 3.2

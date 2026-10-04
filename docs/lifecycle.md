@@ -139,7 +139,7 @@ operations.
 
 | # | Layer | Create | Destroy |
 | --- | --- | --- | --- |
-| 1 | Host SSH keypair | [`bin/dx-create-keys`](../bin/dx-create-keys) | [`bin/dx-destroy-keys`](../bin/dx-destroy-keys) |
+| 1 | Host SSH keypair (`~/.ssh/dxe/dx_key[.pub]`; [legacy checkout-root fallback](configuration.md#where-the-default-key-pair-lives)) | [`bin/dx-create-keys`](../bin/dx-create-keys) | [`bin/dx-destroy-keys`](../bin/dx-destroy-keys) |
 | 2 | Persistent volumes | [`bin/dx-create-volumes`](../bin/dx-create-volumes) | [`bin/dx-destroy-volumes`](../bin/dx-destroy-volumes) |
 | 3 | Image | [`bin/dx-create-image`](../bin/dx-create-image) | [`bin/dx-destroy-image`](../bin/dx-destroy-image) |
 | 4 | Container | [`bin/dx-create-container`](../bin/dx-create-container) | [`bin/dx-destroy-container`](../bin/dx-destroy-container) |

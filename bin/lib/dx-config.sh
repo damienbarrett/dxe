@@ -59,8 +59,8 @@ DX_CONTAINER_RESTART_POLICY	enum:no,unless-stopped	=no
 DX_CONTAINER_NAME	name	=dx-host
 DX_IMAGE	image	=dx-nixos-26.05
 DX_SSH_PORT	port	=2222
-DX_SSH_KEY	abspath	@root:dx_key
-DX_SSH_KEY_PUB	abspath	@root:dx_key.pub
+DX_SSH_KEY	abspath	@home:.ssh/dxe/dx_key
+DX_SSH_KEY_PUB	abspath	@home:.ssh/dxe/dx_key.pub
 DX_SSH_CONNECT_TIMEOUT	posint	=15
 DX_SYSTEM_WAIT_TIMEOUT	posint	=30
 DX_CONTEXT_DIR	abspath	@root:container/dx-nixos-26.05
@@ -403,6 +403,36 @@ dx_config_set_resolved() {
     export "${name?}" "${origin_name?}"
 }
 
+# The Mac default key pair used to live in the checkout ($DX_PROJECT_ROOT/dx_key and
+# dx_key.pub); the registry default is now $HOME/.ssh/dxe/dx_key[.pub], outside any
+# checkout (a git worktree removal can no longer take the guest's only key with it).
+# A checkout that still holds its pair at the old place must keep working, so for each
+# of DX_SSH_KEY and DX_SSH_KEY_PUB on its own: when the configured path is directly
+# under $HOME/.ssh/dxe/, does not exist, and a file with the same name exists in the
+# checkout root, the legacy file is used and ONE line on stderr names the commands that
+# finish the move. Any other path (a profile's explicit key elsewhere, a mount's derived
+# key, a nested one) is never touched; the field's origin is kept, so origin-based
+# decisions (dx-mount's origin_explicit) see exactly what they saw before. Applied once,
+# where the snapshot is resolved (dx_init_config): every reader of the key -- dx-ssh,
+# dx-wait-ssh, dx-create-container's public-key injection, backups, tunnels, dx-herdr and
+# the docker-ssh runtime's ssh options alike -- receives the effective path through the
+# exported field, and a child that inherits the snapshot neither repeats nor reprints it.
+dx_config_legacy_key_fallback() {
+    local name path legacy origin_name moved=""
+    [ -n "${HOME:-}" ] || return 0
+    for name in DX_SSH_KEY DX_SSH_KEY_PUB; do
+        path="${!name}"
+        case "${path#"$HOME/.ssh/dxe/"}" in "$path"|*/*|'') continue ;; esac
+        [ ! -e "$path" ] || continue
+        legacy="$DX_PROJECT_ROOT/${path##*/}"
+        [ -f "$legacy" ] || continue
+        origin_name="DXE_CONFIG_ORIGIN_$name"
+        dx_config_set_resolved "$name" "$legacy" "${!origin_name:-default}" || return 1
+        moved="$moved $(printf '%q' "$legacy")"
+    done
+    [ -z "$moved" ] || echo "Note: the SSH key is still at its legacy location in the checkout; to adopt the default location run: mkdir -p ~/.ssh/dxe && mv$moved ~/.ssh/dxe/" >&2
+}
+
 dx_init_config() {
     local root="${1:-}" name parsed_name origin_name value origin env_present
     if [ -z "$root" ]; then
@@ -445,6 +475,7 @@ dx_init_config() {
         unset "$parsed_name"
     done
 
+    dx_config_legacy_key_fallback || return 1
     dx_config_validate_cross_fields || return 1
 
     DXE_CONFIG_SNAPSHOT_VERSION=$DXE_CONFIG_SNAPSHOT_VERSION_CURRENT

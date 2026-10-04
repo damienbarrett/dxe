@@ -64,6 +64,24 @@ before="$(shasum -a 256 "$v2")"
 if dx_mount_manifest_publish_new "$v2" >/dev/null 2>&1; then test_fail "first publication is semantically write-once"; else test_pass "first publication is semantically write-once"; fi
 [ "$before" = "$(shasum -a 256 "$v2")" ] && test_pass "failed publication preserves authoritative manifest" || test_fail "failed publication preserves authoritative manifest"
 
+# The destroy guard protects the PRIMARY guest's key pair: the default moved to
+# $HOME/.ssh/dxe/dx_key[.pub] (residual R2), and checkouts that still hold the pair at the
+# old place ($DX_PROJECT_ROOT/dx_key[.pub]) keep working through the legacy fallback, so
+# the guard must refuse BOTH. Explicit environment values make the plan resolve the key
+# from the environment instead of deriving a private one.
+guard_home="$state/guard-home"; mkdir -p "$guard_home"
+for guard_pair in "DX_SSH_KEY=$guard_home/.ssh/dxe/dx_key" "DX_SSH_KEY=$BASE_DIR/dx_key" \
+    "DX_SSH_KEY_PUB=$guard_home/.ssh/dxe/dx_key.pub" "DX_SSH_KEY_PUB=$BASE_DIR/dx_key.pub"; do
+    guard_out="$(env -u DX_CONTAINER_NAME -u DX_NIX_VOLUME -u DX_PERSIST_VOLUME -u DX_BOOTSTRAP_VOLUME -u DX_SSH_KEY -u DX_SSH_KEY_PUB -u DX_SSH_PORT \
+        -u DXE_CONFIG_RESOLVED -u DXE_CONFIG_SNAPSHOT_VERSION HOME="$guard_home" DX_MOUNT_IDENTITY_DIR="$state/guard-identities" "$guard_pair" \
+        "$MOUNT" "$repo" --print-destroy-plan 2>&1)" && guard_rc=0 || guard_rc=$?
+    if [ "$guard_rc" -ne 0 ] && printf '%s\n' "$guard_out" | stdin_matches -F -- "refusing to destroy default dx-host resource (${guard_pair%%=*}=${guard_pair#*=})"; then
+        test_pass "dx-mount --print-destroy-plan refuses the primary guest's key: ${guard_pair%%=*} at ${guard_pair#*=}"
+    else
+        test_fail "dx-mount --print-destroy-plan refuses the primary guest's key: ${guard_pair%%=*} at ${guard_pair#*=} (rc $guard_rc; out: $guard_out)"
+    fi
+done
+
 audit="$(DX_MOUNT_IDENTITY_DIR="$state" "$MOUNT" --audit-manifests)"
 if printf '%s\n' "$audit" | stdin_matches 'v2.env format=v2 complete=true'; then test_pass "manifest audit reports v2 completeness"; else test_fail "manifest audit reports v2 completeness"; fi
 # WP8.4b (Fable D7): the "no production test seam" check moved to

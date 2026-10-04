@@ -590,6 +590,201 @@ done
     && test_pass "every DXE_CONFIG_FIELDS name resolves a non-empty dx_config_kind" \
     || test_fail "every DXE_CONFIG_FIELDS name resolves a non-empty dx_config_kind (missing:$registry_unresolved)"
 
+# --- Mac default SSH key relocation (residual R2): the registry default moved from the
+# checkout ($DX_PROJECT_ROOT/dx_key[.pub]) to $HOME/.ssh/dxe/dx_key[.pub]. A checkout that
+# still holds its pair at the old place keeps working through ONE shared fallback
+# (dx_config_legacy_key_fallback, applied where the configuration snapshot is resolved, so
+# every reader -- dx-ssh, dx-wait-ssh, dx-create-container, backups, tunnels, dx-herdr, the
+# docker-ssh runtime's ssh options -- receives the effective path and none can disagree).
+# Only paths directly under $HOME/.ssh/dxe/ are ever repointed; explicit paths elsewhere
+# (a profile's ${DX_PROJECT_ROOT}/..._key, a mount's derived key) are untouched.
+kf_run() {
+    # $1 = case dir (holds home/ and root/), rest = environment assignments for the
+    # fallback's inputs; prints "key|pub|key-origin|pub-origin" and leaves stderr in $kf_err
+    # (set by kf_case: this runs in a command substitution, so it cannot set it).
+    local case_dir="$1"; shift
+    (
+        HOME="$case_dir/home"; DX_PROJECT_ROOT="$case_dir/root"
+        DX_SSH_KEY="$HOME/.ssh/dxe/dx_key"; DX_SSH_KEY_PUB="$HOME/.ssh/dxe/dx_key.pub"
+        DXE_CONFIG_ORIGIN_DX_SSH_KEY=default; DXE_CONFIG_ORIGIN_DX_SSH_KEY_PUB=default
+        for assignment in "$@"; do eval "$assignment"; done
+        dx_config_legacy_key_fallback 2> "$kf_err"
+        dx_config_legacy_key_fallback 2>> "$kf_err"
+        printf '%s|%s|%s|%s' "$DX_SSH_KEY" "$DX_SSH_KEY_PUB" "$DXE_CONFIG_ORIGIN_DX_SSH_KEY" "$DXE_CONFIG_ORIGIN_DX_SSH_KEY_PUB"
+    )
+}
+kf_case() { # $1 = name; creates fresh home/ and root/
+    kf_dir="$fixture/keyfallback-$1"; rm -rf "$kf_dir"; mkdir -p "$kf_dir/home/.ssh/dxe" "$kf_dir/root"
+    kf_err="$kf_dir/stderr"
+}
+kf_lines() { grep -c '' "$kf_err" || true; }
+
+kf_case both-present
+: > "$kf_dir/home/.ssh/dxe/dx_key"; : > "$kf_dir/home/.ssh/dxe/dx_key.pub"; : > "$kf_dir/root/dx_key"; : > "$kf_dir/root/dx_key.pub"
+kf_out="$(kf_run "$kf_dir")"
+[ "$kf_out" = "$kf_dir/home/.ssh/dxe/dx_key|$kf_dir/home/.ssh/dxe/dx_key.pub|default|default" ] && [ ! -s "$kf_err" ] \
+    && test_pass "the key fallback is not used when the new default pair exists (even if a legacy pair also does), and prints nothing" \
+    || test_fail "the key fallback is not used when the new default pair exists (got: $kf_out; stderr: $(cat "$kf_err"))"
+
+kf_case legacy-only
+: > "$kf_dir/root/dx_key"; : > "$kf_dir/root/dx_key.pub"
+kf_out="$(kf_run "$kf_dir")"
+if [ "$kf_out" = "$kf_dir/root/dx_key|$kf_dir/root/dx_key.pub|default|default" ] && [ "$(kf_lines)" -eq 1 ] \
+    && grep -qF "mkdir -p ~/.ssh/dxe && mv $kf_dir/root/dx_key $kf_dir/root/dx_key.pub ~/.ssh/dxe/" "$kf_err"; then
+    test_pass "a legacy pair in the checkout root is used when the new default is absent: origins kept, ONE line naming the exact mkdir/mv commands (and none on a repeat call)"
+else
+    test_fail "a legacy pair in the checkout root is used when the new default is absent (got: $kf_out; stderr: $(cat "$kf_err"))"
+fi
+kf_exported="$(
+    HOME="$kf_dir/home"; DX_PROJECT_ROOT="$kf_dir/root"
+    DX_SSH_KEY="$HOME/.ssh/dxe/dx_key"; DX_SSH_KEY_PUB="$HOME/.ssh/dxe/dx_key.pub"
+    DXE_CONFIG_ORIGIN_DX_SSH_KEY=default; DXE_CONFIG_ORIGIN_DX_SSH_KEY_PUB=default
+    dx_config_legacy_key_fallback 2>/dev/null
+    bash -c 'printf "%s|%s" "$DX_SSH_KEY" "$DX_SSH_KEY_PUB"'
+)"
+[ "$kf_exported" = "$kf_dir/root/dx_key|$kf_dir/root/dx_key.pub" ] \
+    && test_pass "the fallback exports the effective key paths to child processes" \
+    || test_fail "the fallback exports the effective key paths to child processes (got: $kf_exported)"
+
+kf_case neither
+kf_out="$(kf_run "$kf_dir")"
+[ "$kf_out" = "$kf_dir/home/.ssh/dxe/dx_key|$kf_dir/home/.ssh/dxe/dx_key.pub|default|default" ] && [ ! -s "$kf_err" ] \
+    && test_pass "with neither pair present the key paths stay at the new default and nothing is printed (the readers' own error is unchanged)" \
+    || test_fail "with neither pair present the key paths stay at the new default (got: $kf_out; stderr: $(cat "$kf_err"))"
+
+kf_case explicit-elsewhere
+: > "$kf_dir/root/dx_key"; : > "$kf_dir/root/dx_key.pub"
+kf_out="$(kf_run "$kf_dir" 'DX_SSH_KEY="$DX_PROJECT_ROOT/dx_key.missing"; DX_SSH_KEY_PUB="$HOME/elsewhere/dx_key.pub"')"
+[ "$kf_out" = "$kf_dir/root/dx_key.missing|$kf_dir/home/elsewhere/dx_key.pub|default|default" ] && [ ! -s "$kf_err" ] \
+    && test_pass "an explicit path that is not directly under \$HOME/.ssh/dxe/ is never repointed" \
+    || test_fail "an explicit path that is not directly under \$HOME/.ssh/dxe/ is never repointed (got: $kf_out; stderr: $(cat "$kf_err"))"
+
+kf_case no-home
+: > "$kf_dir/root/dx_key"; : > "$kf_dir/root/dx_key.pub"
+kf_out="$(kf_run "$kf_dir" 'unset HOME')"
+[ "$kf_out" = "$kf_dir/home/.ssh/dxe/dx_key|$kf_dir/home/.ssh/dxe/dx_key.pub|default|default" ] && [ ! -s "$kf_err" ] \
+    && test_pass "without HOME the key fallback does nothing (and cannot misread an absolute path as home-relative)" \
+    || test_fail "without HOME the key fallback does nothing (got: $kf_out; stderr: $(cat "$kf_err"))"
+
+kf_case nested
+mkdir -p "$kf_dir/home/.ssh/dxe/sub"; : > "$kf_dir/root/dx_key"
+kf_out="$(kf_run "$kf_dir" 'DX_SSH_KEY="$HOME/.ssh/dxe/sub/dx_key"')"
+case "$kf_out" in "$kf_dir/home/.ssh/dxe/sub/dx_key|"*) [ ! -s "$kf_err" ] && test_pass "a key nested below \$HOME/.ssh/dxe/ is never repointed" || test_fail "a nested key prints nothing" ;; *) test_fail "a key nested below \$HOME/.ssh/dxe/ is never repointed (got: $kf_out)" ;; esac
+
+kf_case private-only
+: > "$kf_dir/root/dx_key"
+kf_out="$(kf_run "$kf_dir")"
+if [ "$kf_out" = "$kf_dir/root/dx_key|$kf_dir/home/.ssh/dxe/dx_key.pub|default|default" ] && [ "$(kf_lines)" -eq 1 ] \
+    && grep -qF "mkdir -p ~/.ssh/dxe && mv $kf_dir/root/dx_key ~/.ssh/dxe/" "$kf_err" && ! grep -qF "dx_key.pub" "$kf_err"; then
+    test_pass "each file of the pair falls back on its own: a legacy private key alone is repointed and the note names only it"
+else
+    test_fail "each file of the pair falls back on its own (got: $kf_out; stderr: $(cat "$kf_err"))"
+fi
+
+kf_case spaces
+mkdir -p "$kf_dir/root dir"; : > "$kf_dir/root dir/dx_key"
+kf_out="$(kf_run "$kf_dir" 'DX_PROJECT_ROOT="$DX_PROJECT_ROOT dir"')"
+if [ "$kf_out" = "$kf_dir/root dir/dx_key|$kf_dir/home/.ssh/dxe/dx_key.pub|default|default" ] \
+    && grep -qF "mv $(printf '%q' "$kf_dir/root dir/dx_key") ~/.ssh/dxe/" "$kf_err"; then
+    test_pass "a legacy path that contains spaces is used and quoted in the note so the command can be pasted"
+else
+    test_fail "a legacy path that contains spaces is used and quoted in the note (got: $kf_out; stderr: $(cat "$kf_err"))"
+fi
+
+# End to end through the real resolution: dx_init_config applies the fallback once, keeps the
+# field origin (so dx-mount's origin_explicit still treats it as a default), and a child that
+# inherits the snapshot validates it without printing again.
+kf_case init
+: > "$kf_dir/root/dx_key"; : > "$kf_dir/root/dx_key.pub"
+kf_init_out="$(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    HOME="$kf_dir/home"
+    dx_init_config "$kf_dir/root" 2> "$kf_dir/stderr" || exit 1
+    printf '%s|%s|%s\n' "$DX_SSH_KEY" "$DX_SSH_KEY_PUB" "$DXE_CONFIG_ORIGIN_DX_SSH_KEY"
+    dx_init_config "$kf_dir/root" 2>> "$kf_dir/stderr" || exit 1
+)"
+if [ "$kf_init_out" = "$kf_dir/root/dx_key|$kf_dir/root/dx_key.pub|default" ] && [ "$(grep -c '' "$kf_dir/stderr")" -eq 1 ]; then
+    test_pass "dx_init_config applies the legacy key fallback once; re-validating the inherited snapshot neither changes nor reprints it"
+else
+    test_fail "dx_init_config applies the legacy key fallback once (got: $kf_init_out; stderr: $(cat "$kf_dir/stderr"))"
+fi
+kf_case init-new
+: > "$kf_dir/home/.ssh/dxe/dx_key"; : > "$kf_dir/home/.ssh/dxe/dx_key.pub"; : > "$kf_dir/root/dx_key"
+kf_init_out="$(
+    for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
+    unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
+    HOME="$kf_dir/home"
+    dx_init_config "$kf_dir/root" 2> "$kf_dir/stderr" || exit 1
+    printf '%s' "$DX_SSH_KEY"
+)"
+[ "$kf_init_out" = "$kf_dir/home/.ssh/dxe/dx_key" ] && [ ! -s "$kf_dir/stderr" ] \
+    && test_pass "dx_init_config resolves to the new default key location when it exists, silently" \
+    || test_fail "dx_init_config resolves to the new default key location when it exists (got: $kf_init_out)"
+
+# dx-test's profile now keeps its pair under ~/.ssh/dxe/ too (the ${HOME} placeholder).
+dxtest_keys="$(
+    export DX_PROJECT_ROOT="$BASE_DIR"
+    HOME="$fixture/dxtest-home"
+    dx_parse_config_file "$BASE_DIR/tests/profiles/dx-test.env" || exit 1
+    printf '%s|%s' "$DXE_PARSED_DX_SSH_KEY" "$DXE_PARSED_DX_SSH_KEY_PUB"
+)"
+[ "$dxtest_keys" = "$fixture/dxtest-home/.ssh/dxe/dx-test_key|$fixture/dxtest-home/.ssh/dxe/dx-test_key.pub" ] \
+    && test_pass "the dx-test profile points its key pair at \$HOME/.ssh/dxe/" \
+    || test_fail "the dx-test profile points its key pair at \$HOME/.ssh/dxe/ (got: $dxtest_keys)"
+
+# dx-create-keys' whole job lives in dx_ssh_key_generate (a covered library; the entrypoint
+# is one call): a missing key directory under $HOME/.ssh/dxe is created private (0700, with
+# ~/.ssh itself 0700 when it must be created too); an existing key is never overwritten;
+# an explicit key elsewhere makes no directories.
+kg_bin="$fixture/keygen-bin"; mkdir -p "$kg_bin"
+cat > "$kg_bin/ssh-keygen" <<'KEYGEN'
+#!/bin/bash
+printf 'ssh-keygen %s\n' "$*" >> "$KG_LOG"
+while [ "$#" -gt 0 ]; do case "$1" in -f) key="$2"; shift ;; esac; shift; done
+printf 'private\n' > "$key"; printf 'public\n' > "$key.pub"
+KEYGEN
+chmod +x "$kg_bin/ssh-keygen"
+export KG_LOG="$fixture/keygen.log"
+kg_mode() { ls -ld "$1" | cut -c1-10; }
+kg_home="$fixture/keygen-home"; rm -rf "$kg_home"; mkdir -p "$kg_home"
+: > "$KG_LOG"
+kg_out="$( HOME="$kg_home"; PATH="$kg_bin:$PATH"; dx_ssh_key_generate "$kg_home/.ssh/dxe/dx_key" 2>&1 )" && kg_rc=0 || kg_rc=$?
+if [ "$kg_rc" -eq 0 ] && [ "$(kg_mode "$kg_home/.ssh/dxe")" = drwx------ ] && [ "$(kg_mode "$kg_home/.ssh")" = drwx------ ] \
+    && [ -f "$kg_home/.ssh/dxe/dx_key" ] && grep -qx "ssh-keygen -t ed25519 -f $kg_home/.ssh/dxe/dx_key -N " "$KG_LOG" \
+    && printf '%s\n' "$kg_out" | grep -qF "Generating SSH keypair at $kg_home/.ssh/dxe/dx_key"; then
+    test_pass "generating at the new default creates ~/.ssh/dxe (and a missing ~/.ssh) with mode 0700 and runs ssh-keygen -t ed25519"
+else
+    test_fail "generating at the new default creates ~/.ssh/dxe with mode 0700 (rc $kg_rc; ssh: $(kg_mode "$kg_home/.ssh" 2>&1); dxe: $(kg_mode "$kg_home/.ssh/dxe" 2>&1); log: $(cat "$KG_LOG"); out: $kg_out)"
+fi
+mkdir -p "$kg_home/.ssh/dxe"; printf 'precious\n' > "$kg_home/.ssh/dxe/dx_key"; : > "$KG_LOG"
+kg_out="$( HOME="$kg_home"; PATH="$kg_bin:$PATH"; dx_ssh_key_generate "$kg_home/.ssh/dxe/dx_key" 2>&1 )" && kg_rc=0 || kg_rc=$?
+if [ "$kg_rc" -eq 0 ] && [ "$(cat "$kg_home/.ssh/dxe/dx_key")" = precious ] && [ ! -s "$KG_LOG" ] && printf '%s\n' "$kg_out" | grep -qF "already exists; skipping generation"; then
+    test_pass "an existing key is never overwritten (ssh-keygen is not even run)"
+else
+    test_fail "an existing key is never overwritten (rc $kg_rc; log: $(cat "$KG_LOG"); out: $kg_out)"
+fi
+rm -f "$kg_home/.ssh/dxe/dx_key"; mkdir -p "$kg_home/.ssh/dxe"; chmod 755 "$kg_home/.ssh/dxe"; : > "$KG_LOG"
+( HOME="$kg_home"; PATH="$kg_bin:$PATH"; dx_ssh_key_generate "$kg_home/.ssh/dxe/dx_key" >/dev/null 2>&1 ) && kg_rc=0 || kg_rc=$?
+[ "$kg_rc" -eq 0 ] && [ "$(kg_mode "$kg_home/.ssh/dxe")" = drwxr-xr-x ] && [ -f "$kg_home/.ssh/dxe/dx_key" ] \
+    && test_pass "an existing key directory keeps its mode" \
+    || test_fail "an existing key directory keeps its mode (rc $kg_rc; $(kg_mode "$kg_home/.ssh/dxe"))"
+kg_home2="$fixture/keygen-home2"; rm -rf "$kg_home2"; mkdir -p "$kg_home2" "$fixture/keygen-elsewhere"; : > "$KG_LOG"
+( HOME="$kg_home2"; PATH="$kg_bin:$PATH"; dx_ssh_key_generate "$fixture/keygen-elsewhere/dx-test_key" >/dev/null 2>&1 ) && kg_rc=0 || kg_rc=$?
+[ "$kg_rc" -eq 0 ] && [ -f "$fixture/keygen-elsewhere/dx-test_key" ] && [ ! -e "$kg_home2/.ssh" ] \
+    && test_pass "an explicit key path elsewhere generates there and creates no ~/.ssh/dxe" \
+    || test_fail "an explicit key path elsewhere generates there and creates no ~/.ssh/dxe (rc $kg_rc)"
+kg_home4="$fixture/keygen-home4"; rm -rf "$kg_home4" "$fixture/keygen-missing-dir"; mkdir -p "$kg_home4"; : > "$KG_LOG"
+( HOME="$kg_home4"; PATH="$kg_bin:$PATH"; dx_ssh_key_generate "$fixture/keygen-missing-dir/dx-test_key" >/dev/null 2>&1 ) && kg_rc=0 || kg_rc=$?
+[ "$kg_rc" -ne 0 ] && [ ! -e "$fixture/keygen-missing-dir" ] && [ ! -e "$kg_home4/.ssh" ] \
+    && test_pass "a missing directory for an explicit key path elsewhere is not created (only the default ~/.ssh/dxe is)" \
+    || test_fail "a missing directory for an explicit key path elsewhere is not created (rc $kg_rc)"
+kg_home3="$fixture/keygen-home3"; rm -rf "$kg_home3"; mkdir -p "$kg_home3"; printf 'not a directory\n' > "$kg_home3/.ssh"; : > "$KG_LOG"
+( HOME="$kg_home3"; PATH="$kg_bin:$PATH"; dx_ssh_key_generate "$kg_home3/.ssh/dxe/dx_key" >/dev/null 2>&1 ) && kg_rc=0 || kg_rc=$?
+[ "$kg_rc" -ne 0 ] && [ ! -s "$KG_LOG" ] \
+    && test_pass "a key directory that cannot be created fails without running ssh-keygen" \
+    || test_fail "a key directory that cannot be created fails without running ssh-keygen (rc $kg_rc; log: $(cat "$KG_LOG"))"
+
 # Process identity and lock reclamation use PID plus process start, never PID alone.
 lock="$fixture/live.lock"
 dx_lock_acquire "$lock" 1

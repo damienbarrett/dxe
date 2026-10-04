@@ -29,6 +29,17 @@ start fresh:
 For a complete wipe (including `/persist` contents and SSH keys), use
 `./bin/dx-factory-reset` — it prompts for confirmation before removing anything.
 
+### "SSH key file not found at ~/.ssh/dxe/dx_key"
+
+The default key pair lives in `~/.ssh/dxe/` (it used to be the checkout root).
+A checkout that still holds `dx_key` and `dx_key.pub` at its root is used
+automatically, with one line naming the `mkdir -p ~/.ssh/dxe && mv ...`
+commands that move the pair. If neither location has the key, run
+`./bin/dx-create-keys` for a new pair (a new public key is only provisioned
+into a guest that is created afterwards: an existing guest authorizes the key it
+was created with, so move that pair rather than generating another). See
+[Where the default key pair lives](configuration.md#where-the-default-key-pair-lives).
+
 ### Guest stops before SSH with a missing bootstrap toolchain
 
 The container starts and then stops, and `container logs dx-host` ends with a

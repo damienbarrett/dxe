@@ -359,8 +359,9 @@ check grep -q 'cat >/dev/null' "$ROOT/bin/lib/dx-bootstrap-sync.sh"
 # block on a real tty. Each entrypoint is instead copied into its own
 # private "project root" (DX_SSH_KEY and friends resolve from
 # DX_PROJECT_ROOT, which bin/dx-lib.sh always recomputes from the sourced
-# file's own location -- a fake HOME alone would not stop dx-create-keys
-# from writing a real keypair into this checkout), sourced by a nested probe
+# file's own location; the default key pair now lives under $HOME/.ssh/dxe,
+# so the redirected HOME below is what keeps dx-create-keys from writing a
+# real keypair), sourced by a nested probe
 # script with HOME and XDG_STATE_HOME redirected into that same private
 # root, PATH restricted to a directory holding only fake
 # `container`/`docker`/`ssh` (each `exit 1`) plus /usr/bin:/bin, and stdin
