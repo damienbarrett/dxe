@@ -40,6 +40,20 @@ Every plan document below is listed under exactly one of these.
 
 ## Open plans
 
+- **Usage-service Claude workspace preparation** — Open, carried forward
+  from the application's completed QNAP migration on 2026-10-05. Owner:
+  DXE. Prepare or preserve Claude's trust and bypass-permission acceptance
+  for `/persist/services/agent-stats/workspace` as user `dx`, without
+  overwriting unrelated project settings or shared credentials. Rust and
+  Python capture already detect first-run prompts and report the manual
+  fix; automatic workspace preparation remains unimplemented. Revisit
+  trigger: the next change to service workspace preparation or fresh-guest
+  setup. Completion requires a disposable docker-ssh proof that first
+  collection and collection after recreation need no interactive first-run
+  acceptance. Current workaround:
+  [QNAP runbook, section 10.8](docs/qnap-runbook.md#108-claude-workspace-trust).
+  Source: [application migration completion record](https://github.com/damienbarrett/agent-stats/blob/main/deploy/qnap/migration-completion.md#remaining-dxe-follow-up).
+
 - [`findings.md`](findings.md) — Consolidated findings plan, combining three
   independent reviews of the repository at `4e8c5cc` dated 2026-09-29
   (`docs/reviews/2026-09-29-astra.md`, `docs/reviews/2026-09-29-muse.md`,

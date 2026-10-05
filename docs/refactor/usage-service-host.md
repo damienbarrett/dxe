@@ -1,12 +1,19 @@
 # Usage service on the production QNAP guest — DXE-side design
 
 Decided with the user on 2026-10-03 (answers 1B, 2B, 3A, 4A to the four
-questions). Inputs: the usage-stats plan (kept outside this repository) section 10's requirements
-table, the three reference commits on `feat/usage-service-host-config`
+questions). The requirements are preserved below. Other inputs were the
+three reference commits on `feat/usage-service-host-config`
 (registry fields, a loopback publication flag, docs; one uncommitted
-`dx-create-container` edit), and the guest bootstrap, which today ends with
+`dx-create-container` edit), and the guest bootstrap, which at design time ended with
 `exec sshd -D -e -p 2222`. Target: `dx-qnap` (production, SSH on the NAS's
 Tailscale address at port 2222).
+
+Status: enabled on production on 2026-10-04. Application migration wrap-up
+completed on 2026-10-05; see the
+[completion record](https://github.com/damienbarrett/agent-stats/blob/main/deploy/qnap/migration-completion.md).
+The remaining Claude workspace-preparation follow-up is tracked in
+[plans.md](../../plans.md#open-plans), with the current workaround in the
+[runbook](../qnap-runbook.md#108-claude-workspace-trust).
 
 ## What is being asked
 

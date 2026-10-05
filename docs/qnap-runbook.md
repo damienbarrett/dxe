@@ -648,3 +648,29 @@ provider CLI (the line names it). A failed request, a service that does not
 come back, or a failed check is reported with "no rollback was performed" and
 never fails `dx-ai`; shared tools are never silently reverted. To restart by hand at any
 time, use `dx-usage-service restart` from the host.
+
+### 10.8 Claude workspace trust
+
+Automatic preparation of Claude's trust and bypass-permission acceptance
+for `/persist/services/agent-stats/workspace` is an
+[open DXE follow-up](../plans.md#open-plans). A fresh workspace can show a
+first-run prompt that blocks the unattended collector. Rust and Python
+capture detect this condition and report the required setup.
+
+Current workaround: in an interactive guest session as user `dx`, run:
+
+```bash
+cd /persist/services/agent-stats/workspace
+claude --dangerously-skip-permissions --model sonnet
+```
+
+Accept the first-run prompts, then enter `/exit`. Use the shared DXE
+Claude configuration; keep existing provider credentials and the keyring.
+Restart only the usage service with the normal host command:
+
+```bash
+./bin/dx-profile <profile> ./bin/dx-usage-service restart
+```
+
+Check the next report for a Claude row with data. This documents the manual
+workaround; automatic workspace preparation remains unimplemented.
