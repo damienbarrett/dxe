@@ -24,6 +24,13 @@ if ! declare -F dx_persist_relocate_dir >/dev/null; then
     source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../scripts/lib/dx-persist-relocate.sh"
 fi
 
+# WP4.5: the /persist directory marker (.dxe-persist-dir) is read with the
+# one parser the host also uses (bin/lib/dx-persist-dir.sh), loaded the same
+# sibling-relative way.
+if ! declare -F dx_persist_marker_parse >/dev/null; then
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../scripts/lib/dx-persist-marker.sh"
+fi
+
 dx_ensure_tree_owner() {
     local target="$1"
     local marker="$2"
@@ -110,12 +117,76 @@ dx_prepare_owned_directory() {
     fi
 }
 
+# Spec R17 "In the guest too" (plan D-9, WP4.5). In host-path mode /persist
+# is a directory on the NAS share, and Docker's restart policy can start the
+# guest after a NAS reboot without any host-side check. So before setup_persist
+# changes anything, the guest itself checks that ROOT is a mount point and
+# that its marker names this guest (DX_PERSIST_DIR_GUEST, from
+# dx-create-container) and is `ready`. A failure prints one Error line and
+# returns 1; bootstrap_phases runs under `set -e`, so the boot stops before
+# sshd. Read-only: the marker is never rewritten here.
+#
+# Volume mode (DX_PERSIST_STORAGE unset, empty or "volume") returns 0 at once
+# and keeps today's behaviour, including booting on the guest's own
+# filesystem when nothing is mounted. Any other mode fails closed, as
+# prepare_nix_volume_impl does for DX_NIX_STORAGE_MODE.
+dx_persist_storage_check() {
+    local root="$1"
+    local guest="${DX_PERSIST_DIR_GUEST:-}"
+    local marker
+
+    case "${DX_PERSIST_STORAGE:-volume}" in
+        volume) return 0 ;;
+        host-path) : ;;
+        *)
+            echo "Error: unknown DX_PERSIST_STORAGE '$DX_PERSIST_STORAGE'; expected volume or host-path. Refusing to touch $root; recreate the container with ./bin/dx-recreate." >&2
+            return 1
+            ;;
+    esac
+    marker="$root/$DX_PERSIST_MARKER_NAME"
+    if [ -z "$guest" ]; then
+        echo "Error: DX_PERSIST_DIR_GUEST is empty, so this host-path guest cannot tell whether $root is its own directory; recreate the container with ./bin/dx-recreate." >&2
+        return 1
+    fi
+    # Plain `mountpoint` (util-linux, in bootstrapEssentials) reads the mount
+    # table, so it sees a Docker bind. Its own stderr is dropped: the Error
+    # line below is the one line a refusal prints.
+    if ! mountpoint -q "$root" 2>/dev/null; then
+        echo "Error: $root is not a mount point, so host-path guest data would land on the container's own filesystem; check that the share directory is bound at $root, then run ./bin/dx-recreate." >&2
+        return 1
+    fi
+    if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+        echo "Error: $marker is missing, so $root is not a prepared directory for guest $guest (or the NAS share is not unlocked yet); check the share, then run ./bin/dx, whose host-side checks say what to do." >&2
+        return 1
+    fi
+    # Only a regular file is read: a symlink is never followed, and a FIFO
+    # would block the boot.
+    if [ -L "$marker" ] || [ ! -f "$marker" ]; then
+        echo "Error: $marker is malformed (not a regular file); inspect it on the NAS before starting the guest again." >&2
+        return 1
+    fi
+    if ! dx_persist_marker_parse <"$marker" 2>/dev/null; then
+        echo "Error: $marker is malformed; inspect it on the NAS (schema=1, guest=$guest and state=ready are expected) before starting the guest again." >&2
+        return 1
+    fi
+    if [ "$DX_PERSIST_MARKER_GUEST" != "$guest" ]; then
+        echo "Error: $marker names guest $DX_PERSIST_MARKER_GUEST, not $guest; this directory belongs to another guest. Check DX_PERSIST_HOST_ROOT and DX_CONTAINER_NAME in the profile, then run ./bin/dx-recreate." >&2
+        return 1
+    fi
+    if [ "$DX_PERSIST_MARKER_STATE" != ready ]; then
+        echo "Error: $marker has state $DX_PERSIST_MARKER_STATE, not ready; the guest starts only on a ready directory. Finish the migration, or after a rollback set the profile back to volume mode and run ./bin/dx-recreate." >&2
+        return 1
+    fi
+    echo "Verified host-path $root for guest $guest: a mount point with a ready $DX_PERSIST_MARKER_NAME."
+}
+
 setup_persist() {
     local persist_root="${1:-/persist}"
     if [ -L "$persist_root" ]; then
         echo "Error: refusing to prepare persisted storage through symlink: $persist_root" >&2
         return 1
     fi
+    dx_persist_storage_check "$persist_root" || return 1
     if [ -d "$persist_root" ]; then
         chown dx:dx "$persist_root"
         chmod 0755 "$persist_root"

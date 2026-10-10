@@ -1385,3 +1385,15 @@ and argv prepass, the Apple refusal arm, and `dx_persist_create_volume_spec` /
 persist `--volume` item changed in place and adds no line). Measured with
 `tests/run-coverage-linux.sh`: covered=100% scope_exec_lines=4596
 unscoped_prod_exec_lines=2640.
+
+## WP4.5 (2026-10-11)
+
+`scope_exec_lines_floor` 4596 -> 4630 (measured, 100% covered): the guest
+`/persist` check `dx_persist_storage_check` in
+`container/dx-nixos-26.05/bootstrap/persistence.sh` (storage-mode dispatch,
+the host-path mount, marker, guest and state refusals, the success line), its
+call in `setup_persist`, and the sibling-relative source of
+`scripts/lib/dx-persist-marker.sh`. `unscoped_prod_exec_lines_ceiling`
+unchanged at 2640: no entry-point line was added. Measured with
+`tests/run-coverage-linux.sh`: covered=100% scope_exec_lines=4630
+unscoped_prod_exec_lines=2640.
