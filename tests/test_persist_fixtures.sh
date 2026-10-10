@@ -303,6 +303,7 @@ tree_nonroot_cases() {
     persist_fixture_euid() { echo 1000; }
     out="$(PATH="$chowns:$PATH" persist_fixture_tree_build "$d" 2>&1)"; rc=$?
     unset -f persist_fixture_euid
+    # shellcheck source=lib/persist-fixtures.sh
     source "$LIB"
     assert_eq "builder exits 0 and prints nothing" "0:" "$rc:$out"
     assert_false "not root: chown is never run" test -e "$chowns/chown.log"
@@ -386,6 +387,7 @@ tree_nonroot_cases() {
     persist_fixture_euid() { echo 1000; }
     persist_fixture_tree_build "$d2" >/dev/null 2>&1
     unset -f persist_fixture_euid
+    # shellcheck source=lib/persist-fixtures.sh
     source "$LIB"
     if need persist_fixture_tree_list; then
         persist_fixture_tree_list "$d2" > "$SCRATCH/got2"
@@ -412,6 +414,7 @@ tree_root_stub_cases() {
     persist_fixture_euid() { echo 0; }
     out="$(PATH="$chowns:$PATH" persist_fixture_tree_build "$d" 2>&1)"; rc=$?
     unset -f persist_fixture_euid
+    # shellcheck source=lib/persist-fixtures.sh
     source "$LIB"
     assert_eq "root path: exits 0 and prints nothing" "0:" "$rc:$out"
     assert_eq "root path: exactly three chown calls with exact argv, in order" \
@@ -461,6 +464,7 @@ long_path_cases() {
     persist_fixture_euid() { echo 1000; }
     persist_fixture_tree_build "$long" >/dev/null 2>&1
     unset -f persist_fixture_euid
+    # shellcheck source=lib/persist-fixtures.sh
     source "$LIB"
     assert_true "DIR path is longer than 104 bytes" test "${#long}" -gt 104
     assert_true "socket still created under a very long DIR" test -S "$long/special/sock"
