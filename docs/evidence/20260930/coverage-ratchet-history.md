@@ -1317,6 +1317,11 @@ Verbatim rebaseline history from `tests/coverage/ratchet.env` before the ratio m
 # computation.
 ```
 
+## 2026-09-30: WP5.2 bootstrap protocol source line
+
+`unscoped_prod_exec_lines_ceiling` 2634 -> 2635 (+1). WP5.2 added one `source`
+line (`bin/lib/dx-bootstrap-protocol.sh`) to the `bin/dx-lib.sh` facade order.
+
 ## 2026-10-03: usage service (feat/usage-service-host)
 
 `unscoped_prod_exec_lines_ceiling` 2635 -> 2650 (+15). The first measurement of
@@ -1348,3 +1353,23 @@ the logic (including the new restart-count abort) lives in the covered
 `bin/lib/dx-container.sh`. Measured on a clean export at `c1beafa` with
 `tests/run-coverage-linux.sh`: `scope_exec_lines=4402`,
 `unscoped_prod_exec_lines=2641`, scope coverage 100%.
+
+## 2026-10-04: dx-create-keys body moved into bin/lib (fix/residuals-20261004)
+
+`unscoped_prod_exec_lines_ceiling` 2641 -> 2638 (-3). `bin/dx-create-keys`'s
+whole body moved into `bin/lib/dx-ssh-common.sh` (`dx_ssh_key_generate`),
+leaving one call line (-5). `bin/dx-mount` gained two lines for the primary
+key pair's new default location and its legacy one (+2). Measured on a clean
+export with `tests/run-coverage-linux.sh`: `scope_exec_lines=4450`, 100%
+covered. No exempt logic was added.
+
+## 2026-10-10: WP4.1 marker library and persist-dir module
+
+`scope_exec_lines_floor` 3935 -> 4560 (+625, the measured in-scope total on a
+clean scratch checkout, 100% covered). `bin/lib/dx-persist-dir.sh` and
+`scripts/lib/dx-persist-marker.sh` account for 110 of those lines.
+
+`unscoped_prod_exec_lines_ceiling` 2638 -> 2639 (+1). One
+`source "$DX_LIB_DIR/lib/dx-persist-dir.sh"` line in the `bin/dx-lib.sh`
+facade, which must load the new module. Measured 2639 with
+`tests/run-coverage-linux.sh`. No exempt logic was added.
