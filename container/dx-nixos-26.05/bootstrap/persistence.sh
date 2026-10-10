@@ -26,9 +26,15 @@ fi
 
 # WP4.5: the /persist directory marker (.dxe-persist-dir) is read with the
 # one parser the host also uses (bin/lib/dx-persist-dir.sh), loaded the same
-# sibling-relative way.
-if ! declare -F dx_persist_marker_parse >/dev/null; then
-    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../scripts/lib/dx-persist-marker.sh"
+# sibling-relative way. Only host-path mode needs it, so a tree published
+# without it still sources cleanly and boots in volume mode; in host-path
+# mode dx_persist_storage_check refuses, naming the library, instead.
+dx_persist_marker_library() {
+    printf '%s\n' "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../scripts/lib/dx-persist-marker.sh"
+}
+if ! declare -F dx_persist_marker_parse >/dev/null && [ -r "$(dx_persist_marker_library)" ]; then
+    # shellcheck source=/dev/null
+    source "$(dx_persist_marker_library)"
 fi
 
 dx_ensure_tree_owner() {
@@ -122,9 +128,10 @@ dx_prepare_owned_directory() {
 # guest after a NAS reboot without any host-side check. So before setup_persist
 # changes anything, the guest itself checks that ROOT is a mount point and
 # that its marker names this guest (DX_PERSIST_DIR_GUEST, from
-# dx-create-container) and is `ready`. A failure prints one Error line and
-# returns 1; bootstrap_phases runs under `set -e`, so the boot stops before
-# sshd. Read-only: the marker is never rewritten here.
+# dx-create-container) and is `ready`; it also refuses when the marker
+# library was not loaded. A failure prints one Error line and returns 1;
+# bootstrap_phases runs under `set -e`, so the boot stops before sshd.
+# Read-only: the marker is never rewritten here.
 #
 # Volume mode (DX_PERSIST_STORAGE unset, empty or "volume") returns 0 at once
 # and keeps today's behaviour, including booting on the guest's own
@@ -143,6 +150,10 @@ dx_persist_storage_check() {
             return 1
             ;;
     esac
+    if ! declare -F dx_persist_marker_parse >/dev/null || [ -z "${DX_PERSIST_MARKER_NAME:-}" ]; then
+        echo "Error: the /persist marker library $(dx_persist_marker_library) is not loaded, so this host-path guest cannot check $root; restart with ./bin/dx, which republishes the bootstrap." >&2
+        return 1
+    fi
     marker="$root/$DX_PERSIST_MARKER_NAME"
     if [ -z "$guest" ]; then
         echo "Error: DX_PERSIST_DIR_GUEST is empty, so this host-path guest cannot tell whether $root is its own directory; recreate the container with ./bin/dx-recreate." >&2

@@ -15,7 +15,10 @@ set -euo pipefail
 #   - the host-path success line;
 #   - constitution rule 3: the `mountpoint` stub is validated against the
 #     real tool where one exists (Linux CI and the kcov image), and a host
-#     without the tool fails closed.
+#     without the tool fails closed;
+#   - a missing marker library (scripts/lib/dx-persist-marker.sh) stops a
+#     host-path guest with one Error line naming it, with errexit on or off,
+#     and leaves volume mode unchanged and silent.
 # Every mutating command is a recording stub in each run; all file activity
 # stays inside $TMP_ROOT.
 
@@ -83,12 +86,13 @@ gu_new_case() { # NAME -> GU_DIR, GU_ROOT, GU_MARKER (a fresh, real directory)
     : >"$GU_DIR/log/calls"
 }
 
-# gu_run DIR FUNCTION ROOT MOUNTPOINT_MODE
+# gu_run DIR FUNCTION ROOT MOUNTPOINT_MODE [nolib]
 #   MOUNTPOINT_MODE: "mounted" (a stub that says ROOT is a mount point),
 #   "noisy" (a stub that fails and writes its own stderr line), or "real"
-#   (no stub: whatever `mountpoint` this host has, if any).
+#   (no stub: whatever `mountpoint` this host has, if any). "nolib" removes
+#   the marker parser first, as if its library had never been loaded.
 gu_run() {
-    local dir="$1" fn="$2" root="$3" probe="$4"
+    local dir="$1" fn="$2" root="$3" probe="$4" lib="${5:-}"
     (
         set +e
         export DX_PERSIST_STORAGE=host-path DX_PERSIST_DIR_GUEST="$GUEST"
@@ -99,6 +103,7 @@ gu_run() {
             noisy) mountpoint() { echo "mountpoint: $*: unexpected failure" >&2; return 1; } ;;
             real) : ;;
         esac
+        if [ "$lib" = nolib ]; then unset -f dx_persist_marker_parse; fi
         "$fn" "$root" </dev/null >"$dir/log/out" 2>"$dir/log/err"
         printf '%s\n' "$?" >"$dir/log/rc"
     ) || true
@@ -202,6 +207,74 @@ if command -v mountpoint >/dev/null 2>&1 && [ -d /proc ]; then
 else
     gu_expect_refusal "real probe: with no mountpoint tool on this host even /proc fails closed at the probe" \
         "$GU_DIR" "/proc is not a mount point"
+fi
+
+# --- A missing marker library fails closed in host-path mode only --------
+
+gu_new_case nolib-in-process
+gu_ready_marker >"$GU_MARKER"
+gu_run "$GU_DIR" setup_persist "$GU_ROOT" mounted nolib
+gu_expect_refusal "without the marker parser a host-path setup_persist refuses with one Error line naming dx-persist-marker.sh, nothing changed" \
+    "$GU_DIR" "dx-persist-marker.sh"
+
+# A bootstrap tree published without scripts/lib/dx-persist-marker.sh,
+# sourced by a fresh shell exactly as bootstrap.sh does. The probe is a file
+# (kcov breaks an inline `bash -c` that sources under set -u).
+GU_TREE="$TMP_ROOT/nolib-tree"
+command mkdir -p "$GU_TREE/bootstrap" "$GU_TREE/scripts/lib"
+command cp "$BOOTSTRAP_DIR/common.sh" "$BOOTSTRAP_DIR/persistence.sh" "$GU_TREE/bootstrap/"
+command cp "$CONTAINER_DIR/scripts/lib/dx-persist-relocate.sh" "$GU_TREE/scripts/lib/"
+declare -f gu_define_recorders >"$TMP_ROOT/recorders.sh"
+cat >"$TMP_ROOT/nolib-probe.sh" <<'PROBE'
+# $1 tree, $2 persist root, $3 errexit on|off, $4 recorder definitions.
+if [ "$3" = on ]; then set -euo pipefail; else set -uo pipefail; fi
+source "$4"
+gu_define_recorders
+mountpoint() { return 0; }
+source "$1/bootstrap/persistence.sh"
+setup_persist "$2"
+PROBE
+
+# gu_nolib_run DIR MODE ERREXIT -> DIR/log/{rc,out,err,calls}
+gu_nolib_run() {
+    local dir="$1" mode="$2" errexit="$3" rc=0
+    : >"$dir/log/calls"
+    if [ "$mode" = host-path ]; then
+        env GU_CALLS="$dir/log/calls" GU_STUB_BIN="$GU_STUB_BIN" \
+            DX_PERSIST_STORAGE=host-path DX_PERSIST_DIR_GUEST="$GUEST" \
+            bash "$TMP_ROOT/nolib-probe.sh" "$GU_TREE" "$GU_ROOT" "$errexit" "$TMP_ROOT/recorders.sh" \
+            </dev/null >"$dir/log/out" 2>"$dir/log/err" || rc=$?
+    else
+        env -u DX_PERSIST_STORAGE -u DX_PERSIST_DIR_GUEST GU_CALLS="$dir/log/calls" GU_STUB_BIN="$GU_STUB_BIN" \
+            bash "$TMP_ROOT/nolib-probe.sh" "$GU_TREE" "$GU_ROOT" "$errexit" "$TMP_ROOT/recorders.sh" \
+            </dev/null >"$dir/log/out" 2>"$dir/log/err" || rc=$?
+    fi
+    printf '%s\n' "$rc" >"$dir/log/rc"
+}
+
+for gu_errexit in on off; do
+    gu_new_case "nolib-tree-errexit-$gu_errexit"
+    gu_ready_marker >"$GU_MARKER"
+    gu_nolib_run "$GU_DIR" host-path "$gu_errexit"
+    gu_expect_refusal "a bootstrap tree without dx-persist-marker.sh (errexit $gu_errexit): host-path setup_persist refuses with one Error line naming the library, nothing changed" \
+        "$GU_DIR" "dx-persist-marker.sh"
+done
+
+gu_new_case nolib-tree-volume
+gu_nolib_run "$GU_DIR" volume on
+printf '%s\n' \
+    "chown dx:dx $GU_ROOT" \
+    "chmod 0755 $GU_ROOT" \
+    "install -d -o dx -g dx -m 0755 $GU_ROOT/home $GU_ROOT/home/dx" \
+    "mkdir -p $GU_ROOT/home/dx" \
+    "mkdir -p $GU_ROOT/home/dx/.local" \
+    "mkdir -p $GU_ROOT/home/dx/.local/state" \
+    "mkdir -p $GU_ROOT/home/dx/.local/share" >"$GU_DIR/log/expected-calls"
+if [ "$(cat "$GU_DIR/log/rc")" = 0 ] && [ ! -s "$GU_DIR/log/out" ] && [ ! -s "$GU_DIR/log/err" ] \
+    && cmp -s "$GU_DIR/log/expected-calls" "$GU_DIR/log/calls"; then
+    test_pass "a bootstrap tree without dx-persist-marker.sh leaves volume mode unchanged: silent, the usual seven calls"
+else
+    test_fail "a bootstrap tree without dx-persist-marker.sh leaves volume mode unchanged: silent, the usual seven calls (rc $(cat "$GU_DIR/log/rc"); err: $(cat "$GU_DIR/log/err"); calls: $(tr '\n' ';' <"$GU_DIR/log/calls"))"
 fi
 
 print_summary

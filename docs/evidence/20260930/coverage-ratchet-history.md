@@ -1397,3 +1397,12 @@ call in `setup_persist`, and the sibling-relative source of
 unchanged at 2640: no entry-point line was added. Measured with
 `tests/run-coverage-linux.sh`: covered=100% scope_exec_lines=4630
 unscoped_prod_exec_lines=2640.
+
+Follow-up (2026-10-11, verifier probe "a missing marker library skips the
+check"): `scope_exec_lines_floor` 4630 -> 4634 (measured, 100% covered). The
+marker library is now loaded only when readable, through the new
+`dx_persist_marker_library` helper, and `dx_persist_storage_check` refuses a
+host-path boot with one Error line naming the library when it is not
+loaded; volume mode is unaffected. `unscoped_prod_exec_lines_ceiling`
+unchanged at 2640. Measured with `tests/run-coverage-linux.sh`:
+covered=100% scope_exec_lines=4634 unscoped_prod_exec_lines=2640.
