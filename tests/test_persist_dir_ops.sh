@@ -39,15 +39,23 @@ set -uo pipefail
 #
 #   probe ROOT GUEST   stdout, exactly, then exit 0:
 #       root=<canonical ROOT: cd -P -- ROOT && pwd -P in the NAS shell>
-#       mounted=yes|no
+#       mounted=yes|no|unknown
 #       state=absent|symlink|empty|nonempty
 #       marker=absent|present
 #       <the marker file's bytes verbatim, only when marker=present>
-#     mounted is the pluggable stand-in (Gate A refines it): when the
-#     controller variable DX_PERSIST_HOST_MOUNT_SENTINEL is unset or empty
-#     the root counts as mounted; otherwise mounted=yes iff the file/dir
-#     <canonical ROOT>/<DX_PERSIST_HOST_MOUNT_SENTINEL> exists. state:
-#     symlink = the persist path is a symbolic link (even dangling; never
+#     mounted is a FAIL-CLOSED signal (spec R15: the share root must be proven
+#     mounted/unlocked before anything is created; an unmounted QTS volume can
+#     leave an empty mount point). The sentinel is the controller variable
+#     DX_PERSIST_HOST_MOUNT_SENTINEL, a config registry field (kind optname:
+#     one file name, no "/", no ".."; default empty; set per private profile
+#     like DX_PERSIST_HOST_ROOT; a name must not start with "." or "-").
+#     Unset or empty: mounted=unknown (never yes). Configured: mounted=yes
+#     iff <canonical ROOT>/<sentinel> exists as a REGULAR FILE (lstat; a
+#     directory or a symlink, even to a file, gives no), else mounted=no.
+#     The probe only reports facts; the POLICY (an existing marked directory
+#     proves itself through its marker; creating a new directory requires
+#     mounted=yes) belongs to WP4.3 and is not tested here.
+#     state: symlink = the persist path is a symbolic link (even dangling; never
 #     followed, so then marker=absent); empty = a directory with no entries
 #     at all (dotfiles count as entries); nonempty = a directory with any
 #     entry (the marker alone makes it nonempty); absent = nothing there.
@@ -91,6 +99,7 @@ case "$SCRATCH" in
     *) echo "unexpected scratch dir [$SCRATCH]" >&2; exit 1 ;;
 esac
 
+unset DX_PERSIST_HOST_MOUNT_SENTINEL
 NL='
 '
 MARKER_NAME=".dxe-persist-dir"
@@ -291,7 +300,7 @@ probe_cases() {
     nas dx_runtime_host_dir_probe "$root" "$g" >"$SCRATCH/probe.out" 2>"$SCRATCH/probe.err"
     rc=$?
     eq "absent: status 0" "0" "$rc"
-    file_eq_out "absent: exact report" "root=$canon${NL}mounted=yes${NL}state=absent${NL}marker=absent${NL}" "$SCRATCH/probe.out"
+    file_eq_out "absent: exact report" "root=$canon${NL}mounted=unknown${NL}state=absent${NL}marker=absent${NL}" "$SCRATCH/probe.out"
     eq "probe is exactly one ssh call" "1" "$(rec_count)"
     cmd_check "probe" 1 && {
         word_is "probe" 1 "$root"
@@ -302,26 +311,26 @@ probe_cases() {
     d="$root/dxe/$g/persist"
     mkdir -p "$d"
     nas dx_runtime_host_dir_probe "$root" "$g" >"$SCRATCH/probe.out" 2>/dev/null
-    file_eq_out "empty: exact report" "root=$canon${NL}mounted=yes${NL}state=empty${NL}marker=absent${NL}" "$SCRATCH/probe.out"
+    file_eq_out "empty: exact report" "root=$canon${NL}mounted=unknown${NL}state=empty${NL}marker=absent${NL}" "$SCRATCH/probe.out"
 
     : >"$d/.hidden"
     nas dx_runtime_host_dir_probe "$root" "$g" >"$SCRATCH/probe.out" 2>/dev/null
-    file_eq_out "a dotfile makes it nonempty" "root=$canon${NL}mounted=yes${NL}state=nonempty${NL}marker=absent${NL}" "$SCRATCH/probe.out"
+    file_eq_out "a dotfile makes it nonempty" "root=$canon${NL}mounted=unknown${NL}state=nonempty${NL}marker=absent${NL}" "$SCRATCH/probe.out"
     rm -f "$d/.hidden"
 
     printf 'data\n' >"$d/file"
     nas dx_runtime_host_dir_probe "$root" "$g" >"$SCRATCH/probe.out" 2>/dev/null
-    file_eq_out "nonempty: exact report" "root=$canon${NL}mounted=yes${NL}state=nonempty${NL}marker=absent${NL}" "$SCRATCH/probe.out"
+    file_eq_out "nonempty: exact report" "root=$canon${NL}mounted=unknown${NL}state=nonempty${NL}marker=absent${NL}" "$SCRATCH/probe.out"
 
     printf '%s\n' "$MARKER_TEXT" >"$d/$MARKER_NAME"
     nas dx_runtime_host_dir_probe "$root" "$g" >"$SCRATCH/probe.out" 2>/dev/null
     file_eq_out "marker present: text follows the marker=present line verbatim" \
-        "root=$canon${NL}mounted=yes${NL}state=nonempty${NL}marker=present${NL}$MARKER_TEXT${NL}" "$SCRATCH/probe.out"
+        "root=$canon${NL}mounted=unknown${NL}state=nonempty${NL}marker=present${NL}$MARKER_TEXT${NL}" "$SCRATCH/probe.out"
 
     rm -f "$d/file"
     nas dx_runtime_host_dir_probe "$root" "$g" >"$SCRATCH/probe.out" 2>/dev/null
     file_eq_out "the marker alone is nonempty" \
-        "root=$canon${NL}mounted=yes${NL}state=nonempty${NL}marker=present${NL}$MARKER_TEXT${NL}" "$SCRATCH/probe.out"
+        "root=$canon${NL}mounted=unknown${NL}state=nonempty${NL}marker=present${NL}$MARKER_TEXT${NL}" "$SCRATCH/probe.out"
 
     # A symlink is reported as such, never followed (its target holds a marker).
     local other="$root/elsewhere"
@@ -331,19 +340,19 @@ probe_cases() {
     ln -s "$other" "$d"
     nas dx_runtime_host_dir_probe "$root" "$g" >"$SCRATCH/probe.out" 2>/dev/null
     file_eq_out "symlink to a populated dir: state=symlink, marker not followed" \
-        "root=$canon${NL}mounted=yes${NL}state=symlink${NL}marker=absent${NL}" "$SCRATCH/probe.out"
+        "root=$canon${NL}mounted=unknown${NL}state=symlink${NL}marker=absent${NL}" "$SCRATCH/probe.out"
     rm -f "$d"
     ln -s "$root/no-such-target" "$d"
     nas dx_runtime_host_dir_probe "$root" "$g" >"$SCRATCH/probe.out" 2>/dev/null
     file_eq_out "dangling symlink: state=symlink" \
-        "root=$canon${NL}mounted=yes${NL}state=symlink${NL}marker=absent${NL}" "$SCRATCH/probe.out"
+        "root=$canon${NL}mounted=unknown${NL}state=symlink${NL}marker=absent${NL}" "$SCRATCH/probe.out"
 
     # A symlinked root resolves canonically.
     local link="$SCRATCH/dxe-root-link"
     ln -s "$root" "$link"
     nas dx_runtime_host_dir_probe "$link" "$g" >"$SCRATCH/probe.out" 2>/dev/null
     file_eq_out "symlinked root: canonical root reported" \
-        "root=$canon${NL}mounted=yes${NL}state=symlink${NL}marker=absent${NL}" "$SCRATCH/probe.out"
+        "root=$canon${NL}mounted=unknown${NL}state=symlink${NL}marker=absent${NL}" "$SCRATCH/probe.out"
     rm -f "$link"
 
     # Not a directory.
@@ -355,27 +364,73 @@ probe_cases() {
 }
 probe_cases
 
-test_section "WP4.2: probe's mounted flag is the pluggable sentinel check"
+test_section "WP4.2: probe's mounted flag fails closed on a sentinel file"
 mount_cases() {
-    local root canon
+    local root canon n=".share-mounted" S="share-mounted" rc link
     root="$(new_root)"
     use_root "$root"
     canon="$(physical "$root")"
+    nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
+    has "sentinel unset: mounted=unknown" "$SCRATCH/probe.out" "mounted=unknown"
     DX_PERSIST_HOST_MOUNT_SENTINEL="" nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
-    has "empty sentinel setting: mounted=yes" "$SCRATCH/probe.out" "mounted=yes"
+    has "sentinel empty: mounted=unknown" "$SCRATCH/probe.out" "mounted=unknown"
+    : >"$root/$n"
+    DX_PERSIST_HOST_MOUNT_SENTINEL="" nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
+    if grep -Fq "mounted=yes" "$SCRATCH/probe.out"; then test_fail "no sentinel configured is never mounted=yes"; else test_pass "no sentinel configured is never mounted=yes"; fi
+    rm -f "$root/$n"
     reclog_reset
-    DX_PERSIST_HOST_MOUNT_SENTINEL=".share-mounted" nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
-    file_eq_out "sentinel missing: mounted=no, rest still reported" \
+    DX_PERSIST_HOST_MOUNT_SENTINEL="$S" nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
+    file_eq_out "sentinel configured but absent: mounted=no, rest still reported" \
         "root=$canon${NL}mounted=no${NL}state=absent${NL}marker=absent${NL}" "$SCRATCH/probe.out"
     eq "the sentinel check is part of the same single ssh call" "1" "$(rec_count)"
+    cmd_check "probe (sentinel)" 1 && word_is "probe (sentinel)" 1 "$S"
     reclog_reset
-    : >"$root/.share-mounted"
-    DX_PERSIST_HOST_MOUNT_SENTINEL=".share-mounted" nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
-    has "sentinel present: mounted=yes" "$SCRATCH/probe.out" "mounted=yes"
-    DX_PERSIST_HOST_MOUNT_SENTINEL=".other-sentinel" nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
+    : >"$root/$S"
+    DX_PERSIST_HOST_MOUNT_SENTINEL="$S" nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
+    rc=$?
+    eq "sentinel present: status 0" "0" "$rc"
+    file_eq_out "sentinel present (regular file): mounted=yes" \
+        "root=$canon${NL}mounted=yes${NL}state=absent${NL}marker=absent${NL}" "$SCRATCH/probe.out"
+    DX_PERSIST_HOST_MOUNT_SENTINEL="other-sentinel" nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
     has "a different sentinel name is honoured" "$SCRATCH/probe.out" "mounted=no"
+    rm -f "$root/$S"
+    mkdir "$root/$S"
+    DX_PERSIST_HOST_MOUNT_SENTINEL="$S" nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
+    has "sentinel that is a directory: mounted=no" "$SCRATCH/probe.out" "mounted=no"
+    rmdir "$root/$S"
+    : >"$root/real-file"
+    ln -s real-file "$root/$S"
+    DX_PERSIST_HOST_MOUNT_SENTINEL="$S" nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
+    has "sentinel that is a symlink to a file: mounted=no" "$SCRATCH/probe.out" "mounted=no"
+    rm -f "$root/$S"
+    ln -s no-such-target "$root/$S"
+    DX_PERSIST_HOST_MOUNT_SENTINEL="$S" nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
+    has "sentinel that is a dangling symlink: mounted=no" "$SCRATCH/probe.out" "mounted=no"
+    # The sentinel is looked up under the canonical root, via a symlinked root.
+    rm -f "$root/$S"
+    : >"$root/$S"
+    link="$SCRATCH/dxe-sentinel-root-link"
+    ln -s "$root" "$link"
+    DX_PERSIST_HOST_MOUNT_SENTINEL="$S" nas dx_runtime_host_dir_probe "$link" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
+    has "sentinel found through a symlinked root: mounted=yes" "$SCRATCH/probe.out" "mounted=yes"
+    rm -f "$link"
 }
 mount_cases
+
+test_section "WP4.2: the sentinel is a validated profile field"
+sentinel_field_cases() {
+    local f=DX_PERSIST_HOST_MOUNT_SENTINEL v
+    check "$f is a registry field (dx_config_is_field)" dx_config_is_field "$f"
+    eq "$f kind is optname" "optname" "$(dx_config_kind "$f" 2>/dev/null)"
+    eq "$f default is empty" "" "$(dx_config_default "$f" 2>/dev/null)"
+    check "$f default is registered (default lookup succeeds)" dx_config_default "$f"
+    check "$f: empty is accepted" dx_config_validate_value "$f" ""
+    check "$f: a plain file name is accepted" dx_config_validate_value "$f" "share-mounted"
+    for v in "a/b" "/abs" "../x" ".." "dir/" "a b" ".hidden" "-dash"; do
+        check_not "$f: [$v] is rejected" dx_config_validate_value "$f" "$v"
+    done
+}
+sentinel_field_cases
 
 # ---------------------------------------------------------------------------
 test_section "WP4.2: create makes the directory and a valid marker, nothing else"
@@ -468,7 +523,7 @@ quoting_cases() {
     reclog_reset
     nas dx_runtime_host_dir_probe "$rel" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
     file_eq_out "probe with a dashed, spaced ROOT" \
-        "root=$canon${NL}mounted=yes${NL}state=nonempty${NL}marker=present${NL}$MARKER_TEXT${NL}" "$SCRATCH/probe.out"
+        "root=$canon${NL}mounted=unknown${NL}state=nonempty${NL}marker=present${NL}$MARKER_TEXT${NL}" "$SCRATCH/probe.out"
     cmd_check "probe (dash+space)" 1 && word_is "probe (dash+space)" 1 "$rel"
 
     reclog_reset
