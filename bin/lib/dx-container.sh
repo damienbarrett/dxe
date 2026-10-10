@@ -645,6 +645,62 @@ dx_persist_create_volume_spec() {
     fi
 }
 
+# The source /persist is configured to have (plans/do D-6): the named volume
+# in volume mode, the derived host directory in host-path mode. Same
+# derivation as dx_persist_create_volume_spec above.
+dx_persist_configured_source() {
+    if [ "${DX_PERSIST_STORAGE:-volume}" = host-path ]; then
+        printf '%s/dxe/%s/persist\n' "$DX_PERSIST_HOST_ROOT" "$DX_CONTAINER_NAME"
+    else
+        printf '%s\n' "$DX_PERSIST_VOLUME"
+    fi
+}
+
+# dx_persist_actual_source <name> -- the source of the container's mount whose
+# destination is /persist (a volume name or a host path), read from
+# dx_runtime_container_mounts; "(no /persist mount)" when it has none.
+# Non-zero when the mounts cannot be read.
+dx_persist_actual_source() {
+    local mounts actual
+    mounts="$(dx_runtime_container_mounts "$1")" || return 1
+    actual="$(awk -F'|' '$3 == "/persist" { print $2; exit }' <<<"$mounts")"
+    printf '%s\n' "${actual:-(no /persist mount)}"
+}
+
+# The body of dx-status's "/persist storage" section: configured, actual and,
+# when they differ, a mismatch line. It never says a switch happened: only
+# dx-recreate changes what a container mounts.
+dx_persist_status_report() {
+    local configured actual
+    configured="$(dx_persist_configured_source)"
+    printf 'configured: %s\n' "$configured"
+    if ! container_exists "$DX_CONTAINER_NAME"; then
+        printf 'actual: (container not present)\n'
+        return 0
+    fi
+    if ! actual="$(dx_persist_actual_source "$DX_CONTAINER_NAME")"; then
+        printf 'actual: (unavailable)\n'
+        return 0
+    fi
+    printf 'actual: %s\n' "$actual"
+    if [ "$actual" != "$configured" ]; then
+        printf 'mismatch: /persist is not on the configured storage; dx-recreate applies the configuration\n'
+    fi
+    return 0
+}
+
+# One Warning line (stderr) when the existing container's /persist source
+# differs from the configured one; silent otherwise or when unreadable. The
+# caller carries on either way.
+dx_persist_warn_mismatch() {
+    local configured actual
+    actual="$(dx_persist_actual_source "$DX_CONTAINER_NAME")" || return 0
+    configured="$(dx_persist_configured_source)"
+    [ "$actual" = "$configured" ] && return 0
+    echo "Warning: $DX_CONTAINER_NAME's /persist is on $actual but the configuration says $configured; run dx-recreate to apply the configuration." >&2
+    return 0
+}
+
 # Appends the guest environment for host-path mode to CREATE_ARGS; volume mode
 # appends nothing, so its create argv is byte-identical to before.
 dx_persist_create_env_args() {

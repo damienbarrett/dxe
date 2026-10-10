@@ -114,6 +114,12 @@ dx_runtime_container_running() { dx_runtime_dispatch container_running "$@"; }
 # has no restart policy). bin/dx-wait-ssh uses the rise to spot a crash loop.
 dx_runtime_container_restart_count() { dx_runtime_dispatch container_restart_count "$@"; }
 dx_runtime_container_list() { dx_runtime_dispatch container_list "$@"; }
+# dx_runtime_container_mounts <name> -- the container's ACTUAL mounts, one
+# `type|source|destination|rw` line each (a named volume's source is its
+# name, a bind's its host path). Non-zero with no output when the container
+# does not exist. bin/dx-status and bin/dx-start-container compare the
+# /persist line with the configured source (plans/do D-6).
+dx_runtime_container_mounts() { dx_runtime_dispatch container_mounts "$@"; }
 
 # dx_runtime_container_create's parameter vocabulary is deliberately
 # runtime-NEUTRAL (qnap-dxe-plan.md DQ2: "runtime-specific CLI syntax ...

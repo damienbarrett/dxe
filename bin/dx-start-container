@@ -20,6 +20,10 @@ trap dx_lifecycle_lock_release EXIT HUP INT TERM
 
 dx_nix_volume_claim_acquire "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME"
 
+# Plans/do D-6: warn (once) when the existing container's /persist is not on
+# the configured storage; only dx-recreate changes that, so carry on.
+dx_persist_warn_mismatch
+
 if container_is_running "$DX_CONTAINER_NAME"; then
     echo "Container $DX_CONTAINER_NAME is already running; skipping start."
 else

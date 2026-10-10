@@ -16,6 +16,8 @@
 # Safe to source: defines functions only, no command availability exit,
 # service start, or I/O at import time.
 
+DX_RUNTIME_APPLE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 dx_runtime_apple_available() {
     command -v container >/dev/null 2>&1 && return 0
     cat >&2 <<'EOF'
@@ -338,4 +340,20 @@ dx_runtime_apple_lock_acquire() {
 
 dx_runtime_apple_lock_release() {
     dx_lock_release "$1"
+}
+
+# dx_runtime_container_mounts <name> (plans/do D-6): one `type|source|
+# destination|rw` line per mount, parsed from the `container inspect` JSON
+# without jq or python. The real shape (container 1.4.1) is
+# configuration.mounts[] = {destination, options[], source, type:{volume:
+# {cache:{..}, format, name, sync:{..}}} | type:{virtiofs:{}}} with
+# alphabetical keys and nested objects both before and after "name", so a
+# small brace-depth-aware tokenizer reads each mount's own top-level keys
+# instead of grepping for the first "name". A volume reports its VOLUME NAME,
+# a virtiofs host share is a `bind` with its source path; `ro` when
+# "options" contains "ro".
+dx_runtime_apple_container_mounts() {
+    local json
+    json="$(container inspect "$1" 2>/dev/null)" || return 1
+    printf '%s\n' "$json" | awk -f "$DX_RUNTIME_APPLE_LIB_DIR/dx-inspect-mounts.awk"
 }
