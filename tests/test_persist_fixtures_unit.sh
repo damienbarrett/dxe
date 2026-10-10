@@ -290,6 +290,32 @@ existing_entry_cases() {
 }
 existing_entry_cases
 
+# ---------------------------------------------------------------------------
+test_section "persist-fixtures unit: the builder refuses a directory swapped after validation"
+
+# The validated path is replaced by a function-level seam that names a symlink
+# (as if a component were swapped between validation and cd); no real race.
+swapped_dir_cases() {
+    local a="$SCRATCH/swap/area" err rc
+    mkdir -p "$a/real" "$a/other"
+    ln -s other "$a/link"
+    err="$(
+        TMPDIR="$a"
+        export TMPDIR
+        builtin cd -- "$SCRATCH" || exit 97
+        persist_fixture_euid() { echo 1000; }
+        _persist_fixture_build_dir() { printf '%s/link/' "$a"; }
+        persist_fixture_tree_build "$a/real" 2>&1 >/dev/null
+    )"
+    rc=$?
+    assert_eq "a validated path that now resolves elsewhere: status 1" "1" "$rc"
+    assert_eq "a validated path that now resolves elsewhere: says no longer validated" "yes" \
+        "$(grep -Fq 'no longer the directory' <<<"$err" && echo yes || echo "no: $err")"
+    assert_eq "a validated path that now resolves elsewhere: nothing built in either" "|" \
+        "$(ls -A "$a/other")|$(ls -A "$a/real")"
+}
+swapped_dir_cases
+
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     print_summary
     exit_with_code

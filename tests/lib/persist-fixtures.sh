@@ -164,6 +164,13 @@ persist_fixture_tree_build() {
     esac
     (
         cd -P -- "$phys" || exit 1
+        # The check-then-act window: DIR was validated before this cd, so a
+        # component swapped for a symlink since would land elsewhere. Refuse
+        # unless the physical cwd is the very path that was validated.
+        if [ "${PWD%/}/" != "$phys" ]; then
+            echo "persist-fixtures: refusing to build in [$dir]: it is no longer the directory that was validated" >&2
+            exit 1
+        fi
         for name in plain.txt empty-file secret-0600.txt private-0700 ._root-meta nested links special names owners; do
             if [ -e "$name" ] || [ -L "$name" ]; then
                 echo "persist-fixtures: refusing to build in [$dir]: it already holds $name" >&2
@@ -185,7 +192,7 @@ persist_fixture_tree_build() {
         ln links/b-one nested/b-two
         ln -s ../plain.txt links/to-plain
         ln -s no-such-target links/dangling
-        (cd special && perl -MIO::Socket::UNIX -e \
+        (cd ./special && perl -MIO::Socket::UNIX -e \
             'IO::Socket::UNIX->new(Local => "sock", Listen => 1) or die "socket: $!\n"') || exit 1
         mkfifo special/fifo
         printf 'x' > "names/line
