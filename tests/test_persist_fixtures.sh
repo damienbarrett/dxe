@@ -64,6 +64,16 @@ set -uo pipefail
 #      with l -> /elsewhere), "/dxe-x", "$HOME/dxe-x" and "$REPO/dxe-x" are
 #      all refused.
 #
+#      Hardening pinned by tests/test_persist_fixtures_safety.sh (WP0.2
+#      safety review), whose contract wins where the two differ: a relative
+#      PATH is refused (so the "." parent of a bare name above never
+#      applies); there is no usable temp area when it is, or contains, the
+#      account home or the checkout; before removal only directories get
+#      u+rwx (no chmod -R); the tree builder builds only strictly inside the
+#      temp area, never re-permissions entries that existed before it ran,
+#      and resolves a relative DIR against the real cwd; the NAS fake stores
+#      a relative ROOT as its absolute physical path.
+#
 #      Tool lookup. The destructive commands it runs (rm, chmod, and any of
 #      chown, mv, find, rmdir, unlink, rsync it chooses to use) are found
 #      through PATH -- never an absolute path, `command -p`, perl or another
