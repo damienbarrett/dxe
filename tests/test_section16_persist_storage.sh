@@ -60,12 +60,14 @@ assert_grep_in_file "$SSH_COMMON_LIB" \
     "mkdir -p /persist" \
     "bootstrap launch command creates fixed /persist path"
 
+# WP3.3: the persist --volume spec is chosen by mode in bin/lib/dx-container.sh
+# (dx_persist_create_volume_spec); dx-create-container only calls it.
 assert_grep_in_file "$DX_CREATE" \
-    "DX_PERSIST_VOLUME" \
-    "dx-create-container references DX_PERSIST_VOLUME"
-assert_grep_in_file "$DX_CREATE" \
-    "[-]-volume[= ].*DX_PERSIST_VOLUME:/persist:rw" \
-    "dx-create-container mounts the persist volume at /persist"
+    "dx_persist_create_volume_spec" \
+    "dx-create-container takes its persist volume spec from dx_persist_create_volume_spec"
+assert_grep_in_file "$BASE_DIR/bin/lib/dx-container.sh" \
+    "persist:%s:/persist:rw.*DX_PERSIST_VOLUME" \
+    "dx_persist_create_volume_spec mounts the persist volume at /persist in volume mode"
 assert_file_not_contains "$DX_CREATE" \
     "DX_PERSIST_PATH" \
     "dx-create-container does not consume DX_PERSIST_PATH"

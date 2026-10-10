@@ -134,6 +134,15 @@ dx_runtime_container_list() { dx_runtime_dispatch container_list "$@"; }
 #                               /nix per DQ4, never CAP_SYS_ADMIN)
 #   --volume persist:VOLNAME:TARGET:MODE    today's target is always the
 #                               fixed guest path /persist
+#   --volume persist-dir:PATH:TARGET:MODE  (plans/do D-4) a host directory
+#                               PATH bound at TARGET instead of the persist
+#                               volume, for DX_PERSIST_STORAGE=host-path.
+#                               PATH must not contain ':' (the spec splits
+#                               on it) or ',' (it would inject extra --mount
+#                               options); the parser refuses both. docker-ssh
+#                               renders ONE `--mount type=bind,source=PATH,
+#                               target=TARGET[,readonly]` and touches nothing
+#                               on the host; Apple refuses the role.
 #   --volume bootstrap:VOLNAME:TARGET:MODE  target is DX_BOOTSTRAP_PATH
 #   --volume git:SRC:TARGET:MODE            optional host bind mount
 #   --env KEY=VALUE             repeatable, rendered in the order given
@@ -201,6 +210,27 @@ dx_runtime_container_create_parse_volume_spec() {
             DXE_VOLSPEC_TARGET=""
             DXE_VOLSPEC_MODE="${rest##*:}"
             ;;
+        persist-dir:*)
+            DXE_VOLSPEC_ROLE=persist-dir
+            rest="${spec#persist-dir:}"
+            case "$rest" in
+                *,*)
+                    echo "Error: a persist-dir path must not contain ',' (it would inject extra --mount options): '$spec'." >&2
+                    return 1
+                    ;;
+            esac
+            # PATH:TARGET:MODE is exactly three fields: a ':' in PATH makes four.
+            case "$rest" in
+                *:*:*:*)
+                    echo "Error: a persist-dir path must not contain ':' (the volume spec splits on it): '$spec'." >&2
+                    return 1
+                    ;;
+            esac
+            DXE_VOLSPEC_NAME="${rest%%:*}"
+            rest="${rest#*:}"
+            DXE_VOLSPEC_TARGET="${rest%%:*}"
+            DXE_VOLSPEC_MODE="${rest##*:}"
+            ;;
         persist:*|bootstrap:*|git:*)
             DXE_VOLSPEC_ROLE="${spec%%:*}"
             rest="${spec#*:}"
@@ -210,7 +240,7 @@ dx_runtime_container_create_parse_volume_spec() {
             DXE_VOLSPEC_MODE="${rest##*:}"
             ;;
         *)
-            echo "Error: unrecognized --volume spec '$spec' (expected nix:NAME:MODE or {persist,bootstrap,git}:NAME:TARGET:MODE)." >&2
+            echo "Error: unrecognized --volume spec '$spec' (expected nix:NAME:MODE or {persist,bootstrap,git,persist-dir}:NAME:TARGET:MODE)." >&2
             return 1
             ;;
     esac

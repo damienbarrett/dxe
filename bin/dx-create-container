@@ -111,7 +111,7 @@ CREATE_ARGS=(
     --name "$DX_CONTAINER_NAME"
     --image "$DX_IMAGE"
     --volume "nix:$DX_NIX_VOLUME:rw"
-    --volume "persist:$DX_PERSIST_VOLUME:/persist:rw"
+    --volume "$(dx_persist_create_volume_spec)"
     --volume "bootstrap:$DX_BOOTSTRAP_VOLUME:$DX_BOOTSTRAP_PATH:rw"
     --env "HOST_TZ=$HOST_TZ"
     --env "DX_GUEST_ACTIVATION_TIMEOUT=$DX_GUEST_ACTIVATION_TIMEOUT"
@@ -135,6 +135,9 @@ CREATE_ARGS=(
     --health-interval 10s
     --health-retries 3
 )
+
+# host-path mode: the two guest variables (nothing in volume mode).
+dx_persist_create_env_args
 
 # Usage service items (on only; off appends nothing): see bin/lib/dx-usage-service.sh.
 dx_usage_host_create_args

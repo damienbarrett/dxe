@@ -142,6 +142,10 @@ dx_runtime_apple_container_create() {
             --volume)
                 dx_runtime_container_create_parse_volume_spec "$2" || return 1
                 case "$DXE_VOLSPEC_ROLE" in
+                    persist-dir)
+                        echo "Error: a persist-dir volume (DX_PERSIST_STORAGE=host-path) is not supported by DX_RUNTIME=apple; see docs/guest.md for reaching /persist from the Mac." >&2
+                        return 1
+                        ;;
                     nix) flags+=(--volume "$DXE_VOLSPEC_NAME:/var/lib/dx-nix-raw:$DXE_VOLSPEC_MODE") ;;
                     *) flags+=(--volume "$DXE_VOLSPEC_NAME:$DXE_VOLSPEC_TARGET:$DXE_VOLSPEC_MODE") ;;
                 esac

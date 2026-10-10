@@ -632,3 +632,22 @@ dx_connect_or_bring_up() {
     dx_lifecycle_lock_drop
     exec "$script_dir/dx-ssh" "$@"
 }
+
+# The --volume spec for /persist (plans/do D-4, D-9): the named persist volume
+# in volume mode (today's spec, unchanged), or the derived per-guest host
+# directory $DX_PERSIST_HOST_ROOT/dxe/$DX_CONTAINER_NAME/persist as a
+# persist-dir bind in host-path mode.
+dx_persist_create_volume_spec() {
+    if [ "${DX_PERSIST_STORAGE:-volume}" = host-path ]; then
+        printf 'persist-dir:%s/dxe/%s/persist:/persist:rw' "$DX_PERSIST_HOST_ROOT" "$DX_CONTAINER_NAME"
+    else
+        printf 'persist:%s:/persist:rw' "$DX_PERSIST_VOLUME"
+    fi
+}
+
+# Appends the guest environment for host-path mode to CREATE_ARGS; volume mode
+# appends nothing, so its create argv is byte-identical to before.
+dx_persist_create_env_args() {
+    [ "${DX_PERSIST_STORAGE:-volume}" = host-path ] || return 0
+    CREATE_ARGS+=(--env "DX_PERSIST_STORAGE=host-path" --env "DX_PERSIST_DIR_GUEST=$DX_CONTAINER_NAME")
+}
