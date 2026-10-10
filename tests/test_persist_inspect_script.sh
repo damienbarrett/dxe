@@ -75,8 +75,9 @@
 #  --write-probe (Q-10 only): exactly one ssh call whose remote command is
 #    `<docker> run` with `--name dxe-spike-<suffix>`,
 #    `--label dxe.role=spike`, DXE_QNAP_PROBE_IMAGE, and a bind whose source
-#    is DXE_QNAP_SHARE_ROOT. Inside it: mkdir of
-#    <root>/dxe/.dxe-spike-<random>, `chown`, a root-owned 0700 mkdir, then
+#    is DXE_QNAP_SHARE_ROOT. Inside it (WP2.1b: directly in the share root,
+#    verified by read-back; see tests/test_persist_inspect_probe.sh): mkdir of
+#    <root>/.dxe-spike-<random>, `chown`, a root-owned 0700 mkdir, then
 #    removal of that one directory (no globs, no `..`). The only write verbs
 #    anywhere are mkdir, chown, rm, rmdir, and every operand contains
 #    `.dxe-spike-` (or is a variable assigned from such a path in the same
@@ -270,6 +271,7 @@ check() { # check <description> <command...>
 }
 
 has() { grep -Fq -- "$2" <<<"$1"; }
+lacks_text() { ! grep -Fq -- "$2" <<<"$1"; }
 
 report_file() { ls "$HOME_DIR"/dxe-recovery/qnap/phase1-persist-inspect-*.md 2>/dev/null | head -n1; }
 
@@ -422,7 +424,8 @@ check "probe binds only the share root" has "$RUN_TEXT" "$SHARE"
 check "probe never binds the docker socket or other host paths" test -z "$(grep -Eo -- '(-v|--volume)[= ][^ ]+' <<<"$RUN_TEXT" | grep -Fv -- "$SHARE")"
 check "probe writes only .dxe-spike-* operands" test -n "$(all_writes)" -a -z "$(all_writes | grep BADOPERAND)"
 check "probe uses only mkdir, chown, rm, rmdir" test -n "$(all_writes)" -a -z "$(all_writes | grep VERB | grep -Ev 'VERB:(mkdir|chown|rm|rmdir)$')"
-check "probe creates a .dxe-spike- directory under dxe/" has "$RUN_TEXT" "/dxe/.dxe-spike-"
+check "probe creates its .dxe-spike- directory directly in the share root" has "$RUN_TEXT" "/share/.dxe-spike-"
+check "probe never depends on <root>/dxe (WP2.1b)" lacks_text "$RUN_TEXT" "/share/dxe"
 check "probe runs a chown" has "$(all_writes)" "VERB:chown"
 check "probe makes a directory" has "$(all_writes)" "VERB:mkdir"
 check "probe removes its own directory" has "$(all_writes)" "VERB:rm"

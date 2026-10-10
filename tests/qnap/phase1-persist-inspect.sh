@@ -25,11 +25,19 @@
 #
 # Write probe (Q-10 only, --write-probe): ONE `docker run` of a one-off
 # container named dxe-spike-* and labelled dxe.role=spike, bind-mounting
-# only the share root. Inside it: mkdir <root>/dxe/.dxe-spike-<random>,
-# chown, a 0700 mkdir as root, then removal of that one directory. Every
-# write operand is that .dxe-spike-* path. The removal is unconditional and
-# the container is --rm. If the ssh connection is cut mid-probe, remove a
-# leftover <root>/dxe/.dxe-spike-* directory by hand.
+# only the share root. Inside it: mkdir <root>/.dxe-spike-<random> (directly
+# in the share root; <root>/dxe is never needed), chown 30033:30033, and a
+# 0700 mkdir as root, each VERIFIED by reading the owner and mode back with
+# `stat -c '%u:%g %a'` (a chown that exits 0 but changes nothing, a
+# root-squashed create or an ignored mode is a fail, reported with its
+# observed= value), then removal of that one directory. Every write operand
+# is that .dxe-spike-* path. The removal is unconditional and the container
+# is --rm. If the ssh connection is cut mid-probe, remove a leftover
+# <root>/.dxe-spike-* directory by hand.
+#
+# Every remote command is POSIX sh (the QNAP shell is busybox sh, and the
+# probe runs sh inside an image): no pipefail, no bashisms. A find in a
+# count pipeline reports its own exit status as a trailing find-rc=<n> line.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -179,6 +187,12 @@ else
     set_q 4 "$q4_st" "DockerRootDir=${q4_root:-n/a}"
 fi
 
+# --- Q-9 input needed by Q-8: the remote uid ------------------------------------
+
+remote "id -u"
+uid_rc=$R_RC
+uid="$(printf '%s' "$R_OUT" | head -n1)"
+
 # --- Q-8: size and contents of the volume ----------------------------------------
 
 if [ -z "$MOUNTPOINT" ]; then
@@ -186,27 +200,64 @@ if [ -z "$MOUNTPOINT" ]; then
 else
     MP="$(rq "$MOUNTPOINT")"
     q8_st=ok
+    q8_partial=""
     # count <label> <remote command>: sets COUNT; a failed command fails Q-8.
     count() {
         remote "$2"
         if [ "$R_RC" -ne 0 ]; then q8_st=fail; fi
         COUNT="$(int "$R_OUT")"
     }
+    # find_rc <output>: splits the trailing find-rc=<n> status line off a
+    # find group's output; sets FIND_RC (0 if absent) and FIND_OUT.
+    find_rc() {
+        FIND_RC="$(printf '%s\n' "$1" | sed -n 's/^find-rc=\([0-9]*\)$/\1/p' | tail -n1)"
+        FIND_RC="${FIND_RC:-0}"
+        FIND_OUT="$(printf '%s\n' "$1" | sed '/^find-rc=[0-9]*$/d')"
+    }
+    # find_failed <label>: Q-8 fails and is marked partial.
+    find_failed() {
+        q8_st=fail
+        q8_partial="${q8_partial:+$q8_partial,}$1"
+    }
+    # fcount <label> <find arguments>: sets COUNT to the number of lines
+    # find printed, or n/a (and marks Q-8 partial) when find exited non-zero.
+    fcount() {
+        remote "{ find $MP $2; echo \"find-rc=\$?\"; } | awk '/^find-rc=/{rc=substr(\$0,9);next}{n++}END{print n+0, rc+0}'"
+        COUNT="$(int "$(printf '%s' "$R_OUT" | awk '{print $1; exit}')")"
+        FIND_RC="$(printf '%s' "$R_OUT" | awk '{print $2; exit}')"
+        if [ "$R_RC" -ne 0 ] || [ "$COUNT" = "n/a" ] || [ "${FIND_RC:-0}" != 0 ]; then
+            find_failed "$1"
+            COUNT="n/a"
+        fi
+    }
     remote "du -sk $MP"
     if [ "$R_RC" -ne 0 ]; then q8_st=fail; fi
     size_kb="$(int "$(printf '%s' "$R_OUT" | awk '{print $1; exit}')")"
-    count entries "find $MP | wc -l"; entries="$COUNT"
-    count hardlinks "find $MP -type f -links +1 | wc -l"; hardlinks="$COUNT"
-    remote "find $MP -name '._*'"
-    if [ "$R_RC" -ne 0 ]; then q8_st=fail; fi
-    appledouble="$(printf '%s\n' "$R_OUT" | grep -c .)"
-    apple_paths="$(printf '%s\n' "$R_OUT" | grep . | head -n 20 | tr '\n' ' ')"
-    if [ "$appledouble" -gt 20 ]; then apple_paths="$apple_paths(+$((appledouble - 20)) more)"; fi
-    count special "find $MP -type s -o -type p -o -type b -o -type c | wc -l"; special="$COUNT"
+    fcount entries ""; entries="$COUNT"
+    fcount hardlinks "-type f -links +1"; hardlinks="$COUNT"
+    remote "{ find $MP -name '._*'; echo \"find-rc=\$?\"; }"
+    find_rc "$R_OUT"
+    apple_out="$FIND_OUT"
+    apple_paths=""
+    if [ "$R_RC" -ne 0 ] || [ "$FIND_RC" != 0 ]; then
+        find_failed appledouble
+        appledouble="n/a"
+    else
+        appledouble="$(printf '%s\n' "$apple_out" | grep -c .)"
+        apple_paths="$(printf '%s\n' "$apple_out" | grep . | head -n 20 | tr '\n' ' ')"
+        if [ "$appledouble" -gt 20 ]; then apple_paths="$apple_paths(+$((appledouble - 20)) more)"; fi
+    fi
+    fcount special "-type s -o -type p -o -type b -o -type c"; special="$COUNT"
     # A missing getfacl/getfattr on the NAS is reported as n/a, not a failure.
     count acl "if command -v getfacl >/dev/null 2>&1; then getfacl -R -s -p $MP 2>/dev/null | grep -c '^# file:' || true; else echo n/a; fi"; acl="$COUNT"
     count xattr "if command -v getfattr >/dev/null 2>&1; then getfattr -R -h -d -m - $MP 2>/dev/null | grep -c '^# file:' || true; else echo n/a; fi"; xattr="$COUNT"
-    set_q 8 "$q8_st" "size_kb=$size_kb entries=$entries hardlinks=$hardlinks appledouble=$appledouble special=$special acl=$acl xattr=$xattr appledouble_paths: ${apple_paths:-none}"
+    q8_notes=""
+    if [ -n "$q8_partial" ]; then q8_notes=" partial (find failed: $q8_partial)"; fi
+    case "$uid" in
+        '' | *[!0-9]* | 0) : ;;
+        *) q8_notes="$q8_notes non-root (remote uid $uid: unreadable paths are possible)" ;;
+    esac
+    set_q 8 "$q8_st" "size_kb=$size_kb entries=$entries hardlinks=$hardlinks appledouble=$appledouble special=$special acl=$acl xattr=$xattr appledouble_paths: ${apple_paths:-none}$q8_notes"
 fi
 
 # --- Q-9: rsync and the shell tools ------------------------------------------------
@@ -221,9 +272,7 @@ caps="$(printf '%s\n' "$rsync_out" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//'
 yesno() { if grep -Fxq -e "$1" <<<"$caps"; then printf yes; else printf no; fi; }
 remote "rsync --help 2>&1"
 if grep -Fq -e '--numeric-ids' <<<"$R_OUT"; then numeric=yes; else numeric=no; fi
-remote "id -u"
-if [ "$R_RC" -ne 0 ]; then q9_st=fail; fi
-uid="$(printf '%s' "$R_OUT" | head -n1)"
+if [ "$uid_rc" -ne 0 ]; then q9_st=fail; fi
 missing=""
 for tool in readlink mv du mktemp; do
     remote "command -v $tool"
@@ -252,12 +301,22 @@ if [ "$WRITE_PROBE" -eq 1 ]; then
         probe_ev="write-probe=fail (docker CLI not found on the NAS)"
     else
         suffix="$(date -u +%Y%m%d%H%M%S)-$$-$RANDOM"
-        probe_dir="/share/dxe/.dxe-spike-$suffix"
-        # Single-quoted for the remote shell: no single quote may appear in it.
-        probe_script="d=$probe_dir; if mkdir \"\$d\"; then if chown 30033:30033 \"\$d\"; then echo chown=ok; else echo chown=fail; fi; if mkdir -m 0700 \"\$d/.dxe-spike-0700\"; then echo mkdir0700=ok; else echo mkdir0700=fail; fi; else echo chown=fail; echo mkdir0700=fail; fi; rm -rf \"\$d\""
+        # POSIX sh inside the container; single-quoted for the remote shell,
+        # so no single quote may appear in it. Write operands are only the
+        # .dxe-spike-* path (redirect-free mkdir/chown/rm commands, each ended by an explicit ;).
+        probe_script="d=/share/.dxe-spike-$suffix; "'rb() { stat -c "%u:%g %a" "$1" 2>/dev/null; }
+if mkdir "$d"; then
+  chown 30033:30033 "$d";
+  o=$(rb "$d"); o=${o%% *}
+  if [ "$o" = 30033:30033 ]; then echo chown=ok; else echo "chown=fail(observed=${o:-n/a})"; fi
+  if mkdir -m 0700 "$d/.dxe-spike-0700" && s=$(rb "$d/.dxe-spike-0700") && [ -n "$s" ]; then
+    if [ "$s" = "0:0 700" ]; then echo mkdir0700=ok; else echo "mkdir0700=fail(observed=${s%% *}/${s#* })"; fi
+  else echo "mkdir0700=fail(observed=n/a)"; fi
+else echo "chown=fail(observed=n/a)"; echo "mkdir0700=fail(observed=n/a)"; fi
+rm -rf "$d"'
         remote "$DOCKER run --rm --name dxe-spike-inspect-$suffix --label dxe.role=spike --network none -v $(rq "$SHARE_ROOT:/share") --entrypoint sh $(rq "${DXE_QNAP_PROBE_IMAGE:-$(dxe_qnap_probe_image_default)}") -c '$probe_script'"
-        p_chown="$(printf '%s\n' "$R_OUT" | sed -n 's/^chown=\([a-z]*\).*/\1/p' | head -n1)"
-        p_mkdir="$(printf '%s\n' "$R_OUT" | sed -n 's/^mkdir0700=\([a-z]*\).*/\1/p' | head -n1)"
+        p_chown="$(printf '%s\n' "$R_OUT" | sed -n 's/^chown=\(.*\)$/\1/p' | head -n1)"
+        p_mkdir="$(printf '%s\n' "$R_OUT" | sed -n 's/^mkdir0700=\(.*\)$/\1/p' | head -n1)"
         if [ "$R_RC" -eq 0 ] && [ "$p_chown" = ok ] && [ "$p_mkdir" = ok ]; then
             probe_ev="write-probe=ok chown=ok mkdir0700=ok"
         else
