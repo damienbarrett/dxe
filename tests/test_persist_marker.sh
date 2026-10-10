@@ -64,6 +64,32 @@ test_section "WP4.1: /persist directory marker format"
 LIB="$BASE_DIR/container/dx-nixos-26.05/scripts/lib/dx-persist-marker.sh"
 HOSTLIB="$BASE_DIR/bin/lib/dx-persist-dir.sh"
 TMP_ROOT="$(mktemp -d)"
+
+# Nested probes run from real files (`bash "$PROBES/Pn.sh" ...`), never inline
+# `bash -c '...'`: kcov injects code reading BASH_SOURCE, which is unset in an
+# inline program and dies under `set -u` (same rule as test_refactor_contracts.sh).
+PROBES="$TMP_ROOT/probes"; mkdir -p "$PROBES"
+cat >"$PROBES/P0.sh" <<'PROBE'
+before=$-; source "$1"; [ "$before" = "$-" ]
+PROBE
+cat >"$PROBES/P1.sh" <<'PROBE'
+set -euo pipefail; before=$-; source "$1"; [ "$before" = "$-" ]
+PROBE
+cat >"$PROBES/P2.sh" <<'PROBE'
+source "$1"; declare -F "$2" >/dev/null
+PROBE
+cat >"$PROBES/P3.sh" <<'PROBE'
+source "$1"; printf "%s" "$DX_PERSIST_MARKER_NAME"
+PROBE
+cat >"$PROBES/P4.sh" <<'PROBE'
+source "$1"; dx_persist_marker_format hostg ready
+PROBE
+cat >"$PROBES/P5.sh" <<'PROBE'
+source "$1"; declare -F dx_persist_marker_write >/dev/null
+PROBE
+cat >"$PROBES/P6.sh" <<'PROBE'
+source "$1"; dx_persist_marker_write "$2" "$3"
+PROBE
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 assert_file_exists "$LIB" "the marker library exists"
@@ -181,14 +207,14 @@ done
 for f in "$LIB" "$HOSTLIB"; do
     name="${f#"$BASE_DIR"/}"
     output=""
-    if [ -f "$f" ] && output="$(bash -c 'before=$-; source "$1"; [ "$before" = "$-" ]' _ "$f" 2>&1)" && [ -z "$output" ]; then
+    if [ -f "$f" ] && output="$(bash "$PROBES/P0.sh" "$f" 2>&1)" && [ -z "$output" ]; then
         test_pass "$name is side-effect-free when sourced"
     else
         test_fail "$name is side-effect-free when sourced ($output)"
     fi
 done
 output=""
-if [ -f "$LIB" ] && output="$(bash -c 'set -euo pipefail; before=$-; source "$1"; [ "$before" = "$-" ]' _ "$LIB" 2>&1)" && [ -z "$output" ]; then
+if [ -f "$LIB" ] && output="$(bash "$PROBES/P1.sh" "$LIB" 2>&1)" && [ -z "$output" ]; then
     test_pass "sourcing the library under set -euo pipefail changes nothing"
 else
     test_fail "sourcing the library under set -euo pipefail changes nothing ($output)"
@@ -198,19 +224,19 @@ fi
 for f in "$HOSTLIB" "$LIB"; do
     missing=""
     for fn in dx_persist_marker_format dx_persist_marker_parse dx_persist_marker_write; do
-        bash -c 'source "$1"; declare -F "$2" >/dev/null' _ "$f" "$fn" 2>/dev/null || missing="$missing $fn"
+        bash "$PROBES/P2.sh" "$f" "$fn" 2>/dev/null || missing="$missing $fn"
     done
     if [ -f "$f" ] && [ -z "$missing" ]; then test_pass "${f#"$BASE_DIR"/} defines the marker functions"; else test_fail "${f#"$BASE_DIR"/} defines the marker functions (missing:$missing)"; fi
 done
-out="$(bash -c 'source "$1"; printf "%s" "$DX_PERSIST_MARKER_NAME"' _ "$HOSTLIB" 2>&1)"
+out="$(bash "$PROBES/P3.sh" "$HOSTLIB" 2>&1)"
 if [ "$out" = .dxe-persist-dir ]; then test_pass "the host module exposes DX_PERSIST_MARKER_NAME=.dxe-persist-dir"; else test_fail "the host module exposes DX_PERSIST_MARKER_NAME=.dxe-persist-dir (got: $out)"; fi
 # From another working directory the host module still finds the library.
-out="$(cd "$TMP_ROOT" && bash -c 'source "$1"; dx_persist_marker_format hostg ready' _ "$HOSTLIB" 2>&1)"
+out="$(cd "$TMP_ROOT" && bash "$PROBES/P4.sh" "$HOSTLIB" 2>&1)"
 if [ "$out" = "$(printf 'schema=1\nguest=hostg\nstate=ready\n')" ]; then test_pass "the host module formats a marker from an unrelated working directory"; else test_fail "the host module formats a marker from an unrelated working directory (got: $out)"; fi
 
 # --- write: recording mv stub ---
 HOST_HAS_WRITE=0
-bash -c 'source "$1"; declare -F dx_persist_marker_write >/dev/null' _ "$HOSTLIB" 2>/dev/null && HOST_HAS_WRITE=1
+bash "$PROBES/P5.sh" "$HOSTLIB" 2>/dev/null && HOST_HAS_WRITE=1
 STUBS="$TMP_ROOT/stubs"; mkdir -p "$STUBS"
 cat >"$STUBS/mv" <<'STUB'
 #!/bin/sh
@@ -224,7 +250,7 @@ chmod +x "$STUBS/mv"
 text="$(printf 'schema=1\nguest=wg\nstate=ready\ncreated-at=%s\n' "$T_TS")"
 D="$TMP_ROOT/dir1"; mkdir -p "$D"
 export MV_LOG="$TMP_ROOT/mv.log"; : >"$MV_LOG"
-out="$(PATH="$STUBS:$PATH" bash -c 'source "$1"; dx_persist_marker_write "$2" "$3"' _ "$HOSTLIB" "$D" "$text" 2>&1)"; rc=$?
+out="$(PATH="$STUBS:$PATH" bash "$PROBES/P6.sh" "$HOSTLIB" "$D" "$text" 2>&1)"; rc=$?
 src="$(grep '^ARG=' "$MV_LOG" | sed -n 1p | sed 's/^ARG=//')"
 dst="$(grep '^ARG=' "$MV_LOG" | sed -n 2p | sed 's/^ARG=//')"
 if [ "$rc" -eq 0 ] && [ -z "$out" ] && [ "$(sed -n 1p "$MV_LOG")" = 2 ] && [ "$(grep -c '^ARG=' "$MV_LOG")" = 2 ]; then test_pass "write runs exactly one two-argument mv and prints nothing"; else test_fail "write runs exactly one two-argument mv and prints nothing (rc=$rc out='$out' log=$(tr '\n' ' ' <"$MV_LOG"))"; fi
@@ -241,12 +267,12 @@ exec /bin/mv "$@"
 STUB
 export MV_SNAPSHOT="$TMP_ROOT/snapshot"
 D2="$TMP_ROOT/dir2"; mkdir -p "$D2"
-PATH="$STUBS:$PATH" bash -c 'source "$1"; dx_persist_marker_write "$2" "$3"' _ "$HOSTLIB" "$D2" "$text" >/dev/null 2>&1
+PATH="$STUBS:$PATH" bash "$PROBES/P6.sh" "$HOSTLIB" "$D2" "$text" >/dev/null 2>&1
 if [ "$(cat "$MV_SNAPSHOT" 2>/dev/null)" = "$text" ]; then test_pass "the temporary file is complete before mv runs"; else test_fail "the temporary file is complete before mv runs"; fi
 
 # --- write: real directory, no stub ---
 D3="$TMP_ROOT/dir3 with space"; mkdir -p "$D3"
-if bash -c 'source "$1"; dx_persist_marker_write "$2" "$3"' _ "$HOSTLIB" "$D3" "$text" >/dev/null 2>&1 \
+if bash "$PROBES/P6.sh" "$HOSTLIB" "$D3" "$text" >/dev/null 2>&1 \
     && [ "$(cat "$D3/.dxe-persist-dir")" = "$text" ] \
     && [ "$(ls -A "$D3")" = ".dxe-persist-dir" ]; then
     test_pass "write on a real directory (with a space) leaves exactly the marker and nothing else"
@@ -254,7 +280,7 @@ else
     test_fail "write on a real directory (with a space) leaves exactly the marker and nothing else ($(ls -A "$D3" 2>&1 | tr '\n' ' '))"
 fi
 text2="$(printf 'schema=1\nguest=wg\nstate=retired\nretired-at=%s\n' "$T_TS2")"
-if bash -c 'source "$1"; dx_persist_marker_write "$2" "$3"' _ "$HOSTLIB" "$D3" "$text2" >/dev/null 2>&1 \
+if bash "$PROBES/P6.sh" "$HOSTLIB" "$D3" "$text2" >/dev/null 2>&1 \
     && [ "$(cat "$D3/.dxe-persist-dir")" = "$text2" ] && [ "$(ls -A "$D3")" = ".dxe-persist-dir" ]; then
     test_pass "write replaces an existing marker atomically in place"
 else
@@ -263,14 +289,14 @@ fi
 
 # failing mv: previous marker unchanged, non-zero, no temp left behind
 before="$(cat "$D3/.dxe-persist-dir")"
-PATH="$STUBS:$PATH" MV_FAIL=1 bash -c 'source "$1"; dx_persist_marker_write "$2" "$3"' _ "$HOSTLIB" "$D3" "$text" >/dev/null 2>&1; rc=$?
+PATH="$STUBS:$PATH" MV_FAIL=1 bash "$PROBES/P6.sh" "$HOSTLIB" "$D3" "$text" >/dev/null 2>&1; rc=$?
 if [ "$HOST_HAS_WRITE" = 1 ] && [ "$rc" -ne 0 ] && [ "$(cat "$D3/.dxe-persist-dir")" = "$before" ] && [ "$(ls -A "$D3")" = ".dxe-persist-dir" ]; then
     test_pass "a failing mv returns non-zero, keeps the previous marker and leaves no temporary file"
 else
     test_fail "a failing mv returns non-zero, keeps the previous marker and leaves no temporary file (rc=$rc dir=$(ls -A "$D3" | tr '\n' ' '))"
 fi
 D4="$TMP_ROOT/dir4"; mkdir -p "$D4"
-PATH="$STUBS:$PATH" MV_FAIL=1 bash -c 'source "$1"; dx_persist_marker_write "$2" "$3"' _ "$HOSTLIB" "$D4" "$text" >/dev/null 2>&1; rc=$?
+PATH="$STUBS:$PATH" MV_FAIL=1 bash "$PROBES/P6.sh" "$HOSTLIB" "$D4" "$text" >/dev/null 2>&1; rc=$?
 if [ "$HOST_HAS_WRITE" = 1 ] && [ "$rc" -ne 0 ] && [ -z "$(ls -A "$D4")" ]; then test_pass "a failing mv with no previous marker creates no marker and no temporary file"; else test_fail "a failing mv with no previous marker creates no marker and no temporary file (rc=$rc)"; fi
 
 # invalid text: nothing written, mv never runs
@@ -281,9 +307,9 @@ echo called >>"$MV_LOG"
 exec /bin/mv "$@"
 STUB
 D5="$TMP_ROOT/dir5"; mkdir -p "$D5"
-PATH="$STUBS:$PATH" bash -c 'source "$1"; dx_persist_marker_write "$2" "$3"' _ "$HOSTLIB" "$D5" "$(printf 'schema=1\nguest=g\nstate=paused\n')" >/dev/null 2>&1; rc=$?
+PATH="$STUBS:$PATH" bash "$PROBES/P6.sh" "$HOSTLIB" "$D5" "$(printf 'schema=1\nguest=g\nstate=paused\n')" >/dev/null 2>&1; rc=$?
 if [ "$HOST_HAS_WRITE" = 1 ] && [ "$rc" -ne 0 ] && [ -z "$(ls -A "$D5")" ] && [ ! -s "$MV_LOG" ]; then test_pass "write refuses invalid marker text without touching the directory or running mv"; else test_fail "write refuses invalid marker text without touching the directory or running mv (rc=$rc)"; fi
-bash -c 'source "$1"; dx_persist_marker_write "$2" "$3"' _ "$HOSTLIB" "$TMP_ROOT/nonexistent" "$text" >/dev/null 2>&1; rc=$?
+bash "$PROBES/P6.sh" "$HOSTLIB" "$TMP_ROOT/nonexistent" "$text" >/dev/null 2>&1; rc=$?
 if [ "$HOST_HAS_WRITE" = 1 ] && [ "$rc" -ne 0 ] && [ ! -e "$TMP_ROOT/nonexistent" ]; then test_pass "write to a missing directory fails and creates nothing"; else test_fail "write to a missing directory fails and creates nothing (rc=$rc)"; fi
 
 print_summary
