@@ -57,6 +57,9 @@ else
     echo "Not found"
 fi
 
+echo -e "\n--- /persist storage ---"
+dx_persist_status_report
+
 echo -e "\n--- Bootstrap Generation ---"
 if container_exists "$DX_CONTAINER_NAME"; then
     if container_is_running "$DX_CONTAINER_NAME"; then

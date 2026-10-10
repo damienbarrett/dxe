@@ -52,6 +52,8 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_USAGE_SERVICE` | `off` | `off` or `on`. Opt-in supervised usage-service mode. When `on`, `dx-create-container` adds one more published port (see `DX_USAGE_SERVICE_HOST_PORT`) through the same neutral publish vocabulary SSH uses and passes `DX_USAGE_SERVICE=on` into the container environment, where the guest reads it. It takes effect when the container is created, so recreate the container to change it. `off` adds nothing: the create command is byte-identical to a profile that never sets the field. |
 | `DX_USAGE_SERVICE_HOST_PORT` | `8787` | Host port (1-65535) published to container port 8787 when `DX_USAGE_SERVICE=on`; ignored when `off`. Published exactly as SSH is: on the Mac's loopback for the Apple runtime, and on the NAS's discovered Tailscale address (never the LAN or `0.0.0.0`) for docker-ssh. Must differ from `DX_SSH_PORT`: `dx-create-container` refuses `on` otherwise. |
 
+Changing `DX_PERSIST_STORAGE` or `DX_PERSIST_HOST_ROOT` does not change an existing container: the mounts are fixed at creation. `dx-status` shows a `--- /persist storage ---` section with `configured:` and `actual:` sources (and a `mismatch:` line when they differ), and `dx-start-container` prints one `Warning:` naming `dx-recreate` and continues. Only `dx-recreate` applies the configured storage.
+
 `DX_NIX_VOLUME` exists because the Nix store is large, persistent, and lives on
 its own writable filesystem. Apple Container creates and mounts the volume at
 `/var/lib/dx-nix-raw`; the guest bootstrap then formats the backing block

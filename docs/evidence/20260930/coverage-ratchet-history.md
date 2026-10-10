@@ -1385,3 +1385,16 @@ and argv prepass, the Apple refusal arm, and `dx_persist_create_volume_spec` /
 persist `--volume` item changed in place and adds no line). Measured with
 `tests/run-coverage-linux.sh`: covered=100% scope_exec_lines=4596
 unscoped_prod_exec_lines=2640.
+
+## WP3.4 (2026-10-11)
+
+`scope_exec_lines_floor` 4596 -> 4629 (measured, 100% covered): the Docker and
+Apple `container_mounts` adapters, the awk-file loader constant, and the
+`dx_persist_configured_source` / `_actual_source` / `_status_report` /
+`_warn_mismatch` helpers in `bin/lib/dx-container.sh`. The Apple inspect parser
+lives in `bin/lib/dx-inspect-mounts.awk` (not a shell file, so outside the
+shell line metric). `unscoped_prod_exec_lines_ceiling` 2640 -> 2643 (+3): the
+`/persist storage` header `echo` and the `dx_persist_status_report` call in
+`bin/dx-status`, and the single `dx_persist_warn_mismatch` call in
+`bin/dx-start-container`. Measured with `tests/run-coverage-linux.sh`:
+covered=100% scope_exec_lines=4629 unscoped_prod_exec_lines=2643.

@@ -666,3 +666,14 @@ dx_runtime_docker_capability() {
     esac
 }
 
+
+# dx_runtime_container_mounts <name> -- one `type|source|destination|rw` line
+# per mount (plans/do D-6). A named volume reports its VOLUME NAME as the
+# source, a bind its host path. One remote call through the transport; the
+# reply has CR and blank lines stripped. A missing container is non-zero with
+# no output.
+dx_runtime_docker_container_mounts() {
+    local out
+    out="$(dx_runtime_docker_cli container inspect --format '{{range .Mounts}}{{.Type}}|{{if eq .Type "volume"}}{{.Name}}{{else}}{{.Source}}{{end}}|{{.Destination}}|{{if .RW}}rw{{else}}ro{{end}}{{println}}{{end}}' "$1" 2>/dev/null)" || return 1
+    printf '%s\n' "$out" | tr -d '\r' | awk 'NF'
+}
