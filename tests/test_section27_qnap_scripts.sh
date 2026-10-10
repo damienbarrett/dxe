@@ -37,7 +37,7 @@ assert_file_exists "$QNAP_SPIKE" "phase0-spike.sh exists"
 assert_file_exists "$BASE_DIR/tests/qnap/lib/phase0-common.sh" "phase0-common.sh exists"
 assert_file_exists "$BASE_DIR/tests/qnap/README.md" "tests/qnap/README.md exists"
 
-for script in "$QNAP_INV" "$QNAP_SPIKE" "$BASE_DIR/tests/qnap/lib/phase0-common.sh"; do
+for script in "$QNAP_INV" "$QNAP_SPIKE" "$BASE_DIR/tests/qnap/phase1-persist-inspect.sh" "$BASE_DIR/tests/qnap/lib/phase0-common.sh"; do
     if bash -n "$script"; then test_pass "$(basename "$script") passes bash syntax"; else test_fail "$(basename "$script") passes bash syntax"; fi
 done
 
