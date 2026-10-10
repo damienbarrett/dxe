@@ -120,8 +120,11 @@ STALE_MATCHES=$(rg -n '/workspace|DX_WORKSPACE|WORKSPACE|~/workspace|DX_PERSIST_
 # (/persist/services/agent-stats/workspace, the package's contract); it is
 # unrelated to the retired workspace volume, so its launcher library and test
 # are exempt by name, like the legacy-migration fixtures above.
+# That state-directory path is exempt wherever it appears (e.g. in plan and
+# docs references), because the name alone is not a workspace-volume reference.
 UNEXPECTED_STALE=$(printf '%s\n' "$STALE_MATCHES" | grep -vE \
-    'bin/dx-lib.sh|bin/lib/dx-config.sh|bin/dx-create-volumes|bin/dx-migrate-persist|bin/dx-mount|README.md|refactor-plan.md|docs/|tests/test_section9_host_scripts.sh|tests/test_section10_docs.sh|tests/test_section16_persist_storage.sh|tests/test_section18_mount_git.sh|tests/test_runtime_boundary_characterisation.sh|tests/test_docker_runtime_adapter.sh|tests/test_docker_adapter_.*\.sh|tests/fixtures/config-registry-defaults.txt|scripts/lib/dx-usage-service.sh|tests/test_usage_service.sh' || true)
+    'bin/dx-lib.sh|bin/lib/dx-config.sh|bin/dx-create-volumes|bin/dx-migrate-persist|bin/dx-mount|README.md|refactor-plan.md|docs/|tests/test_section9_host_scripts.sh|tests/test_section10_docs.sh|tests/test_section16_persist_storage.sh|tests/test_section18_mount_git.sh|tests/test_runtime_boundary_characterisation.sh|tests/test_docker_runtime_adapter.sh|tests/test_docker_adapter_.*\.sh|tests/fixtures/config-registry-defaults.txt|scripts/lib/dx-usage-service.sh|tests/test_usage_service.sh' \
+    | grep -vF 'services/agent-stats/workspace' || true)
 if [ -z "$UNEXPECTED_STALE" ]; then
     test_pass "no stale workspace runtime references outside explicit legacy docs/tests"
 else

@@ -674,3 +674,5 @@ Restart only the usage service with the normal host command:
 
 Check the next report for a Claude row with data. This documents the manual
 workaround; automatic workspace preparation remains unimplemented.
+
+Revisit trigger: the next change to service workspace preparation or fresh-guest setup (tracked under Open plans in plans.md).
