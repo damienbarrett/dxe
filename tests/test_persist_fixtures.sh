@@ -26,11 +26,63 @@ set -uo pipefail
 #
 #  persist_fixture_cleanup PATH...
 #      Removes each PATH recursively, including trees holding mode-0700/0500
-#      directories, sockets, FIFOs and dangling symlinks. A path that does not
-#      exist is not an error (status 0). It REFUSES (status 1, message on
-#      stderr containing "refusing", nothing removed) an empty argument, "/",
-#      "." and any path whose basename does not start with "dxe-". Intended
-#      use: trap 'persist_fixture_cleanup "$ROOT" "$TOOLS"' EXIT
+#      directories, sockets, FIFOs and dangling symlinks. A PATH that is
+#      itself a symbolic link is removed as a link: whatever it points to is
+#      not changed (no mode change, nothing removed). A PATH that does not
+#      exist, but whose parent directory does and is inside the temp area, is
+#      not an error (status 0). Intended use:
+#          trap 'persist_fixture_cleanup "$ROOT" "$TOOLS"' EXIT
+#      with ROOT and TOOLS created under ${TMPDIR:-/tmp}.
+#
+#      Guards. Every PATH is checked BEFORE anything is touched. If any PATH
+#      is refused the call prints a message containing "refusing" on stderr,
+#      returns 1, and runs NO destructive command at all -- not even for the
+#      PATHs that would have passed. A PATH is refused when:
+#        (a) it is empty, "/" or ".";
+#        (b) its basename (the text after its last "/") does not start with
+#            "dxe-" (so a PATH ending in "/" is refused as well);
+#        (c) its parent directory is not inside the temp area (defence in
+#            depth: a dxe- name alone is not enough). Definitions:
+#            - the PARENT of PATH is PATH with its last "/component" removed
+#              ("/" when that leaves nothing; "." for a bare name), resolved
+#              physically as `cd -P -- PARENT && pwd -P` would (symlinks and
+#              ".." resolved by the kernel). A parent that cannot be resolved
+#              (does not exist) is not inside, so it is refused.
+#            - the TEMP AREA is ${TMPDIR:-/tmp} as set at the moment of the
+#              call, resolved the same way. It is NOT the PARENT given to
+#              persist_fixture_root_create (that is not remembered): a root is
+#              only cleanable when it was created under the temp area.
+#            - inside means: the resolved parent equals the resolved temp
+#              area, or begins with the resolved temp area followed by "/"
+#              (so a sibling such as "$TMPDIR-evil" is outside).
+#        (d) the temp area itself does not exist or resolves to "/": then
+#            every PATH is refused.
+#      Consequences pinned below: symlinked temp dirs still work (macOS
+#      /var -> /private/var and /tmp -> /private/tmp; a TMPDIR that is itself
+#      a symlink, or that ends in "/"); "$TMPDIR/dxe-a/../../dxe-x", a
+#      symlink inside the temp area pointing outside it ("$TMPDIR/l/dxe-x"
+#      with l -> /elsewhere), "/dxe-x", "$HOME/dxe-x" and "$REPO/dxe-x" are
+#      all refused.
+#
+#      Tool lookup. The destructive commands it runs (rm, chmod, and any of
+#      chown, mv, find, rmdir, unlink, rsync it chooses to use) are found
+#      through PATH -- never an absolute path, `command -p`, perl or another
+#      interpreter -- so a test can put recording stubs first on PATH. The
+#      suite checks this: with the stubs on PATH a valid cleanup leaves the
+#      root in place and the stub log names it.
+#
+#  Safety design of THIS suite (incident 2026-10-11: a mutation probe that
+#  disabled the basename guard let the old refusal cases run the real
+#  `chmod -R u+rwx /`). Every call that hands persist_fixture_cleanup (or the
+#  tree builder's missing-DIR case) a PATH that is not a fixture created in
+#  this run goes through in_stub_jail: a subshell with recording stubs for
+#  rm chmod chown mv find rmdir unlink rsync first on PATH (each stub only
+#  appends its argv to a log and exits 0), cwd in an empty scratch sandbox,
+#  and an interlock that does not run the call at all unless every one of
+#  those tools resolves to its stub. Those cases assert the refusal AND an
+#  EMPTY stub log, so a broken guard turns them red without doing anything.
+#  The real rm/chmod only ever see directories persist_fixture_root_create
+#  made inside this run's scratch directory.
 #
 #  persist_fixture_nas_create ROOT [PARENT]
 #      ROOT must be an existing directory (else status 1, message containing
@@ -95,7 +147,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 LIB="$SCRIPT_DIR/lib/persist-fixtures.sh"
 
-SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pfx-test.XXXXXX")"
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pfx-test.XXXXXX")" || exit 1
+# Never arm the recursive trap on anything but the fresh mktemp directory.
+case "$SCRATCH" in
+    */dxe-pfx-test.*) : ;;
+    *) exit 1 ;;
+esac
+if [ ! -d "$SCRATCH" ] || [ -L "$SCRATCH" ]; then exit 1; fi
 trap 'chmod -R u+rwx "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH"' EXIT
 
 # --- local helpers ----------------------------------------------------------
@@ -160,6 +218,105 @@ recording_chown_dir() { # prints dir; log is $dir/chown.log
     printf '%s\n' "$d"
 }
 
+# --- destructive-command jail (see "Safety design" above) --------------------
+DESTRUCTIVE_TOOLS="rm chmod chown mv find rmdir unlink rsync"
+
+# Fixed scratch layout for every jailed and temp-area case (all inside
+# $SCRATCH; nothing outside it is ever created).
+SANDBOX="$SCRATCH/sandbox"       # empty cwd for jailed calls
+AREA="$SCRATCH/area"             # the temp area (TMPDIR) for most cases
+AREA_LINK="$SCRATCH/area-link"   # symlink -> $AREA
+OUTSIDE="$SCRATCH/outside"       # NOT inside $AREA
+mkdir -p "$SANDBOX" "$AREA" "$OUTSIDE"
+ln -s "$AREA" "$AREA_LINK"
+
+# destructive_stubs_create: prints a new directory holding a recording stub
+# for every tool in DESTRUCTIVE_TOOLS. Each stub appends ONE line
+# "tool arg1 arg2 ..." to DIR/calls.log and exits 0 WITHOUT doing anything.
+# Self-contained on purpose: the jail must not depend on the library (or the
+# fake-tools.sh it pulls in) that it is protecting the machine from.
+destructive_stubs_create() {
+    local d t
+    d="$(mktemp -d "$SCRATCH/stubs.XXXXXX")" || return 1
+    : > "$d/calls.log"
+    for t in $DESTRUCTIVE_TOOLS; do
+        printf '#!/usr/bin/env bash\n{ printf %%s %s; printf " %%s" "$@"; printf "\\n"; } >> %s\nexit 0\n' \
+            "$t" "'$d/calls.log'" > "$d/$t" || return 1
+        chmod 0755 "$d/$t" || return 1
+    done
+    printf '%s\n' "$d"
+}
+
+# in_stub_jail STUBS AREA CWD CMD...: runs CMD in a subshell with STUBS first
+# on PATH, TMPDIR=AREA and cwd=CWD. Interlock: unless every tool in
+# DESTRUCTIVE_TOOLS resolves to its stub, CMD is NOT run (status 98).
+in_stub_jail() {
+    local stubs="$1" area="$2" cwd="$3"
+    shift 3
+    (
+        PATH="$stubs:$PATH"
+        export PATH
+        hash -r
+        TMPDIR="$area"
+        export TMPDIR
+        cd "$cwd" || exit 97
+        for tool in $DESTRUCTIVE_TOOLS; do
+            if [ "$(command -v "$tool")" != "$stubs/$tool" ]; then
+                echo "stub interlock: $tool is not the recording stub; $1 NOT run" >&2
+                exit 98
+            fi
+        done
+        "$@"
+    )
+}
+
+# expect_refusal DESC AREA PATH...: persist_fixture_cleanup PATH... under the
+# jail (TMPDIR=AREA) must refuse -- status 1, "refusing" on stderr -- and must
+# not even attempt a destructive command (the stub log stays empty; on
+# failure the assertion shows the attempted calls).
+expect_refusal() {
+    local desc="$1" area="$2" stubs err rc
+    shift 2
+    if ! stubs="$(destructive_stubs_create)"; then
+        test_fail "$desc: recording stubs could not be created"
+        return 0
+    fi
+    err="$(in_stub_jail "$stubs" "$area" "$SANDBOX" persist_fixture_cleanup "$@" 2>&1 >/dev/null)"
+    rc=$?
+    assert_eq "$desc: status 1" "1" "$rc"
+    assert_true "$desc: stderr says refusing" grep -Fq "refusing" <<<"$err"
+    assert_eq "$desc: no destructive command attempted (stub log empty)" "" "$(cat "$stubs/calls.log")"
+}
+
+# real_cleanup AREA PATH...: the REAL cleanup with TMPDIR=AREA (a subshell, so
+# TMPDIR does not leak). Only ever given fixture roots made in this run;
+# interlock: it does not call the cleanup at all (status 99) unless every
+# PATH is textually below this run's $SCRATCH with no ".." component.
+real_cleanup() {
+    local area="$1" p
+    shift
+    for p in "$@"; do
+        case "$p" in
+            *"/.."* | *"../"*)
+                test_fail "real_cleanup interlock: [$p] has a .. component; NOT run"
+                return 99
+                ;;
+            "$SCRATCH"/?*) : ;;
+            *)
+                test_fail "real_cleanup interlock: [$p] is not inside \$SCRATCH; NOT run"
+                return 99
+                ;;
+        esac
+    done
+    (
+        TMPDIR="$area"
+        export TMPDIR
+        persist_fixture_cleanup "$@"
+    )
+}
+
+exists() { test -e "$1" || test -L "$1"; }
+
 # ---------------------------------------------------------------------------
 test_section "persist-fixtures: library presence and import purity"
 
@@ -209,29 +366,161 @@ root_cases() {
     default_root="$(TMPDIR="$SCRATCH" persist_fixture_root_create)"
     assert_eq "PARENT defaults to \${TMPDIR:-/tmp}" "$SCRATCH" "$(dirname "$default_root")"
 
-    # Cleanup removes a nasty tree.
+    # Cleanup removes a nasty tree (real cleanup under the runner's own TMPDIR).
     persist_fixture_tree_build "$a" 2>/dev/null
-    persist_fixture_cleanup "$a" "$b" "$default_root"
+    real_cleanup "${TMPDIR:-/tmp}" "$a" "$b" "$default_root"
     assert_eq "cleanup removed a full tree (0700 dirs, socket, fifo, dangling link) and the empty roots" "no:no:no" \
         "$(test -e "$a" -o -L "$a" && echo yes || echo no):$(test -e "$b" && echo yes || echo no):$(test -e "$default_root" && echo yes || echo no)"
-    persist_fixture_cleanup "$a" 2>/dev/null
+    real_cleanup "${TMPDIR:-/tmp}" "$a" 2>/dev/null
     assert_eq "cleanup of a missing path is not an error" "0" "$?"
-
-    # Refusals.
-    local victim="$SCRATCH/not-prefixed" err rc
-    mkdir -p "$victim"
-    err="$(persist_fixture_cleanup "$victim" 2>&1)"; rc=$?
-    assert_eq "cleanup refuses a path whose basename lacks the dxe- prefix (status 1)" "1" "$rc"
-    assert_true "refusal message says refusing" grep -Fq "refusing" <<<"$err"
-    assert_true "refused directory is untouched" test -d "$victim"
-    for bad in "" "/" "."; do
-        err="$(persist_fixture_cleanup "$bad" 2>&1)"; rc=$?
-        assert_eq "cleanup refuses [$bad] (status 1)" "1" "$rc"
-        assert_true "cleanup refusing [$bad] says refusing" grep -Fq "refusing" <<<"$err"
-    done
-    assert_true "cwd still exists after refusing '.'" test -d .
 }
 root_cases
+
+# ---------------------------------------------------------------------------
+test_section "persist-fixtures: cleanup reaches rm/chmod only through PATH (the jail's stubs intercept)"
+
+# Validates the stand-in: if the stubs did not intercept a REAL removal, an
+# empty stub log in the refusal cases below would prove nothing.
+stub_intercept_cases() {
+    need persist_fixture_root_create || return 0
+    need persist_fixture_cleanup || return 0
+    local root stubs rc line named=no
+    root="$(persist_fixture_root_create "$AREA")"
+    : > "$root/keep"
+    if ! stubs="$(destructive_stubs_create)"; then
+        test_fail "recording stubs could not be created"
+        return 0
+    fi
+    in_stub_jail "$stubs" "$AREA" "$SANDBOX" persist_fixture_cleanup "$root" >/dev/null 2>&1
+    rc=$?
+    assert_eq "stubbed: a valid cleanup still reports success" "0" "$rc"
+    assert_true "stubbed: the root and its file are still there (every removal went through a PATH tool)" test -f "$root/keep"
+    while IFS= read -r line; do
+        case "$line" in
+            *" $root" | *" $root "*) named=yes ;;
+        esac
+    done < "$stubs/calls.log"
+    assert_eq "stubbed: the stub log records a destructive call naming the root" "yes" "$named"
+    real_cleanup "$AREA" "$root"
+    assert_false "unstubbed: the same root is then really removed" exists "$root"
+}
+stub_intercept_cases
+
+# ---------------------------------------------------------------------------
+test_section "persist-fixtures: cleanup refusals (jailed: recording stubs first on PATH)"
+
+refusal_cases() {
+    need persist_fixture_cleanup || return 0
+    mkdir -p "$AREA/not-prefixed" "$AREA/dxe-ok"
+    expect_refusal "refuses an empty argument" "$AREA" ""
+    expect_refusal "refuses /" "$AREA" "/"
+    expect_refusal "refuses ." "$AREA" "."
+    expect_refusal "refuses \$HOME" "$AREA" "$HOME"
+    expect_refusal "refuses the repository root" "$AREA" "$BASE_DIR"
+    expect_refusal "refuses a temp-area directory whose basename lacks dxe-" "$AREA" "$AREA/not-prefixed"
+    expect_refusal "refuses a dxe- path with a trailing slash" "$AREA" "$AREA/dxe-ok/"
+    expect_refusal "refuses the whole call when one of several PATHs is bad" "$AREA" "$AREA/dxe-ok" "/"
+    assert_true "the refused non-prefixed directory is untouched" test -d "$AREA/not-prefixed"
+    assert_true "the valid PATH of a refused call is untouched" test -d "$AREA/dxe-ok"
+    assert_true "the jail's cwd sandbox still exists" test -d "$SANDBOX"
+    assert_eq "the jail's cwd sandbox is still empty" "" "$(ls -A "$SANDBOX")"
+}
+refusal_cases
+
+# ---------------------------------------------------------------------------
+test_section "persist-fixtures: cleanup temp-area guard (jailed refusals)"
+
+temp_area_refusal_cases() {
+    need persist_fixture_cleanup || return 0
+    # Existing dxe- directories that are NOT inside $AREA (but are inside this
+    # run's scratch directory).
+    mkdir -p "$OUTSIDE/dxe-outside" "$AREA/dxe-a" "$SCRATCH/dxe-x" \
+        "$SCRATCH/area-evil/dxe-y" "$AREA/dxe-ok"
+    ln -s "$OUTSIDE" "$AREA/escape"
+
+    expect_refusal "refuses a dxe- name in the repository (not in the temp area)" "$AREA" "$BASE_DIR/dxe-not-temp"
+    expect_refusal "refuses /dxe-x" "$AREA" "/dxe-x"
+    expect_refusal "refuses \$HOME/dxe-x" "$AREA" "$HOME/dxe-x"
+    expect_refusal "refuses an existing dxe- directory outside the temp area" "$AREA" "$OUTSIDE/dxe-outside"
+    expect_refusal "refuses a .. escape out of the temp area" "$AREA" "$AREA/dxe-a/../../dxe-x"
+    expect_refusal "refuses a sibling that merely shares the temp area's name prefix" "$AREA" "$SCRATCH/area-evil/dxe-y"
+    expect_refusal "refuses a path through a symlink in the temp area that points outside it" "$AREA" "$AREA/escape/dxe-outside"
+    expect_refusal "refuses a PATH whose parent directory does not exist" "$AREA" "$AREA/no-such-dir/dxe-x"
+    expect_refusal "refuses everything when the temp area does not exist" "$SCRATCH/no-such-area" "$AREA/dxe-ok"
+    expect_refusal "refuses everything when the temp area is / (in the temp area)" "/" "$AREA/dxe-ok"
+    expect_refusal "refuses everything when the temp area is / (directly under it)" "/" "/dxe-x"
+
+    assert_true "outside directory untouched" test -d "$OUTSIDE/dxe-outside"
+    assert_true ".. target untouched" test -d "$SCRATCH/dxe-x"
+    assert_true "name-prefix sibling untouched" test -d "$SCRATCH/area-evil/dxe-y"
+    assert_true "in-area directory of the degenerate-area calls untouched" test -d "$AREA/dxe-ok"
+    assert_false "nothing was created at the parent-less path" exists "$AREA/no-such-dir"
+}
+temp_area_refusal_cases
+
+# ---------------------------------------------------------------------------
+test_section "persist-fixtures: cleanup temp-area guard (real removals inside the temp area)"
+
+temp_area_removal_cases() {
+    need persist_fixture_root_create || return 0
+    need persist_fixture_cleanup || return 0
+    local r rc
+
+    # TMPDIR is itself a symlink to the area; the root is created through it.
+    r="$(TMPDIR="$AREA_LINK" persist_fixture_root_create)"
+    : > "$r/f"
+    real_cleanup "$AREA_LINK" "$r" 2>/dev/null; rc=$?
+    assert_eq "symlinked TMPDIR: cleanup succeeds" "0" "$rc"
+    assert_false "symlinked TMPDIR: root removed" exists "$r"
+
+    # The area spelled canonically, the PATH spelled through the symlink.
+    r="$(persist_fixture_root_create "$AREA")"
+    real_cleanup "$AREA" "$AREA_LINK/${r##*/}" 2>/dev/null; rc=$?
+    assert_eq "PATH through a symlink to the temp area: cleanup succeeds" "0" "$rc"
+    assert_false "PATH through a symlink to the temp area: root removed" exists "$r"
+
+    # The area spelled through the symlink, the PATH spelled canonically.
+    r="$(persist_fixture_root_create "$AREA")"
+    real_cleanup "$AREA_LINK" "$r" 2>/dev/null; rc=$?
+    assert_eq "TMPDIR through a symlink, canonical PATH: cleanup succeeds" "0" "$rc"
+    assert_false "TMPDIR through a symlink, canonical PATH: root removed" exists "$r"
+
+    # TMPDIR with a trailing slash (macOS sets it that way).
+    r="$(TMPDIR="$AREA/" persist_fixture_root_create)"
+    real_cleanup "$AREA/" "$r" 2>/dev/null; rc=$?
+    assert_eq "TMPDIR ending in /: cleanup succeeds" "0" "$rc"
+    assert_false "TMPDIR ending in /: root removed" exists "$r"
+
+    # A root deeper inside the area.
+    mkdir -p "$AREA/deeper/still"
+    r="$(persist_fixture_root_create "$AREA/deeper/still")"
+    persist_fixture_tree_build "$r" >/dev/null 2>&1
+    real_cleanup "$AREA" "$r" 2>/dev/null; rc=$?
+    assert_eq "root nested deeper inside the temp area: cleanup succeeds" "0" "$rc"
+    assert_false "root nested deeper inside the temp area: full tree removed" exists "$r"
+    assert_true "root nested deeper inside the temp area: its parent is kept" test -d "$AREA/deeper/still"
+
+    # A PATH that is a symlink is removed as a link; its referent -- a fixture
+    # root OUTSIDE the temp area -- keeps its contents and modes.
+    local holder victim
+    holder="$(persist_fixture_root_create "$AREA")"
+    victim="$(persist_fixture_root_create "$OUTSIDE")"
+    mkdir "$victim/sub"
+    printf 'keep\n' > "$victim/file"
+    chmod 0600 "$victim/file"
+    chmod 0500 "$victim/sub"
+    ln -s "$victim" "$holder/dxe-link"
+    real_cleanup "$AREA" "$holder/dxe-link" 2>/dev/null; rc=$?
+    assert_eq "symlink PATH: cleanup succeeds" "0" "$rc"
+    assert_false "symlink PATH: the link itself is removed" exists "$holder/dxe-link"
+    assert_true "symlink PATH: its referent still exists" test -d "$victim/sub"
+    assert_eq "symlink PATH: referent file content unchanged" "keep" "$(cat "$victim/file" 2>/dev/null)"
+    assert_eq "symlink PATH: referent file mode unchanged (no chmod through the link)" "0600" "$(lstat_field mode "$victim/file")"
+    assert_eq "symlink PATH: referent directory mode unchanged" "0500" "$(lstat_field mode "$victim/sub")"
+    real_cleanup "$AREA" "$holder" 2>/dev/null
+    assert_false "the link's holder root is then removed" exists "$holder"
+}
+temp_area_removal_cases
 
 # ---------------------------------------------------------------------------
 test_section "persist-fixtures: NAS fake runs commands locally against the root"
@@ -394,12 +683,21 @@ tree_nonroot_cases() {
         assert_true "two trees list byte-identically" cmp -s "$SCRATCH/got1" "$SCRATCH/got2"
     fi
 
-    # Missing directory.
-    local err
-    err="$(persist_fixture_tree_build "$SCRATCH/nope" 2>&1)"; rc=$?
+    # Missing directory. Jailed: if the existence check were broken the
+    # builder would chmod/find relative to its cwd, so that cwd is an empty
+    # scratch sandbox and every destructive tool is a recording stub.
+    local err stubs cwd="$SCRATCH/tree-missing-cwd"
+    mkdir -p "$cwd"
+    if ! stubs="$(destructive_stubs_create)"; then
+        test_fail "missing DIR: recording stubs could not be created"
+        return 0
+    fi
+    err="$(in_stub_jail "$stubs" "$AREA" "$cwd" persist_fixture_tree_build "$SCRATCH/nope" 2>&1)"; rc=$?
     assert_eq "missing DIR: status 1" "1" "$rc"
     assert_true "missing DIR: message says does not exist" grep -Fq "does not exist" <<<"$err"
     assert_false "missing DIR: nothing created" test -e "$SCRATCH/nope"
+    assert_eq "missing DIR: nothing created in the caller's cwd" "" "$(ls -A "$cwd")"
+    assert_eq "missing DIR: no destructive command attempted (stub log empty)" "" "$(cat "$stubs/calls.log")"
 }
 tree_nonroot_cases
 
