@@ -36,5 +36,7 @@ source "$DX_LIB_DIR/lib/dx-ssh-common.sh"
 source "$DX_LIB_DIR/lib/dx-mount-plan.sh"
 # shellcheck source=lib/dx-tunnel.sh
 source "$DX_LIB_DIR/lib/dx-tunnel.sh"
+# shellcheck source=lib/dx-persist-dir.sh
+source "$DX_LIB_DIR/lib/dx-persist-dir.sh"
 
 dx_init_config "$DX_PROJECT_ROOT"

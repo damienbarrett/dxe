@@ -392,6 +392,11 @@ entrypoint_conforms() {
     func="$(entrypoint_main_name "$entry_name")"
     probe_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-wp41-probe.XXXXXX")"
     cp -R "$ROOT/bin" "$probe_root/bin"
+    # WP4.1: bin/lib/dx-persist-dir.sh (in the bin/dx-lib.sh facade) sources
+    # the guest-shared marker library by path relative to the checkout root,
+    # so the private root carries that one directory too.
+    mkdir -p "$probe_root/container/dx-nixos-26.05/scripts"
+    cp -R "$ROOT/container/dx-nixos-26.05/scripts/lib" "$probe_root/container/dx-nixos-26.05/scripts/lib"
     mkdir -p "$probe_root/fake-path" "$probe_root/home" "$probe_root/state"
     for fake_tool in container docker ssh; do
         printf '#!/bin/sh\nexit 1\n' > "$probe_root/fake-path/$fake_tool"
