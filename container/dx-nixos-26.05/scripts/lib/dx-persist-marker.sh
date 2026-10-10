@@ -19,6 +19,7 @@
 # directory and then runs `mv` onto the final name, so a reader sees either
 # the previous marker or the whole new one, never a partial file.
 
+# shellcheck disable=SC2034 # result variables are read by the sourcing caller
 DX_PERSIST_MARKER_NAME=.dxe-persist-dir
 
 # A guest or volume name: [A-Za-z0-9][A-Za-z0-9_.-]*
