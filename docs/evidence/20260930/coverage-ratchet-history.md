@@ -1373,3 +1373,15 @@ clean scratch checkout, 100% covered). `bin/lib/dx-persist-dir.sh` and
 `source "$DX_LIB_DIR/lib/dx-persist-dir.sh"` line in the `bin/dx-lib.sh`
 facade, which must load the new module. Measured 2639 with
 `tests/run-coverage-linux.sh`. No exempt logic was added.
+
+## WP3.3 (2026-10-11)
+
+`scope_exec_lines_floor` 4560 -> 4596 (measured, 100% covered): the
+`persist-dir` role in the volume-spec parser, the Docker `--mount` render arm
+and argv prepass, the Apple refusal arm, and `dx_persist_create_volume_spec` /
+`dx_persist_create_env_args` in `bin/lib/dx-container.sh`.
+`unscoped_prod_exec_lines_ceiling` 2639 -> 2640 (+1): the single
+`dx_persist_create_env_args` call line in `bin/dx-create-container` (the
+persist `--volume` item changed in place and adds no line). Measured with
+`tests/run-coverage-linux.sh`: covered=100% scope_exec_lines=4596
+unscoped_prod_exec_lines=2640.

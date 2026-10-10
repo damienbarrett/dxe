@@ -134,9 +134,22 @@ dx_runtime_docker_label_flags() {
     DXE_RUNTIME_DOCKER_LABEL_ARGV=(--label io.dxe.managed=true --label "io.dxe.schema=$DXE_RUNTIME_DOCKER_LABEL_SCHEMA" --label "io.dxe.profile=$(dx_runtime_docker_profile_id)" --label "io.dxe.role=$1" --label "io.dxe.system=${DX_GUEST_SYSTEM:?}")
 }
 
+# ",readonly" for MODE ro, nothing otherwise.
+dx_runtime_docker_mount_ro_suffix() {
+    [ "$1" != ro ] || printf ',readonly'
+}
+
 dx_runtime_docker_container_create() {
     dx_runtime_docker_require_bin >/dev/null || return 1
-    local name="" image="" entrypoint_cmd="" flags=() entrypoint_args=() guest_addr=""
+    local name="" image="" entrypoint_cmd="" flags=() entrypoint_args=() guest_addr="" prev="" arg
+    # PREPASS: parse every --volume spec before the first runtime call, so a
+    # malformed persist-dir path (':' or ',') is refused with nothing sent.
+    for arg in "$@"; do
+        if [ "$prev" = --volume ]; then
+            dx_runtime_container_create_parse_volume_spec "$arg" || return 1
+        fi
+        prev="$arg"
+    done
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --name) name="$2"; shift 2 ;;
@@ -144,6 +157,13 @@ dx_runtime_docker_container_create() {
             --volume)
                 dx_runtime_container_create_parse_volume_spec "$2" || return 1
                 case "$DXE_VOLSPEC_ROLE" in
+                    persist-dir)
+                        # No ownership proof and no host mutation: the
+                        # directory is operator-owned (D-4/D-5), one --mount
+                        # pair, never -v/--volume (a missing source would be
+                        # silently created by -v).
+                        flags+=(--mount "type=bind,source=$DXE_VOLSPEC_NAME,target=$DXE_VOLSPEC_TARGET$(dx_runtime_docker_mount_ro_suffix "$DXE_VOLSPEC_MODE")")
+                        ;;
                     nix)
                         # Astra F3's "writable attachment" checkpoint: an
                         # EXISTING nix/persist/bootstrap volume is proven
