@@ -692,6 +692,20 @@ else
         fi
     done
 
+    # WP1.1 (spec requirement 11): VS Code Remote-SSH unpacks its server with
+    # tar and gzip, so `dx` itself (not only root's bootstrap toolchain) must
+    # have both: through the runtime exec path and through the SSH path.
+    if container_exec_dx_bash 'command -v tar && command -v gzip' >/dev/null; then
+        test_pass "dx has tar and gzip (runtime exec path)"
+    else
+        test_fail "dx has tar and gzip (runtime exec path)"
+    fi
+    if guest_bash 'command -v tar && command -v gzip' >/dev/null; then
+        test_pass "dx has tar and gzip (SSH path)"
+    else
+        test_fail "dx has tar and gzip (SSH path)"
+    fi
+
     # Behaviour: query the activated tmux config from a throwaway server inside
     # the guest, proving the typed Home Manager options actually take effect at
     # runtime (not merely that strings exist in tools.nix).

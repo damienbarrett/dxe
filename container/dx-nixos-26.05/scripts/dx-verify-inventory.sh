@@ -24,7 +24,7 @@
 # node, fish, nu, tput and clear are installed (man-db via Home Manager's
 # own manual.manpages default, the rest via home.nix/home/shell.nix) but
 # were missing here until that contract caught it.
-DX_REQUIRED_INVENTORY="git gh nix ssh tmux rg fd curl jq direnv just task lazygit yazi btop fastfetch nvim tinty less file which man starship node fish nu tput clear"
+DX_REQUIRED_INVENTORY="git gh nix ssh tmux rg fd curl jq direnv just task lazygit yazi btop fastfetch nvim tinty less file which man starship node fish nu tput clear tar gzip"
 
 dx_verify_inventory_main() {
     if [ "${1:-}" = --print-inventory ]; then
