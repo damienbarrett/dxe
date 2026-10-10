@@ -18,6 +18,8 @@ source "$BASE_DIR/bin/lib/dx-container.sh"
 source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
 source "$BASE_DIR/bin/lib/dx-mount-plan.sh"
 source "$BASE_DIR/bin/lib/dx-tunnel.sh"
+# WP4.1: the /persist directory module (marker format), last in the facade.
+source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 test_section "Refactor State-Machine Contracts"
 
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-refactor-state.XXXXXX")"
