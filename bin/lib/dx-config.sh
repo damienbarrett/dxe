@@ -77,6 +77,8 @@ DX_NIX_MOUNT	abspath	=/nix
 DX_NIX_DISK	abspath	@home:.dx-cache/nix-store.img
 DX_NIX_DISK_SIZE	size	=64G
 DX_PERSIST_VOLUME	name	=dx-persist
+DX_PERSIST_STORAGE	enum:volume,host-path	=volume
+DX_PERSIST_HOST_ROOT	optpath	=
 DX_GIT_MOUNT_SOURCE	optpath	=
 DX_GIT_MOUNT_TARGET	abspath	=/workspace
 DX_GUEST_WORKDIR	optpath	=
@@ -270,6 +272,31 @@ dx_config_validate_cross_fields() {
             ;;
     esac
 
+    # /persist storage mode (plans/do D-1; R13, R14, R22). host-path puts
+    # /persist in a QNAP share directory, which only the docker-ssh runtime
+    # can bind: Apple Container cannot (its host-folder binds break git's
+    # ownership checks and are slow), so it is refused here with a pointer to
+    # the Mac access docs. The guest directory is derived from the root and
+    # DX_CONTAINER_NAME, never configured; the root must be non-empty and
+    # colon-free because the volume spec splits on ':'. volume mode ignores
+    # DX_PERSIST_HOST_ROOT entirely.
+    if [ "${DX_PERSIST_STORAGE:-}" = host-path ]; then
+        [ "${DX_RUNTIME:-}" = docker-ssh ] || {
+            echo "Error: DX_PERSIST_STORAGE=host-path requires DX_RUNTIME=docker-ssh (the Apple runtime cannot bind a share directory); to reach /persist from the Mac see docs/guest.md." >&2
+            return 1
+        }
+        [ -n "${DX_PERSIST_HOST_ROOT:-}" ] || {
+            echo "Error: DX_PERSIST_HOST_ROOT is required when DX_PERSIST_STORAGE=host-path (the share root; the guest directory is derived beneath it)." >&2
+            return 1
+        }
+        case "$DX_PERSIST_HOST_ROOT" in
+            *:*)
+                echo "Error: DX_PERSIST_HOST_ROOT must not contain ':' (the volume spec splits on it)." >&2
+                return 1
+                ;;
+        esac
+    fi
+
     # The three named-volume roles must never collide (Astra F10, Muse C1):
     # a shared name would let one role's guest-side traffic reach another
     # role's volume.
@@ -453,7 +480,7 @@ dx_init_config() {
             value=$(dx_config_default "$name")
             origin=default
         fi
-        dx_config_set_resolved "$name" "$value" "$origin"
+        dx_config_set_resolved "$name" "$value" "$origin" || return 1
         unset "$parsed_name"
     done
 

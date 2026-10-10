@@ -277,10 +277,13 @@ dx_runtime_apple_guest_ssh_address() { printf '%s\n' 127.0.0.1; }
 #     Phase 6 item 4): `container create` has no HEALTHCHECK concept;
 #     --health-cmd/--health-interval/--health-retries are read and
 #     discarded by dx_runtime_apple_container_create above, unconditionally.
+#   runtime_host_directories -- no (plans/do D-5): Apple's host-folder binds
+#     lose ownership and are slow, so the persist-dir: role is refused and
+#     DX_PERSIST_STORAGE=host-path is rejected for DX_RUNTIME=apple.
 dx_runtime_apple_capability() {
     case "$1" in
         direct_named_volume_mounts|bind_mounts|host_filesystem_reclamation|raw_nix_disk) return 0 ;;
-        restart_policy|container_healthcheck|usage_service) return 1 ;;
+        restart_policy|container_healthcheck|usage_service|runtime_host_directories) return 1 ;;
         *) echo "Error: unknown runtime capability '$1'." >&2; return 2 ;;
     esac
 }

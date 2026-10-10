@@ -624,12 +624,17 @@ dx_runtime_docker_run_ephemeral() {
 # capability message"). container_healthcheck
 # (qnap-dxe-plan.md Phase 6 item 4): yes -- the one neutral create-time
 # health flag; --health-cmd/--health-interval/--health-retries render as
-# Docker's own real create flags (above).
+# Docker's own real create flags (above). runtime_host_directories: yes --
+# the persist-dir: role renders as --mount type=bind (plans/do D-5).
 
 dx_runtime_docker_capability() {
     case "$1" in
         direct_named_volume_mounts) return 0 ;;
         bind_mounts) return 1 ;;
+        # runtime_host_directories: the adapter can bind an operator-owned
+        # host directory as /persist (the persist-dir: role, plans/do D-4/D-5),
+        # which bind_mounts (the dx-mount/git: host-folder kind) stays off for.
+        runtime_host_directories) return 0 ;;
         restart_policy) return 0 ;;
         host_filesystem_reclamation) return 1 ;;
         raw_nix_disk) return 1 ;;
