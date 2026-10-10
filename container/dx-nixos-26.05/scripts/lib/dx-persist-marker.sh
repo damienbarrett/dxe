@@ -155,7 +155,8 @@ dx_persist_marker_parse() {
                     created-at) _dx_pm_created="$_dx_pm_val" ;;
                     migrated-at) _dx_pm_migrated="$_dx_pm_val" ;;
                     *) _dx_pm_retired="$_dx_pm_val" ;;
-                esac ;;
+                esac
+                ;;
         esac
     done
     [ -n "$_dx_pm_schema" ] || { dx_persist_marker_fail "missing schema"; return 1; }
