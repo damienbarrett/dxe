@@ -30,14 +30,24 @@
 #       NAME
 #     The adapter strips CR and drops blank lines from the reply.
 #   * Apple adapter: `container inspect NAME` (JSON array) parsed WITHOUT jq
-#     (the fake environment has no jq on PATH). Each element of
-#     configuration.mounts looks like
-#       {"type":{"volume":{"name":"N",...}},"source":"S","destination":"D","options":[...]}
-#     for a volume (reported as volume|N|D|rw) and
-#       {"type":{"virtiofs":{}},"source":"S","destination":"D","options":[...]}
-#     for a host bind (reported as bind|S|D|rw). `ro` appears when
-#     "options" contains "ro". Both compact (one-line) and pretty-printed
-#     JSON must work.
+#     (the fake environment has no jq on PATH). THE REFERENCE IS THE REAL
+#     SHAPE captured from Apple container 1.4.1: the top level is an array of
+#     objects with keys configuration, id, status; configuration.mounts is an
+#     array whose objects have their keys in ALPHABETICAL order (destination,
+#     options, source, type), e.g. for a named volume
+#       {"destination":"/persist","options":["rw"],"source":"<dir>/volume.img",
+#        "type":{"volume":{"cache":{"on":{}},"format":"ext4","name":"dx-persist",
+#        "sync":{"fsync":{}}}}}
+#     Nested objects sit BEFORE and AFTER "name" inside "volume", so the parser
+#     must cope with nested braces and must not take the first "name" it sees
+#     or the first "}" as the end of the mount. A volume is reported as
+#     volume|<volume name>|D|rw (source = the name, never the volume.img path).
+#     A host bind is (best guess, not observable on the capture host)
+#       {"destination":"D","options":["rw"],"source":"S","type":{"virtiofs":{}}}
+#     reported as bind|S|D|rw. `ro` appears when "options" contains "ro". The
+#     output order is the JSON order. Compact one-line JSON and pretty-printed
+#     JSON (indent 1 or 2, `"k": v` or Swift-style `"k" : v`) must all work.
+#     The older hand-written shapes (type first, "name" first) stay supported.
 #   * bin/dx-status prints a section headed `--- /persist storage ---`
 #     (stopped or running container alike) containing the lines
 #       configured: <volume name | derived host directory>
@@ -134,6 +144,11 @@ case \"\$*\" in
     'inspect dx-vol') cat '$fixture/apple-vol.json'; exit 0 ;;
     'inspect dx-pretty') cat '$fixture/apple-pretty.json'; exit 0 ;;
     'inspect dx-hp') cat '$fixture/apple-hp.json'; exit 0 ;;
+    'inspect dx-real') cat '$fixture/apple-real.json'; exit 0 ;;
+    'inspect dx-real2') cat '$fixture/apple-real-indent2.json'; exit 0 ;;
+    'inspect dx-real1') cat '$fixture/apple-real-indent1.json'; exit 0 ;;
+    'inspect dx-realbind') cat '$fixture/apple-real-bind.json'; exit 0 ;;
+    'inspect dx-decoy') cat '$fixture/apple-real-decoy.json'; exit 0 ;;
     *) echo 'Error: not found' >&2; exit 1 ;;
 esac"
 printf '%s\n' "$APPLE_VOL_COMPACT" > "$fixture/apple-vol.json"
@@ -190,6 +205,181 @@ else
     test_fail "apple: dx_runtime_container_mounts is available"
 fi
 
+# --- 2b. Apple adapter: the REAL inspect shape (container 1.4.1) -------------
+real_vol() { # name dest -> one real-shaped volume mount (compact)
+    printf '{"destination":"%s","options":["rw"],"source":"/fixture/volumes/%s/volume.img","type":{"volume":{"cache":{"on":{}},"format":"ext4","name":"%s","sync":{"fsync":{}}}}}' "$2" "$1" "$1"
+}
+REAL_MOUNTS="$(real_vol dx-nix /var/lib/dx-nix-raw),$(real_vol dx-persist /persist),$(real_vol dx-bootstrap /guest-bootstrap)"
+REAL_COMPACT="[{\"configuration\":{\"id\":\"dx-real\",\"mounts\":[$REAL_MOUNTS]},\"id\":\"dx-real\",\"status\":\"running\"}]"
+printf '%s\n' "$REAL_COMPACT" > "$fixture/apple-real.json"
+# Pretty-printed like `container inspect` (Swift style, space before colon).
+cat > "$fixture/apple-real-indent2.json" <<'JSON'
+[
+  {
+    "configuration" : {
+      "id" : "dx-real",
+      "mounts" : [
+        {
+          "destination" : "/var/lib/dx-nix-raw",
+          "options" : [
+            "rw"
+          ],
+          "source" : "/fixture/volumes/dx-nix/volume.img",
+          "type" : {
+            "volume" : {
+              "cache" : {
+                "on" : {
+
+                }
+              },
+              "format" : "ext4",
+              "name" : "dx-nix",
+              "sync" : {
+                "fsync" : {
+
+                }
+              }
+            }
+          }
+        },
+        {
+          "destination" : "/persist",
+          "options" : [
+            "rw"
+          ],
+          "source" : "/fixture/volumes/dx-persist/volume.img",
+          "type" : {
+            "volume" : {
+              "cache" : {
+                "on" : {
+
+                }
+              },
+              "format" : "ext4",
+              "name" : "dx-persist",
+              "sync" : {
+                "fsync" : {
+
+                }
+              }
+            }
+          }
+        },
+        {
+          "destination" : "/guest-bootstrap",
+          "options" : [
+            "rw"
+          ],
+          "source" : "/fixture/volumes/dx-bootstrap/volume.img",
+          "type" : {
+            "volume" : {
+              "cache" : {
+                "on" : {
+
+                }
+              },
+              "format" : "ext4",
+              "name" : "dx-bootstrap",
+              "sync" : {
+                "fsync" : {
+
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "id" : "dx-real",
+    "status" : "running"
+  }
+]
+JSON
+# Indent 1, conventional `"k": v` spacing, empty objects collapsed.
+cat > "$fixture/apple-real-indent1.json" <<'JSON'
+[
+ {
+  "configuration": {
+   "id": "dx-real",
+   "mounts": [
+    {
+     "destination": "/var/lib/dx-nix-raw",
+     "options": ["rw"],
+     "source": "/fixture/volumes/dx-nix/volume.img",
+     "type": {
+      "volume": {
+       "cache": {
+        "on": {}
+       },
+       "format": "ext4",
+       "name": "dx-nix",
+       "sync": {
+        "fsync": {}
+       }
+      }
+     }
+    },
+    {
+     "destination": "/persist",
+     "options": ["rw"],
+     "source": "/fixture/volumes/dx-persist/volume.img",
+     "type": {
+      "volume": {
+       "cache": {
+        "on": {}
+       },
+       "format": "ext4",
+       "name": "dx-persist",
+       "sync": {
+        "fsync": {}
+       }
+      }
+     }
+    },
+    {
+     "destination": "/guest-bootstrap",
+     "options": ["rw"],
+     "source": "/fixture/volumes/dx-bootstrap/volume.img",
+     "type": {
+      "volume": {
+       "cache": {
+        "on": {}
+       },
+       "format": "ext4",
+       "name": "dx-bootstrap",
+       "sync": {
+        "fsync": {}
+       }
+      }
+     }
+    }
+   ]
+  },
+  "id": "dx-real",
+  "status": "running"
+ }
+]
+JSON
+# /persist as a virtiofs bind (guess), same key order, between two volumes.
+printf '%s\n' "[{\"configuration\":{\"id\":\"dx-realbind\",\"mounts\":[$(real_vol dx-nix /var/lib/dx-nix-raw),{\"destination\":\"/persist\",\"options\":[\"rw\"],\"source\":\"/fixture/hostroot/dxe/dx-realbind/persist\",\"type\":{\"virtiofs\":{}}},{\"destination\":\"/workspace\",\"options\":[\"ro\"],\"source\":\"/fixture/ws\",\"type\":{\"virtiofs\":{}}},$(real_vol dx-bootstrap /guest-bootstrap)]},\"id\":\"dx-realbind\",\"status\":\"stopped\"}]" > "$fixture/apple-real-bind.json"
+# A decoy "name" key inside the nested objects, BEFORE the real name.
+printf '%s\n' "[{\"configuration\":{\"id\":\"dx-decoy\",\"mounts\":[{\"destination\":\"/persist\",\"options\":[\"rw\"],\"source\":\"/fixture/volumes/dx-persist/volume.img\",\"type\":{\"volume\":{\"cache\":{\"on\":{\"name\":\"decoy\"}},\"format\":\"ext4\",\"name\":\"dx-persist\",\"sync\":{\"fsync\":{\"name\":\"decoy2\"}}}}}]},\"id\":\"dx-decoy\",\"status\":\"running\"}]" > "$fixture/apple-real-decoy.json"
+want_real="$(printf 'volume|dx-nix|/var/lib/dx-nix-raw|rw\nvolume|dx-persist|/persist|rw\nvolume|dx-bootstrap|/guest-bootstrap|rw')"
+for pair in "dx-real:compact one-line" "dx-real2:pretty-printed (indent 2, Swift style)" "dx-real1:pretty-printed (indent 1)"; do
+    apple_mounts "${pair%%:*}"
+    if [ "$M_RC" -eq 0 ] && [ "$M_OUT" = "$want_real" ]; then
+        test_pass "apple real shape: ${pair#*:} gives three volumes in JSON order with names as sources"
+    else test_fail "apple real shape: ${pair#*:} gives three volumes in JSON order (rc=$M_RC got: $M_OUT)"; fi
+done
+apple_mounts dx-realbind
+want="$(printf 'volume|dx-nix|/var/lib/dx-nix-raw|rw\nbind|/fixture/hostroot/dxe/dx-realbind/persist|/persist|rw\nbind|/fixture/ws|/workspace|ro\nvolume|dx-bootstrap|/guest-bootstrap|rw')"
+if [ "$M_RC" -eq 0 ] && [ "$M_OUT" = "$want" ]; then
+    test_pass "apple real shape: /persist as a virtiofs bind (rw) between volumes, plus a ro bind"
+else test_fail "apple real shape: /persist as a virtiofs bind (rc=$M_RC got: $M_OUT)"; fi
+apple_mounts dx-decoy
+if [ "$M_RC" -eq 0 ] && [ "$M_OUT" = 'volume|dx-persist|/persist|rw' ]; then
+    test_pass "apple real shape: a nested \"name\" key before the volume name is not mistaken for it"
+else test_fail "apple real shape: nested \"name\" decoy (rc=$M_RC got: $M_OUT)"; fi
 # --- 3. dx-status and dx-start-container -------------------------------------
 # The entry points are sourced in a probe FILE (BASH_SOURCE is unset in
 # `bash -c` under kcov), their runtime-touching functions replaced by
