@@ -62,6 +62,10 @@
   ripgrep = [ "rg" ];
   fd = [ "fd" ];
   curl = [ "curl" ];
+  # spec R11: VS Code Remote-SSH unpacks its server with tar and gzip, and
+  # until now they existed only in root's bootstrap toolchain, not for dx.
+  gnutar = [ "tar" ];
+  gzip = [ "gzip" ];
   cacert = [ ];
   jq = [ "jq" ];
   just = [ "just" ];
