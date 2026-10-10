@@ -85,7 +85,7 @@ expect_reject "no DX_PERSIST_DIR_GUEST config field exists (it is a derived gues
 # resolve [NAME=value ...]: prints "rc=<n>", then stderr lines, then the
 # resolved persist fields (when rc=0). Nothing inherited from this shell.
 resolve() {
-    local out rc
+    local out
     out="$(env -i HOME="$fixture/home" PATH="$tools:/usr/bin:/bin" "$@" \
         bash -c 'source "$1/bin/lib/dx-config.sh"; dx_init_config "$2" 2>&1; rc=$?; echo "rc=$rc"; echo "STORAGE=${DX_PERSIST_STORAGE-unset}"; echo "ROOT=${DX_PERSIST_HOST_ROOT-unset}"' \
         _ "$BASE_DIR" "$fixture/root")"
@@ -219,8 +219,7 @@ else test_fail "dx-profile resolves a profile without the fields to volume"; pri
 write_profile apple-hostpath 'export DX_PERSIST_STORAGE=host-path
 export DX_PERSIST_HOST_ROOT=/share/example-root'
 out="$(profile_run apple-hostpath)"
-if ! has "$out" "rc=0" && has "$out" "$APPLE_MSG_A" && has "$out" "$APPLE_MSG_C" && ! has "$out" "DX_PERSIST_STORAGE=host-path
-"; then
+if ! has "$out" "rc=0" && has "$out" "$APPLE_MSG_A" && has "$out" "$APPLE_MSG_C" && ! grep -Fqx -- "DX_PERSIST_STORAGE=host-path" <<<"$out"; then
     test_pass "dx-profile reports the apple + host-path error and runs nothing"
 else test_fail "dx-profile reports the apple + host-path error and runs nothing"; printf "%s\n" "$out" | tail -n 6; fi
 
