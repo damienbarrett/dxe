@@ -15,28 +15,77 @@ persist_fixture_root_create() {
     mktemp -d "${1:-${TMPDIR:-/tmp}}/dxe-persist-share.XXXXXX"
 }
 
-# persist_fixture_cleanup PATH...: remove fixture trees, refusing anything
-# that is not clearly a dxe- fixture path.
+# persist_fixture_cleanup PATH...: remove fixture trees. Every PATH is
+# checked before anything is touched, and one refused PATH refuses the whole
+# call: its basename must start with dxe- (so "", "/", "." and a trailing "/"
+# are refused) and its parent directory, resolved physically, must be the
+# temp area ${TMPDIR:-/tmp} (resolved the same way) or lie below it. With no
+# such temp area, or one that is the root directory, everything is refused.
+# A symlink PATH is unlinked, never followed. rm and chmod are found through
+# PATH, so tests can put recording stubs in front of them.
 persist_fixture_cleanup() {
-    local target base
+    local area target
+    area="$(_persist_fixture_temp_area)" || area=""
     for target in "$@"; do
-        base="${target##*/}"
-        case "$target" in
-            "" | "/" | ".") base="" ;;
-        esac
-        case "$base" in
-            dxe-*) : ;;
-            *)
-                echo "persist-fixtures: refusing to remove [$target]" >&2
-                return 1
-                ;;
-        esac
+        if ! _persist_fixture_cleanup_allowed "$area" "$target"; then
+            echo "persist-fixtures: refusing to remove [$target]: not a dxe- path inside the temp area [${TMPDIR:-/tmp}]" >&2
+            return 1
+        fi
     done
     for target in "$@"; do
-        [ -e "$target" ] || [ -L "$target" ] || continue
-        chmod -R u+rwx "$target" 2>/dev/null || true
-        rm -rf "$target"
+        if [ -L "$target" ]; then
+            rm -f -- "$target"
+        elif [ -e "$target" ]; then
+            chmod -R u+rwx -- "$target" 2>/dev/null || true
+            rm -rf -- "$target"
+        fi
     done
+}
+
+# _persist_fixture_cleanup_allowed AREA PATH: AREA is the temp area as
+# _persist_fixture_temp_area prints it ("" when there is none).
+_persist_fixture_cleanup_allowed() {
+    local area="$1" target="$2" parent
+    [ -n "$area" ] || return 1
+    case "${target##*/}" in
+        dxe-*) : ;;
+        *) return 1 ;;
+    esac
+    case "$target" in
+        */*) parent="${target%/*}" ;;
+        *) parent=. ;;
+    esac
+    parent="$(_persist_fixture_physical_dir "${parent:-/}")" || return 1
+    # Both end in "/", so a sibling such as "$TMPDIR-evil" does not match.
+    case "$parent" in
+        "$area"*) return 0 ;;
+    esac
+    return 1
+}
+
+# _persist_fixture_temp_area: prints ${TMPDIR:-/tmp} as
+# _persist_fixture_physical_dir does; fails when it does not exist or is
+# the root directory (however it is spelled, e.g. "//").
+_persist_fixture_temp_area() {
+    local area
+    area="$(_persist_fixture_physical_dir "${TMPDIR:-/tmp}")" || return 1
+    [ ! "$area" -ef / ] || return 1
+    printf '%s' "$area"
+}
+
+# _persist_fixture_physical_dir DIR: prints DIR resolved physically, as
+# `cd -P -- DIR && pwd -P` would (cd -P sets $PWD to exactly that), plus a
+# trailing "/" so a name ending in a newline survives command substitution;
+# fails when DIR cannot be entered.
+# A relative DIR is entered as "./DIR", so neither CDPATH nor a DIR of "-"
+# ($OLDPWD) can make cd land somewhere other than where rm would act.
+_persist_fixture_physical_dir() {
+    local dir="$1"
+    case "$dir" in
+        /*) : ;;
+        *) dir="./$dir" ;;
+    esac
+    (cd -P -- "$dir" >/dev/null 2>&1 && printf '%s/' "${PWD%/}")
 }
 
 # persist_fixture_nas_create ROOT [PARENT]: fake tool dir whose ssh runs the
