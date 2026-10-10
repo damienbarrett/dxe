@@ -372,3 +372,62 @@ Then connect normally with `./bin/dx-ssh`, run `dx-theme dark` and `dx-theme lig
 - **Bootstrap Payload:** `/guest-bootstrap` is backed by the `dx-bootstrap`
   volume and populated from the local checkout at start time, keeping repository
   changes out of the image layer.
+
+## Browsing /persist from the Mac
+
+Use this to browse and manage files under `/persist` from the Mac, for example to move or copy a project tree around. Editing happens in the guest, not on the Mac. Two access paths are supported, both over the guest's existing SSH: VS Code Remote-SSH and an SFTP file browser such as ForkLift, Transmit or Cyberduck. There is no helper command; you add an `~/.ssh/config` entry once. For one-off copies keep using `dx-get` and `dx-put`.
+
+Browsing works only while the guest is running. When the guest is stopped there is nothing listening on the SSH port, so the connection is refused until you start it again.
+
+Add this to `~/.ssh/config` for the default profile:
+
+```sshconfig
+Host dx-host
+  HostName 127.0.0.1
+  Port 2222
+  User dx
+  IdentityFile ~/.ssh/dxe/dx_key
+  IdentitiesOnly yes
+  HostKeyAlias dx-host
+  StrictHostKeyChecking accept-new
+```
+
+Other profiles substitute their own name, port and key (`DX_SSH_PORT` and `DX_SSH_KEY` from the profile file). Every guest is reached through `127.0.0.1`, so `HostKeyAlias` keeps each guest's pinned host key under its own name instead of colliding on the shared address. The guest's host key persists in `/persist/etc/ssh`, so the pin survives rebuilds and recreates.
+
+VS Code needs a second alias that shares the first one's pinned key. They cannot be merged, because `RemoteCommand` clashes with the subsystem request an SFTP client makes:
+
+```sshconfig
+Host dx-host-vscode
+  HostName 127.0.0.1
+  Port 2222
+  User dx
+  IdentityFile ~/.ssh/dxe/dx_key
+  IdentitiesOnly yes
+  HostKeyAlias dx-host
+  StrictHostKeyChecking accept-new
+  RemoteCommand bash -l
+```
+
+Turn on the VS Code user setting `"remote.SSH.enableRemoteCommand": true`, then connect with:
+
+```bash
+code --remote ssh-remote+dx-host-vscode /persist
+```
+
+For an SFTP client, create a connection to the `dx-host` alias (or enter host `127.0.0.1`, the profile's port, user `dx` and the same key). SSHFS and Finder mounts are out of scope.
+
+Both paths run as `dx`, with `dx`'s permissions. Root-only entries such as `etc/ssh` stay unreadable. This is intended.
+
+### After a factory reset
+
+`dx-factory-reset` deletes the volume, so the guest gets a new host key and your Mac refuses the connection with a changed-key warning. Do not clear the pin blindly. First confirm the new key's fingerprint from inside the guest, through `dx-ssh`, which does not pin anything:
+
+```bash
+dx-ssh 'ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
+```
+
+(`/etc/ssh` is the live copy of the key kept in `/persist/etc/ssh`; the persisted store itself is root-only.) Once that fingerprint matches the one your Mac reports in the warning, remove the old pin and reconnect:
+
+```bash
+ssh-keygen -R dx-host
+```
