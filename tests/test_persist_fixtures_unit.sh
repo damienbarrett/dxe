@@ -4,20 +4,27 @@
 # coverage: yes
 set -uo pipefail
 
-# WP0.2 implementer cases for persist_fixture_cleanup's temp-area guard
-# (tests/lib/persist-fixtures.sh) that tests/test_persist_fixtures.sh does
-# not pin. The guard must judge the same directory that rm will act on:
-#  - a relative parent is resolved against the cwd only -- never through
-#    CDPATH, and a parent spelled "-" is a directory named "-", not $OLDPWD;
+# WP0.2 implementer cases for tests/lib/persist-fixtures.sh that neither
+# tests/test_persist_fixtures.sh nor tests/test_persist_fixtures_safety.sh
+# pins. The guards must judge the same directory that the tools act on:
+#  - a relative cleanup PATH is refused whatever the cwd, CDPATH or $OLDPWD
+#    (the safety suite's rule (e)), including the cases an earlier guard
+#    resolved against the cwd and accepted;
 #  - a parent whose physical name ends in a newline is compared exactly
 #    (command substitution must not strip it);
-#  - a temp area spelled "//" is the root directory and refuses everything.
+#  - a temp area spelled "//" is the root directory and refuses everything;
+#  - a relative TMPDIR, NAS ROOT or builder DIR is never resolved from a
+#    stale $PWD (cwd entered through a symlink since repointed), even where
+#    bash's cd would fall back to the real cwd;
+#  - the tree builder refuses a DIR that already holds one of the names it
+#    creates, so it never rewrites or re-permissions an existing entry.
 #
-# Safety: every call here runs under the same kind of jail as the acceptance
-# suite -- recording stubs for every destructive tool first on PATH, behind
-# an interlock that does not run the call unless each tool resolves to its
-# stub -- so a broken guard records a call instead of deleting anything.
-# Nothing is created outside this run's fresh mktemp directory.
+# Safety: every guard call here runs under the same kind of jail as the
+# acceptance suites -- recording stubs for every destructive tool first on
+# PATH, behind an interlock that does not run the call unless each tool
+# resolves to its stub -- so a broken guard records a call instead of
+# deleting anything. The builder runs with real tools only on directories
+# inside this run's fresh mktemp directory, and nothing is created outside it.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
@@ -128,22 +135,22 @@ expect_accepted() {
 }
 
 # ---------------------------------------------------------------------------
-test_section "persist-fixtures unit: a relative parent is resolved against the cwd only"
+test_section "persist-fixtures unit: a relative cleanup PATH is refused whatever the cwd"
 
-relative_parent_cases() {
+relative_path_cases() {
     # "sub" exists both in the area (reachable through CDPATH) and in the
     # outside cwd, where rm would really act.
     mkdir -p "$AREA/sub" "$OUTSIDE/sub/dxe-x" "$OUTSIDE/-/dxe-y" "$AREA/sub/dxe-z" "$AREA/dxe-w"
-    expect_refused "CDPATH pointing into the temp area does not make an outside relative parent acceptable" \
+    expect_refused "CDPATH pointing into the temp area does not make an outside relative PATH acceptable" \
         "$AREA" "$OUTSIDE" cleanup_with_cdpath "$AREA_P" sub/dxe-x
-    expect_refused "a parent named - is the cwd's ./-, not \$OLDPWD inside the temp area" \
+    expect_refused "a relative PATH under - is refused, \$OLDPWD inside the temp area or not" \
         "$AREA" "$OUTSIDE" cleanup_with_oldpwd "$AREA_P/sub" -/dxe-y
-    expect_accepted "a relative parent inside the temp area is accepted (CDPATH set elsewhere)" \
-        "$AREA" "$AREA" sub/dxe-z cleanup_with_cdpath "$OUTSIDE" sub/dxe-z
-    expect_accepted "a bare dxe- name with the cwd in the temp area is accepted" \
-        "$AREA" "$AREA" dxe-w persist_fixture_cleanup dxe-w
+    expect_refused "a relative PATH is refused even with its parent inside the temp area (CDPATH set elsewhere)" \
+        "$AREA" "$AREA" cleanup_with_cdpath "$OUTSIDE" sub/dxe-z
+    expect_refused "a bare dxe- name is refused even with the cwd in the temp area" \
+        "$AREA" "$AREA" persist_fixture_cleanup dxe-w
 }
-relative_parent_cases
+relative_path_cases
 
 # ---------------------------------------------------------------------------
 test_section "persist-fixtures unit: physical names are compared exactly"
@@ -169,6 +176,119 @@ root_area_cases() {
         persist_fixture_cleanup "$AREA/dxe-w"
 }
 root_area_cases
+
+assert_eq() { # assert_eq DESC EXPECTED ACTUAL
+    if [ "$2" = "$3" ]; then test_pass "$1"; else test_fail "$1 (expected [$2], got [$3])"; fi
+}
+
+mode_of() { # mode_of PATH: permission bits as four octal digits (lstat)
+    perl -e 'my @s = lstat($ARGV[0]) or exit 1; printf "%04o", $s[2] & 07777' "$1"
+}
+
+REAL_LN="$(type -P ln)"
+# from_stale_cwd LINK NEWTARGET CMD...: enters LINK logically (its current
+# target becomes the real cwd), repoints LINK to NEWTARGET, then runs CMD:
+# $PWD now spells a path that leads to NEWTARGET, the real cwd is the old
+# one. Changes the cwd, so it only ever runs inside a subshell.
+from_stale_cwd() {
+    local link="$1" new="$2"
+    shift 2
+    cd -L -- "$link" || return 96
+    "$REAL_LN" -sfn -- "$new" "$link" || return 95
+    "$@"
+}
+
+# ---------------------------------------------------------------------------
+test_section "persist-fixtures unit: nothing relative is resolved from a stale \$PWD"
+
+stale_cwd_cases() {
+    local s="$SCRATCH/stale" err rc
+    mkdir -p "$s/real/area/dxe-t" "$s/fake/area/dxe-t" "$s/real/r" "$s/fake/r" "$s/tools" "$s/links"
+    ln -s "$s/real" "$s/links/cwd"
+    ln -s "$s/real" "$s/links/cwd2"
+    expect_refused "a relative TMPDIR read from a stale \$PWD gives no temp area" \
+        area "$SCRATCH" from_stale_cwd "$s/links/cwd" "$s/fake" persist_fixture_cleanup "$s/fake/area/dxe-t"
+    expect_accepted "control: the same relative TMPDIR from a sound cwd is the cwd's ./area" \
+        area "$s/fake" "$s/fake/area/dxe-t" persist_fixture_cleanup "$s/fake/area/dxe-t"
+
+    err="$(builtin cd -- "$SCRATCH" && from_stale_cwd "$s/links/cwd2" "$s/fake" persist_fixture_nas_create r "$s/tools" 2>&1 >/dev/null)"
+    rc=$?
+    assert_eq "a relative NAS ROOT from a stale \$PWD: status 1" "1" "$rc"
+    assert_eq "a relative NAS ROOT from a stale \$PWD: says it cannot be resolved" "yes" \
+        "$(grep -Fq "cannot be resolved" <<<"$err" && echo yes || echo "no: $err")"
+    assert_eq "a relative NAS ROOT from a stale \$PWD: no tool directory created" "" "$(ls -A "$s/tools")"
+
+    # Only the real cwd has "victim": bash's cd -P then falls back to the
+    # kernel and reports the right directory, but the rule is still to refuse
+    # (real tools; every path involved is inside $s).
+    mkdir -p "$s/real/victim"
+    ln -s "$s/real" "$s/links/cwd3"
+    err="$(
+        TMPDIR="$s"
+        export TMPDIR
+        persist_fixture_euid() { echo 1000; }
+        builtin cd -- "$SCRATCH" &&
+            from_stale_cwd "$s/links/cwd3" "$s/fake" persist_fixture_tree_build victim 2>&1 >/dev/null
+    )"
+    rc=$?
+    assert_eq "a relative DIR from a stale \$PWD that only the real cwd holds: status 1" "1" "$rc"
+    assert_eq "a relative DIR from a stale \$PWD that only the real cwd holds: says refusing" "yes" \
+        "$(grep -Fq refusing <<<"$err" && echo yes || echo "no: $err")"
+    assert_eq "a relative DIR from a stale \$PWD that only the real cwd holds: nothing built" "|no" \
+        "$(ls -A "$s/real/victim")|$(test -e "$s/fake/victim" && echo yes || echo no)"
+}
+stale_cwd_cases
+
+# ---------------------------------------------------------------------------
+test_section "persist-fixtures unit: the builder never rewrites an entry that was already there"
+
+# build_as_user AREA DIR: the REAL builder (non-root path) with TMPDIR=AREA,
+# from $SCRATCH. Interlock: DIR must be textually below $SCRATCH (status 99).
+build_as_user() {
+    case "$2" in
+        *"/.."* | *"../"*) return 99 ;;
+        "$SCRATCH"/?*) : ;;
+        *) return 99 ;;
+    esac
+    (
+        TMPDIR="$1"
+        export TMPDIR
+        builtin cd -- "$SCRATCH" || exit 97
+        persist_fixture_euid() { echo 1000; }
+        persist_fixture_tree_build "$2"
+    )
+}
+
+existing_entry_cases() {
+    local a="$SCRATCH/pre/area" err rc
+    mkdir -p "$a/file" "$a/dir/nested" "$a/link"
+    printf 'mine\n' > "$a/file/plain.txt"
+    chmod 0640 "$a/file/plain.txt"
+    chmod 0700 "$a/dir/nested"
+    ln -s no-such-target "$a/link/links"
+
+    err="$(build_as_user "$a" "$a/file" 2>&1 >/dev/null)"
+    rc=$?
+    assert_eq "DIR already holds plain.txt: status 1" "1" "$rc"
+    assert_eq "DIR already holds plain.txt: says refusing" "yes" "$(grep -Fq refusing <<<"$err" && echo yes || echo "no: $err")"
+    assert_eq "DIR already holds plain.txt: its content is unchanged" "mine" "$(cat "$a/file/plain.txt")"
+    assert_eq "DIR already holds plain.txt: its mode is unchanged" "0640" "$(mode_of "$a/file/plain.txt")"
+    assert_eq "DIR already holds plain.txt: nothing else is created" "plain.txt" "$(ls -A "$a/file")"
+
+    build_as_user "$a" "$a/dir" >/dev/null 2>&1
+    rc=$?
+    assert_eq "DIR already holds a nested/ directory: status 1" "1" "$rc"
+    assert_eq "DIR already holds a nested/ directory: its mode is unchanged" "0700" "$(mode_of "$a/dir/nested")"
+    assert_eq "DIR already holds a nested/ directory: nothing is created in it or beside it" "nested|" \
+        "$(ls -A "$a/dir")|$(ls -A "$a/dir/nested")"
+
+    build_as_user "$a" "$a/link" >/dev/null 2>&1
+    rc=$?
+    assert_eq "DIR already holds a dangling symlink named links: status 1" "1" "$rc"
+    assert_eq "DIR already holds a dangling symlink named links: it is unchanged, nothing else created" \
+        "links|no-such-target" "$(ls -A "$a/link")|$(readlink "$a/link/links")"
+}
+existing_entry_cases
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     print_summary
