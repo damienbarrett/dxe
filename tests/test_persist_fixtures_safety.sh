@@ -718,6 +718,48 @@ builder_preexisting_cases() {
 builder_preexisting_cases
 
 # ---------------------------------------------------------------------------
+test_section "persist-fixtures safety: the inner cd is CDPATH-proof (B4, real tools in scratch)"
+
+# CDPATH names a scratch directory holding a directory of every name the
+# builder ever changes into (bash searches CDPATH before the literal name).
+# The builder must still put the socket in DIR/special and write nothing into
+# the CDPATH directory, nor anything to stdout.
+builder_cdpath_inner_cd_cases() {
+    need persist_fixture_tree_build || return 0
+    local A="$SCRATCH/b4/area" cdp="$SCRATCH/b4/cdp" n before after out rc entry
+    mkdir -p "$A/abs" "$cdp"
+    for n in special nested links private-0700 names owners a b c; do
+        mkdir -p "$cdp/$n"
+    done
+    before="$(cd -P -- "$cdp" && find . | sort)"
+
+    out="$(CDPATH="$cdp"; export CDPATH; real_build "$A" "$SANDBOX" "$A/abs" 2>&1)"
+    rc=$?
+    assert_eq "CDPATH set, absolute DIR: status 0" "0" "$rc"
+    assert_eq "CDPATH set, absolute DIR: builder stdout/stderr empty" "" "$out"
+    assert_true "CDPATH set: DIR/special/sock is a socket" test -S "$A/abs/special/sock"
+    assert_true "CDPATH set: DIR/special/fifo is a fifo" test -p "$A/abs/special/fifo"
+    for entry in plain.txt empty-file secret-0600.txt private-0700/inner.txt ._root-meta \
+        nested/a/b/c/deep.txt links/a-one links/to-plain names/-dash.txt; do
+        assert_true "CDPATH set: DIR/$entry exists" exists "$A/abs/$entry"
+    done
+    after="$(cd -P -- "$cdp" && find . | sort)"
+    assert_eq "CDPATH directory untouched (no socket or other entry created there)" "$before" "$after"
+
+    mkdir -p "$A/rel"
+    # Relative DIR: cwd and TMPDIR are the scratch area (real_build's interlock
+    # wants an absolute DIR, so the call is spelled out; all of it in $SCRATCH).
+    out="$(CDPATH="$cdp"; TMPDIR="$A"; export CDPATH TMPDIR; builtin cd -- "$A" && as_user persist_fixture_tree_build rel 2>&1)"
+    rc=$?
+    assert_eq "CDPATH set, relative DIR: builder stdout/stderr empty" "" "$out"
+    assert_eq "CDPATH set, relative DIR: status 0" "0" "$rc"
+    assert_true "CDPATH set, relative DIR: DIR/special/sock is a socket" test -S "$A/rel/special/sock"
+    after="$(cd -P -- "$cdp" && find . | sort)"
+    assert_eq "CDPATH directory untouched by the relative-DIR build" "$before" "$after"
+}
+builder_cdpath_inner_cd_cases
+
+# ---------------------------------------------------------------------------
 test_section "persist-fixtures safety: chown targets for a relative DIR (A5)"
 
 builder_chown_cases() {
