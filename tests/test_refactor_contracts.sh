@@ -44,6 +44,7 @@ libraries+=(
     "$ROOT/tests/lib/tmux-probes.sh"
     "$ROOT/tests/lib/coverage-metric.sh"
     "$ROOT/tests/lib/inherited-config.sh"
+    "$ROOT/tests/lib/persist-fixtures.sh"
     "$ROOT/tests/test_helpers.sh"
 )
 
