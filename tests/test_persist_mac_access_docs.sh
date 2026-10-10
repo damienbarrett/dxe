@@ -1,7 +1,7 @@
 #!/bin/bash
 # tier: unit
 # bash32: yes
-# coverage: yes
+# coverage: no
 # WP1.2 (spec requirements 7-9): the Mac access docs section for browsing
 # /persist over the guest's existing SSH (VS Code Remote-SSH and an SFTP
 # browser). The connection snippets are checked by BEHAVIOUR: each fenced
@@ -57,6 +57,9 @@ EXPECT_KEY_REL="${EXPECT_KEY_RAW#\$\{HOME\}/}"
 # ssh expands ~ from the passwd entry (when it expands at all), which can
 # differ from $HOME.
 PASSWD_HOME="$(cd ~ 2>/dev/null && pwd)"
+# The literal tilde ssh -G prints when it does not expand ~ (built without a
+# quoted tilde, which ShellCheck SC2088 rejects).
+TILDE="$(printf '%s' '~')"
 
 if [ -n "$EXPECT_PORT" ] && [ -n "$EXPECT_KEY_REL" ] && [ "$EXPECT_KEY_REL" != "$EXPECT_KEY_RAW" ]; then
     test_pass "default profile values read from tests/profiles/default.env (port $EXPECT_PORT, key ~/$EXPECT_KEY_REL)"
@@ -120,7 +123,7 @@ check_alias() {
     want_a="$HOME/$EXPECT_KEY_REL"
     want_b="$PASSWD_HOME/$EXPECT_KEY_REL"
     # Some clients print ~ unexpanded, others expand it.
-    if [ "$key_value" != "$want_a" ] && [ "$key_value" != "$want_b" ] && [ "$key_value" != "~/$EXPECT_KEY_REL" ]; then
+    if [ "$key_value" != "$want_a" ] && [ "$key_value" != "$want_b" ] && [ "$key_value" != "$TILDE/$EXPECT_KEY_REL" ]; then
         echo "identityfile is '$key_value', want $want_a"
     fi
     [ "$(dump_value "$dump" identitiesonly)" = yes ] || echo "identitiesonly is '$(dump_value "$dump" identitiesonly)', want yes"
