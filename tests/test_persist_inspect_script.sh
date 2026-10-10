@@ -11,7 +11,7 @@
 #                   [--report FILE] [--help]
 #    unknown argument -> exit 2 + usage on stderr. --help -> usage, exit 0.
 #  Environment:
-#    DXE_QNAP_HOST            ssh_config alias (default qnap-dxe), as phase0.
+#    DXE_QNAP_HOST            ssh_config alias (default: the phase-0 alias), as phase0.
 #    DXE_QNAP_DOCKER          absolute docker path ON THE NAS. When set, no
 #                             discovery call is made (tests set it).
 #    DXE_QNAP_SHARE_ROOT      REQUIRED: candidate share path on the NAS.
