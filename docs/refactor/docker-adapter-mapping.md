@@ -214,6 +214,7 @@ number(s) satisfied.
 | --- | --- | --- |
 | `direct_named_volume_mounts` | yes | DQ4: `/nix`, `/persist`, bootstrap all mount via named volumes directly |
 | `bind_mounts` | no | DQ8: `dx-mount DIR` is unsupported in the first QNAP release — a controller-local directory is never a valid remote bind source |
+| `runtime_host_directories` | yes | plans/do D-5: the `persist-dir:` role binds an operator-owned QNAP share directory as `/persist` (`DX_PERSIST_STORAGE=host-path`); distinct from `bind_mounts`, which stays no. Apple answers no |
 | `restart_policy` | yes | DQ3: `DX_CONTAINER_RESTART_POLICY` is a real docker-ssh field (`no`\|`unless-stopped`), unlike Apple's fixed "no" |
 | `host_filesystem_reclamation` | no | DQ8: Apple's sparse-image/`fstrim` host-side reclamation has no Docker equivalent; guest-side `nix-collect-garbage` still works via `dx_runtime_exec`, unaffected |
 | `raw_nix_disk` (Branch 11 / Phase 5) | no | DQ8: `bin/dx-nix-disk`'s sparse Apple raw-disk-image mechanism has no Docker equivalent at all; `bin/dx-nix-disk` refuses immediately, before any mutation |
