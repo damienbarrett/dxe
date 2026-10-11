@@ -1704,3 +1704,7 @@ call). On a tree holding 5378 / 2622 the expected values are 5444 / 2623:
 `scope_exec_lines_floor` 5378 -> 5444, `unscoped_prod_exec_lines_ceiling`
 2622 -> 2623 (provisional until the next integration coverage run). The WP6.3
 dated line left ratchet.env; its full entry is the "WP6.3" section above.
+
+## WP6.2c (2026-10-12): rsync on the optional essentials list
+
+Measured on wp/6.2c (feat/persist-host-dir at edec0d3 plus WP6.2c): covered=100%, scope_exec_lines=5444, unscoped_prod_exec_lines=2623. These equal the provisional integration values (5444 / 2623) exactly: the WP adds no executable line (the list gains an argument on an existing printf), so ratchet.env is unchanged. This run is the integration measurement for the merged Mac branch: the provisional 5444 / 2623 hold.
