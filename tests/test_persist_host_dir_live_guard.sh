@@ -269,6 +269,19 @@ new_canary() {
     CANARY="$base/canary"
 }
 
+# The bare image the live containers run has no sed and no awk. Every script runs
+# here with a PATH holding only symlinks to the tools that image has, so a script
+# that calls anything else fails the case instead of failing on the NAS.
+BARE_TOOLS="$SCRATCH/bare-tools"
+mkdir -p "$BARE_TOOLS"
+for tool in ls grep stat mktemp find du df sort head cksum cat mv rm mkdir chmod ln rmdir printf echo test; do
+    tool_path="$(command -v "$tool" 2>/dev/null)"
+    case "$tool_path" in /*) ln -s "$tool_path" "$BARE_TOOLS/$tool" ;; *) : ;; esac
+done
+for tool in sed awk; do
+    if [ -e "$BARE_TOOLS/$tool" ]; then echo "bare tool dir must not hold $tool" >&2; exit 1; fi
+done
+
 # run_script SHELL CANARY SCRIPT [ARG...] (stdin passed): status of the script.
 run_script() {
     local shell="$1" canary="$2" script="$3"
@@ -277,7 +290,8 @@ run_script() {
         "$SCRATCH"/case-*/canary) : ;;
         *) echo "refusing to run a script outside the scratch area: $canary" >&2; return 99 ;;
     esac
-    "$shell" -c "$script" sh "$canary" "$@"
+    shell="$(command -v "$shell")"
+    PATH="$BARE_TOOLS" "$shell" -c "$script" sh "$canary" "$@"
 }
 
 facts() { run_script "$1" "$2" "$PERSIST_LIVE_SCRIPT_STAT" </dev/null 2>/dev/null; }
