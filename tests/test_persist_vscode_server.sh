@@ -953,6 +953,9 @@ oe_profile() {
             mkdir -p "$nixld/bin" "$gen/libexec"
             printf 'fake nix-ld\n' > "$nixld/bin/nix-ld"
             ln -s "$nixld/bin/nix-ld" "$gen/libexec/nix-ld"
+            mkdir -p "$root/nix/store/2222bbbb-rsync-3.4.1/bin" "$gen/bin"
+            printf 'fake rsync\n' > "$root/nix/store/2222bbbb-rsync-3.4.1/bin/rsync"
+            ln -s "$root/nix/store/2222bbbb-rsync-3.4.1/bin/rsync" "$gen/bin/rsync"
             ;;
         dangling)
             mkdir -p "$gen/libexec"
@@ -1008,6 +1011,7 @@ eq "nix-ld on PATH does not count: the profile is what is checked" "nix-ld" "$OE
 # The list is data: a second entry (as WP6.2b will add for rsync) is honoured
 # in list order with no other change.
 R="$(mktemp -d "$WORK/opt-list.XXXXXX")"; oe_profile "$R/root" nixld
+rm -f "$R/root/nix/store/8888hhhh-profile/bin/rsync"  # nixld now holds rsync; this case needs it absent
 OE_FIND_OUT="$( (
     DX_ESSENTIALS_ROOT="$R/root"
     export DX_ESSENTIALS_ROOT
@@ -1071,6 +1075,7 @@ oe_run() {
                         if [ "$create" = yes ] && [ -d "$gen" ]; then
                             mkdir -p "$gen/libexec"
                             printf 'fake nix-ld\n' > "$gen/libexec/nix-ld"
+                            printf 'fake rsync\n' > "$gen/bin/rsync"
                         fi
                     fi
                     return "$install_rc"
