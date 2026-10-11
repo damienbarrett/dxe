@@ -1052,6 +1052,47 @@ deep/er/est/._z
 sp ace/._a" "$(keys apple)"
     eq "odd names: entries" "$(find "$ODDT" -mindepth 1 | wc -l | tr -d ' ')" "$(key entries)"
 
+    # WP6.3c: regression fixtures for the three shell details the loops and the
+    # sort depend on. Each is run the restricted way (bare PATH, en_US.UTF-8).
+    # (a) A ._ name that ends with a space survives the while-read loops
+    #     (pins `IFS=`: without it read strips the trailing blank).
+    TRAILT="$SCRATCH/dxe-trailing"
+    mkdir "$TRAILT"
+    mkdir "$TRAILT/sub dir"
+    : >"$TRAILT/sub dir/._notes "
+    script_run "$TRAILT"
+    eq "trailing space: exit 0" "0" "$S_RC"
+    eq "trailing space: the apple= line carries the exact name, trailing space included" "sub dir/._notes " "$(keys apple)"
+
+    # (b) A special file at a path containing a backslash is reported
+    #     byte-for-byte (pins `read -r`: without it the backslash is eaten).
+    BSLT="$SCRATCH/dxe-backslash"
+    mkdir "$BSLT"
+    mkdir "$BSLT/back\\dir"
+    mkfifo "$BSLT/back\\dir/fi\\fo"
+    script_run "$BSLT"
+    eq "backslash: exit 0" "0" "$S_RC"
+    eq "backslash: special count" "1" "$(key special)"
+    eq "backslash: the special_path= line carries the path byte-for-byte" 'back\dir/fi\fo' "$(keys special_path)"
+
+    # (c) Names that sort differently under C and en_US.UTF-8; the test runs
+    #     the script with LC_ALL=en_US.UTF-8 (bare_run), the script's own
+    #     LC_ALL=C must still give byte order (pins `export LC_ALL=C`).
+    # (No names differing only in case: macOS volumes are case-insensitive.)
+    SORTT="$SCRATCH/dxe-sortorder"
+    mkdir "$SORTT"
+    for n in ._B ._a ._Z ._c ._ ._1 ._-x ._y; do : >"$SORTT/$n"; done
+    script_run "$SORTT"
+    eq "sort order: exit 0" "0" "$S_RC"
+    eq "sort order: the apple= lines are in C byte order under LC_ALL=en_US.UTF-8" "._
+._-x
+._1
+._B
+._Z
+._a
+._c
+._y" "$(keys apple)"
+
     # A partly unreadable tree is a failed read, never a partial number.
     if [ "$(id -u)" = 0 ]; then
         test_skip "an unreadable subtree fails the script (root can read everything)"
