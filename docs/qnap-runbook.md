@@ -701,10 +701,10 @@ written when a setting is missing.
 
 ### 11.1 The rule
 
-**Change nothing during the migration.** From the inventory to the end of the
-confirmation, the guest stays stopped, nobody edits files in the volume or the
-new directory (not over SMB, not in Finder), and you do not edit the profile
-until the migration command has printed its report. Two reasons:
+**Change nothing during the migration.** From stopping the guest (step 2) until
+dx-persist-migrate has printed its report, the guest stays stopped and nobody
+edits the volume or the new directory (not over SMB, not in Finder); and you do
+not edit the profile until that report is printed. Two reasons:
 
 - The copy is verified against the volume as it was. A change made meanwhile
   either fails the verification or, worse, goes unnoticed. `rsync` decides what
@@ -725,7 +725,8 @@ until the migration command has printed its report. Two reasons:
    still missing.
 2. **A mount sentinel.** Create a regular file directly under the share root
    that exists only while the share is mounted and unlocked, and name it in
-   your private profile. Create it with a command that refuses to overwrite:
+   your private profile. Create it on the NAS (in an SSH shell there, or in Finder over SMB) with a
+   command that refuses to overwrite:
    ```sh
    ( set -C; : > <qnap-share>/dxe-share-mounted )
    ```
@@ -755,9 +756,9 @@ until the migration command has printed its report. Two reasons:
 ./bin/dx-profile <your-profile-name> ./bin/dx-persist-inventory
 ```
 
-It prints `size_kb`, `entries`, `hard_links`, the `appledouble` files
+It prints `size_kb`, `entries`, `hard_links`, `appledouble_count` and the `appledouble` files
 (`._*`, which the copy drops by name, so rescue a legitimate one first),
-`special` files (sockets and similar copy as inert entries), `acls` and
+`special_count` and the `special` files (sockets and similar copy as inert entries), `acls` and
 `xattrs`, `rsync_version`, `rsync_check`, `target_free_kb` and `target_room`
 for the share, and `rollback_free_kb` and `rollback_room` for a rollback
 volume. The report is printed whole or not at all. Exit codes:
@@ -795,6 +796,16 @@ Exit codes:
 - exit 1: refused (one `Error:` line naming the fix, nothing written) or failed
   before the verification, for example the copy was interrupted. The marker
   stays `copying`.
+  Two cases come after a good verification:
+  - the ready marker could not be set. The message says `... verified, but its
+    marker could not be set to ready (see above), so it stays copying; run
+    dx-persist-migrate again (it resumes and verifies again).` Do that.
+  - the host-path record could not be written. The message says `... is
+    migrated and ready, but its host-path record <path> could not be written;
+    make that path writable.` The directory is already `ready`; make the path
+    (under `${XDG_STATE_HOME:-$HOME/.local/state}`) writable. dx-create-volumes
+    writes the missing record once the profile uses DX_PERSIST_STORAGE=host-path
+    (dx-recreate), so go on with step 4.
 - exit 2: usage.
 - exit 3: the copy did not verify. The marker stays `copying`, so the guest
   cannot start on the directory. See 11.6.
@@ -853,7 +864,8 @@ delete it later, `dx-status` lists it as `kept volume:` and
 - **A hard kill** (for example `kill -9` of the controller process at the wrong
   moment) can leave one temporary file next to the marker, named
   `.dxe-persist-dir.XXXXXX` (six random characters). Look, then remove that one
-  file yourself (see 11.8 for the command shape) and run the command again.
+  file yourself with the root-container commands in 11.8, and run the command
+  again.
 - **Between the profile change and the recreate.** `dx-status` shows
   `configured:` and `actual:` differing and a `mismatch:` line; a start warns.
   Nothing is broken: `dx-recreate` finishes the switch.
@@ -891,6 +903,10 @@ Otherwise, with the guest stopped:
 ./bin/dx-profile <your-profile-name> ./bin/dx-persist-rollback --volume <new volume name>
 ```
 
+Like the migration, it needs `DX_PERSIST_HOST_MOUNT_SENTINEL`, and it reads only a
+directory whose marker is `ready`: on a `copying` directory it says there is
+nothing to roll back (the data is still in the volume).
+
 The name must be a new volume (not `DX_PERSIST_VOLUME`, `DX_NIX_VOLUME`,
 `DX_BOOTSTRAP_VOLUME`, the original volume, or any existing volume). The
 command creates the new volume with this profile's labels, copies into it,
@@ -912,10 +928,17 @@ The directory and the original volume both stay until you delete them. A start
 on the retired directory is refused.
 
 **Migrating again** needs a new empty directory. Move the retired (or
-abandoned) one aside first, on the NAS:
+abandoned) one aside first. The directory is root-owned, so do not use the NAS
+ssh account; run this yourself on the NAS as root in a one-off container (or
+rename it in Finder over SMB). Look first (the `ls` command in 11.8, on
+`/dxe/<container name>`), then:
 
 ```sh
-mv <qnap-share>/dxe/<container name>/persist <qnap-share>/dxe/<container name>/persist.retired-<date>
+docker run --rm --network none --user 0:0 --pull never \
+  --mount type=bind,source=<qnap-share>/dxe,target=/dxe \
+  --entrypoint sh <DX_IMAGE> -c '
+mv -- /dxe/<container name>/persist /dxe/<container name>/persist.retired-<date>
+'
 ```
 
 The next `dx-persist-migrate` creates a fresh directory. (Do not leave the
@@ -935,18 +958,35 @@ docker run --rm --network none --user 0:0 --pull never \
   --entrypoint ls <DX_IMAGE> -la /dxe/<container name>
 ```
 
-Read that output. Only if it is the directory you mean to delete:
+Read that output. Only if it is what you mean to delete, pick one form.
+
+Delete one retired or moved-aside directory (look at
+`/dxe/<container name>` first, as above):
 
 ```sh
 docker run --rm --network none --user 0:0 --pull never \
   --mount type=bind,source=<qnap-share>/dxe,target=/dxe \
-  --entrypoint sh <DX_IMAGE> -c 'rm -r /dxe/<container name>/<directory to delete>'
+  --entrypoint sh <DX_IMAGE> -c 'rm -r /dxe/<container name>/persist.retired-<date>'
 ```
 
-For the single leftover marker file of 11.4, look the same way (the same command, with
-`ls -la /dxe/<container name>/persist`) and remove just
-`/dxe/<container name>/persist/.dxe-persist-dir.<suffix>` with
-`rm -- <that path>`.
+Delete the whole guest directory (look at `/dxe/<container name>` first, as
+above):
+
+```sh
+docker run --rm --network none --user 0:0 --pull never \
+  --mount type=bind,source=<qnap-share>/dxe,target=/dxe \
+  --entrypoint sh <DX_IMAGE> -c 'rm -r /dxe/<container name>'
+```
+
+Delete the single leftover marker file of 11.4 (look first with the same
+command on `/dxe/<container name>/persist`; this is a single-file `rm`, not a
+recursive one):
+
+```sh
+docker run --rm --network none --user 0:0 --pull never \
+  --mount type=bind,source=<qnap-share>/dxe,target=/dxe \
+  --entrypoint sh <DX_IMAGE> -c 'rm -- /dxe/<container name>/persist/.dxe-persist-dir.<suffix>'
+```
 
 Deleting the whole guest directory also needs its record file on your
 controller deleted, or the tooling will refuse to create an empty guest in its
