@@ -764,13 +764,10 @@ dx_persist_kept_volumes() {
     return 0
 }
 
-# The record file D-7 keeps on the Mac for this guest's directory, named by the
-# profile id ($DX_REMOTE_HOST__$DX_CONTAINER_NAME, the DQ6 label value). The
-# formula is the Docker adapter's dx_runtime_docker_profile_id, restated here
-# because this module may not name adapter functions (the boundary audit);
-# tests/test_persist_destroy_reset_unit.sh pins the two equal.
-dx_persist_record_file() {
-    printf '%s/dxe/persist-dirs/%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}" "${DX_REMOTE_HOST:?}__${DX_CONTAINER_NAME:?}"
+# The record path for the manual-removal line, or a placeholder naming the
+# variables it is built from when it cannot be formed (fail-closed helper).
+dx_persist_kept_record_label() {
+    dx_persist_dir_record_path || echo "<XDG_STATE_HOME>/dxe/persist-dirs/<DX_REMOTE_HOST>__<DX_CONTAINER_NAME>"
 }
 
 # What destroy and reset print in host-path mode: the directory they keep and
@@ -782,7 +779,7 @@ dx_persist_kept_report() {
     [ "${DX_PERSIST_STORAGE:-volume}" = host-path ] || return 0
     echo "Kept /persist host directory: $(dx_persist_configured_source)"
     echo "  manual removal 1: with the guest stopped, remove $DX_PERSIST_HOST_ROOT/dxe/$DX_CONTAINER_NAME on the NAS"
-    echo "  manual removal 2: delete the record file $(dx_persist_record_file)"
+    echo "  manual removal 2: delete the record file $(dx_persist_kept_record_label)"
     while IFS= read -r vol; do
         [ -n "$vol" ] || continue
         echo "Kept persist volume: $vol"

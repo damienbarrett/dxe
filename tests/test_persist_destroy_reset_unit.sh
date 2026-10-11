@@ -97,8 +97,10 @@ XDG_STATE_HOME=/state-x
 check "kept report: directory, removal steps, each volume" "$want" "$(dx_persist_kept_report)"
 unset XDG_STATE_HOME
 HOME=/home-x
-check "record file name is the adapter's profile id" "$(dx_runtime_docker_profile_id)" "$(basename "$(dx_persist_record_file)")"
-check "record file falls back to \$HOME/.local/state" "/home-x/.local/state/dxe/persist-dirs/host.invalid__dx-u" "$(dx_persist_record_file)"
+check "record path basename is the adapter's profile id" "$(dx_runtime_docker_profile_id)" "$(basename "$(dx_persist_dir_record_path)")"
+check "record path falls back to \$HOME/.local/state" "/home-x/.local/state/dxe/persist-dirs/host.invalid__dx-u" "$(dx_persist_dir_record_path)"
+got="$(HOME="" dx_persist_kept_report | grep -F "manual removal 2")"
+check "kept report names a placeholder when the record path cannot be formed" "  manual removal 2: delete the record file <XDG_STATE_HOME>/dxe/persist-dirs/<DX_REMOTE_HOST>__<DX_CONTAINER_NAME>" "$got"
 check "status lines: one per kept volume" "kept volume: u-persist
 kept volume: u-old" "$(dx_persist_status_kept_lines)"
 

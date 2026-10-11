@@ -3,9 +3,10 @@ set -euo pipefail
 
 # dx-factory-reset
 # Removes every host-side artefact: container, image, persistent volumes,
-# and the SSH keypair. The /nix store and /persist contents are GONE after
-# this — re-downloading Nix takes hours. Prompts once for confirmation; pass
-# --force to skip.
+# and the SSH keypair. The /nix store is GONE after this — re-downloading Nix
+# takes hours. /persist volumes are removed too in volume mode; in host-path
+# mode the NAS directory and every persist volume are kept. Prompts once for
+# confirmation; pass --force to skip.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
