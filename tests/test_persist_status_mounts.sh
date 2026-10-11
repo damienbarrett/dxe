@@ -410,6 +410,14 @@ dx_nix_volume_claim_acquire() { :; }
 dx_bootstrap_lease_listing() { :; }
 dx_bootstrap_report_drift() { :; }
 dx_bootstrap_confirm_publication() { :; }
+# WP4.3: in host-path mode dx-start-container probes the NAS directory before
+# it starts the container (tests/test_persist_start_decision.sh). Answer that
+# probe with this guest's ready marker and no persist volume, so these cases
+# keep testing only the mismatch warning.
+dx_runtime_host_dir_probe() {
+    printf 'root=%s\nmounted=unknown\nstate=nonempty\nmarker=present\nschema=1\nguest=%s\nstate=ready\n' "$1" "$2"
+}
+dx_runtime_volume_exists() { return 1; }
 dx_runtime_container_mounts() {
     echo "mounts $1" >> "$P_LOG"
     [ "$P_MOUNTS_RC" = 0 ] || return "$P_MOUNTS_RC"
