@@ -1542,3 +1542,11 @@ measured 4959 on a base whose actual scope was 4910 (+49); the merged tree held
 so the measured value should fall; the ceiling is not lowered here). The WP6.1
 dated line left `tests/coverage/ratchet.env` to keep it at 10 lines; its full
 entry is the "WP6.1" section above.
+
+## Integration after WP4.3+WP5.1 (2026-10-11)
+
+Merged tree 3dd64f2 plus 06ed9af (one D-7 record path helper). Linux kcov run:
+`covered=100% scope_exec_lines=5117 unscoped_prod_exec_lines=2627`.
+Floor stays 5117 (the provisional estimate equals the measurement: the removed
+`dx_persist_record_file` was replaced by a one-line `dx_persist_kept_record_label`).
+Ceiling lowered 2644 -> 2627 (allowed direction; WP5.1's entry points shrank).
