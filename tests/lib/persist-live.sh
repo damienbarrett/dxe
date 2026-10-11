@@ -34,8 +34,9 @@
 #       the image by name; images carry no ownership labels);
 #     - the file names of DX_SSH_KEY and DX_SSH_KEY_PUB contain "canary"
 #       (dx-factory-reset deletes the key pair);
-#     - DX_SSH_PORT is not 2222, the registry default and the production
-#       QNAP guest's port;
+#     - DX_SSH_PORT is neither 2222 (the registry default and the production
+#       QNAP guest's port) nor 8787 (the usage service's default host port,
+#       which the production guest publishes);
 #     - DX_CONTAINER_RESTART_POLICY=no (the guest-side check case needs a
 #       guest that stopped itself to stay stopped);
 #     - DX_USAGE_SERVICE=off (its host port would collide with the
@@ -219,10 +220,16 @@ persist_live_guard() {
                 ;;
         esac
     done
-    if [ "${DX_SSH_PORT:-}" = 2222 ]; then
-        _persist_live_refuse "DX_SSH_PORT=2222 is the default guest port (the production QNAP guest's); give the canary its own port."
-        refused=1
-    fi
+    case "${DX_SSH_PORT:-}" in
+        2222)
+            _persist_live_refuse "DX_SSH_PORT=2222 is the default guest port (the production QNAP guest's); give the canary its own port."
+            refused=1
+            ;;
+        8787)
+            _persist_live_refuse "DX_SSH_PORT=8787 is the usage service's default host port (published by the production QNAP guest); give the canary its own port."
+            refused=1
+            ;;
+    esac
     if [ "${DX_CONTAINER_RESTART_POLICY:-}" != no ]; then
         _persist_live_refuse "DX_CONTAINER_RESTART_POLICY must be no (got '${DX_CONTAINER_RESTART_POLICY:-}'); the guest-side check case needs a guest that stopped itself to stay stopped."
         refused=1

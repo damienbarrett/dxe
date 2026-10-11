@@ -115,6 +115,7 @@ expect_one_refusal "a non-canary image" 'DX_IMAGE=dx-qnap-nixos does not contain
 expect_one_refusal "the production key pair" "DX_SSH_KEY=/fixture/keys/qnap is not a canary key" DX_SSH_KEY=/fixture/keys/qnap
 expect_one_refusal "a key that is canary only by its directory" "DX_SSH_KEY_PUB=/fixture/canary/dx_key.pub is not a canary key" DX_SSH_KEY_PUB=/fixture/canary/dx_key.pub
 expect_one_refusal "the default SSH port" "DX_SSH_PORT=2222 is the default guest port" DX_SSH_PORT=2222
+expect_one_refusal "the usage service's host port" "DX_SSH_PORT=8787 is the usage service's default host port" DX_SSH_PORT=8787
 expect_one_refusal "an unless-stopped restart policy" "DX_CONTAINER_RESTART_POLICY must be no (got 'unless-stopped')" DX_CONTAINER_RESTART_POLICY=unless-stopped
 expect_one_refusal "the usage service" "DX_USAGE_SERVICE must be off (got 'on')" DX_USAGE_SERVICE=on
 expect_one_refusal "an empty mount sentinel" "DX_PERSIST_HOST_MOUNT_SENTINEL is empty" DX_PERSIST_HOST_MOUNT_SENTINEL=
@@ -504,6 +505,7 @@ run_live() {
     env -i HOME="$SCRATCH/home" PATH="$fakes:/usr/bin:/bin" TMPDIR="$SCRATCH/tmp" \
         DX_PROFILES_DIR="$SCRATCH/profiles" SKIP_INTEGRATION="$2" DXE_PERSIST_LIVE_CANARY="$3" \
         DXE_PERSIST_LIVE_RUN_DIR="${4:-$SCRATCH/run-$1}" DXE_LIVE_GUARD_TRANSCRIPT="$transcript" \
+        DXE_PERSIST_LIVE_KEEP_RUNNING="${LIVE_KEEP_RUNNING:-}" \
         "$BASE_DIR/bin/dx-profile" "$1" bash "$BASE_DIR/tests/test_persist_host_dir_live.sh" 2>&1
     echo "rc=$?"
 }
@@ -547,6 +549,20 @@ else test_fail "a canary profile with a failing NAS connection stops at the pref
 if [ -d "$SCRATCH/run-live-canary/logs" ] && [ -d "$SCRATCH/run-live-canary/state" ] && [ ! -e "$SCRATCH/home/.local/state/dxe" ]; then
     test_pass "the live suite keeps its state (XDG_STATE_HOME) in its run directory, never the operator's"
 else test_fail "the live suite keeps its state (XDG_STATE_HOME) in its run directory, never the operator's"; fi
+if has "$out" "Stopped the canary container" || has "$out" "DXE_PERSIST_LIVE_KEEP_RUNNING=1"; then
+    test_fail "after a failure with no running container (the NAS is unreachable) the suite reports no stop"
+else test_pass "after a failure with no running container (the NAS is unreachable) the suite reports no stop"; fi
+failure_remote_lines="$remote_lines"
+LIVE_KEEP_RUNNING=1
+out="$(run_live live-canary false dx-live-canary)"
+LIVE_KEEP_RUNNING=""
+remote_lines="$(grep -c . "$transcript" || true)"
+discovery_lines="$(grep -c '^ssh|.*NOTFOUND' "$transcript" || true)"
+if ! has "$out" "rc=0" && has "$out" "DXE_PERSIST_LIVE_KEEP_RUNNING=1: the canary container is left as it is." \
+    && [ "$remote_lines" -ge 1 ] && [ "$remote_lines" = "$discovery_lines" ] \
+    && [ "$((remote_lines + 1))" = "$failure_remote_lines" ]; then
+    test_pass "DXE_PERSIST_LIVE_KEEP_RUNNING=1 skips the after-failure stop: one remote query fewer (no running check, no stop)"
+else test_fail "DXE_PERSIST_LIVE_KEEP_RUNNING=1 skips the after-failure stop ($remote_lines remote lines vs $failure_remote_lines without it, $discovery_lines discovery; $(tail -n 6 <<<"$out"))"; fi
 
 print_summary
 exit_with_code

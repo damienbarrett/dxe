@@ -27,14 +27,33 @@
 # dx-backup mirror; default: a new mktemp directory), DXE_PERSIST_LIVE_SKIP_DX_AI=1
 # (do not install the optional AI tools for R28; that part is then reported
 # as SKIP), DXE_PERSIST_LIVE_KEEP=1 (skip the final cleanup),
-# DXE_PERSIST_LIVE_CLEANUP_ONLY=1 (run only the final cleanup; pass the same
-# DXE_PERSIST_LIVE_RUN_DIR so the canary's record is found).
+# DXE_PERSIST_LIVE_KEEP_RUNNING=1 (after a failure, do not stop the canary
+# container), DXE_PERSIST_LIVE_CLEANUP_ONLY=1 (run only the final cleanup;
+# pass the same DXE_PERSIST_LIVE_RUN_DIR so the canary's record is found).
 #
 # Behaviour:
 #   - Fail-fast: the suite stops at the first failing check, puts back what
 #     the interrupted case had moved (the leaf, the marker, the leaf's mode,
-#     the record), leaves the canary in place for inspection and prints the
-#     cleanup-only command. Each check prints one PASS/FAIL line.
+#     the record), stops the canary container (unless
+#     DXE_PERSIST_LIVE_KEEP_RUNNING=1) so a failed unattended run never leaves
+#     it running, leaves the rest of the canary in place for inspection and
+#     prints the cleanup-only command. Each check prints one PASS/FAIL line.
+#   - Three kinds of check are FINDINGS instead: recorded as a failure
+#     ("FINDING: ...", listed again at the end) but the run goes on, so the
+#     later cases and the final cleanup still run. They are the gaps this run
+#     is expected to measure:
+#       * the NAS operations case (du and the marker's temp file + mv run as
+#         the management account, uid 1000, against a 30033:30001 0755 leaf
+#         that holds root-only etc/ssh);
+#       * the dx-ai checks of the /nix recovery case (R28);
+#       * the /persist bind source. The checks compare Docker's reported
+#         source with the CONFIGURED path <root>/dxe/<canary>/persist. A QTS
+#         share root is normally a symlink into its pool's data path; if
+#         Docker reports the resolved path, that is a WP3.4 finding (dx-status
+#         and dx-start-container compare the configured path with it, so they
+#         report a configured/actual mismatch), not a suite bug: it is
+#         recorded once and the run continues with the reported path. Any
+#         other bind shape still stops the run.
 #   - Everything the suite changes on the share it changes from a root
 #     one-off container whose only bind is the canary's own directory
 #     <root>/dxe/<canary> (persist_live_root_sh), with the fixed in-container
@@ -108,13 +127,15 @@
 #                           host key (R27).
 #   /nix recovery           on the new /nix, Home Manager tools run and the
 #                           dx-ai profile in /persist resolves into the store
-#                           again with codex working, with no manual step (R28).
+#                           again with codex working, with no manual step
+#                           (R28). The dx-ai checks are FINDINGS on failure.
 #   destroy volumes         dx-destroy then dx-destroy-volumes --force remove
 #                           nix and bootstrap only (R25, R26).
 #   NAS operations          the management-account operations the unit
 #                           transcripts record: host_dir_usage, host_dir_free
 #                           and host_dir_marker_write (same bytes; no temp
-#                           file left) work on the real share.
+#                           file left) work on the real share (FINDINGS on
+#                           failure; see Behaviour).
 #   final cleanup           leaf moved aside to persist.dxe-live-removed-<UTC>,
 #                           dx-factory-reset --force, the persist volume
 #                           deleted (DQ6-checked), the record deleted; nothing
@@ -201,6 +222,8 @@ LV_CREATED_AT=""
 LV_FACTS0=""
 LV_DX_AI=""
 LV_DX_AI_REASON=""
+LV_FINDINGS=""
+LV_ACTUAL=""
 
 lv_case() {
     LV_CASE="$1"
@@ -225,6 +248,30 @@ lv_check() {
         return 0
     fi
     lv_bad "$description"
+}
+
+# lv_finding DESCRIPTION: a known, expected gap this run exists to surface. It
+# is recorded as a failure ("FINDING: ...") and listed at the end, but the run
+# goes on, so the later cases and the final cleanup still run. Used only where
+# the header says so; every other check stops the run.
+lv_finding() {
+    test_fail "$LV_CASE: FINDING: $1"
+    LV_FINDINGS="$LV_FINDINGS
+  - $LV_CASE: $1"
+    return 0
+}
+
+# lv_check_or_finding DESCRIPTION COMMAND [ARG...]: lv_check, except that a
+# failure is a FINDING. Always returns 0.
+lv_check_or_finding() {
+    local description="$1"
+    shift
+    if "$@"; then
+        lv_ok "$description"
+    else
+        lv_finding "$description"
+    fi
+    return 0
 }
 
 # lv_run [--stdin FILE] LABEL [NAME=VALUE...] -- COMMAND [ARG...]
@@ -307,7 +354,7 @@ lv_equal() {
     return 1
 }
 
-lv_has_line() { printf '%s\n' "$1" | grep -Fqx -- "$2"; }
+lv_has_line() { grep -Fqx -- "$2" <<<"$1"; }
 
 # --- Remote facts (read-only) ----------------------------------------------
 lv_probe() { dxe_runtime_call dx_runtime_host_dir_probe "$DX_PERSIST_HOST_ROOT" "$DX_CONTAINER_NAME" 2>/dev/null; }
@@ -343,6 +390,43 @@ lv_ensure_image() {
 }
 lv_mount_line() {
     dxe_runtime_call dx_runtime_container_mounts "$DX_CONTAINER_NAME" 2>/dev/null | awk -F'|' '$3 == "/persist"'
+}
+
+# lv_check_bind: /persist is exactly one read-write bind of the leaf. Docker
+# may report the bind source with the share root resolved (a QTS share root is
+# usually a symlink into its pool's data path): the first time, that is a
+# FINDING for WP3.4 (dx-status and dx-start-container compare the configured
+# path with the reported one, so they would show a mismatch) and the run goes
+# on with the reported path in LV_ACTUAL; later binds must report the same
+# path. Any other shape -- no bind, a volume, read-only, two /persist mounts,
+# another directory -- stops the run.
+lv_check_bind() {
+    local line source
+    line="$(lv_mount_line)"
+    if [ "$line" = "bind|$LV_LEAF|/persist|rw" ]; then
+        LV_ACTUAL="$LV_LEAF"
+        lv_ok "/persist is one read-write bind of $LV_LEAF"
+        return 0
+    fi
+    case "$line" in
+        *"
+"*) : ;;
+        "bind|/"*"/dxe/$DX_CONTAINER_NAME/persist|/persist|rw")
+            source="${line#bind|}"
+            source="${source%%|*}"
+            if [ -z "$LV_ACTUAL" ] || [ "$LV_ACTUAL" = "$LV_LEAF" ]; then
+                LV_ACTUAL="$source"
+                lv_finding "Docker reports the /persist bind source as $source, not the configured $LV_LEAF (WP3.4: dx-status and dx-start-container would report a configured/actual mismatch)"
+                return 0
+            fi
+            if [ "$source" = "$LV_ACTUAL" ]; then
+                lv_ok "/persist is one read-write bind of $LV_LEAF (reported as $source, as before)"
+                return 0
+            fi
+            ;;
+    esac
+    lv_equal "$line" "bind|${LV_ACTUAL:-$LV_LEAF}|/persist|rw"
+    lv_bad "/persist is one read-write bind of $LV_LEAF"
 }
 lv_logs() { dxe_runtime_call dx_runtime_logs "$DX_CONTAINER_NAME" 2>&1; }
 lv_log_count() {
@@ -442,6 +526,18 @@ lv_stop() {
     echo ""
     echo "Stopped at the first failure: $LV_FAILURE"
     lv_restore_inflight
+    # A failed run must not leave the canary running unattended (overnight,
+    # next to the production guest) unless the operator asked for that.
+    if [ "${DXE_PERSIST_LIVE_KEEP_RUNNING:-}" = 1 ]; then
+        echo "  DXE_PERSIST_LIVE_KEEP_RUNNING=1: the canary container is left as it is."
+    elif lv_container_running; then
+        lv_run stop-after-failure -- "$BIN_DIR/dx-stop-container"
+        if [ "$LV_RC" -eq 0 ]; then
+            echo "  Stopped the canary container $DX_CONTAINER_NAME."
+        else
+            echo "  WARNING: could not stop $DX_CONTAINER_NAME (see $LV_ERR); stop it by hand: ./bin/dx-profile $LV_PROFILE_NAME ./bin/dx-stop-container"
+        fi
+    fi
     echo "The canary is left in place for inspection. Logs: $LV_RUN_DIR/logs"
     echo "To remove it afterwards: $LV_CLEANUP_COMMAND"
 }
@@ -565,7 +661,7 @@ c_bring_up() {
     lv_run_ok "dx brings the guest up and runs a command in it" dx-bring-up -- "$BIN_DIR/dx" true || return 1
     lv_check "dx used the directory as it was (no second creation)" lv_out_has "Using /persist directory $LV_LEAF (marker ready)" || return 1
     lv_check "the container is running" lv_container_running || return 1
-    lv_check "/persist is one read-write bind of the leaf" lv_equal "$(lv_mount_line)" "bind|$LV_LEAF|/persist|rw" || return 1
+    lv_check_bind || return 1
     lv_check "the guest verified its mount and marker before using /persist (WP4.5)" \
         test "$(lv_log_count "Verified host-path /persist for guest $DX_CONTAINER_NAME: a mount point with a ready .dxe-persist-dir.")" -ge 1 || return 1
     lv_check "/persist is a mount point inside the guest" test "$(lv_guest 'grep -c " /persist " /proc/self/mountinfo')" -ge 1 || return 1
@@ -576,8 +672,12 @@ c_bring_up() {
     lv_check "and mode 0755" lv_has_line "$stat" "leaf_mode=755" || return 1
     lv_run_ok "dx-status runs" status -- "$BIN_DIR/dx-status" || return 1
     lv_check "dx-status: configured is the leaf" lv_out_has "configured: $LV_LEAF" || return 1
-    lv_check "dx-status: actual is the leaf" lv_out_has "actual: $LV_LEAF" || return 1
-    lv_check "dx-status reports no mismatch" lv_out_lacks "mismatch:" || return 1
+    lv_check "dx-status: actual is the bind source Docker reports" lv_out_has "actual: $LV_ACTUAL" || return 1
+    if [ "$LV_ACTUAL" = "$LV_LEAF" ]; then
+        lv_check "dx-status reports no mismatch" lv_out_lacks "mismatch:" || return 1
+    else
+        echo "    (dx-status reports a mismatch: the bind-source FINDING above)"
+    fi
     LV_FPR0="$(lv_host_fingerprint)"
     lv_check "the guest's SSH host key fingerprint is readable" test -n "$LV_FPR0" || return 1
     echo "    host key: $LV_FPR0"
@@ -609,7 +709,7 @@ c_recreate() {
     lv_run_ok "dx-recreate rebuilds the container" recreate -- "$BIN_DIR/dx-recreate" true || return 1
     lv_check "it reused the directory" lv_out_has "Using /persist directory $LV_LEAF (marker ready)" || return 1
     lv_check "it created nothing on the share" lv_out_lacks "Creating /persist directory" || return 1
-    lv_check "the new container binds the same leaf" lv_equal "$(lv_mount_line)" "bind|$LV_LEAF|/persist|rw" || return 1
+    lv_check_bind || return 1
     lv_check "the persist volume still does not exist" lv_volume_is absent "$DX_PERSIST_VOLUME" || return 1
     lv_same_guest_state
 }
@@ -620,12 +720,12 @@ c_mismatch() {
     before="$(lv_state)"
     lv_run status-volume-config DX_PERSIST_STORAGE=volume -- "$BIN_DIR/dx-status"
     lv_check "dx-status reports the configured volume" lv_out_has "configured: $DX_PERSIST_VOLUME" || return 1
-    lv_check "and the actual directory" lv_out_has "actual: $LV_LEAF" || return 1
+    lv_check "and the actual directory" lv_out_has "actual: $LV_ACTUAL" || return 1
     lv_check "and the mismatch, naming dx-recreate" lv_out_has "mismatch: /persist is not on the configured storage; dx-recreate applies the configuration" || return 1
     lv_run start-volume-config DX_PERSIST_STORAGE=volume -- "$BIN_DIR/dx-start-container"
     lv_check "dx-start-container warns about the mismatch, naming dx-recreate" \
-        lv_err_has "Warning: $DX_CONTAINER_NAME's /persist is on $LV_LEAF but the configuration says $DX_PERSIST_VOLUME; run dx-recreate to apply the configuration." || return 1
-    lv_check "the bind is unchanged (a switch is never applied from the configuration)" lv_equal "$(lv_mount_line)" "bind|$LV_LEAF|/persist|rw" || return 1
+        lv_err_has "Warning: $DX_CONTAINER_NAME's /persist is on $LV_ACTUAL but the configuration says $DX_PERSIST_VOLUME; run dx-recreate to apply the configuration." || return 1
+    lv_check_bind || return 1
     lv_check "nothing changed on the share, the volumes or the record" lv_state_unchanged "$before"
 }
 
@@ -892,7 +992,7 @@ c_reuse_after_reset() {
     lv_run_ok "dx brings the reset guest up again (new image, keys and /nix)" dx-after-reset -- "$BIN_DIR/dx" true || return 1
     lv_check "it reused the directory" lv_out_has "Using /persist directory $LV_LEAF (marker ready)" || return 1
     lv_check "it created nothing" lv_out_lacks "Creating /persist directory" || return 1
-    lv_check "/persist is the same bind" lv_equal "$(lv_mount_line)" "bind|$LV_LEAF|/persist|rw" || return 1
+    lv_check_bind || return 1
     lv_check "the guest's dx user is still $LV_OWNER" lv_equal "$(lv_guest 'printf "%s:%s\n" "$(id -u)" "$(id -g)"')" "$LV_OWNER" || return 1
     lv_same_guest_state
 }
@@ -907,9 +1007,13 @@ c_nix_state_recovery() {
         test_skip "$LV_CASE: dx-ai's /nix-linked state not validated (${LV_DX_AI_REASON:-not prepared})"
         return 0
     fi
+    # Expected gap (bootstrap's ai_tools_opted_in looks for an executable codex
+    # through this very profile): a failure here is a FINDING, not a stop.
     profile="$(lv_dx_ai_profile)"
-    lv_check "dx-ai's profile in /persist resolves into the new Nix store with no manual step" test "${profile#/nix/store/}" != "$profile" || return 1
-    lv_run_ok "codex runs with no manual step" codex-version-after -- guest_bash 'codex --version'
+    lv_check_or_finding "dx-ai's profile in /persist resolves into the new Nix store with no manual step (R28; got: $profile)" \
+        test "${profile#/nix/store/}" != "$profile"
+    lv_run codex-version-after -- guest_bash 'codex --version'
+    lv_check_or_finding "codex runs with no manual step (R28)" lv_rc_zero
 }
 
 c_destroy_volumes() {
@@ -936,26 +1040,32 @@ lv_usage_line_ok() {
     awk -F'\t' -v p="$LV_LEAF" 'NF == 2 && $1 ~ /^[0-9]+$/ && $2 == p { ok = 1 } END { exit !ok }' "$LV_OUT" || { lv_show_logs; return 1; }
 }
 
+# The management account is uid 1000, not root, and the leaf is 30033:30001
+# 0755 with root-only etc/ssh inside: du exits 1 on the unreadable directories
+# and a temp file cannot be created in the leaf. These are the gaps this case
+# exists to measure (WP5.2's usage line, WP6.4/6.5's marker writes), so every
+# check here is a FINDING on failure and the run goes on to the cleanup.
 c_nas_operations() {
     local free stat entries
     lv_case "NAS operations"
     echo "    (the probe ran in every case above; establish, its chown and its marker mv in creation and fresh start)"
     lv_run host-dir-usage -- dxe_runtime_call dx_runtime_host_dir_usage "$LV_LEAF"
-    lv_check "host_dir_usage (du -sk over the management account) succeeds" lv_rc_zero || return 1
-    lv_check "it prints <KiB><TAB><leaf>" lv_usage_line_ok || return 1
+    lv_check_or_finding "host_dir_usage (du -sk over the management account) succeeds" lv_rc_zero
+    lv_check_or_finding "it prints <KiB><TAB><leaf>" lv_usage_line_ok
     lv_run host-dir-free -- dxe_runtime_call dx_runtime_host_dir_free "$DX_PERSIST_HOST_ROOT"
-    lv_check "host_dir_free (df -P -k over the management account) succeeds" lv_rc_zero || return 1
+    lv_check_or_finding "host_dir_free (df -P -k over the management account) succeeds" lv_rc_zero
     free="$(cat "$LV_OUT")"
-    lv_check "it reports a filesystem" test -n "$(persist_live_kv fs "$free")" || return 1
-    lv_check "and numeric total KiB" grep -Eq '^total_kb=[0-9]+$' "$LV_OUT" || return 1
-    lv_check "and numeric available KiB" grep -Eq '^avail_kb=[0-9]+$' "$LV_OUT" || return 1
+    lv_check_or_finding "it reports a filesystem" test -n "$(persist_live_kv fs "$free")"
+    lv_check_or_finding "and numeric total KiB" grep -Eq '^total_kb=[0-9]+$' "$LV_OUT"
+    lv_check_or_finding "and numeric available KiB" grep -Eq '^avail_kb=[0-9]+$' "$LV_OUT"
     entries="$(lv_entries_of "$(lv_stat)")"
     lv_run host-dir-marker-write -- dxe_runtime_call dx_runtime_host_dir_marker_write "$LV_LEAF" "$LV_MARKER0"
-    lv_check "host_dir_marker_write (temp file + mv over the management account) succeeds on the $LV_OWNER-owned leaf" lv_rc_zero || return 1
-    lv_check "the marker holds the same bytes" lv_equal "$(lv_marker_of "$(lv_probe)")" "$LV_MARKER0" || return 1
+    lv_check_or_finding "host_dir_marker_write (temp file + mv over the management account) succeeds on the $LV_OWNER-owned leaf" lv_rc_zero
+    lv_check_or_finding "the marker holds the same bytes afterwards" lv_equal "$(lv_marker_of "$(lv_probe)")" "$LV_MARKER0"
     stat="$(lv_stat)"
-    lv_check "its mv left no temp file" lv_equal "$(lv_entries_of "$stat")" "$entries" || return 1
-    lv_check "and the marker is 0644" lv_has_line "$stat" "marker_mode=644"
+    lv_check_or_finding "no temp file is left in the leaf" lv_equal "$(lv_entries_of "$stat")" "$entries"
+    lv_check_or_finding "and the marker is 0644" lv_has_line "$stat" "marker_mode=644"
+    return 0
 }
 
 c_final_cleanup() {
@@ -1020,6 +1130,10 @@ for lv_case_fn in $LV_CASES; do
 done
 if [ -z "$LV_FAILURE" ] && [ "${DXE_PERSIST_LIVE_KEEP:-}" = 1 ] && [ "${DXE_PERSIST_LIVE_CLEANUP_ONLY:-}" != 1 ]; then
     echo "DXE_PERSIST_LIVE_KEEP=1: the canary is left in place. To remove it: $LV_CLEANUP_COMMAND"
+fi
+if [ -n "$LV_FINDINGS" ]; then
+    echo ""
+    echo "Findings (each recorded as a failure; the run went on past them):$LV_FINDINGS"
 fi
 
 print_summary
