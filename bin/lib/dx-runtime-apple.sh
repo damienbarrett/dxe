@@ -339,3 +339,14 @@ dx_runtime_apple_lock_acquire() {
 dx_runtime_apple_lock_release() {
     dx_lock_release "$1"
 }
+
+# NAS directory operations (WP4.2): there is no NAS behind the Apple
+# runtime, so every operation refuses without touching any tool.
+dx_runtime_apple_host_dir_unsupported() {
+    echo "Error: NAS directory operations are unsupported under DX_RUNTIME=apple." >&2
+    return 1
+}
+dx_runtime_apple_host_dir_probe() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_create() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_marker_write() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_usage() { dx_runtime_apple_host_dir_unsupported; }

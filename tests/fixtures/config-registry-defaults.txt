@@ -26,6 +26,7 @@ DX_NIX_DISK_SIZE	size	64G
 DX_PERSIST_VOLUME	name	dx-persist
 DX_PERSIST_STORAGE	enum:volume,host-path	volume
 DX_PERSIST_HOST_ROOT	optpath	
+DX_PERSIST_HOST_MOUNT_SENTINEL	optname	
 DX_GIT_MOUNT_SOURCE	optpath	
 DX_GIT_MOUNT_TARGET	abspath	/workspace
 DX_GUEST_WORKDIR	optpath	

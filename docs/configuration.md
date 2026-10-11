@@ -35,6 +35,7 @@ tests, parallel experiments, or multiple containers on the same host.
 | `DX_PERSIST_VOLUME` | `dx-persist` | Named volume mounted at the fixed guest path `/persist`. |
 | `DX_PERSIST_STORAGE` | `volume` | `volume` (the named volume above) or `host-path` (`/persist` is a directory on the QNAP share, bound into the guest). `host-path` is QNAP/`docker-ssh` only: under `DX_RUNTIME=apple` it is rejected with a pointer to `docs/guest.md`. |
 | `DX_PERSIST_HOST_ROOT` | empty | Absolute, colon-free path of the share root (`<qnap-share>`); required when `DX_PERSIST_STORAGE=host-path`, ignored in `volume` mode. The guest directory is derived, never configured: `<root>/dxe/<container name>/persist`. |
+| `DX_PERSIST_HOST_MOUNT_SENTINEL` | empty | Optional file name (no `/`, not starting with `.` or `-`) of a regular file that exists directly under `DX_PERSIST_HOST_ROOT` only while the share is mounted and unlocked; set it per private profile. The directory probe reports `mounted=yes` when the file exists, `mounted=no` when it does not, and `mounted=unknown` (never `yes`) when this is empty, so creating a new guest directory needs it configured. |
 | `DX_GIT_MOUNT_SOURCE` | empty | Optional host directory bind-mounted by `dx-create-container`. Leave empty for plain `dx`; use `dx-mount` to set it for an isolated side container. |
 | `DX_GIT_MOUNT_TARGET` | `/workspace` | Guest path for an explicit host checkout mount. |
 | `DX_GUEST_WORKDIR` | empty | Optional guest workdir used by `dx-ssh`; `dx-mount` sets it to the mounted repo subdirectory. |
@@ -110,6 +111,7 @@ registry that validates it.
 | `DX_PERSIST_VOLUME` | `dx-persist` |
 | `DX_PERSIST_STORAGE` | `volume` |
 | `DX_PERSIST_HOST_ROOT` | (empty) |
+| `DX_PERSIST_HOST_MOUNT_SENTINEL` | (empty) |
 | `DX_GIT_MOUNT_SOURCE` | (empty) |
 | `DX_GIT_MOUNT_TARGET` | `/workspace` |
 | `DX_GUEST_WORKDIR` | (empty) |
