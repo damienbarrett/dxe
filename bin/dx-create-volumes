@@ -7,6 +7,10 @@ source "$SCRIPT_DIR/dx-lib.sh"
 create_volumes_main() {
 dx_require_container_cli
 
+# Host-path mode (plans/do D-9): probe the share and decide before any volume
+# is created; a refusal stops here. Volume mode prints and calls nothing.
+dx_persist_action="$(dx_persist_create_decision)" || exit 1
+
 # Ensures every persistent volume exists. container_ensure_volume is itself
 # idempotent: it inspects the volume and returns early when it is already there.
 echo "Ensuring nix volume $DX_NIX_VOLUME..."
@@ -24,8 +28,9 @@ EOF
     exit 1
 fi
 
-echo "Ensuring persist volume $DX_PERSIST_VOLUME..."
-container_ensure_volume "$DX_PERSIST_VOLUME"
+# The named persist volume in volume mode; in host-path mode the decision
+# above, acted on (that volume is never created there).
+dx_persist_storage_ensure "$dx_persist_action"
 echo "Ensuring bootstrap volume $DX_BOOTSTRAP_VOLUME..."
 container_ensure_volume "$DX_BOOTSTRAP_VOLUME"
 }

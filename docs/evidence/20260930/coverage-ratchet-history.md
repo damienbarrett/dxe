@@ -1481,3 +1481,40 @@ WP4.2b (no in-scope change) and WP2.1c (tests/qnap only). WP5.2 measured 4923 on
 a base whose actual scope was 4910 (+13), so the merged tree's expected scope is
 4923: `scope_exec_lines_floor` 4910 -> 4923, to be confirmed by the next
 integration coverage run. `unscoped_prod_exec_lines_ceiling` unchanged at 2643.
+
+## WP4.3 (2026-10-11)
+
+`scope_exec_lines_floor` 4806 -> 5055 (measured, 100% covered): the start
+decision in `bin/lib/dx-persist-dir.sh` -- the D-7 record lookup
+(`dx_persist_dir_record_path` / `_exists`), the pure
+`dx_persist_start_decision` and its mount gate, the refusal messages
+(`dx_persist_refusal`), the shared probe-and-decide step
+(`dx_persist_host_dir_decide`), the `dx-create-volumes` helpers
+(`dx_persist_create_decision`, `dx_persist_storage_ensure`), the
+`dx-start-container` check (`dx_persist_start_check`) and the fail-closed
+WP4.4 placeholder `dx_persist_dir_establish`; exercised by the acceptance
+suite `tests/test_persist_start_decision.sh` and the in-process cases in
+`tests/test_persist_start_decision_unit.sh`. Measured on a branch based on
+47e6ba0 (before cf87b87's floor of 4910), so the merge reconciles the two.
+`unscoped_prod_exec_lines_ceiling` 2643 -> 2644 (+1): the single
+`dx_persist_start_check || exit 1` call in `bin/dx-start-container`.
+`bin/dx-create-volumes` nets zero: it gains the
+`dx_persist_action="$(dx_persist_create_decision)" || exit 1` call line, and
+its persist `echo` plus `container_ensure_volume "$DX_PERSIST_VOLUME"` pair
+became the one `dx_persist_storage_ensure "$dx_persist_action"` call.
+Measured with `tests/run-coverage-linux.sh`: covered=100%
+scope_exec_lines=5055 unscoped_prod_exec_lines=2644.
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP3.4, recorded in full above) moved here verbatim:
+
+    # 2026-10-11 WP3.4: floor 4596 -> 4629 (measured, 100% covered; mounts parsers, dx_persist_* status helpers); ceiling 2640 -> 2643 (+3 entry-point lines: echo header and dx_persist_status_report call in bin/dx-status, dx_persist_warn_mismatch call in bin/dx-start-container). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+Merge WP4.3 (2026-10-11): wp/4.3 was merged into feat/persist-host-dir. WP4.3
+measured 5055 on a base whose actual scope was 4910 (+145); the merged tree
+already held 4923, so the expected scope is 5068: `scope_exec_lines_floor`
+4923 -> 5068 (provisional, to be confirmed by the integration coverage run).
+`unscoped_prod_exec_lines_ceiling` 2643 -> 2644 (WP4.3's one
+`dx_persist_start_check || exit 1` line in bin/dx-start-container). The WP4.5
+dated line left `tests/coverage/ratchet.env` to keep it at 10 lines; its full
+entry is the "WP4.5" section above.
