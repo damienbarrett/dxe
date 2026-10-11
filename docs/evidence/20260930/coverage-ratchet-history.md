@@ -1592,3 +1592,18 @@ measured 5075 on a base whose actual scope was 4910 (+165); the merged tree held
 the new bin/dx-persist-inventory wrapper (WP6.3). The WP4.2, WP5.2 and WP6.2
 dated lines left `tests/coverage/ratchet.env` to keep it at 10 lines; their full
 entries are the sections above.
+
+## Integration after WP4.3+WP5.1 (2026-10-11)
+
+Merged tree 3dd64f2 plus 06ed9af (one D-7 record path helper). Linux kcov run:
+`covered=100% scope_exec_lines=5117 unscoped_prod_exec_lines=2627`.
+Floor stays 5117 (the provisional estimate equals the measurement: the removed
+`dx_persist_record_file` was replaced by a one-line `dx_persist_kept_record_label`).
+Ceiling lowered 2644 -> 2627 (allowed direction; WP5.1's entry points shrank).
+
+Merge wp/int-1 (2026-10-12): the D-7 record-path dedupe and its measured
+integration ratchet (scope 5117, unscoped 2627 on the WP4.3+WP5.1 tree) were
+merged after WP6.2+WP6.2b+WP6.3. The merged tree's expected values are
+therefore scope 5117 + 165 = 5282 (floor unchanged) and unscoped 2627 + 5 (the
+bin/dx-persist-inventory wrapper) = 2632: `unscoped_prod_exec_lines_ceiling`
+2649 -> 2632, to be confirmed by the next integration coverage run.
