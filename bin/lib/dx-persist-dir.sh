@@ -889,10 +889,11 @@ dx_persist_migrate_main() {
 # guest, the new name against the marker and the runtime, the directory's
 # inventory, rsync_check); the new volume, created with this profile's DQ6
 # persist labels; rsync from the directory into it; the manifest verify; the
-# `retired` marker; the report. Nothing is ever deleted: a failed copy or
-# verification leaves the new volume as it is, and the next attempt needs a
-# new --volume name. It never starts the guest, never edits the profile and
-# never touches the D-7 record.
+# guest checked again (WP6.5b: in host-path mode the directory is the guest's
+# /persist); the `retired` marker; the report. Nothing is ever deleted: a
+# failure once the new volume exists leaves it as it is, prints how to remove
+# it (WP6.5b), and the next attempt needs a new --volume name. It never
+# starts the guest, never edits the profile and never touches the D-7 record.
 #   exit 0  rolled back and verified;  1  refused, or failed anywhere but the
 #   verification;  2  usage;  3  the copy did not verify (the marker stays
 #   ready).
@@ -1004,12 +1005,61 @@ dx_persist_rollback_report() {
     printf 'next: set DX_PERSIST_STORAGE=volume and DX_PERSIST_VOLUME=%s in the profile, then run dx-recreate (the directory is kept, marked retired).\n' "$2"
 }
 
+# dx_persist_rollback_kept NAME: the line that follows every failure once
+# NAME exists (WP6.5b): NAME is kept, and the command that removes it if it is
+# not wanted. Only printed: the rollback never deletes a volume.
+dx_persist_rollback_kept() {
+    echo "Kept: the new volume $1 is left on ${DX_REMOTE_HOST:-the NAS}; if you do not want it, remove it there with: docker volume rm $1" >&2
+}
+
+# dx_persist_rollback_fill NAME CANON DEST SOURCE CREATED MIGRATED INVENTORY
+# [RSYNC_FLAG...]: the steps once NAME exists -- the copy, the verify, the
+# guest re-check, the retired marker and the report. Status 0 rolled back, 3
+# the copy did not verify, 1 any other failure (one Error line each); the
+# caller adds the kept-volume line on a failure. The copy and the verify run
+# with DX_PERSIST_VOLUME=NAME, so NAME's name-derived DQ6 role is persist.
+dx_persist_rollback_fill() {
+    local name="$1" canon="$2" dest="$3" src="$4" created="$5" migrated="$6" inv="$7"
+    local guest="$DX_CONTAINER_NAME" now retired t0 t1 t2 t3 rc=0
+    shift 7
+    echo "Copying $dest into the new volume $name (the guest stays stopped)..."
+    t0="$(date +%s)"
+    DX_PERSIST_VOLUME="$name" dx_runtime_host_rsync reverse "$name" "$dest" "$@" >&2 || rc=$?
+    t1="$(date +%s)"
+    if [ "$rc" -ne 0 ]; then
+        echo "Error: the copy into the new volume $name stopped before it finished (rsync exit $rc); $dest stays ready and $name is left as it is. Run dx-persist-rollback again with a new --volume name." >&2
+        return 1
+    fi
+    echo "Verifying $name against $dest (manifest)..."
+    t2="$(date +%s)"
+    DX_PERSIST_VOLUME="$name" dx_runtime_host_manifest_verify reverse "$name" "$dest" || rc=$?
+    t3="$(date +%s)"
+    if [ "$rc" -ne 0 ]; then
+        echo "Error: the new volume $name does not verify against $dest (manifest exit $rc; see above), so $dest stays ready and the guest can keep using it; $name is left for inspection. Investigate, then run dx-persist-rollback again with a new --volume name." >&2
+        return 3
+    fi
+    now="$(dx_persist_dir_utc_now)"
+    if ! retired="$(dx_persist_marker_format "$guest" retired "$src" "$created" "$migrated" "$now" 2>/dev/null)"; then
+        echo "Error: the controller's clock gave no usable UTC time ('$now'), so $dest stays ready although $name verified; fix the clock, then run dx-persist-rollback again with a new --volume name." >&2
+        return 1
+    fi
+    # The guest must still be stopped when the directory is retired (WP6.5b):
+    # in host-path mode the directory is its /persist, so one started during
+    # the copy or the verification may have changed it after rsync read it.
+    dx_persist_guest_stopped dx-persist-rollback "The copy into $name verified, but $dest stays ready, because the guest may have changed it during the copy; $name is kept, so the next run needs a new --volume name." || return 1
+    if ! dx_runtime_host_dir_marker_set "$canon" "$guest" ready "$retired"; then
+        echo "Error: $name verified, but the marker of $dest could not be set to retired (see above), so it stays ready; $name is kept. Fix the cause, then run dx-persist-rollback again with a new --volume name." >&2
+        return 1
+    fi
+    dx_persist_rollback_report "$dest" "$name" "$src" "$(dx_persist_migrate_seconds "$t0" "$t1")" "$(dx_persist_migrate_seconds "$t2" "$t3")" "$inv"
+}
+
 # dx_persist_rollback_run NAME: everything after the lock (the caller holds
 # it). Steps from the new volume on run with DX_PERSIST_VOLUME=NAME, so NAME's
 # name-derived DQ6 role is persist for its creation, the copy and the verify.
 dx_persist_rollback_run() {
     local name="$1" guest="$DX_CONTAINER_NAME" state report canon dest src created migrated inv
-    local flags=() now retired t0 t1 t2 t3 rc=0
+    local flags=() rc=0
     dx_persist_guest_stopped dx-persist-rollback "Nothing was changed." || return 1
     report="$(dx_runtime_host_dir_probe "$DX_PERSIST_HOST_ROOT" "$guest")" || report=""
     if ! dx_persist_rollback_decide "$guest" <<<"$report"; then
@@ -1043,32 +1093,9 @@ dx_persist_rollback_run() {
         echo "Error: could not create the volume $name on the NAS (see above); nothing was copied and $dest stays ready. Fix the cause, then run dx-persist-rollback again." >&2
         return 1
     fi
-    echo "Copying $dest into the new volume $name (the guest stays stopped)..."
-    t0="$(date +%s)"
-    DX_PERSIST_VOLUME="$name" dx_runtime_host_rsync reverse "$name" "$dest" "${flags[@]+"${flags[@]}"}" >&2 || rc=$?
-    t1="$(date +%s)"
-    if [ "$rc" -ne 0 ]; then
-        echo "Error: the copy into the new volume $name stopped before it finished (rsync exit $rc); $dest stays ready and $name is left as it is. Run dx-persist-rollback again with a new --volume name." >&2
-        return 1
-    fi
-    echo "Verifying $name against $dest (manifest)..."
-    t2="$(date +%s)"
-    DX_PERSIST_VOLUME="$name" dx_runtime_host_manifest_verify reverse "$name" "$dest" || rc=$?
-    t3="$(date +%s)"
-    if [ "$rc" -ne 0 ]; then
-        echo "Error: the new volume $name does not verify against $dest (manifest exit $rc; see above), so $dest stays ready and the guest can keep using it; $name is left for inspection. Investigate, then run dx-persist-rollback again with a new --volume name." >&2
-        return 3
-    fi
-    now="$(dx_persist_dir_utc_now)"
-    if ! retired="$(dx_persist_marker_format "$guest" retired "$src" "$created" "$migrated" "$now" 2>/dev/null)"; then
-        echo "Error: the controller's clock gave no usable UTC time ('$now'), so $dest stays ready although $name verified; fix the clock, then run dx-persist-rollback again with a new --volume name." >&2
-        return 1
-    fi
-    if ! dx_runtime_host_dir_marker_set "$canon" "$guest" ready "$retired"; then
-        echo "Error: $name verified, but the marker of $dest could not be set to retired (see above), so it stays ready; $name is kept. Fix the cause, then run dx-persist-rollback again with a new --volume name." >&2
-        return 1
-    fi
-    dx_persist_rollback_report "$dest" "$name" "$src" "$(dx_persist_migrate_seconds "$t0" "$t1")" "$(dx_persist_migrate_seconds "$t2" "$t3")" "$inv"
+    dx_persist_rollback_fill "$name" "$canon" "$dest" "$src" "$created" "$migrated" "$inv" "${flags[@]+"${flags[@]}"}" || rc=$?
+    [ "$rc" -eq 0 ] || dx_persist_rollback_kept "$name"
+    return "$rc"
 }
 
 dx_persist_rollback_main() {
