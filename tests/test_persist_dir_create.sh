@@ -121,8 +121,9 @@ set -uo pipefail
 #    the record path (no temp file is left behind). An existing record is
 #    replaced. If the record cannot be written: status 1 and exactly one
 #    `Error:` line naming the record path. Success: status 0, no `Error:` line.
-#    Only establish writes the record: dx-start-container never does, and a
-#    refusal or a failed establish leaves it exactly as it was.
+#    Only establish and the backfill (F) write the record: dx-start-container
+#    never does, and a refusal or a failed establish leaves it exactly as it
+#    was.
 #
 # E. Wiring, DX_PERSIST_STORAGE=host-path (WP4.3's placement is kept).
 #    bin/dx-create-volumes probes, learns the persist volume's state through
@@ -138,6 +139,26 @@ set -uo pipefail
 #    (the container's marker mv failing on its first call) leaves an empty,
 #    unmarked leaf and no record; the next dx-create-volumes, still for a new
 #    guest, adopts it and finishes.
+#
+# F. Backfill of a missing record (amendment; the coordinator's decision on
+#    WP4.4 open point 5). In host-path mode, when dx-create-volumes' decision
+#    is `ok` (a ready marker naming this guest) and dx_persist_dir_record_exists
+#    reports the record absent, dx-create-volumes writes it: the same path,
+#    the same lines and the same atomic write as D (mode 0600, a temp file in
+#    the record's directory and ONE mv onto it, no temp left), with
+#        mode=backfill
+#        created-at=<the marker's created-at value; when the marker has no
+#                    created-at line, one UTC timestamp taken on the
+#                    controller during the run>
+#    The backfill runs no container (no docker run), makes no NAS-shell call
+#    beyond the one probe and writes nothing to the share. If the record
+#    cannot be written: exactly one line beginning `Warning:` on stderr,
+#    naming the record path, no `Error:` line, and dx-create-volumes still
+#    succeeds (status 0; the bootstrap volume is still ensured). On the ok
+#    path an existing record -- anything at the record path, as
+#    dx_persist_dir_record_exists counts it -- is never touched (byte- and
+#    mode-identical, no mv onto it). Volume mode backfills nothing, and
+#    dx-start-container never writes the record.
 #
 # Test-only conventions. The share is a fixture root under a private TMPDIR
 # area served by the WP0.2 NAS fake (the "remote" shell runs locally with
@@ -586,13 +607,17 @@ expect_marker() {
     eq "$label: the marker's mode is 0644" 644 "$(file_mode "$f" 2>/dev/null)"
 }
 
-# expect_record LABEL MODE: the D-7 record, exactly (its created-at is the
-# leaf marker's own), written atomically.
+# expect_record LABEL MODE [CREATED_AT]: the D-7 record, exactly, written
+# atomically. Its created-at is CREATED_AT when given, else the leaf marker's.
 expect_record() {
     local label="$1" mode="$2" want="$W/record.want" movers tmp_file marker_t
-    marker_t="$(sed -n 's/^created-at=//p' "$GDIR/$MARKER_NAME" 2>/dev/null | head -n1)"
-    if [ -z "$marker_t" ]; then
-        test_fail "$label: the leaf has a marker whose created-at the record can repeat"
+    if [ "$#" -ge 3 ]; then
+        marker_t="$3"
+    else
+        marker_t="$(sed -n 's/^created-at=//p' "$GDIR/$MARKER_NAME" 2>/dev/null | head -n1)"
+        if [ -z "$marker_t" ]; then
+            test_fail "$label: the leaf has a marker whose created-at the record can repeat"
+        fi
     fi
     printf 'schema=1\nguest=%s\nroot=%s\nmode=%s\ncreated-at=%s\n' "$GUEST" "$ROOT" "$mode" "$marker_t" >"$want"
     if [ -f "$REC_FILE" ] && [ ! -L "$REC_FILE" ] && cmp -s "$want" "$REC_FILE"; then
@@ -644,7 +669,7 @@ expect_leaf() {
 }
 
 expect_ok() { # LABEL
-    if [ "$RC" -eq 0 ] && [ "$(error_lines "$ERR$OUT")" = 0 ]; then
+    if [ "$RC" -eq 0 ] && [ "$(error_lines "$(printf '%s\n%s' "$ERR" "$OUT")")" = 0 ]; then
         test_pass "$1: exits 0 with no Error line"
     else
         test_fail "$1: exits 0 with no Error line (rc=$RC stderr: $ERR)"
@@ -1227,7 +1252,8 @@ cv
 expect_refused "create-volumes, empty directory with a record and no override" "DX_PERSIST_FRESH_START=$GUEST"
 eq "create-volumes, refused: no docker run" 0 "$(n_runs)"
 
-# A ready directory: nothing is established, no record is written.
+# A ready directory: nothing is established (the missing record is
+# backfilled; section F below pins how).
 world
 put_sentinel
 mkdir -p "$GDIR"
@@ -1263,7 +1289,99 @@ else test_pass "start-container, volume state unknown: no container start"; fi
 eq "start-container, volume state unknown: no docker run" 0 "$(n_runs)"
 
 # ---------------------------------------------------------------------------
-test_section "WP4.4: only establish writes the record"
+test_section "WP4.4 (F): dx-create-volumes backfills a missing record on ok"
+
+put_ready_marker() { # TEXT
+    mkdir -p "$GDIR"
+    printf '%s\n' "$1" >"$GDIR/$MARKER_NAME"
+}
+ready_text() { # [CREATED_AT]
+    printf 'schema=1\nguest=%s\nstate=ready' "$GUEST"
+    if [ -n "${1:-}" ]; then printf '\ncreated-at=%s' "$1"; fi
+}
+record_movers() { awk -v r="$REC_FILE" '{ n = split($0, w, " "); if (n >= 2 && w[n] == r) c++ } END { print c + 0 }' "$MVLOG"; }
+# expect_quiet_ok LABEL: status 0, no Error or Warning line, no docker run,
+# the share unchanged, and the probe the only NAS-shell call.
+expect_quiet_ok() {
+    local label="$1" all
+    all="$(printf '%s\n%s' "$ERR" "$OUT")"
+    expect_ok "$label"
+    eq "$label: no Warning line" 0 "$(grep -c '^Warning:' <<<"$all" || true)"
+    eq "$label: no docker run" 0 "$(n_runs)"
+    eq "$label: the share is unchanged" "$BEFORE" "$AFTER"
+    eq "$label: the one probe is the only NAS-shell call" 1 "$(count_lines "$LOG" '^ssh sh -c ')"
+}
+
+world
+put_ready_marker "$(ready_text 2026-10-11T08:00:00Z)"
+cv
+expect_quiet_ok "backfill, ready marker, no record"
+expect_record "backfill, ready marker, no record" backfill 2026-10-11T08:00:00Z
+
+world dx-fix-persist
+put_ready_marker "$(printf 'schema=1\nguest=%s\nstate=ready\nsource-volume=dx-fix-persist\ncreated-at=2026-10-01T07:06:05Z\nmigrated-at=2026-10-02T01:02:03Z' "$GUEST")"
+cv
+expect_quiet_ok "backfill, migrated ready marker, old volume kept"
+expect_record "backfill, migrated ready marker (its created-at, not migrated-at)" backfill 2026-10-01T07:06:05Z
+
+world
+put_ready_marker "$(ready_text)"
+cv
+expect_quiet_ok "backfill, ready marker without created-at"
+rec_t="$(sed -n 's/^created-at=//p' "$REC_FILE" 2>/dev/null | head -n1)"
+if dx_persist_marker_valid_timestamp "$rec_t" && not_after "$T0" "$rec_t" && not_after "$rec_t" "$T1"; then
+    test_pass "backfill, ready marker without created-at: created-at is a UTC timestamp taken during the run"
+else
+    test_fail "backfill, ready marker without created-at: created-at is a UTC timestamp taken during the run (got [$rec_t], run $T0..$T1)"
+fi
+expect_record "backfill, ready marker without created-at" backfill "$rec_t"
+
+# An existing record is never touched on the ok path.
+world
+put_ready_marker "$(ready_text 2026-10-11T08:00:00Z)"
+put_record "$OLD_RECORD"
+chmod 0644 "$REC_FILE"
+cv
+expect_quiet_ok "ok with an existing record"
+eq "ok with an existing record: the record is byte- and mode-identical" "$STATE_BEFORE" "$STATE_AFTER"
+eq "ok with an existing record: no mv onto the record" 0 "$(record_movers)"
+
+world
+put_ready_marker "$(ready_text 2026-10-11T08:00:00Z)"
+mkdir -p "$REC_FILE"
+cv
+expect_quiet_ok "ok with a directory at the record path (counts as a record)"
+eq "ok with a directory at the record path: the state directory is unchanged" "$STATE_BEFORE" "$STATE_AFTER"
+
+# The backfill cannot write: one Warning, and the command still succeeds.
+world
+put_ready_marker "$(ready_text 2026-10-11T08:00:00Z)"
+printf 'not a directory\n' >"$STATE/dxe"
+cv
+eq "backfill cannot write: exits 0" 0 "$RC"
+eq "backfill cannot write: no Error line" 0 "$(error_lines "$(printf '%s\n%s' "$ERR" "$OUT")")"
+eq "backfill cannot write: exactly one Warning: line, on stderr" "1 0" \
+    "$(grep -c '^Warning:' <<<"$ERR" || true) $(grep -c '^Warning:' <<<"$OUT" || true)"
+if grep -Fq -- "$STATE/dxe/persist-dirs/${NAS}__$GUEST" <<<"$(grep '^Warning:' <<<"$ERR" || true)"; then
+    test_pass "backfill cannot write: the Warning line names the record path"
+else
+    test_fail "backfill cannot write: the Warning line names the record path (stderr: $ERR)"
+fi
+eq "backfill cannot write: the state file is left as it was" "not a directory" "$(cat "$STATE/dxe")"
+eq "backfill cannot write: the bootstrap volume is still ensured" 1 \
+    "$(count_lines "$LOG" '^ssh docker volume create .* dx-fix-bootstrap$')"
+eq "backfill cannot write: no docker run" 0 "$(n_runs)"
+eq "backfill cannot write: the share is unchanged" "$BEFORE" "$AFTER"
+
+# Volume mode backfills nothing.
+world
+put_ready_marker "$(ready_text 2026-10-11T08:00:00Z)"
+cv DX_PERSIST_STORAGE=volume
+eq "volume mode: dx-create-volumes exits 0" 0 "$RC"
+eq "volume mode: no record is backfilled" "$STATE_BEFORE" "$STATE_AFTER"
+
+# ---------------------------------------------------------------------------
+test_section "WP4.4: dx-start-container never writes the record"
 
 world
 put_sentinel
