@@ -1461,3 +1461,21 @@ ownership check, one-off container run).
 `unscoped_prod_exec_lines_ceiling` unchanged at 2643: no entry point gained a
 line. Measured with `tests/run-coverage-linux.sh`: covered=100%
 scope_exec_lines=4973 unscoped_prod_exec_lines=2643.
+
+## WP6.3 (2026-10-11)
+
+`scope_exec_lines_floor` 4973 -> 5063 (+90, measured, 100% covered): the
+`dx_runtime_volume_inventory` and `dx_runtime_host_dir_free` dispatchers, their
+Apple "unsupported" arms, the docker-ssh implementations (the one-line
+read-only container script and the one-line NAS `df` script are constants), and
+`dx_persist_inventory_main` with its parsing helpers in
+`bin/lib/dx-persist-dir.sh`.
+`unscoped_prod_exec_lines_ceiling` 2643 -> 2648 (+5): the new entry point
+`bin/dx-persist-inventory` has `set -euo pipefail` (required by
+tests/test_section9_host_scripts.sh), the `SCRIPT_DIR` line, the `source` of
+`dx-lib.sh`, the `persist_inventory_main` definition (tests/
+test_refactor_contracts.sh wants `<name>_main` defined in the entry point
+itself), and the `_main` call guard. The WP4.5 dated line moved out of
+`tests/coverage/ratchet.env` (kept at 10 lines); its entry is in this history
+above. Measured with `tests/run-coverage-linux.sh`: covered=100%
+scope_exec_lines=5063 unscoped_prod_exec_lines=2648.
