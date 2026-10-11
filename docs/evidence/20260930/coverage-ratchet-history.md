@@ -1645,3 +1645,37 @@ holding 5282 / 2632 the expected values are 5377 / 2622:
 `scope_exec_lines_floor` 5282 -> 5377, `unscoped_prod_exec_lines_ceiling`
 2632 -> 2622 (provisional). The WP4.3 dated line left ratchet.env; its full
 entry is the "WP4.3" section above.
+
+## WP6.4 (2026-10-12)
+
+`scope_exec_lines_floor` 5377 -> 5591 (+214, measured, 100% covered): the
+forward migration. In `bin/lib/dx-persist-dir.sh` (+154),
+`dx_persist_migrate_main` and its helpers: the usage, the refusals that need
+no runtime call, the pure destination decision on the probe report, the one
+Error line per refusal, the seconds and report helpers, and the run itself
+(guest state, DQ6 checks, probe, inventory, rsync_check, establish with the
+copying marker, the copy, the manifest verify, the ready marker, the D-7
+record). In `bin/lib/dx-runtime-docker-lifecycle.sh` (+51),
+`dx_runtime_docker_container_state`, `dx_runtime_docker_host_dir_marker_set`
+with its constant single-line compare-and-set script, and
+`dx_runtime_docker_host_manifest_verify` (the manifest tool's path is a
+constant; its text is read at call time). In `bin/lib/dx-runtime-apple.sh`
+(+9), `dx_runtime_apple_container_state` and the two "unsupported" arms. The
+214 lines are exactly the instrumented lines the WP6.4 commits add, so the
+provisional 5377 for the merged WP4.4 base is confirmed. Exercised by the
+acceptance suite `tests/test_persist_migrate.sh` (real rsync and the real
+manifest tool under kcov) and the in-process cases in
+`tests/test_persist_migrate_unit.sh`.
+`unscoped_prod_exec_lines_ceiling` 2622 -> 2627 (+5): the new entry point
+`bin/dx-persist-migrate` has, like `bin/dx-persist-inventory`, `set -euo
+pipefail`, the `SCRIPT_DIR` line, the `source` of `dx-lib.sh`, the
+`persist_migrate_main` definition and the `_main` call guard; no other entry
+point changed, so this also confirms the provisional 2622. Measured with
+`tests/run-coverage-linux.sh`: covered=100% scope_exec_lines=5591
+unscoped_prod_exec_lines=2627 (the run before this ratchet change stopped at
+the unscoped check, 2627 > 2622, after the 100% line-coverage check passed).
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP5.1, recorded in full above) moved here verbatim:
+
+    # 2026-10-11 WP5.1: floor 4806 -> 4959 (measured, 100% covered; host-path destroy/reset lists, kept report and status lines in dx-container.sh); ceiling unchanged at 2643 (no entry-point line added; the two entry points shrank, measured 2626). History: docs/evidence/20260930/coverage-ratchet-history.md.
