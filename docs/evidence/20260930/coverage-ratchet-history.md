@@ -1478,3 +1478,33 @@ To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
 comment (WP3.4, recorded in full above) moved here verbatim:
 
     # 2026-10-11 WP3.4: floor 4596 -> 4629 (measured, 100% covered; mounts parsers, dx_persist_* status helpers); ceiling 2640 -> 2643 (+3 entry-point lines: echo header and dx_persist_status_report call in bin/dx-status, dx_persist_warn_mismatch call in bin/dx-start-container). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+## WP4.4 (2026-10-12)
+
+`scope_exec_lines_floor` 5055 -> 5150 (+95, measured, 100% covered): host-path
+directory creation and the D-7 record. In the runtime facade and both adapters,
+`dx_runtime_volume_state` (Docker's present/absent/unknown reading of one
+`volume inspect`, Apple's two-state answer) and `dx_runtime_host_dir_establish`
+(the Docker pre-call checks, the constant single-line establish script and its
+one root one-off `docker run`; Apple's "unsupported"). In
+`bin/lib/dx-persist-dir.sh`, `DX_PERSIST_DIR_OWNER`, `dx_persist_dir_establish`
+(which replaces WP4.3's placeholder), the record writer
+`dx_persist_dir_record_write`, the `ok`-path `dx_persist_dir_record_backfill`,
+the shared `dx_persist_host_dir_guest_ok`, the unknown-volume refusal and the
+`--report` hand-off in `dx_persist_host_dir_decide`, and
+`dx_persist_legacy_volume_check` (dx-create-volumes' legacy dx-workspace check,
+moved out of the entry point and worded per storage mode). These are exercised by
+the acceptance suite `tests/test_persist_dir_create.sh` and the in-process
+cases in `tests/test_persist_dir_create_unit.sh`. Measured on a branch based on
+f65e19a (WP4.3 Green), so the merge reconciles this with feat's later floor.
+`unscoped_prod_exec_lines_ceiling` unchanged at 2644: no entry point gained a
+line. `bin/dx-create-volumes` shrank, because its legacy-volume block (the
+`legacy_volume` assignment, the three-test `if`, the heredoc and `exit 1`) became
+the one `dx_persist_legacy_volume_check ... || exit 1` call. Measured with
+`tests/run-coverage-linux.sh`: covered=100% scope_exec_lines=5150
+unscoped_prod_exec_lines=2634.
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP4.5, recorded in full above) moved here verbatim:
+
+    # 2026-10-11 WP4.5: floor 4596 -> 4630 -> 4634 (measured, 100% covered; dx_persist_storage_check, then its missing-marker-library refusal, in bootstrap/persistence.sh); ceiling unchanged at 2640 (no entry-point lines). History: docs/evidence/20260930/coverage-ratchet-history.md.
