@@ -322,3 +322,16 @@ dx_runtime_capability() { dx_runtime_dispatch capability "$@"; }
 dx_runtime_lock_acquire() { dx_runtime_dispatch lock_acquire "$@"; }
 dx_runtime_lock_release() { dx_runtime_dispatch lock_release "$@"; }
 dx_runtime_lock_path() { dx_runtime_dispatch lock_path "$@"; }
+
+# NAS directory operations (WP4.2; plan D-6; spec R15-R17): probe, create and
+# write the marker of, and size, <ROOT>/dxe/<GUEST>/persist on the share the
+# docker-ssh host fronts. Apple has no NAS, so its adapter answers
+# "unsupported" without making any call.
+#   dx_runtime_host_dir_probe ROOT GUEST            facts, one per line
+#   dx_runtime_host_dir_create ROOT GUEST MARKER    new directory + marker
+#   dx_runtime_host_dir_marker_write PATH MARKER    atomic marker replace
+#   dx_runtime_host_dir_usage PATH                  `du -sk -- PATH`
+dx_runtime_host_dir_probe() { dx_runtime_dispatch host_dir_probe "$@"; }
+dx_runtime_host_dir_create() { dx_runtime_dispatch host_dir_create "$@"; }
+dx_runtime_host_dir_marker_write() { dx_runtime_dispatch host_dir_marker_write "$@"; }
+dx_runtime_host_dir_usage() { dx_runtime_dispatch host_dir_usage "$@"; }

@@ -357,3 +357,14 @@ dx_runtime_apple_container_mounts() {
     json="$(container inspect "$1" 2>/dev/null)" || return 1
     printf '%s\n' "$json" | awk -f "$DX_RUNTIME_APPLE_LIB_DIR/dx-inspect-mounts.awk"
 }
+
+# NAS directory operations (WP4.2): there is no NAS behind the Apple
+# runtime, so every operation refuses without touching any tool.
+dx_runtime_apple_host_dir_unsupported() {
+    echo "Error: NAS directory operations are unsupported under DX_RUNTIME=apple." >&2
+    return 1
+}
+dx_runtime_apple_host_dir_probe() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_create() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_marker_write() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_usage() { dx_runtime_apple_host_dir_unsupported; }
