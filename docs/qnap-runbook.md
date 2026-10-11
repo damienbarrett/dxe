@@ -684,3 +684,283 @@ Check the next report for a Claude row with data. This documents the manual
 workaround; automatic workspace preparation remains unimplemented.
 
 Revisit trigger: the next change to service workspace preparation or fresh-guest setup (tracked under Open plans in plans.md).
+
+## 11. Migrating /persist to a NAS host directory
+
+This moves a guest's `/persist` from its Docker volume into a directory on the
+NAS share, `<qnap-share>/dxe/<container name>/persist`, so Finder, SMB and NAS
+snapshots can reach it. The data is copied on the NAS; nothing leaves it. The
+old volume is kept, and you can roll back (11.7). Settings and rules are in
+[`docs/configuration.md`](configuration.md) and
+[`docs/lifecycle.md`](lifecycle.md); this section is the procedure.
+
+Run every command from your checkout as
+`./bin/dx-profile <your-profile-name> ./bin/<command>`. The migration commands
+need `DX_RUNTIME=docker-ssh` and refuse with one `Error:` line and nothing
+written when a setting is missing.
+
+### 11.1 The rule
+
+**Change nothing during the migration.** From the inventory to the end of the
+confirmation, the guest stays stopped, nobody edits files in the volume or the
+new directory (not over SMB, not in Finder), and you do not edit the profile
+until the migration command has printed its report. Two reasons:
+
+- The copy is verified against the volume as it was. A change made meanwhile
+  either fails the verification or, worse, goes unnoticed. `rsync` decides what
+  to copy again, after an interruption, by size and modification time to the
+  second, so a file rewritten within the same second as its copy, at the same
+  size, looks unchanged to it (the same-second caveat). The verification
+  compares content checksums and would catch this, but do not rely on that.
+- The downtime is the copy plus the verification plus the recreate; you choose
+  the window.
+
+### 11.2 Prerequisites (found on a live NAS)
+
+1. **Boot the guest once** on the current checkout before you start. The copy
+   runs `rsync` (version 3.1 or newer) from the guest's own tools, because the
+   NAS's `rsync` is 3.0.x and its SSH account is not root. Existing guests only
+   get `rsync` (and `nix-ld`, for VS Code's server) on a boot of a checkout
+   that includes them. The inventory's `rsync_check` line tells you if it is
+   still missing.
+2. **A mount sentinel.** Create a regular file directly under the share root
+   that exists only while the share is mounted and unlocked, and name it in
+   your private profile. Create it with a command that refuses to overwrite:
+   ```sh
+   ( set -C; : > <qnap-share>/dxe-share-mounted )
+   ```
+   ```sh
+   export DX_PERSIST_HOST_ROOT=<qnap-share>
+   export DX_PERSIST_HOST_MOUNT_SENTINEL=dxe-share-mounted
+   ```
+   Without `DX_PERSIST_HOST_MOUNT_SENTINEL` the migration refuses: an unmounted
+   or locked volume can leave an empty mount point, and nothing else proves the
+   share is there. Keep the root and the sentinel in the private profile only.
+3. **The bare image.** The commands run their NAS-side reads in one-off
+   containers from `DX_IMAGE`, the bare `nixos/nix` image, which has no `sed`
+   or `awk`. They are written for that. Use a current checkout; do not try to
+   fix it by installing tools into the image.
+4. **The Public share.** On the Public share every user with Read/Write access
+   over SMB can read and modify everything in `/persist`, whatever the file
+   owner or mode says, including `etc/ssh` (the host private keys) and stored
+   credentials. This was observed on the NAS and is accepted; a dedicated
+   private share would remove it (only `DX_PERSIST_HOST_ROOT` changes). Leave
+   `etc/ssh` and tool state alone when browsing the directory.
+
+### 11.3 Steps
+
+**1. Inventory.** Read-only; it writes nothing:
+
+```sh
+./bin/dx-profile <your-profile-name> ./bin/dx-persist-inventory
+```
+
+It prints `size_kb`, `entries`, `hard_links`, the `appledouble` files
+(`._*`, which the copy drops by name, so rescue a legitimate one first),
+`special` files (sockets and similar copy as inert entries), `acls` and
+`xattrs`, `rsync_version`, `rsync_check`, `target_free_kb` and `target_room`
+for the share, and `rollback_free_kb` and `rollback_room` for a rollback
+volume. The report is printed whole or not at all. Exit codes:
+
+- exit 0: complete, nothing blocks.
+- exit 1: refused or unreadable (one `Error:` line; nothing was printed).
+- exit 2: usage.
+- exit 3: the report is complete but names a blocker: `rsync_check` is
+  `refused: ...` or a `..._room` line says `no`. Fix it (boot the guest once;
+  free space) and run the inventory again before going on.
+
+**2. Stop the guest.** This also stops the supervised usage service:
+
+```sh
+./bin/dx-profile <your-profile-name> ./bin/dx-stop-container
+```
+
+**3. Migrate.**
+
+```sh
+./bin/dx-profile <your-profile-name> ./bin/dx-persist-migrate
+```
+
+Before it writes anything it checks, under the lifecycle lock, that the guest
+is stopped, that both volumes carry this profile's labels, that the share is
+mounted (the sentinel) and the destination is usable, and that `rsync` works.
+Then it creates the directory with a marker saying `copying`, copies, verifies
+the copy against the volume with a checksum manifest, sets the marker to
+`ready`, writes the host-path record on your controller, and prints a report:
+the destination, `copy_seconds` and `verify_seconds` (your downtime) and the
+dropped `._*` files. It never starts the guest and never edits the profile.
+Exit codes:
+
+- exit 0: migrated and verified; the report ends the output.
+- exit 1: refused (one `Error:` line naming the fix, nothing written) or failed
+  before the verification, for example the copy was interrupted. The marker
+  stays `copying`.
+- exit 2: usage.
+- exit 3: the copy did not verify. The marker stays `copying`, so the guest
+  cannot start on the directory. See 11.6.
+
+The destination must be empty or absent. A non-empty directory is refused,
+never merged, unless its marker says `copying` for this guest and this volume:
+that is the resume case.
+
+**4. Switch the profile.** Only after exit 0. In your private profile, set:
+
+```sh
+export DX_PERSIST_STORAGE=host-path
+```
+
+and recreate the guest, which mounts the directory and starts it:
+
+```sh
+./bin/dx-profile <your-profile-name> ./bin/dx-recreate
+```
+
+**5. Confirm.** Check each of these before you call it done:
+
+1. `./bin/dx-profile <your-profile-name> ./bin/dx-status` shows the
+   `/persist storage` section with `configured:` and `actual:` both the
+   directory `<qnap-share>/dxe/<container name>/persist`, and no `mismatch:`
+   line.
+2. The guest's own check passed. The guest logs one line at start,
+   `Verified host-path /persist for guest <container name>: a mount point with
+   a ready .dxe-persist-dir.` (in Container Station's log for the container, or
+   `docker logs <container name>` on the NAS). Without it, `/persist` is not
+   the ready directory.
+3. `dx-ssh` connects with no host key changed warning: `etc/ssh` came across
+   intact, so the host key is unchanged.
+4. Git works for `dx`: in a repository under `/persist`, `git status` runs with
+   no "dubious ownership" error.
+5. The usage service is running (if you use it):
+   `./bin/dx-profile <your-profile-name> ./bin/dx-usage-service status`.
+6. herdr starts (`./bin/dx-profile <your-profile-name> ./bin/dx-herdr`); it
+   recreates its sockets on start.
+7. Your own work is there: open a session, look at a recent project and the
+   credentials your tools use.
+
+**6. Keep the old volume.** Do not delete it. The migration and the rollback
+never delete the old volume (nor the directory); nothing does it for you, and
+`dx-destroy-volumes` and `dx-factory-reset` also leave it and the directory in
+host-path mode. Keep the volume until the new setup has run for a while and
+your NAS backup or snapshot of the directory has passed a restore test. To
+delete it later, `dx-status` lists it as `kept volume:` and
+`dx-destroy-volumes` prints the `docker volume rm` line; that is yours to run.
+
+### 11.4 When the migration is interrupted
+
+- **The copy was interrupted** (the SSH session dropped, Ctrl-C, the NAS
+  rebooted). The command printed `the copy ... stopped before it finished` and
+  exit 1. Run it again: it resumes into the same directory and verifies again.
+- **A hard kill** (for example `kill -9` of the controller process at the wrong
+  moment) can leave one temporary file next to the marker, named
+  `.dxe-persist-dir.XXXXXX` (six random characters). Look, then remove that one
+  file yourself (see 11.8 for the command shape) and run the command again.
+- **Between the profile change and the recreate.** `dx-status` shows
+  `configured:` and `actual:` differing and a `mismatch:` line; a start warns.
+  Nothing is broken: `dx-recreate` finishes the switch.
+
+### 11.5 Abandoning before the switch
+
+While the profile is still in volume mode nothing changed for the guest: the
+volume is untouched. To abandon, do not switch; start the guest as before. Move
+the half-built directory aside (11.7) or remove it (11.8) before a new attempt.
+
+### 11.6 When the verification fails
+
+Exit 3 means the directory does not match the volume. The marker stays
+`copying`, the guest cannot start on it, and the profile is still in volume
+mode. Read the lines above the error (the manifest lists the differences).
+Fix the cause (a change made during the migration is the usual one), then run
+the migration again: it resumes and verifies again. Or abandon: move aside the
+directory (11.7) and start over later.
+
+### 11.7 Rolling back
+
+The new volume is a copy. **Rolling back copies the directory into a new
+volume, so what changed on the directory since the migration comes along
+(additions, deletions, renames).** The original volume is not used and not
+changed.
+
+If the guest never ran on the directory, or its writes there can be discarded:
+set `DX_PERSIST_STORAGE=volume` in the profile and run `dx-recreate`; the old
+volume is as it was.
+
+Otherwise, with the guest stopped:
+
+```sh
+./bin/dx-profile <your-profile-name> ./bin/dx-stop-container
+./bin/dx-profile <your-profile-name> ./bin/dx-persist-rollback --volume <new volume name>
+```
+
+The name must be a new volume (not `DX_PERSIST_VOLUME`, `DX_NIX_VOLUME`,
+`DX_BOOTSTRAP_VOLUME`, the original volume, or any existing volume). The
+command creates the new volume with this profile's labels, copies into it,
+verifies, and marks the directory `retired`. Exit codes: exit 0 rolled back;
+exit 1 refused or failed (one `Error:` line, nothing deleted; an existing new
+volume is left as it is, so use another name); exit 2 usage; exit 3 the copy
+did not verify (the directory stays `ready`, the new volume is left for
+inspection; run again with another name).
+
+Then switch the profile back, in your private profile:
+
+```sh
+export DX_PERSIST_STORAGE=volume
+export DX_PERSIST_VOLUME=<new volume name>
+```
+
+and run `dx-recreate`, then confirm as in step 5 (`actual:` is the new volume).
+The directory and the original volume both stay until you delete them. A start
+on the retired directory is refused.
+
+**Migrating again** needs a new empty directory. Move the retired (or
+abandoned) one aside first, on the NAS:
+
+```sh
+mv <qnap-share>/dxe/<container name>/persist <qnap-share>/dxe/<container name>/persist.retired-<date>
+```
+
+The next `dx-persist-migrate` creates a fresh directory. (Do not leave the
+aside copy named `persist`.)
+
+### 11.8 Removing a retired or canary directory (you run this yourself)
+
+The tooling never deletes the directory, and neither does a destroy or a
+factory reset. When you are sure you no longer need a retired directory, an
+abandoned one, a moved-aside one or a rehearsal's, remove it yourself. The share
+holds root-owned files, so use a one-off container as root on the NAS, with a
+look first. Use the image named by `DX_IMAGE` in your profile:
+
+```sh
+docker run --rm --network none --user 0:0 --pull never \
+  --mount type=bind,source=<qnap-share>/dxe,target=/dxe \
+  --entrypoint ls <DX_IMAGE> -la /dxe/<container name>
+```
+
+Read that output. Only if it is the directory you mean to delete:
+
+```sh
+docker run --rm --network none --user 0:0 --pull never \
+  --mount type=bind,source=<qnap-share>/dxe,target=/dxe \
+  --entrypoint sh <DX_IMAGE> -c 'rm -r /dxe/<container name>/<directory to delete>'
+```
+
+For the single leftover marker file of 11.4, look the same way (the same command, with
+`ls -la /dxe/<container name>/persist`) and remove just
+`/dxe/<container name>/persist/.dxe-persist-dir.<suffix>` with
+`rm -- <that path>`.
+
+Deleting the whole guest directory also needs its record file on your
+controller deleted, or the tooling will refuse to create an empty guest in its
+place (that is its purpose):
+`${XDG_STATE_HOME:-$HOME/.local/state}/dxe/persist-dirs/<DX_REMOTE_HOST>__<container name>`.
+
+### 11.9 Rehearse on a disposable guest first (WP7.2)
+
+Before the real guest, run this section once end to end on a disposable
+profile. Copy [`tests/profiles/qnap-persist-canary-example.env`](../tests/profiles/qnap-persist-canary-example.env)
+to a private profile with its own container, volume names, key pair and an
+unused SSH port, in volume mode (`DX_PERSIST_STORAGE=volume`). Bring it up, put
+some files in `/persist` (a symlink, a hard link, a `._*` file), then do the
+inventory, stop, migrate, switch, confirm and rollback above, and finally
+remove the canary's directory with 11.8. Never point the rehearsal at the
+production guest's volumes or directory; the commands check labels, but a
+rehearsal only proves anything if its names differ.
