@@ -1645,3 +1645,12 @@ holding 5282 / 2632 the expected values are 5377 / 2622:
 `scope_exec_lines_floor` 5282 -> 5377, `unscoped_prod_exec_lines_ceiling`
 2632 -> 2622 (provisional). The WP4.3 dated line left ratchet.env; its full
 entry is the "WP4.3" section above.
+
+## WP6.3b (2026-10-12)
+
+The inventory container script (`DX_RUNTIME_DOCKER_VOLUME_INVENTORY_SCRIPT`) now
+builds its `apple=` and `special_path=` lists with POSIX `while read` loops
+instead of `sed`, so it runs on the bare image (no sed, no awk). It is still one
+constant line, so the in-scope executable-line count is unchanged: measured
+`covered=100% scope_exec_lines=5377 unscoped_prod_exec_lines=2622`. Floor and
+ceiling stay at 5377 / 2622; ratchet.env is not edited.
