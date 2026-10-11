@@ -1518,3 +1518,27 @@ already held 4923, so the expected scope is 5068: `scope_exec_lines_floor`
 `dx_persist_start_check || exit 1` line in bin/dx-start-container). The WP4.5
 dated line left `tests/coverage/ratchet.env` to keep it at 10 lines; its full
 entry is the "WP4.5" section above.
+
+## WP5.1 (2026-10-11)
+
+`scope_exec_lines_floor` 4806 -> 4959 (+153, measured, 100% covered): the
+host-path destroy/reset helpers in `bin/lib/dx-container.sh`
+(`dx_destroy_volume_lists`, `dx_destroy_plan_and_verify`,
+`dx_destroy_volume_describe`, `dx_factory_reset_volume_lines`,
+`dx_persist_kept_volumes`, `dx_persist_record_file`, `dx_persist_kept_report`,
+`dx_persist_status_kept_lines`), exercised in-process by
+`tests/test_persist_destroy_reset_unit.sh`.
+`unscoped_prod_exec_lines_ceiling` unchanged at 2643: no entry-point line was
+added (`bin/dx-destroy-volumes` and `bin/dx-factory-reset` call the new
+helpers in place of inline loops and `case` blocks, and shrank; unscoped
+measured 2626). Measured with `tests/run-coverage-linux.sh`: covered=100%
+scope_exec_lines=4959 unscoped_prod_exec_lines=2626.
+
+Merge WP5.1 (2026-10-11): wp/5.1 was merged into feat/persist-host-dir. WP5.1
+measured 4959 on a base whose actual scope was 4910 (+49); the merged tree held
+5068, so the expected scope is 5117: `scope_exec_lines_floor` 5068 -> 5117
+(provisional, to be confirmed by the integration coverage run).
+`unscoped_prod_exec_lines_ceiling` stays 2644 (WP5.1 shrank two entry points,
+so the measured value should fall; the ceiling is not lowered here). The WP6.1
+dated line left `tests/coverage/ratchet.env` to keep it at 10 lines; its full
+entry is the "WP6.1" section above.
