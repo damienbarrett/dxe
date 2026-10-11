@@ -4,10 +4,15 @@
 # coverage: yes
 set -uo pipefail
 
-# WP6.3 (plans/do plan.md D-6, D-8, D-10 as revised 2026-10-11; spec R37, R31,
-# spec section 6 step 1): acceptance tests for `dx-persist-inventory`, the
-# pre-migration inventory. Written before the command exists; the implementer
-# builds exactly this contract.
+# WP6.3 (plans/do plan.md D-6, D-8, D-10 as revised 2026-10-11 and clarified
+# 2026-10-11 after the WP6.2 verifier, finding A; spec R37, R31, spec section 6
+# step 1): acceptance tests for `dx-persist-inventory`, the pre-migration
+# inventory. Written before the command exists; the implementer builds exactly
+# this contract. Amended by WP6.2b: the read-only inventory container pins
+# `--user 0:0` and `--pull never`, and the rsync check (WP6.2's
+# dx_runtime_host_rsync_check, unchanged here) now runs rsync from the guest's
+# nix volume after a DQ6 check of that volume (tests/test_persist_rsync_ops.sh
+# pins it), so a complete run makes four docker calls.
 #
 # Interface contract (every name, argv, line and exit code below is pinned):
 #
@@ -43,6 +48,13 @@ set -uo pipefail
 #       - the volume read fails (container non-zero, or its output lacks
 #         `status=ok`, or lacks/garbles a required key), or the share root's
 #         df fails: one Error line, no report.
+#     NOT a refusal: the guest's NIX volume (DX_NIX_VOLUME, where rsync comes
+#     from) failing its DQ6 check inside rsync_check (another profile's, another
+#     role, absent), or rsync missing from it (the run exits 127). Those make
+#     rsync_check "refused" -- a blocker, exit 3, the complete report -- with
+#     the adapter's Error line in it ("refusing to run rsync from volume
+#     '<DX_NIX_VOLUME>'..." / "... boot the guest once ... include rsync"),
+#     and no rsync `run` for a DQ6 failure.
 #
 #  3. Stdout on exit 0 or 3: exactly these `key: value` lines in this order (the
 #     separator is a colon and one space; list entries repeat their key):
@@ -57,7 +69,11 @@ set -uo pipefail
 #       acls: present|none|unknown      (count > 0 / 0 / tool missing)
 #       xattrs: present|none|unknown
 #       rsync_version: <N.N.N>|unknown  unknown whenever rsync_check is refused
-#       rsync_check: ok   |   rsync_check: refused: <the adapter's message minus "Error: ">
+#       rsync_check: ok   |   rsync_check: refused: <the adapter's Error line minus "Error: ">
+#                                       (the line of rsync_check's stderr that
+#                                       starts "Error:"; any other stderr, e.g.
+#                                       docker's own, is dropped, and the
+#                                       command's stderr stays empty)
 #       target_root: <DX_PERSIST_HOST_ROOT exactly as configured>
 #       target_free_kb: <N>             free space of the share root's filesystem
 #       target_room: yes|no             yes iff target_free_kb >= size_kb
@@ -72,18 +88,24 @@ set -uo pipefail
 #     path per line), but every COUNT (entries, hard_links, appledouble_count,
 #     special_count) counts them correctly.
 #
-#  4. Order and transcript. Docker calls in a complete run, exactly three, in
+#  4. Order and transcript. Docker calls in a complete run, exactly four, in
 #     this order (a fake docker records every argv word, NUL-separated; <SCRIPT>
-#     stands for the one multi-line word after -c):
-#       1. volume inspect ...                      (the DQ6 check; first)
-#       2. run --rm --network none -v <VOLUME>:/v:ro --entrypoint sh <IMAGE>
-#              -c <SCRIPT> sh /v                   (the one read-only container)
-#       3. run --rm --network none --entrypoint rsync <IMAGE> --version
+#     stands for the one multi-line word after -c; <NIX> is DX_NIX_VOLUME,
+#     dx-fix-nix here):
+#       1. volume inspect ... <VOLUME>             (the DQ6 check; first)
+#       2. run --rm --network none --user 0:0 --pull never -v <VOLUME>:/v:ro
+#              --entrypoint sh <IMAGE> -c <SCRIPT> sh /v
+#                                                  (the one read-only container)
+#       3. volume inspect ... <NIX>                (rsync_check's DQ6 check of
+#                                                  the guest's nix volume)
+#       4. run --rm --network none --user 0:0 --pull never -v <NIX>:/nix:ro
+#              --entrypoint /nix/var/nix/profiles/per-user/root/profile/bin/rsync
+#              <IMAGE> --version                   (rsync_check, WP6.2b)
 #     plus exactly ONE NAS shell call (ssh), the share root's `df` (see 5b). No
 #     NAS shell command or container writes anything: no mkdir, rm, mv, chmod,
 #     chown, touch, tee, cp, ln, no redirection to a file, no --mount, no
-#     writable bind. Nothing is created under the share root or the controller's
-#     state directory (no D-7 record).
+#     writable bind (every -v ends in :ro). Nothing is created under the share
+#     root or the controller's state directory (no D-7 record).
 #
 #  5. Two new neutral runtime operations, declared in bin/lib/dx-runtime.sh with
 #       dx_runtime_volume_inventory()  { dx_runtime_dispatch volume_inventory "$@"; }
@@ -181,7 +203,8 @@ mkdir "$ROOT"
 mkdir "$SCRATCH/home"
 TOOLS="$(persist_fixture_nas_create "$ROOT" "$SCRATCH")"
 # docker: records every argv word NUL-separated in calls/N; `volume inspect`
-# answers from labels/<name>; `run` answers from run-<entrypoint>.out/.err/.rc.
+# answers from labels/<name>; `run` answers from run-<entrypoint>.out/.err/.rc,
+# <entrypoint> being the entrypoint's last path component (sh, rsync).
 fake_tool_write "$TOOLS" docker 'd="${FAKE_DOCKER_DIR:?}"
 mkdir -p "$d/calls"
 n=$(( $(ls "$d/calls" | wc -l) + 1 ))
@@ -197,7 +220,7 @@ case "$1" in
         ;;
     run)
         ep=""; prev=""
-        for a in "$@"; do if [ "$prev" = --entrypoint ]; then ep="$a"; fi; prev="$a"; done
+        for a in "$@"; do if [ "$prev" = --entrypoint ]; then ep="${a##*/}"; fi; prev="$a"; done
         if [ -f "$d/run-$ep.out" ]; then cat "$d/run-$ep.out"; fi
         if [ -f "$d/run-$ep.err" ]; then cat "$d/run-$ep.err" >&2; fi
         rc=0
@@ -230,19 +253,22 @@ export DX_RUNTIME=docker-ssh DX_REMOTE_HOST="$PERSIST_FIXTURE_NAS_HOST"
 export DX_CONTAINER_NAME=dx-fix DX_GUEST_SYSTEM=x86_64-linux
 export DX_IMAGE=dxe-inv-image:7
 export DX_PERSIST_VOLUME=dx-fix-persist
+export DX_NIX_VOLUME=dx-fix-nix
 export DX_PERSIST_HOST_ROOT="$ROOT"
 export DX_NIX_STORAGE_MODE=direct-volume
 unset DXE_FAKE_SSH_REMOTE_PATH DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION
 
 PROFILE="${PERSIST_FIXTURE_NAS_HOST}__dx-fix"
 OWN_LABELS="true|1|$PROFILE|persist|x86_64-linux"
+NIX_LABELS="true|1|$PROFILE|nix|x86_64-linux"
 export DF_LOG="$SCRATCH/df.log" DXE_FAKE_SSH_ARGV_LOG="$SCRATCH/ssh.log" APPLE_LOG="$SCRATCH/apple.log"
 
-new_case() { # fresh recording area, owned volume, df ok with 600000 free
+new_case() { # fresh recording area, owned persist and nix volumes, df ok with 600000 free
     FAKE_DOCKER_DIR="$(mktemp -d "$SCRATCH/dxe-fake-docker.XXXXXX")"
     export FAKE_DOCKER_DIR
     mkdir "$FAKE_DOCKER_DIR/calls" "$FAKE_DOCKER_DIR/labels"
     printf '%s\n' "$OWN_LABELS" >"$FAKE_DOCKER_DIR/labels/dx-fix-persist"
+    printf '%s\n' "$NIX_LABELS" >"$FAKE_DOCKER_DIR/labels/dx-fix-nix"
     : >"$DF_LOG"
     : >"$DXE_FAKE_SSH_ARGV_LOG"
     : >"$APPLE_LOG"
@@ -256,8 +282,16 @@ put() { # NAME CONTENT: a canned file in the fake docker area (newline-terminate
     printf '%s\n' "$2" >"$FAKE_DOCKER_DIR/$1"
 }
 ncalls() { ls "$FAKE_DOCKER_DIR/calls" | wc -l | tr -d ' '; }
-kind_of() { perl -0777 -e 'my $s = <STDIN>; my @w = split /\0/, $s, -1; print $w[0];' <"$FAKE_DOCKER_DIR/calls/$1"; }
+kind_of() {
+    if [ ! -f "$FAKE_DOCKER_DIR/calls/$1" ]; then printf '<no call %s>' "$1"; return 0; fi
+    perl -0777 -e 'my $s = <STDIN>; my @w = split /\0/, $s, -1; print $w[0];' <"$FAKE_DOCKER_DIR/calls/$1"
+}
+last_word_of() { # N -> the last argv word of call N
+    if [ ! -f "$FAKE_DOCKER_DIR/calls/$1" ]; then printf '<no call %s>' "$1"; return 0; fi
+    perl -0777 -e 'my $s = <STDIN>; my @w = split /\0/, $s, -1; pop @w if @w && $w[-1] eq ""; print $w[-1];' <"$FAKE_DOCKER_DIR/calls/$1"
+}
 call_of() { # N -> <word><word>..., the word after -c shown as SCRIPT
+    if [ ! -f "$FAKE_DOCKER_DIR/calls/$1" ]; then printf '<no call %s>\n' "$1"; return 0; fi
     perl -0777 -e 'my $s = <STDIN>; my @w = split /\0/, $s, -1; pop @w if @w && $w[-1] eq "";
         my $o = ""; for my $i (0 .. $#w) { my $x = $w[$i]; $x = "SCRIPT" if $i > 0 && $w[$i-1] eq "-c"; $o .= "<$x>"; }
         print "$o\n";' <"$FAKE_DOCKER_DIR/calls/$1"
@@ -332,8 +366,8 @@ run_wrapper() { # ARGS...
 errlines() { count_prefix "$INV_ERR" "Error:"; }
 
 # Docker argv for the two runs of a complete inventory.
-INV_RUN_ARGV="<run><--rm><--network><none><-v><dx-fix-persist:/v:ro><--entrypoint><sh><dxe-inv-image:7><-c><SCRIPT><sh></v>"
-RSYNC_RUN_ARGV="<run><--rm><--network><none><--entrypoint><rsync><dxe-inv-image:7><--version>"
+INV_RUN_ARGV="<run><--rm><--network><none><--user><0:0><--pull><never><-v><dx-fix-persist:/v:ro><--entrypoint><sh><dxe-inv-image:7><-c><SCRIPT><sh></v>"
+RSYNC_RUN_ARGV="<run><--rm><--network><none><--user><0:0><--pull><never><-v><dx-fix-nix:/nix:ro><--entrypoint></nix/var/nix/profiles/per-user/root/profile/bin/rsync><dxe-inv-image:7><--version>"
 
 expected_report() { # SIZE ENTRIES HL TARGET_FREE ROLLBACK_FREE -- the standard dataset
     printf '%s\n' \
@@ -489,31 +523,43 @@ run_main
 eq "complete: exit 0" "0" "$INV_RC"
 eq "complete: stderr is empty" "" "$INV_ERR"
 eq "complete: the exact report" "$STD_REPORT" "$INV_OUT"
-eq "complete: exactly three docker calls" "3" "$(ncalls)"
+eq "complete: exactly four docker calls" "4" "$(ncalls)"
 eq "complete: call 1 is the DQ6 volume inspect (before any container)" "volume" "$(kind_of 1)"
-eq "complete: call 2 is the read-only volume container" "$INV_RUN_ARGV" "$(call_of 2)"
-eq "complete: call 3 is the rsync version check" "$RSYNC_RUN_ARGV" "$(call_of 3)"
-eq "complete: exactly one NAS shell call (the df), besides three docker calls" "4" "$(ssh_calls)"
+eq "complete: call 1 inspects the guest's persist volume" "dx-fix-persist" "$(last_word_of 1)"
+eq "complete: call 2 is the read-only volume container (--user 0:0, --pull never)" "$INV_RUN_ARGV" "$(call_of 2)"
+case "$(call_of 3)" in
+    "<volume><inspect>"*) test_pass "complete: call 3 is the nix volume's DQ6 inspect (rsync_check, before its run)" ;;
+    *) test_fail "complete: call 3 is the nix volume's DQ6 inspect (rsync_check, before its run) ($(call_of 3))" ;;
+esac
+eq "complete: call 3 inspects the configured nix volume" "dx-fix-nix" "$(last_word_of 3)"
+eq "complete: call 4 is the rsync version check from the guest's nix volume" "$RSYNC_RUN_ARGV" "$(call_of 4)"
+eq "complete: exactly one NAS shell call (the df), besides four docker calls" "5" "$(ssh_calls)"
 eq "complete: df ran once" "1" "$(df_calls)"
 eq "complete: df's last word is the configured share root" "$ROOT" "$(tail -n 1 "$DF_LOG")"
 
 # no write: transcript and effects
 sub_ok=1
-for n in 1 2 3; do
+for n in 1 2 3 4; do
     case "$(kind_of "$n")" in volume|run|info|version) : ;; *) sub_ok=0 ;; esac
 done
 eq "no write: every docker subcommand is a read (volume inspect / run / info / version)" "1" "$sub_ok"
-case "$(call_of 1)" in
-    "<volume><inspect>"*) test_pass "no write: the volume subcommand is inspect" ;;
-    *) test_fail "no write: the volume subcommand is inspect ($(call_of 1))" ;;
-esac
+for n in 1 3; do
+    case "$(call_of "$n")" in
+        "<volume><inspect>"*) test_pass "no write: volume subcommand $n is inspect" ;;
+        *) test_fail "no write: volume subcommand $n is inspect ($(call_of "$n"))" ;;
+    esac
+done
 ro_ok=1
-for n in 2 3; do
+for n in 2 4; do
     c="$(call_of "$n")"
     case "$c" in *"<--mount>"*|*"<--volume>"*|*":rw>"*|*"<--privileged>"*) ro_ok=0 ;; esac
     case "$c" in *"<--network><none>"*) : ;; *) ro_ok=0 ;; esac
+    case "$c" in *"<--user><0:0>"*) : ;; *) ro_ok=0 ;; esac
+    case "$c" in *"<--pull><never>"*) : ;; *) ro_ok=0 ;; esac
+    # every -v mount is read-only
+    if [ -n "$(perl -e 'my @w = split /></, substr($ARGV[0], 1, -1); for my $i (1 .. $#w) { print "$w[$i]\n" if $w[$i-1] eq "-v" && $w[$i] !~ /:ro$/ }' "$c")" ]; then ro_ok=0; fi
 done
-eq "no write: both containers are --network none, with no --mount, no --volume, no :rw" "1" "$ro_ok"
+eq "no write: both containers are --network none, --user 0:0, --pull never, every -v :ro, no --mount, no --volume" "1" "$ro_ok"
 script="$(script_of 2)"
 write_verb=""
 for verb in rm mv cp chmod chown chgrp touch tee mkdir mkfifo ln dd truncate install mktemp rsync rmdir unlink shred; do
@@ -583,7 +629,7 @@ run_main
 eq "acl+xattr present, rsync can: exit 0" "0" "$INV_RC"
 hasline "acls: present" "$INV_OUT" "acls: present"
 hasline "xattrs: present" "$INV_OUT" "xattrs: present"
-eq "the rsync check is still the one version run" "$RSYNC_RUN_ARGV" "$(call_of 3)"
+eq "the rsync check is still the one version run" "$RSYNC_RUN_ARGV" "$(call_of 4)"
 new_case
 put run-sh.out "$(inv_variant 's/^acl=0$/acl=unknown/; s/^xattr=0$/xattr=unknown/')"
 put run-rsync.out "$V_330"
@@ -636,6 +682,44 @@ put run-rsync.rc 1
 run_main
 eq "rsync cannot run in the image: exit 3" "3" "$INV_RC"
 has "refused line shape" "$INV_OUT" "rsync_check: refused: "
+
+test_section "WP6.3: the guest's nix volume (where rsync comes from) is a blocker, not a refusal"
+new_case
+put run-sh.out "$INV_STD"
+put run-rsync.rc 127
+put run-rsync.err "docker: Error response from daemon: failed to create task for container: exec: \"/nix/var/nix/profiles/per-user/root/profile/bin/rsync\": stat /nix/var/nix/profiles/per-user/root/profile/bin/rsync: no such file or directory: unknown."
+run_main
+eq "rsync missing from the guest's root profile (127): exit 3" "3" "$INV_RC"
+eq "rsync missing: stderr is empty (docker's own stderr is dropped)" "" "$INV_ERR"
+RCHECK="$(grep -F 'rsync_check:' <<<"$INV_OUT")"
+has "rsync missing: refused line shape" "$RCHECK" "rsync_check: refused: "
+has "rsync missing: the report says to boot the guest once" "$RCHECK" "boot the guest once"
+has "rsync missing: ... so its essentials include rsync" "$RCHECK" "include rsync"
+lacks "rsync missing: docker's own text is not the reason" "$RCHECK" "Error response from daemon"
+hasline "rsync missing: the version is unknown" "$INV_OUT" "rsync_version: unknown"
+eq "rsync missing: the report is complete (20 lines)" "20" "$(wc -l <<<"$INV_OUT" | tr -d ' ')"
+
+nix_blocked() { # LABEL NEEDLE (after the case set up the nix volume's labels)
+    put run-sh.out "$INV_STD"
+    put run-rsync.out "$V_330"
+    run_main
+    eq "$1: exit 3 (a blocker)" "3" "$INV_RC"
+    eq "$1: stderr is empty" "" "$INV_ERR"
+    has "$1: rsync_check is refused with the DQ6 wording" "$(grep -F 'rsync_check:' <<<"$INV_OUT")" "rsync_check: refused: $2"
+    hasline "$1: the version is unknown" "$INV_OUT" "rsync_version: unknown"
+    eq "$1: the volume facts are still all there" "1234" "$(sed -n 's/^entries: //p' <<<"$INV_OUT")"
+    eq "$1: only the inventory container ran (no rsync run)" "1" "$(nruns)"
+    eq "$1: the inspects of both volumes, the one run" "3" "$(ncalls)"
+}
+new_case
+set_labels dx-fix-nix "true|1|other-host__other-guest|nix|x86_64-linux"
+nix_blocked "another profile's nix volume" "refusing to run rsync from volume 'dx-fix-nix'"
+new_case
+set_labels dx-fix-nix "true|1|$PROFILE|persist|x86_64-linux"
+nix_blocked "a nix volume carrying another role" "refusing to run rsync from volume 'dx-fix-nix'"
+new_case
+rm -f "$FAKE_DOCKER_DIR/labels/dx-fix-nix"
+nix_blocked "an absent nix volume" "refusing to run rsync from volume 'dx-fix-nix': it does not exist"
 
 test_section "WP6.3: room for the copy and for a rollback volume"
 new_case
@@ -704,6 +788,7 @@ put run-sh.rc 1
 run_main
 refused "the volume read fails" "Error:"
 eq "a failed read: the rsync check is not run" "1" "$(nruns)"
+eq "a failed read: nor the nix volume's inspect (two calls in all)" "2" "$(ncalls)"
 new_case
 put run-sh.out "$(printf '%s\n' "$INV_STD" | sed '/^status=ok$/d')"
 run_main
@@ -809,14 +894,16 @@ export DX_GUEST_SYSTEM=x86_64-linux
 export DX_CONTAINER_NAME=dx-fix
 export DX_IMAGE=dxe-inv-image:7
 export DX_PERSIST_VOLUME=dx-fix-persist
+export DX_NIX_VOLUME=dx-fix-nix
 export DX_NIX_STORAGE_MODE=direct-volume
 export DX_PERSIST_HOST_ROOT=$ROOT
 EOF
-INV_OUT="$(env -u DX_RUNTIME -u DX_REMOTE_HOST -u DX_CONTAINER_NAME -u DX_IMAGE -u DX_PERSIST_VOLUME -u DX_PERSIST_HOST_ROOT -u DX_NIX_STORAGE_MODE DX_PROFILES_DIR="$SCRATCH/profiles" bash "$BASE_DIR/bin/dx-profile" fixprof "$WRAPPER" 2>"$SCRATCH/inv.err")"
+INV_OUT="$(env -u DX_RUNTIME -u DX_REMOTE_HOST -u DX_CONTAINER_NAME -u DX_IMAGE -u DX_PERSIST_VOLUME -u DX_NIX_VOLUME -u DX_PERSIST_HOST_ROOT -u DX_NIX_STORAGE_MODE DX_PROFILES_DIR="$SCRATCH/profiles" bash "$BASE_DIR/bin/dx-profile" fixprof "$WRAPPER" 2>"$SCRATCH/inv.err")"
 INV_RC=$?
 INV_ERR="$(cat "$SCRATCH/inv.err")"
 eq "dx-profile fixprof dx-persist-inventory: exit 0" "0" "$INV_RC"
 eq "dx-profile: the report is the profile's guest" "$STD_REPORT" "$INV_OUT"
+eq "dx-profile: the profile's DX_NIX_VOLUME is the volume mounted for rsync" "$RSYNC_RUN_ARGV" "$(call_of 4)"
 
 # =============================================================================
 # The container script, for real, on WP0.2 trees. The script is taken from the
