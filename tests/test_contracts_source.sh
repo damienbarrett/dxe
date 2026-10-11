@@ -211,6 +211,18 @@ for pair in useradd:shadow groupadd:shadow usermod:shadow ssh-keygen:openssh \
     check bootstrap_invokes "${pair%%:*}"
 done
 
+# --- WP1.4 (plans/do plan.md WP1.4; tests/test_persist_vscode_server.sh):
+# VS Code's server needs a glibc loader and libstdc++, which the nixos/nix
+# base lacks (no /lib at all). Bootstrap links nix-ld at the loader path and
+# populates nix-ld's default library directory as root, before sshd, from
+# ROOT's essentials profile -- so nix-ld and the nix-ld library set
+# (`nixLdLibraries`, a linkFarm let-binding) belong in bootstrapEssentials,
+# one identifier per line, never in dx's guest-tools.nix. The evaluated
+# content (exactly four libraries, from glibc/gcc/zlib) is checked by
+# tests/test_persist_vscode_server.sh where nix is installed.
+check bootstrap_declares nix-ld
+check bootstrap_declares nixLdLibraries
+
 # --- Branch 16: bootstrap keeps no keyring knowledge at all. The guest
 # keyring (D-Bus session bus + gnome-keyring Secret Service, used only by
 # agy) is owned entirely by dx-ai and the explicit dx-keyring command

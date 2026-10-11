@@ -59,6 +59,23 @@ install_essentials() {
             echo "Bootstrap phase: essentials installation failed after $((SECONDS - phase_started))s." >&2
             return 1
         fi
+    elif missing="$(essentials_first_missing_optional_tool)"; then
+        # Nothing required is missing (so no upgrade ran this boot), but an
+        # optional tool is: one best-effort upgrade. A failure is only a
+        # warning; upgrade_essential_packages rolls the profile back itself.
+        echo "Upgrading the essentials profile: optional '$missing' is missing from the installed profile..."
+        if upgrade_essential_packages; then
+            essentials_path="$(essentials_profile_path)"
+            if [ -n "$essentials_path" ]; then
+                export PATH="$essentials_path:$PATH"
+            fi
+            hash -r 2>/dev/null || true
+            if missing="$(essentials_first_missing_optional_tool)"; then
+                echo "Warning: the optional essentials upgrade succeeded but '$missing' is still missing; not retrying this boot." >&2
+            fi
+        else
+            echo "Warning: the optional essentials upgrade for '$missing' failed; continuing without it." >&2
+        fi
     fi
     echo "Bootstrap phase: essentials installation completed in $((SECONDS - phase_started))s."
 }
