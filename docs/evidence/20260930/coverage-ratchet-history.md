@@ -1479,3 +1479,14 @@ itself), and the `_main` call guard. The WP4.5 dated line moved out of
 `tests/coverage/ratchet.env` (kept at 10 lines); its entry is in this history
 above. Measured with `tests/run-coverage-linux.sh`: covered=100%
 scope_exec_lines=5063 unscoped_prod_exec_lines=2648.
+
+## 2026-10-11 WP6.2b (rsync runs from the guest's nix volume)
+
+`scope_exec_lines_floor` 5063 -> 5075 (+12, measured, 100% covered): in
+`bin/lib/dx-runtime-docker-lifecycle.sh` the rsync operations now run the nix
+volume's DQ6 check (`dx_runtime_docker_rsync_nix_check`), refuse an rsync that
+is missing from the volume (exit 127, "boot the guest once"), refuse a copy
+whose VOLUME is the nix volume, and pin `--user 0:0 --pull never` and the
+absolute entrypoint. `unscoped_prod_exec_lines_ceiling` unchanged at 2648 (no
+entry-point line added). Measured with `tests/run-coverage-linux.sh`:
+covered=100% scope_exec_lines=5075 unscoped_prod_exec_lines=2648.

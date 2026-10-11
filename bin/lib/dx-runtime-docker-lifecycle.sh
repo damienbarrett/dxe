@@ -759,11 +759,21 @@ dx_runtime_docker_host_dir_usage() {
     dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_USAGE_SCRIPT" sh "$1"
 }
 
-# rsync operations (WP6.2; plan D-10 as revised 2026-10-11; spec R31, R32).
-# QTS ships rsync 3.0.7 and the NAS account is not root, so rsync runs INSIDE
-# a one-off container on the NAS (root via Docker) from $DX_IMAGE, whose root
-# toolchain (bootstrapEssentials) ships a modern rsync. Every docker call goes
-# through dx_runtime_docker_cli, so paths are only ever quoted argv words.
+# rsync operations (WP6.2/WP6.2b; plan D-10 as revised and clarified 2026-10-11;
+# spec R31, R32). QTS ships rsync 3.0.7 and the NAS account is not root, so
+# rsync runs INSIDE a one-off container on the NAS (root via Docker). $DX_IMAGE
+# is only the bare nix base: the modern rsync lives in the guest's nix volume
+# (root profile, installed from bootstrapEssentials at boot), mounted read-only
+# at /nix after that volume's own DQ6 check. Every docker call goes through
+# dx_runtime_docker_cli, so paths are only ever quoted argv words.
+DX_RUNTIME_DOCKER_RSYNC_BIN=/nix/var/nix/profiles/per-user/root/profile/bin/rsync
+
+# dx_runtime_docker_rsync_nix_check: the nix volume (configuration only, no
+# fallback name) must be this profile's, role nix; sets DX_RSYNC_NIX_VOLUME.
+dx_runtime_docker_rsync_nix_check() {
+    DX_RSYNC_NIX_VOLUME="${DX_NIX_VOLUME-}"
+    dx_runtime_docker_volume_owned "$DX_RSYNC_NIX_VOLUME" "run rsync from"
+}
 
 # Facts from `rsync --version` on stdin, one per line: version=N.N.N (or
 # nothing when no version line exists), then hard_links, acls, xattrs as
@@ -795,34 +805,39 @@ dx_runtime_docker_rsync_gap() {
     rest="${version#*.}"
     minor="${rest%%.*}"
     if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 1 ]; }; then
-        echo "Error: rsync $version in the image is below 3.1 (the migration needs nanosecond mtimes)." >&2
+        echo "Error: rsync $version in the guest's nix volume is below 3.1 (the migration needs nanosecond mtimes)." >&2
         return 1
     fi
     if ! grep -Fqx hard_links=yes <<<"$facts"; then
-        echo "Error: rsync $version in the image lacks hard links support." >&2
+        echo "Error: rsync $version in the guest's nix volume lacks hard links support." >&2
         return 1
     fi
     if [ "$2" = yes ] && ! grep -Fqx acls=yes <<<"$facts"; then
-        echo "Error: rsync $version in the image lacks ACLs support (needed here)." >&2
+        echo "Error: rsync $version in the guest's nix volume lacks ACLs support (needed here)." >&2
         return 1
     fi
     if [ "$3" = yes ] && ! grep -Fqx xattrs=yes <<<"$facts"; then
-        echo "Error: rsync $version in the image lacks xattrs support (needed here)." >&2
+        echo "Error: rsync $version in the guest's nix volume lacks xattrs support (needed here)." >&2
         return 1
     fi
 }
 
 # dx_runtime_docker_host_rsync_check [-A] [-X]
 dx_runtime_docker_host_rsync_check() {
-    local out facts
+    local out facts rc=0
     dx_runtime_docker_rsync_options_parse "$@" || {
         echo "Usage: dx_runtime_host_rsync_check [-A] [-X]" >&2
         return 1
     }
-    out="$(dx_runtime_docker_cli run --rm --network none --entrypoint rsync "${DX_IMAGE:?}" --version)" || {
-        echo "Error: could not run rsync in the image '$DX_IMAGE' on the NAS." >&2
+    dx_runtime_docker_rsync_nix_check || return 1
+    out="$(dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never -v "$DX_RSYNC_NIX_VOLUME:/nix:ro" --entrypoint "$DX_RUNTIME_DOCKER_RSYNC_BIN" "${DX_IMAGE:?}" --version)" || rc=$?
+    if [ "$rc" -eq 127 ]; then
+        echo "Error: rsync is not in the guest's nix volume '$DX_RSYNC_NIX_VOLUME'; boot the guest once on the current image so its essentials include rsync." >&2
         return 1
-    }
+    elif [ "$rc" -ne 0 ]; then
+        echo "Error: could not run rsync from the guest's nix volume '$DX_RSYNC_NIX_VOLUME' on the NAS." >&2
+        return 1
+    fi
     facts="$(awk "$DX_RUNTIME_DOCKER_RSYNC_FACTS_AWK" <<<"$out")"
     if ! grep -Fq version= <<<"$facts"; then
         echo "Error: could not parse the rsync version from the image's output." >&2
@@ -865,8 +880,13 @@ dx_runtime_docker_host_rsync() {
     if [ "$DX_RSYNC_ACL" = yes ]; then extra+=(-A); fi
     if [ "$DX_RSYNC_XATTR" = yes ]; then extra+=(-X); fi
     dx_runtime_docker_rsync_dir_ok "$dir" || return 1
+    if [ "$volume" = "${DX_NIX_VOLUME-}" ]; then
+        echo "Error: refusing to copy with volume '$volume': it is the guest's nix volume, already mounted at /nix (the persist volume is required)." >&2
+        return 1
+    fi
     dx_runtime_docker_volume_owned "$volume" copy || return 1
-    dx_runtime_docker_cli run --rm --network none "${mounts[@]}" --entrypoint rsync "${DX_IMAGE:?}" \
+    dx_runtime_docker_rsync_nix_check || return 1
+    dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never -v "$DX_RSYNC_NIX_VOLUME:/nix:ro" "${mounts[@]}" --entrypoint "$DX_RUNTIME_DOCKER_RSYNC_BIN" "${DX_IMAGE:?}" \
         -aH --numeric-ids "${extra[@]+"${extra[@]}"}" \
         --exclude=/.dxe-persist-dir '--exclude=._*' /src/ /dst/
 }
@@ -894,7 +914,7 @@ dx_runtime_docker_volume_inventory() {
         return 1
     fi
     dx_runtime_docker_volume_owned "$1" inventory || return 1
-    dx_runtime_docker_cli run --rm --network none -v "$1:/v:ro" --entrypoint sh "${DX_IMAGE:?}" \
+    dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never -v "$1:/v:ro" --entrypoint sh "${DX_IMAGE:?}" \
         -c "$DX_RUNTIME_DOCKER_VOLUME_INVENTORY_SCRIPT" sh /v
 }
 
