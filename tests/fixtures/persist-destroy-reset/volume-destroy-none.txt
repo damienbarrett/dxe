@@ -1,0 +1,10 @@
+rc=0
+--- output ---
+No DX volumes exist; nothing to destroy.
+--- docker ---
+version --format {{.Server.Version}}
+info --format {{.ID}}|{{.Name}}|{{.Architecture}}|{{.OperatingSystem}}
+volume inspect dx-hp-nix
+volume inspect dx-hp-persist
+volume inspect dx-hp-bootstrap
+--- volume rm ---

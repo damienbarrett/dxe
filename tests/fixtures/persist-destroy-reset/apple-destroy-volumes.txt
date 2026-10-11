@@ -1,0 +1,16 @@
+rc=0
+--- output ---
+Removing volume dx-hp-nix...
+Removing volume dx-hp-persist...
+Removing volume dx-hp-bootstrap...
+--- docker ---
+volume inspect dx-hp-nix
+volume inspect dx-hp-persist
+volume inspect dx-hp-bootstrap
+volume rm dx-hp-nix
+volume rm dx-hp-persist
+volume rm dx-hp-bootstrap
+--- volume rm ---
+dx-hp-nix
+dx-hp-persist
+dx-hp-bootstrap
