@@ -342,3 +342,10 @@ dx_runtime_host_dir_usage() { dx_runtime_dispatch host_dir_usage "$@"; }
 #   dx_runtime_host_rsync forward|reverse VOL DIR [-A] [-X]
 dx_runtime_host_rsync_check() { dx_runtime_dispatch host_rsync_check "$@"; }
 dx_runtime_host_rsync() { dx_runtime_dispatch host_rsync "$@"; }
+
+# Inventory operations (WP6.3; plan D-10; spec R37): read-only measurements for
+# `dx-persist-inventory`. Apple has no NAS: it answers "unsupported".
+#   dx_runtime_volume_inventory VOLUME   tagged key=value lines (DQ6 check first)
+#   dx_runtime_host_dir_free ROOT        fs=, total_kb=, avail_kb= of ROOT's filesystem
+dx_runtime_volume_inventory() { dx_runtime_dispatch volume_inventory "$@"; }
+dx_runtime_host_dir_free() { dx_runtime_dispatch host_dir_free "$@"; }

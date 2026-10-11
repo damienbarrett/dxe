@@ -370,3 +370,5 @@ dx_runtime_apple_host_dir_marker_write() { dx_runtime_apple_host_dir_unsupported
 dx_runtime_apple_host_dir_usage() { dx_runtime_apple_host_dir_unsupported; }
 dx_runtime_apple_host_rsync_check() { dx_runtime_apple_host_dir_unsupported; }
 dx_runtime_apple_host_rsync() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_volume_inventory() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_free() { dx_runtime_apple_host_dir_unsupported; }
