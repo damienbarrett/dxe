@@ -1672,3 +1672,35 @@ reachability probe and guest-address discovery use it. Measured with
 (floor 5377 -> 5378), `unscoped_prod_exec_lines=2622` (ceiling unchanged),
 scope coverage 100%. The WP5.1 dated line left ratchet.env; its full entry is
 the "WP5.1" section of this file.
+
+## 2026-10-11: VS Code server support via nix-ld (WP1.4, wp/1.4)
+
+`scope_exec_lines_floor` 3935 -> 4510 (the measured in-scope total, now that
+`configure_vscode_server_support`, `vscode_server_apply`, the optional
+essentials tools helpers and the best-effort upgrade branch of
+`install_essentials` joined `container/dx-nixos-26.05/bootstrap`).
+`unscoped_prod_exec_lines_ceiling` 2638 -> 2639 (+1): the single
+`configure_vscode_server_support || echo "Warning: ..." >&2` line in
+`container/dx-nixos-26.05/bootstrap.sh`'s `bootstrap_phases`, an exempt entry
+point whose phase order is pinned by `tests/test_section3_bootstrap.sh`. Measured
+with `tests/run-coverage-linux.sh` on the Green commit `38d6380`:
+`scope_exec_lines=4510`, `unscoped_prod_exec_lines=2639`, scope coverage 100%.
+
+The ratchet.env dated line moved here to keep that file at ten lines:
+`2026-09-30 ceiling 2634 -> 2635: WP5.2 added one source line
+(dx-bootstrap-protocol.sh) to bin/dx-lib.sh's facade order.`
+
+Amendment 3 (2026-10-12, same WP): nix-ld now comes from this boot's
+essentials (first `nix-ld` on PATH), the post-upgrade check and the
+hard-link marker refusal landed. Measured with `tests/run-coverage-linux.sh`
+at the Green commit: `scope_exec_lines=4516` (floor 4510 -> 4516),
+`unscoped_prod_exec_lines=2639` (ceiling unchanged), scope coverage 100%.
+
+Merge feat/mac-ssh-access into feat/persist-host-dir (2026-10-12): the Mac
+branch (WP1.1, WP1.2, WP1.4; WP0.3 is on both) measured 4516 / 2639 on a base
+whose actual values were 4450 / 2638 (+66 in-scope bootstrap lines for WP1.4's
+nix-ld step and optional essentials upgrade; +1 exempt line, the bootstrap.sh
+call). On a tree holding 5378 / 2622 the expected values are 5444 / 2623:
+`scope_exec_lines_floor` 5378 -> 5444, `unscoped_prod_exec_lines_ceiling`
+2622 -> 2623 (provisional until the next integration coverage run). The WP6.3
+dated line left ratchet.env; its full entry is the "WP6.3" section above.

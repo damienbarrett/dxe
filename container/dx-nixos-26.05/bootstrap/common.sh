@@ -307,6 +307,26 @@ essentials_first_missing_tool() {
     return 1
 }
 
+# Tools an installed root profile should have but the boot does not strictly
+# need: one "<name> <path relative to the profile>" line each, in priority
+# order (WP1.4: nix-ld for VS Code's server). A missing one triggers a
+# best-effort upgrade in install_essentials, never a boot failure.
+essentials_optional_tools() {
+    printf '%s\n' 'nix-ld libexec/nix-ld'
+}
+
+# The NAME of the first optional tool the installed root profile lacks (a
+# dangling link counts as missing), or failure when none is or no profile is
+# installed. Looks at the profile itself, never at PATH.
+essentials_first_missing_optional_tool() {
+    local profile="${DX_ESSENTIALS_ROOT:-}/nix/var/nix/profiles/per-user/root/profile" name relative
+    essentials_profile_installed || return 1
+    while read -r name relative; do
+        [ -e "$profile/$relative" ] || { printf '%s\n' "$name"; return 0; }
+    done <<< "$(essentials_optional_tools)"
+    return 1
+}
+
 # Replaces the bootstrap-essentials element of an EXISTING root profile with the
 # current bootstrap flake's output. A plain `nix profile install` over it can
 # conflict with its own earlier contents (the same output at an older revision
