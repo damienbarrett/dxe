@@ -1542,3 +1542,53 @@ measured 4959 on a base whose actual scope was 4910 (+49); the merged tree held
 so the measured value should fall; the ceiling is not lowered here). The WP6.1
 dated line left `tests/coverage/ratchet.env` to keep it at 10 lines; its full
 entry is the "WP6.1" section above.
+
+## WP6.2 (2026-10-11)
+
+`scope_exec_lines_floor` 4806 -> 4973 (+167, measured, 100% covered): the two
+`dx_runtime_host_rsync*` dispatchers, the Apple "unsupported" arms, and the
+docker-ssh rsync check (single-line awk facts program, version and capability
+gap checks) and copy operation (direction, option and directory validation,
+ownership check, one-off container run).
+`unscoped_prod_exec_lines_ceiling` unchanged at 2643: no entry point gained a
+line. Measured with `tests/run-coverage-linux.sh`: covered=100%
+scope_exec_lines=4973 unscoped_prod_exec_lines=2643.
+
+## WP6.3 (2026-10-11)
+
+`scope_exec_lines_floor` 4973 -> 5063 (+90, measured, 100% covered): the
+`dx_runtime_volume_inventory` and `dx_runtime_host_dir_free` dispatchers, their
+Apple "unsupported" arms, the docker-ssh implementations (the one-line
+read-only container script and the one-line NAS `df` script are constants), and
+`dx_persist_inventory_main` with its parsing helpers in
+`bin/lib/dx-persist-dir.sh`.
+`unscoped_prod_exec_lines_ceiling` 2643 -> 2648 (+5): the new entry point
+`bin/dx-persist-inventory` has `set -euo pipefail` (required by
+tests/test_section9_host_scripts.sh), the `SCRIPT_DIR` line, the `source` of
+`dx-lib.sh`, the `persist_inventory_main` definition (tests/
+test_refactor_contracts.sh wants `<name>_main` defined in the entry point
+itself), and the `_main` call guard. The WP4.5 dated line moved out of
+`tests/coverage/ratchet.env` (kept at 10 lines); its entry is in this history
+above. Measured with `tests/run-coverage-linux.sh`: covered=100%
+scope_exec_lines=5063 unscoped_prod_exec_lines=2648.
+
+## 2026-10-11 WP6.2b (rsync runs from the guest's nix volume)
+
+`scope_exec_lines_floor` 5063 -> 5075 (+12, measured, 100% covered): in
+`bin/lib/dx-runtime-docker-lifecycle.sh` the rsync operations now run the nix
+volume's DQ6 check (`dx_runtime_docker_rsync_nix_check`), refuse an rsync that
+is missing from the volume (exit 127, "boot the guest once"), refuse a copy
+whose VOLUME is the nix volume, and pin `--user 0:0 --pull never` and the
+absolute entrypoint. `unscoped_prod_exec_lines_ceiling` unchanged at 2648 (no
+entry-point line added). Measured with `tests/run-coverage-linux.sh`:
+covered=100% scope_exec_lines=5075 unscoped_prod_exec_lines=2648.
+
+Merge WP6.2 + WP6.2b + WP6.3 (2026-10-11): wp/6.2b (WP6.2 Green, WP6.3 Red and
+Green, WP6.2b Red and Green) was merged into feat/persist-host-dir. That branch
+measured 5075 on a base whose actual scope was 4910 (+165); the merged tree held
+5117, so the expected scope is 5282: `scope_exec_lines_floor` 5117 -> 5282
+(provisional, to be confirmed by the next integration coverage run).
+`unscoped_prod_exec_lines_ceiling` 2644 -> 2649: the five executable lines of
+the new bin/dx-persist-inventory wrapper (WP6.3). The WP4.2, WP5.2 and WP6.2
+dated lines left `tests/coverage/ratchet.env` to keep it at 10 lines; their full
+entries are the sections above.

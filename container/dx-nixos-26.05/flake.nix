@@ -136,6 +136,7 @@
             bashInteractive
             shadow
             openssh
+            rsync
             gnutar
             gzip
             sudo

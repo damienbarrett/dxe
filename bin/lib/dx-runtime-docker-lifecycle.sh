@@ -758,3 +758,168 @@ dx_runtime_docker_host_dir_usage() {
     dx_runtime_docker_host_dir_operand_ok "$1" || return 1
     dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_USAGE_SCRIPT" sh "$1"
 }
+
+# rsync operations (WP6.2/WP6.2b; plan D-10 as revised and clarified 2026-10-11;
+# spec R31, R32). QTS ships rsync 3.0.7 and the NAS account is not root, so
+# rsync runs INSIDE a one-off container on the NAS (root via Docker). $DX_IMAGE
+# is only the bare nix base: the modern rsync lives in the guest's nix volume
+# (root profile, installed from bootstrapEssentials at boot), mounted read-only
+# at /nix after that volume's own DQ6 check. Every docker call goes through
+# dx_runtime_docker_cli, so paths are only ever quoted argv words.
+DX_RUNTIME_DOCKER_RSYNC_BIN=/nix/var/nix/profiles/per-user/root/profile/bin/rsync
+
+# dx_runtime_docker_rsync_nix_check: the nix volume (configuration only, no
+# fallback name) must be this profile's, role nix; sets DX_RSYNC_NIX_VOLUME.
+dx_runtime_docker_rsync_nix_check() {
+    DX_RSYNC_NIX_VOLUME="${DX_NIX_VOLUME-}"
+    dx_runtime_docker_volume_owned "$DX_RSYNC_NIX_VOLUME" "run rsync from"
+}
+
+# Facts from `rsync --version` on stdin, one per line: version=N.N.N (or
+# nothing when no version line exists), then hard_links, acls, xattrs as
+# yes/no. A capability counts only as an exact comma-separated token between
+# "Capabilities:" and "Optimizations:"; "hard links" is the older spelling.
+DX_RUNTIME_DOCKER_RSYNC_FACTS_AWK='$1 == "rsync" && $2 == "version" && v == "" && $3 ~ /^[0-9]+[.][0-9]+([.][0-9]+)?$/ { v = $3 } /^Optimizations:/ { on = 0 } on { caps = caps "," $0 } /^Capabilities:/ { on = 1; caps = caps "," substr($0, 14) } END { n = split(caps, t, ","); for (i = 1; i <= n; i++) { s = t[i]; gsub(/^[ \t]+|[ \t]+$/, "", s); if (s == "hardlinks" || s == "hard links") hl = "yes"; if (s == "ACLs") acl = "yes"; if (s == "xattrs") xa = "yes" } if (v != "") print "version=" v; print "hard_links=" (hl == "yes" ? "yes" : "no"); print "acls=" (acl == "yes" ? "yes" : "no"); print "xattrs=" (xa == "yes" ? "yes" : "no") }'
+
+# dx_runtime_docker_rsync_options_parse OPTION... -> sets DX_RSYNC_ACL/_XATTR
+# (yes|no); anything but -A / -X is a usage error (the caller prints it).
+dx_runtime_docker_rsync_options_parse() {
+    local opt
+    DX_RSYNC_ACL=no
+    DX_RSYNC_XATTR=no
+    for opt in "$@"; do
+        case "$opt" in
+            -A) DX_RSYNC_ACL=yes ;;
+            -X) DX_RSYNC_XATTR=yes ;;
+            *) return 1 ;;
+        esac
+    done
+}
+
+# dx_runtime_docker_rsync_gap FACTS ACL_NEEDED XATTR_NEEDED: print the first
+# missing requirement (naming only that one) and return 1, or return 0.
+dx_runtime_docker_rsync_gap() {
+    local facts="$1" version major rest minor
+    version="$(sed -n 's/^version=//p' <<<"$facts")"
+    major="${version%%.*}"
+    rest="${version#*.}"
+    minor="${rest%%.*}"
+    if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 1 ]; }; then
+        echo "Error: rsync $version in the guest's nix volume is below 3.1 (the migration needs nanosecond mtimes)." >&2
+        return 1
+    fi
+    if ! grep -Fqx hard_links=yes <<<"$facts"; then
+        echo "Error: rsync $version in the guest's nix volume lacks hard links support." >&2
+        return 1
+    fi
+    if [ "$2" = yes ] && ! grep -Fqx acls=yes <<<"$facts"; then
+        echo "Error: rsync $version in the guest's nix volume lacks ACLs support (needed here)." >&2
+        return 1
+    fi
+    if [ "$3" = yes ] && ! grep -Fqx xattrs=yes <<<"$facts"; then
+        echo "Error: rsync $version in the guest's nix volume lacks xattrs support (needed here)." >&2
+        return 1
+    fi
+}
+
+# dx_runtime_docker_host_rsync_check [-A] [-X]
+dx_runtime_docker_host_rsync_check() {
+    local out facts rc=0
+    dx_runtime_docker_rsync_options_parse "$@" || {
+        echo "Usage: dx_runtime_host_rsync_check [-A] [-X]" >&2
+        return 1
+    }
+    dx_runtime_docker_rsync_nix_check || return 1
+    out="$(dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never -v "$DX_RSYNC_NIX_VOLUME:/nix:ro" --entrypoint "$DX_RUNTIME_DOCKER_RSYNC_BIN" "${DX_IMAGE:?}" --version)" || rc=$?
+    if [ "$rc" -eq 127 ]; then
+        echo "Error: rsync is not in the guest's nix volume '$DX_RSYNC_NIX_VOLUME'; boot the guest once on the current image so its essentials include rsync." >&2
+        return 1
+    elif [ "$rc" -ne 0 ]; then
+        echo "Error: could not run rsync from the guest's nix volume '$DX_RSYNC_NIX_VOLUME' on the NAS." >&2
+        return 1
+    fi
+    facts="$(awk "$DX_RUNTIME_DOCKER_RSYNC_FACTS_AWK" <<<"$out")"
+    if ! grep -Fq version= <<<"$facts"; then
+        echo "Error: could not parse the rsync version from the image's output." >&2
+        return 1
+    fi
+    dx_runtime_docker_rsync_gap "$facts" "$DX_RSYNC_ACL" "$DX_RSYNC_XATTR" || return 1
+    printf '%s\n' "$facts"
+}
+
+# dx_runtime_docker_rsync_dir_ok DIR: an absolute NAS path that is neither "/"
+# nor able to carry extra --mount options (",") or a second line.
+dx_runtime_docker_rsync_dir_ok() {
+    local nl=$'\n'
+    case "$1" in
+        /) : ;;
+        /*,*|*"$nl"*) : ;;
+        /*) return 0 ;;
+    esac
+    echo "Error: refusing the rsync directory '$1': it must be an absolute path other than / without a comma or newline." >&2
+    return 1
+}
+
+# dx_runtime_docker_host_rsync forward|reverse VOLUME DIR [-A] [-X]
+dx_runtime_docker_host_rsync() {
+    local direction="${1:-}" volume="${2:-}" dir="${3:-}" extra=() mounts=()
+    if [ "$#" -lt 3 ]; then
+        echo "Usage: dx_runtime_host_rsync forward|reverse VOLUME DIR [-A] [-X]" >&2
+        return 1
+    fi
+    shift 3
+    case "$direction" in
+        forward) mounts=(-v "$volume:/src:ro" --mount "type=bind,source=$dir,target=/dst") ;;
+        reverse) mounts=(--mount "type=bind,source=$dir,target=/src,readonly" -v "$volume:/dst") ;;
+        *) echo "Error: unknown rsync direction '$direction' (forward or reverse)." >&2; return 1 ;;
+    esac
+    dx_runtime_docker_rsync_options_parse "$@" || {
+        echo "Error: unsupported rsync option (only -A and -X are accepted)." >&2
+        return 1
+    }
+    if [ "$DX_RSYNC_ACL" = yes ]; then extra+=(-A); fi
+    if [ "$DX_RSYNC_XATTR" = yes ]; then extra+=(-X); fi
+    dx_runtime_docker_rsync_dir_ok "$dir" || return 1
+    if [ "$volume" = "${DX_NIX_VOLUME-}" ]; then
+        echo "Error: refusing to copy with volume '$volume': it is the guest's nix volume, already mounted at /nix (the persist volume is required)." >&2
+        return 1
+    fi
+    dx_runtime_docker_volume_owned "$volume" copy || return 1
+    dx_runtime_docker_rsync_nix_check || return 1
+    dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never -v "$DX_RSYNC_NIX_VOLUME:/nix:ro" "${mounts[@]}" --entrypoint "$DX_RUNTIME_DOCKER_RSYNC_BIN" "${DX_IMAGE:?}" \
+        -aH --numeric-ids "${extra[@]+"${extra[@]}"}" \
+        --exclude=/.dxe-persist-dir '--exclude=._*' /src/ /dst/
+}
+
+# Inventory operations (WP6.3; plan D-10; spec R37). Read-only: the volume is
+# read by a one-off container that mounts it ":ro" with no network, and the
+# share root's free space by one `df` on the NAS. The container script is POSIX
+# sh in ONE line (kcov counts every line of a multi-line literal) and prints
+# tagged key=value lines; it computes everything first and prints last, so a
+# failing find/du/df exits non-zero without status=ok (never a partial number).
+# Counts use `-exec printf ".%.0s" {} +` and then the length of the dots, so a
+# name containing a newline is still one entry. It works from "." after a cd
+# (relative paths need no prefix stripping that a path's own characters could
+# disturb). The script holds no single quote, so the whole text is one
+# single-quoted bash literal.
+DX_RUNTIME_DOCKER_VOLUME_INVENTORY_SCRIPT='export LC_ALL=C; cd -- "$1" || exit 1; t=$(df -P -k .) || exit 1; set -- $(printf "%s\n" "$t" | tail -n 1); dt=$2; da=$4; s=$(du -sk .) || exit 1; s=${s%%[!0-9]*}; e=$(find . -mindepth 1 -exec printf ".%.0s" {} +) || exit 1; h=$(find . -mindepth 1 ! -type d -links +1 -exec printf ".%.0s" {} +) || exit 1; ac=$(find . -mindepth 1 -name "._*" -exec printf ".%.0s" {} +) || exit 1; al=$(find . -mindepth 1 -name "._*" -print) || exit 1; al=$(printf "%s\n" "$al" | sed "s|^\./||" | sort); sc=$(find . -mindepth 1 \( -type p -o -type s -o -type b -o -type c \) -exec printf ".%.0s" {} +) || exit 1; sl=$(find . -mindepth 1 \( -type p -o -type s -o -type b -o -type c \) -print) || exit 1; sl=$(printf "%s\n" "$sl" | sed "s|^\./||" | sort); acl=unknown; if command -v getfacl >/dev/null 2>&1; then a=$(getfacl -R -s -p . 2>/dev/null) && acl=$(printf "%s\n" "$a" | grep -c "^# file:"); fi; xa=unknown; if command -v getfattr >/dev/null 2>&1; then a=$(getfattr -R -h -d -m - . 2>/dev/null) && xa=$(printf "%s\n" "$a" | grep -c "^# file:"); fi; printf "df_total_kb=%s\ndf_avail_kb=%s\nsize_kb=%s\nentries=%s\nhardlinks=%s\nappledouble=%s\n" "$dt" "$da" "$s" "${#e}" "${#h}" "${#ac}"; if [ -n "$al" ]; then printf "%s\n" "$al" | sed "s/^/apple=/"; fi; printf "special=%s\n" "${#sc}"; if [ -n "$sl" ]; then printf "%s\n" "$sl" | sed "s/^/special_path=/"; fi; printf "acl=%s\nxattr=%s\nstatus=ok\n" "$acl" "$xa"'
+
+# $1 ROOT: prints fs=, total_kb=, avail_kb= (KiB) of the filesystem holding it.
+DX_RUNTIME_DOCKER_HOST_DIR_FREE_SCRIPT='t=$(df -P -k -- "$1") || exit 1; set -- $(printf "%s\n" "$t" | tail -n 1); printf "fs=%s\ntotal_kb=%s\navail_kb=%s\n" "$1" "$2" "$4"'
+
+# dx_runtime_docker_volume_inventory VOLUME
+dx_runtime_docker_volume_inventory() {
+    if [ "$#" -ne 1 ]; then
+        echo "Usage: dx_runtime_volume_inventory VOLUME" >&2
+        return 1
+    fi
+    dx_runtime_docker_volume_owned "$1" inventory || return 1
+    dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never -v "$1:/v:ro" --entrypoint sh "${DX_IMAGE:?}" \
+        -c "$DX_RUNTIME_DOCKER_VOLUME_INVENTORY_SCRIPT" sh /v
+}
+
+# dx_runtime_docker_host_dir_free ROOT
+dx_runtime_docker_host_dir_free() {
+    dx_runtime_docker_host_dir_operand_ok "${1-}" || return 1
+    dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_FREE_SCRIPT" sh "$1"
+}
