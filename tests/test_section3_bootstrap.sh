@@ -29,7 +29,7 @@ source "$BOOTSTRAP_DIR/system.sh"
 source "$BOOTSTRAP_DIR/persistence.sh"
 source "$BOOTSTRAP_DIR/activation.sh"
 source "$BOOTSTRAP_DIR/usage-service.sh"
-for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded dx_bootstrap_scratch_dir dx_persist_durable_identity_record dx_read_durable_identity_record dx_write_nix_volume_record dx_read_nix_volume_record dx_parse_nix_volume_record dx_persist_image_default_profile_target dx_read_image_default_profile_target essentials_profile_path essentials_profile_store_path essentials_profile_installed essentials_first_missing_tool install_essential_packages upgrade_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id dx_parse_durable_identity_record create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh configure_vscode_server_support dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_as_dx_argv dx_nix_root_writable_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system dx_usage_service_write_run dx_usage_service_build_tree dx_bootstrap_exec_usage_service dx_bootstrap_usage_service_dispatch; do
+for function_name in dx_validate_atomic_marker_path dx_publish_atomic_marker dx_pipeline_succeeded dx_bootstrap_scratch_dir dx_persist_durable_identity_record dx_read_durable_identity_record dx_write_nix_volume_record dx_read_nix_volume_record dx_parse_nix_volume_record dx_persist_image_default_profile_target dx_read_image_default_profile_target essentials_profile_path essentials_profile_store_path essentials_profile_installed essentials_first_missing_tool essentials_optional_tools essentials_first_missing_optional_tool install_essential_packages upgrade_essential_packages essentials_store_valid repair_store_closure verify_remount_prerequisites ensure_essentials_valid generate_host_keys install_essentials link_system_bash dx_seed_staged_entries dx_move_missing_entries cleanup_stale_nix_store_imports nix_store_import_registered nix_verify_imported_bootstrap_paths dx_write_pending_image_identity nix_install_image_essentials_root nix_seed_volume record_durable_nix_identity migrate_durable_nix_identity_if_needed nix_image_registered_paths nix_image_store_identity nix_image_essentials_identity nix_image_default_profile_store_path capture_nix_image_default_profile nix_restore_image_default_profile nix_image_bootstrap_store_paths nix_target_store_uri nix_image_store_import_required nix_verify_single_bootstrap_path_collision nix_verify_no_bootstrap_path_collision publish_nix_image_store_identity dx_nix_format_device dx_nix_mount prepare_nix_volume prepare_nix_volume_impl prepare_nix_volume_direct_impl populate_prepared_nix_volume populate_prepared_nix_volume_in_place publish_nix_volume_image_identity configure_single_user_nix configure_release_identity resolve_timezone_file configure_timezone materialize_auth_files auth_entries_with_numeric_id dx_parse_durable_identity_record create_user setup_persist dx_ensure_tree_owner dx_prepare_owned_directory configure_ssh configure_vscode_server_support dx_host_key_store_trusted dx_host_key_store_populated dx_harden_host_keys dx_persist_host_keys run_as_dx run_as_dx_argv dx_nix_root_writable_as_dx run_home_manager_activation publish_nix_ownership_marker ensure_nix_ownership ai_tools_opted_in setup_gh_persistence setup_tmux_persistence setup_herdr_persistence dx_seed_herdr_config dx_activate_herdr configure_guest verify_guest_tools dx_guest_native_system dx_guest_resolve_system dx_usage_service_write_run dx_usage_service_build_tree dx_bootstrap_exec_usage_service dx_bootstrap_usage_service_dispatch; do
     if declare -F "$function_name" >/dev/null; then test_pass "$function_name is directly sourceable"; else test_fail "$function_name is directly sourceable"; fi
 done
 
@@ -577,6 +577,10 @@ if materialize_auth_files && [ ! -L "$fixture/auth/etc/group" ] && grep -q '^roo
 # the actual timing/echo logic instead of parsing source text.
 p_ie_output="$({
     useradd() { :; }
+    # WP1.4: an empty essentials root, so the optional-tools upgrade can
+    # never reach a real /nix/var/nix/profiles/per-user/root/profile (a CI
+    # runner with Nix installed may have one).
+    DX_ESSENTIALS_ROOT="$fixture/ie-empty-root"
     install_essentials
 } 2>&1)" || true
 if printf '%s\n' "$p_ie_output" | stdin_matches -F 'Bootstrap phase: essentials installation completed in'; then
@@ -590,12 +594,29 @@ fi
 # because the gate looked at useradd alone: s6 for DX_USAGE_SERVICE=on). Fakes:
 # `command -v` answers from $ES_PRESENT, install/upgrade log and succeed.
 es_root="$fixture/es-root"; mkdir -p "$es_root"
+# WP1.4: the installed profile in these cases already holds every optional
+# essentials tool (essentials_optional_tools), so only the required-tool
+# gate decides here; tests/test_persist_vscode_server.sh covers the
+# optional upgrade itself.
+es_seed_optional_tools() {
+    local generation="$1" name relative
+    declare -F essentials_optional_tools >/dev/null || return 0
+    while read -r name relative; do
+        [ -n "$relative" ] || continue
+        mkdir -p "$generation/$(dirname "$relative")"
+        printf '%s\n' "$name" > "$generation/$relative"
+    done <<<"$(essentials_optional_tools)"
+}
 es_run() {
     # $1 = DX_USAGE_SERVICE ("-" unset), $2 = present tools, $3 = profile "yes"/"no",
     # $4 = status of the install/upgrade stubs. Prints the ordered log + output.
     local usage="$1" present="$2" profile="$3" rc="${4:-0}"
     rm -rf "$es_root"; mkdir -p "$es_root"
-    [ "$profile" != yes ] || { mkdir -p "$es_root/nix/var/nix/profiles/per-user/root/gen-1"; ln -s gen-1 "$es_root/nix/var/nix/profiles/per-user/root/profile"; }
+    [ "$profile" != yes ] || {
+        mkdir -p "$es_root/nix/var/nix/profiles/per-user/root/gen-1"
+        ln -s gen-1 "$es_root/nix/var/nix/profiles/per-user/root/profile"
+        es_seed_optional_tools "$es_root/nix/var/nix/profiles/per-user/root/gen-1"
+    }
     (
         ES_PRESENT="$present"; ES_RC="$rc"
         command() { if [ "${1:-}" = -v ]; then case " $ES_PRESENT " in *" $2 "*) printf '/bin/%s\n' "$2"; return 0 ;; *) return 1 ;; esac; fi; builtin command "$@"; }

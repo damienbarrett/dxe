@@ -57,8 +57,12 @@ set -uo pipefail
 #         never derived from uname or hard-coded (the QNAP is x86_64).
 #      3. P/share/nix-ld/lib/ provides ld.so, libstdc++.so.6, libgcc_s.so.1
 #         and libz.so.1 (each resolving to an existing file).
-#      4. R$LOADER is absent or a symlink (dangling or not). A regular file,
-#         a directory or anything else there is NEVER replaced.
+#      4. R$LOADER is absent, or a symlink (dangling or not) whose target
+#         TEXT (readlink, not resolved) begins with
+#         "${DX_ESSENTIALS_ROOT:-}/nix/store/" -- in production "/nix/store/":
+#         a previous nix-ld or a Nix glibc. A symlink to anywhere else
+#         (e.g. a real glibc loader on an FHS base, absolute or relative), a
+#         regular file, a directory or anything else there is NEVER replaced.
 #      5. R/tmp/vscode-skip-server-requirements-check is absent or a regular
 #         file; a symlink there is never followed or replaced.
 #      A failed precondition: exactly ONE line on stderr, starting
@@ -66,14 +70,16 @@ set -uo pipefail
 #        no profile, or no nix-ld in it        -> "nix-ld"
 #        ldpath missing or not /lib|/lib64     -> "ldpath"
 #        a library missing                     -> that library's name
-#        non-symlink at the loader path        -> LOADER (e.g. /lib/ld-linux-aarch64.so.1)
+#        loader path not ours to replace       -> LOADER (e.g. /lib/ld-linux-aarch64.so.1)
 #        unusable marker path                  -> "vscode-skip-server-requirements-check"
 #      -- nothing on stdout, NOTHING changed under R, no chown call, status 0.
 #    Changes:
 #      6. R$LOADER becomes a symlink that resolves to the same file as
-#         P/libexec/nix-ld. An existing symlink is replaced, including one
-#         that points at a directory (ln -sfn; a link must never be created
-#         inside that directory).
+#         P/libexec/nix-ld, and its target text is itself under the store
+#         (P is a store path), so the next boot may replace it. An existing
+#         store symlink is replaced, including one that points at a
+#         directory (ln -sfn; a link must never be created inside that
+#         directory).
 #      7. R/run/current-system/sw/share/nix-ld/lib is a real directory
 #         holding exactly one symlink per library name, each resolving to
 #         the same file as P/share/nix-ld/lib/<name> (stale links replaced).
@@ -113,6 +119,44 @@ set -uo pipefail
 #    "Warning:" line naming "VS Code" on stderr and runs the remaining
 #    phases; when it returns 0 the call site prints nothing.
 #
+#  Optional essentials tools (amendment, coordinator 2026-10-11): an
+#  EXISTING guest's root profile must receive nix-ld too, best effort.
+#    essentials_optional_tools (bootstrap/common.sh) is the one list, as
+#      data: one line per tool, "<name> <path relative to the root
+#      essentials profile>", in priority order. Today it holds
+#          nix-ld libexec/nix-ld
+#      WP6.2b (another branch) will add "rsync bin/rsync" -- a one-line
+#      addition; nothing else may need to change for it.
+#    essentials_first_missing_optional_tool (bootstrap/common.sh): when the
+#      per-user root profile
+#      ${DX_ESSENTIALS_ROOT:-}/nix/var/nix/profiles/per-user/root/profile
+#      exists (the one essentials_profile_installed tests and
+#      upgrade_essential_packages replaces), prints the NAME of the first
+#      listed tool whose <profile>/<path> does not exist (a dangling link
+#      counts as missing) and returns 0; otherwise -- nothing missing, or
+#      no installed profile -- prints nothing and returns 1. It never
+#      consults PATH.
+#    install_essentials (bootstrap/base-and-storage.sh): the required-tool
+#      gate is unchanged (a failed required install/upgrade still fails
+#      the phase). Afterwards, ONLY when the required gate found nothing
+#      missing (no install or upgrade ran this boot -- at most one upgrade
+#      per boot), the profile is installed and an optional tool is missing:
+#        - one stdout line containing "Upgrading the essentials profile",
+#          "optional" and the quoted name ('nix-ld');
+#        - upgrade_essential_packages (the real one: remove, install, and
+#          its own rollback on failure);
+#        - success: PATH is re-resolved from essentials_profile_path (its
+#          output first on PATH) and hash -r, as the required path does;
+#        - failure: exactly one stderr line containing "Warning:" and the
+#          tool's name (upgrade_essential_packages' own rollback warning
+#          may also appear), no "Error:" line, no "essentials installation
+#          failed" line; "Bootstrap phase: essentials installation
+#          completed in" is still printed and the status is 0.
+#      It is errexit-safe (bootstrap runs it under set -euo pipefail).
+#    The suite drives install_essentials with a recording `nix` function
+#    stub (plus a fail-closed fake nix on PATH) and a `command -v` stub that
+#    answers from a file, so no real Nix profile is ever touched.
+#
 #  Docs: docs/guest.md's "## Browsing /persist from the Mac" section names
 #    nix-ld, the "first connection" and the server "download"
 #    (tests/test_persist_mac_access_docs.sh).
@@ -128,6 +172,10 @@ BOOTSTRAP_DIR="$CONTAINER_DIR/bootstrap"
 source "$BOOTSTRAP_DIR/common.sh"
 # shellcheck source=../container/dx-nixos-26.05/bootstrap/system.sh
 source "$BOOTSTRAP_DIR/system.sh"
+# shellcheck source=../container/dx-nixos-26.05/bootstrap/base-and-storage.sh
+source "$BOOTSTRAP_DIR/base-and-storage.sh"
+# shellcheck source=lib/fake-tools.sh
+source "$SCRIPT_DIR/lib/fake-tools.sh"
 
 MARKER_NAME=vscode-skip-server-requirements-check
 LIB_SUBDIR=run/current-system/sw/share/nix-ld/lib
@@ -488,8 +536,8 @@ ok "aarch64: the decoy nix-ld package's ldpath was not used" absent "$C/guest-ro
 eq "aarch64: /run keeps its mode" "$RUN_MODE_BEFORE" "$(file_mode "$C/guest-root/run")"
 eq "aarch64: /tmp keeps its mode" "$TMP_MODE_BEFORE" "$(file_mode "$C/guest-root/tmp")"
 case "$(readlink "$C/guest-root/lib/ld-linux-aarch64.so.1" 2>/dev/null)" in
-    "$C/guest-root"/*) test_fail "aarch64: the loader link targets the profile, not the guest root" ;;
-    *) test_pass "aarch64: the loader link targets the profile, not the guest root" ;;
+    "$C/store-root/nix/store/"*) test_pass "aarch64: the loader link's target is under the Nix store (the next boot may replace it)" ;;
+    *) test_fail "aarch64: the loader link's target is under the Nix store (got [$(readlink "$C/guest-root/lib/ld-linux-aarch64.so.1" 2>/dev/null)])" ;;
 esac
 
 # Idempotent: a second boot leaves the same tree and logs the same line.
@@ -520,8 +568,11 @@ test_section "WP1.4: stale links from an earlier boot are replaced"
 C="$(vs_case stale)"
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
-mkdir -p "$C/guest-root/lib" "$C/guest-root/stale-dir" "$C/guest-root/$LIB_SUBDIR"
-ln -s "$C/guest-root/stale-dir" "$C/guest-root/lib/ld-linux-aarch64.so.1"
+# The old loader link points at a DIRECTORY in the store (only ln -sfn
+# replaces such a link instead of creating one inside the directory).
+STALE_DIR="$C/store-root/nix/store/0001stale-nix-ld-1.0"
+mkdir -p "$C/guest-root/lib" "$STALE_DIR" "$C/guest-root/$LIB_SUBDIR"
+ln -s "$STALE_DIR" "$C/guest-root/lib/ld-linux-aarch64.so.1"
 printf 'old zlib\n' > "$C/guest-root/old-libz"
 ln -s "$C/guest-root/old-libz" "$C/guest-root/$LIB_SUBDIR/libz.so.1"
 printf 'left by dx\n' > "$C/guest-root/tmp/$MARKER_NAME"
@@ -529,7 +580,7 @@ chmod 0600 "$C/guest-root/tmp/$MARKER_NAME"
 vs_run "$C"
 vs_assert_configured "stale" "$C" /lib/ld-linux-aarch64.so.1
 eq "stale: nothing was created inside the directory the old loader link pointed at" "" \
-    "$(ls -A "$C/guest-root/stale-dir" 2>&1)"
+    "$(ls -A "$STALE_DIR" 2>&1)"
 eq "stale: the file the old libz link pointed at is untouched" "old zlib" "$(cat "$C/guest-root/old-libz" 2>&1)"
 
 C="$(vs_case dangling)"
@@ -595,6 +646,38 @@ vs_run "$C"
 vs_assert_refused "a regular file at the loader path" "$C" "/lib/ld-linux-aarch64.so.1" "$BEFORE"
 eq "a regular file at the loader path: its content is untouched" "a real glibc loader" \
     "$(cat "$C/guest-root/lib/ld-linux-aarch64.so.1" 2>&1)"
+
+# A symlink at the loader path that is not ours (its target is not under the
+# Nix store): a real glibc loader on an FHS-style base, absolute or relative,
+# or a dangling link to somewhere else. Never replaced.
+C="$(vs_case fhsloader)"
+vs_store "$C" aarch64
+vs_stubs "$C" x86_64
+mkdir -p "$C/guest-root/lib" "$C/guest-root/usr/lib/aarch64-linux-gnu"
+printf 'distribution glibc loader\n' > "$C/guest-root/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+ln -s "$C/guest-root/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1" "$C/guest-root/lib/ld-linux-aarch64.so.1"
+BEFORE="$(vs_snapshot "$C/guest-root")"
+vs_run "$C"
+vs_assert_refused "a symlink to a distribution loader at the loader path" "$C" "/lib/ld-linux-aarch64.so.1" "$BEFORE"
+
+C="$(vs_case relloader)"
+vs_store "$C" aarch64
+vs_stubs "$C" x86_64
+mkdir -p "$C/guest-root/lib/aarch64-linux-gnu"
+printf 'distribution glibc loader\n' > "$C/guest-root/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+ln -s aarch64-linux-gnu/ld-linux-aarch64.so.1 "$C/guest-root/lib/ld-linux-aarch64.so.1"
+BEFORE="$(vs_snapshot "$C/guest-root")"
+vs_run "$C"
+vs_assert_refused "a relative symlink at the loader path" "$C" "/lib/ld-linux-aarch64.so.1" "$BEFORE"
+
+C="$(vs_case foreigndangling)"
+vs_store "$C" aarch64
+vs_stubs "$C" x86_64
+mkdir -p "$C/guest-root/lib"
+ln -s /opt/dxe-fixture-absent/ld-linux-aarch64.so.1 "$C/guest-root/lib/ld-linux-aarch64.so.1"
+BEFORE="$(vs_snapshot "$C/guest-root")"
+vs_run "$C"
+vs_assert_refused "a dangling symlink outside the store at the loader path" "$C" "/lib/ld-linux-aarch64.so.1" "$BEFORE"
 
 C="$(vs_case loaderdir)"
 vs_store "$C" aarch64
@@ -716,6 +799,263 @@ case "$VS_ERR" in
     *) test_fail "phases (step fails): the line starts with Warning: (got [$VS_ERR])" ;;
 esac
 has "phases (step fails): the warning names VS Code" "$VS_ERR" "VS Code"
+
+# ---------------------------------------------------------------------------
+test_section "WP1.4: the optional essentials tools are one list, read from the profile"
+
+if (
+    # shellcheck source=../container/dx-nixos-26.05/bootstrap/common.sh
+    source "$BOOTSTRAP_DIR/common.sh"
+    declare -F essentials_optional_tools >/dev/null && declare -F essentials_first_missing_optional_tool >/dev/null
+); then
+    test_pass "bootstrap/common.sh defines essentials_optional_tools and essentials_first_missing_optional_tool"
+else
+    test_fail "bootstrap/common.sh defines essentials_optional_tools and essentials_first_missing_optional_tool"
+fi
+
+OPTIONAL_LIST="$(essentials_optional_tools 2>/dev/null)"
+eq "the optional list holds 'nix-ld libexec/nix-ld' exactly once" 1 "$(grep -Fxc 'nix-ld libexec/nix-ld' <<<"$OPTIONAL_LIST")"
+eq "every optional entry is '<name> <path relative to the profile>'" "" \
+    "$(awk 'NF != 2 || $2 ~ /^\// { print "bad entry: " $0 }' <<<"$OPTIONAL_LIST")"
+eq "optional tool names are unique" "" "$(awk '{ print $1 }' <<<"$OPTIONAL_LIST" | LC_ALL=C sort | uniq -d)"
+
+# oe_profile ROOT KIND -- the per-user root profile under ROOT: none (not
+# installed), bare (installed, no libexec/nix-ld), nixld (installed, with a
+# store link at libexec/nix-ld), dangling (libexec/nix-ld points nowhere).
+oe_profile() {
+    local root="$1" kind="$2" gen="$1/nix/store/8888hhhh-profile" profiles="$1/nix/var/nix/profiles/per-user/root"
+    local nixld="$1/nix/store/1111aaaa-nix-ld-2.0.6"
+    mkdir -p "$root"
+    [ "$kind" != none ] || return 0
+    mkdir -p "$gen/bin" "$profiles"
+    ln -s "$gen" "$profiles/profile-1-link"
+    ln -s profile-1-link "$profiles/profile"
+    case "$kind" in
+        nixld)
+            mkdir -p "$nixld/bin" "$gen/libexec"
+            printf 'fake nix-ld\n' > "$nixld/bin/nix-ld"
+            ln -s "$nixld/bin/nix-ld" "$gen/libexec/nix-ld"
+            ;;
+        dangling)
+            mkdir -p "$gen/libexec"
+            ln -s "$root/nix/store/0000gone-nix-ld-1.0/bin/nix-ld" "$gen/libexec/nix-ld"
+            ;;
+        *) : ;;
+    esac
+}
+
+# oe_find ROOT -- essentials_first_missing_optional_tool against ROOT.
+oe_find() {
+    OE_FIND_OUT="$( (
+        DX_ESSENTIALS_ROOT="$1"
+        export DX_ESSENTIALS_ROOT
+        essentials_first_missing_optional_tool
+    ) 2>&1)"
+    OE_FIND_RC=$?
+}
+
+R="$(mktemp -d "$WORK/opt-bare.XXXXXX")"; oe_profile "$R/root" bare
+oe_find "$R/root"
+eq "installed profile without libexec/nix-ld: reports nix-ld" "nix-ld" "$OE_FIND_OUT"
+eq "installed profile without libexec/nix-ld: status 0" 0 "$OE_FIND_RC"
+
+R="$(mktemp -d "$WORK/opt-nixld.XXXXXX")"; oe_profile "$R/root" nixld
+oe_find "$R/root"
+eq "installed profile with libexec/nix-ld: reports nothing" "" "$OE_FIND_OUT"
+eq "installed profile with libexec/nix-ld: status 1" 1 "$OE_FIND_RC"
+
+R="$(mktemp -d "$WORK/opt-dangling.XXXXXX")"; oe_profile "$R/root" dangling
+oe_find "$R/root"
+eq "a dangling libexec/nix-ld counts as missing" "nix-ld" "$OE_FIND_OUT"
+eq "a dangling libexec/nix-ld: status 0" 0 "$OE_FIND_RC"
+
+R="$(mktemp -d "$WORK/opt-none.XXXXXX")"; oe_profile "$R/root" none
+oe_find "$R/root"
+eq "no installed profile: reports nothing (the normal install covers it)" "" "$OE_FIND_OUT"
+eq "no installed profile: status 1" 1 "$OE_FIND_RC"
+
+# PATH is never consulted: nix-ld on PATH (and `command -v` saying so) does
+# not hide its absence from the profile.
+R="$(mktemp -d "$WORK/opt-path.XXXXXX")"; oe_profile "$R/root" bare
+mkdir -p "$R/bin"; printf '#!/bin/sh\nexit 0\n' > "$R/bin/nix-ld"; chmod 0755 "$R/bin/nix-ld"
+OE_FIND_OUT="$( (
+    PATH="$R/bin:$PATH"
+    DX_ESSENTIALS_ROOT="$R/root"
+    export DX_ESSENTIALS_ROOT
+    command() { if [ "${1:-}" = -v ]; then printf '/fake/bin/%s\n' "${2:-}"; return 0; fi; builtin command "$@"; }
+    essentials_first_missing_optional_tool
+) 2>&1)"
+eq "nix-ld on PATH does not count: the profile is what is checked" "nix-ld" "$OE_FIND_OUT"
+
+# The list is data: a second entry (as WP6.2b will add for rsync) is honoured
+# in list order with no other change.
+R="$(mktemp -d "$WORK/opt-list.XXXXXX")"; oe_profile "$R/root" nixld
+OE_FIND_OUT="$( (
+    DX_ESSENTIALS_ROOT="$R/root"
+    export DX_ESSENTIALS_ROOT
+    essentials_optional_tools() { printf '%s\n' "nix-ld libexec/nix-ld" "rsync bin/rsync"; }
+    essentials_first_missing_optional_tool
+) 2>&1)"
+eq "a listed rsync missing from a profile that has nix-ld is reported" "rsync" "$OE_FIND_OUT"
+R="$(mktemp -d "$WORK/opt-list2.XXXXXX")"; oe_profile "$R/root" bare
+OE_FIND_OUT="$( (
+    DX_ESSENTIALS_ROOT="$R/root"
+    export DX_ESSENTIALS_ROOT
+    essentials_optional_tools() { printf '%s\n' "nix-ld libexec/nix-ld" "rsync bin/rsync"; }
+    essentials_first_missing_optional_tool
+) 2>&1)"
+eq "with both missing, the first listed tool is reported" "nix-ld" "$OE_FIND_OUT"
+
+# ---------------------------------------------------------------------------
+test_section "WP1.4: install_essentials upgrades an existing profile for nix-ld, best effort"
+
+OE_FAIL_CLOSED="$(fake_tool_dir_create "$WORK")"
+
+# oe_run CASE PRESENT PROFILE [INSTALL_RC] [CREATE_NIXLD] -- install_essentials
+# under bootstrap's shell options. PRESENT: the tools `command -v` finds
+# (from a file the fake install extends with useradd). PROFILE: as
+# oe_profile. The recording `nix` stub logs every call; `profile install`
+# returns INSTALL_RC and, on success, marks the upgrade and (unless
+# CREATE_NIXLD=no) adds libexec/nix-ld to the generation.
+# essentials_profile_path answers /es/old/bin before an install and
+# /es/new/bin after one. Call as a plain statement (errexit stays on).
+oe_run() {
+    local dir="$1" present="$2" kind="$3" install_rc="${4:-0}" create="${5:-yes}" tool
+    local root="$1/es-root" gen="$1/es-root/nix/store/8888hhhh-profile"
+    oe_profile "$root" "$kind"
+    : > "$dir/present"
+    for tool in $present; do printf '%s\n' "$tool" >> "$dir/present"; done
+    : > "$dir/nix.log"
+    rm -f "$dir/upgraded" "$dir/continued"
+    (
+        set -euo pipefail
+        PATH="$OE_FAIL_CLOSED:$PATH"
+        DX_ESSENTIALS_ROOT="$root"
+        export DX_ESSENTIALS_ROOT
+        unset DX_USAGE_SERVICE
+        command() {
+            if [ "${1:-}" = -v ]; then
+                if grep -Fqx -- "${2:-}" "$dir/present"; then printf '/fake/bin/%s\n' "$2"; return 0; fi
+                return 1
+            fi
+            builtin command "$@"
+        }
+        essentials_profile_path() {
+            if [ -e "$dir/upgraded" ]; then printf '%s\n' /es/new/bin; else printf '%s\n' /es/old/bin; fi
+        }
+        nix() {
+            printf 'nix %s\n' "$*" >> "$dir/nix.log"
+            case "$*" in
+                *"profile install"*)
+                    if [ "$install_rc" -eq 0 ]; then
+                        : > "$dir/upgraded"
+                        printf 'useradd\n' >> "$dir/present"
+                        if [ "$create" = yes ] && [ -d "$gen" ]; then
+                            mkdir -p "$gen/libexec"
+                            printf 'fake nix-ld\n' > "$gen/libexec/nix-ld"
+                        fi
+                    fi
+                    return "$install_rc"
+                    ;;
+            esac
+            return 0
+        }
+        install_essentials
+        printf '%s\n' "$PATH" > "$dir/path"
+        : > "$dir/continued"
+    ) > "$dir/stdout" 2> "$dir/stderr"
+    OE_RC=$?
+    OE_OUT="$(cat "$dir/stdout")"
+    OE_ERR="$(cat "$dir/stderr")"
+    OE_NIX="$(cat "$dir/nix.log")"
+    OE_PATH="$(cat "$dir/path" 2>/dev/null)"
+    OE_CONTINUED=no
+    if [ -f "$dir/continued" ]; then OE_CONTINUED=yes; fi
+}
+PROFILE_REMOVE="nix profile remove --profile /nix/var/nix/profiles/per-user/root/profile bootstrap-essentials"
+PROFILE_INSTALL="nix profile install --profile /nix/var/nix/profiles/per-user/root/profile"
+PROFILE_ROLLBACK="nix profile rollback --profile /nix/var/nix/profiles/per-user/root/profile"
+upgrading_lines() { grep -F "Upgrading the essentials profile" <<<"$1"; }
+
+C="$(mktemp -d "$WORK/oe-upgrade.XXXXXX")"
+oe_run "$C" useradd bare 0
+eq "optional upgrade: status 0" 0 "$OE_RC"
+eq "optional upgrade: the boot continues under errexit" yes "$OE_CONTINUED"
+eq "optional upgrade: nothing on stderr" "" "$OE_ERR"
+eq "optional upgrade: exactly two nix calls (remove, then install)" 2 "$(line_count "$C/nix.log")"
+has "optional upgrade: the old bootstrap-essentials element is removed first" "$(sed -n 1p "$C/nix.log")" "$PROFILE_REMOVE"
+has "optional upgrade: then the current bootstrap-essentials output is installed" "$(sed -n 2p "$C/nix.log")" "$PROFILE_INSTALL"
+has "optional upgrade: the install names bootstrap-essentials" "$(sed -n 2p "$C/nix.log")" "#bootstrap-essentials"
+eq "optional upgrade: exactly one 'Upgrading the essentials profile' line" 1 "$(upgrading_lines "$OE_OUT" | grep -c .)"
+has "optional upgrade: the line says the tool is optional" "$(upgrading_lines "$OE_OUT")" "optional"
+has "optional upgrade: the line names 'nix-ld'" "$(upgrading_lines "$OE_OUT")" "'nix-ld'"
+has "optional upgrade: the phase completes" "$OE_OUT" "Bootstrap phase: essentials installation completed in"
+case "$OE_PATH" in
+    /es/new/bin:*) test_pass "optional upgrade: PATH is re-resolved from the upgraded profile" ;;
+    *) test_fail "optional upgrade: PATH is re-resolved from the upgraded profile (PATH=$OE_PATH)" ;;
+esac
+
+C="$(mktemp -d "$WORK/oe-fail.XXXXXX")"
+oe_run "$C" useradd bare 1
+eq "failed optional upgrade: status 0 (VS Code support is optional)" 0 "$OE_RC"
+eq "failed optional upgrade: the boot continues under errexit" yes "$OE_CONTINUED"
+has "failed optional upgrade: upgrade_essential_packages rolled the profile back" "$OE_NIX" "$PROFILE_ROLLBACK"
+eq "failed optional upgrade: exactly one Warning line names nix-ld" 1 \
+    "$(grep -F 'Warning:' <<<"$OE_ERR" | grep -Fc 'nix-ld')"
+lacks "failed optional upgrade: no Error line" "$(grep '^Error:' <<<"$OE_OUT
+$OE_ERR")" "Error:"
+lacks "failed optional upgrade: the phase is not reported as failed" "$OE_OUT
+$OE_ERR" "essentials installation failed"
+has "failed optional upgrade: the phase still completes" "$OE_OUT" "Bootstrap phase: essentials installation completed in"
+
+C="$(mktemp -d "$WORK/oe-present.XXXXXX")"
+oe_run "$C" useradd nixld
+eq "nothing missing: status 0" 0 "$OE_RC"
+eq "nothing missing: no nix call at all" "" "$OE_NIX"
+eq "nothing missing: no upgrade line" "" "$(upgrading_lines "$OE_OUT")"
+eq "nothing missing: nothing on stderr" "" "$OE_ERR"
+case "$OE_PATH" in
+    /es/old/bin:*) test_pass "nothing missing: PATH keeps the profile resolved at the start" ;;
+    *) test_fail "nothing missing: PATH keeps the profile resolved at the start (PATH=$OE_PATH)" ;;
+esac
+
+C="$(mktemp -d "$WORK/oe-onpath.XXXXXX")"
+oe_run "$C" "useradd nix-ld" bare 0
+has "nix-ld on PATH but not in the profile: the profile is still upgraded" "$OE_NIX" "$PROFILE_INSTALL"
+has "nix-ld on PATH but not in the profile: the optional line names it" "$(upgrading_lines "$OE_OUT")" "'nix-ld'"
+
+C="$(mktemp -d "$WORK/oe-noprofile.XXXXXX")"
+oe_run "$C" useradd none
+eq "no installed profile, required tools present: status 0" 0 "$OE_RC"
+eq "no installed profile, required tools present: no nix call (never an optional upgrade)" "" "$OE_NIX"
+eq "no installed profile, required tools present: no upgrade line" "" "$(upgrading_lines "$OE_OUT")"
+
+C="$(mktemp -d "$WORK/oe-fresh.XXXXXX")"
+oe_run "$C" "" none 0
+eq "fresh install: status 0" 0 "$OE_RC"
+eq "fresh install: exactly one nix call" 1 "$(line_count "$C/nix.log")"
+has "fresh install: it is the normal install" "$OE_NIX" "$PROFILE_INSTALL"
+has "fresh install: reported as before" "$OE_OUT" "Installing essential tools..."
+lacks "fresh install: no optional upgrade" "$OE_OUT" "optional"
+
+C="$(mktemp -d "$WORK/oe-required.XXXXXX")"
+oe_run "$C" "" bare 0 no
+eq "required upgrade: status 0" 0 "$OE_RC"
+eq "required upgrade: one upgrade only (remove + install), even though nix-ld is still missing" 2 "$(line_count "$C/nix.log")"
+eq "required upgrade: exactly one 'Upgrading the essentials profile' line" 1 "$(upgrading_lines "$OE_OUT" | grep -c .)"
+has "required upgrade: the line names 'useradd'" "$(upgrading_lines "$OE_OUT")" "'useradd'"
+lacks "required upgrade: no optional upgrade in the same boot" "$OE_OUT" "optional"
+
+C="$(mktemp -d "$WORK/oe-required-fail.XXXXXX")"
+oe_run "$C" "" bare 1
+if [ "$OE_RC" -ne 0 ]; then
+    test_pass "failed REQUIRED upgrade: install_essentials still fails the phase"
+else
+    test_fail "failed REQUIRED upgrade: install_essentials still fails the phase (status 0)"
+fi
+has "failed REQUIRED upgrade: the existing failure line" "$OE_ERR" "essentials installation failed"
+lacks "failed REQUIRED upgrade: not reported as completed" "$OE_OUT" "completed in"
+eq "failed REQUIRED upgrade: one install attempt only" 1 "$(grep -Fc "$PROFILE_INSTALL" "$C/nix.log")"
 
 # ---------------------------------------------------------------------------
 test_section "WP1.4: the flake's root toolchain holds nix-ld and the library set"
