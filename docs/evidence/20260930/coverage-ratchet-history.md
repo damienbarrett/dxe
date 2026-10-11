@@ -1348,3 +1348,20 @@ the logic (including the new restart-count abort) lives in the covered
 `bin/lib/dx-container.sh`. Measured on a clean export at `c1beafa` with
 `tests/run-coverage-linux.sh`: `scope_exec_lines=4402`,
 `unscoped_prod_exec_lines=2641`, scope coverage 100%.
+
+## 2026-10-12: stale tmux socket prune (fix/usage-tmux-sockets)
+
+`scope_exec_lines_floor` 3935 -> 4478 (raised to the measured total, allowed
+direction). `dx_usage_service_prune_tmux_sockets`, its helpers and the call in
+`dx_usage_service_serve` are all in `scripts/lib`, covered by
+`tests/test_usage_tmux_sockets.sh` and `tests/test_usage_tmux_sockets_unit.sh`.
+`unscoped_prod_exec_lines_ceiling` is unchanged at 2638: no exempt entry point
+was touched. Measured with `tests/run-coverage-linux.sh` in a scratch worktree
+of the branch head with `wp/0.3` merged (main's sections 10 and 16 abort the
+runner without it): `covered=100%`, `scope_exec_lines=4478`,
+`unscoped_prod_exec_lines=2638`. The coverage image gained the `curl` binary
+(`tests/coverage/Dockerfile`) because the probe uses `curl --unix-socket`.
+
+The oldest dated ratchet.env line was moved here to keep that file at 10 lines:
+
+    # 2026-09-30 ceiling 2634 -> 2635: WP5.2 added one `source` line (dx-bootstrap-protocol.sh) to bin/dx-lib.sh's facade order.

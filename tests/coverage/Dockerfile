@@ -13,3 +13,11 @@ RUN apt-get update \
  && cmake --install /tmp/kcov/build \
  && rm -rf /tmp/kcov \
  && rm -rf /var/lib/apt/lists/*
+
+# The usage service probes stale tmux sockets with `curl --unix-socket` (the
+# guest's dx profile provides curl); the image needs the binary, not just
+# libcurl, for tests/test_usage_tmux_sockets*.sh. A separate layer so the kcov
+# build above stays cached.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/*

@@ -80,6 +80,14 @@ keyring.
 6. **Runbook**: enabling (profile edit + recreate in a window), release
    selection and rollback via the links, the publication-rule note, and the
    Apple client base URL `http://<NAS tailnet name>:8787/`.
+7. **Stale tmux sockets**: every scrape starts its own tmux server on a unique
+   socket under `workspace/tmux/tmux-<uid>/`, and a server killed without its
+   exit path (service kill, container stop, OOM) leaves the socket file behind
+   for ever. `serve` therefore prunes that directory before it execs the
+   package (`dx_usage_service_prune_tmux_sockets`): only direct-child sockets
+   that refuse a connection (probed with `curl --unix-socket`, which the dx
+   profile guarantees) are removed, the directory path is validated first, and
+   a failure is only a warning.
 
 ## What stays out
 

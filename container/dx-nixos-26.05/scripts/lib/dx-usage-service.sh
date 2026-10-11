@@ -52,6 +52,67 @@ dx_usage_service_prepare_state() {
     [ -e "$root/config/implementation" ] || printf 'rust\n' > "$root/config/implementation" || return 1
 }
 
+# True (0) when connecting to the socket NAME (relative to the current directory)
+# is refused or fails outright. curl is the probe because the dx profile
+# guarantees it (guest-tools.nix) and nothing else that can connect to a unix
+# socket is guaranteed (no perl, socat or nc), and tmux cannot tell a dead
+# socket from a foreign listener. curl exit 7 is "could not connect"; any other
+# outcome (a reply, an empty reply from a listener that closes at once, a
+# timeout on a full backlog) means something answered, so the socket is kept.
+dx_usage_service_tmux_socket_dead() {
+    local rc=0
+    curl -q -s -o /dev/null --max-time 2 --unix-socket "$1" http://localhost/ || rc=$?
+    [ "$rc" -eq 7 ]
+}
+
+# Runs in a subshell of the caller: removes the dead sockets among the direct
+# children of the validated directory DIR. Each is probed by relative name from
+# inside DIR (a unix socket path is limited to about 104 bytes).
+dx_usage_service_prune_children() {
+    local dir="$1" entry removed=0 failed=0
+    cd "$dir" || return 1
+    for entry in ./* ./.[!.]* ./..?*; do
+        { [ -S "$entry" ] && [ ! -L "$entry" ]; } || continue
+        dx_usage_service_tmux_socket_dead "$entry" || continue
+        if rm -f -- "$entry"; then removed=$((removed + 1)); else
+            echo "Error: could not remove stale tmux socket $dir/${entry#./}." >&2; failed=1
+        fi
+    done
+    [ "$removed" -eq 0 ] || echo "Pruned $removed stale tmux socket(s) from $dir" >&2
+    [ "$failed" -eq 0 ]
+}
+
+# Removes the dead sockets that are direct children of DIR, which must be
+# "<...>/workspace/tmux/tmux-<id -u>" (the directory TMUX_TMPDIR names for this
+# uid); anything else is refused before a single file is touched. Every scrape
+# of the agent-stats package starts its own tmux server on a unique socket, and
+# a server killed without its exit path leaves the socket file behind for ever.
+# Only sockets (never symlinks, directories or files) that refuse a connection
+# are removed; one stderr line reports how many.
+dx_usage_service_prune_tmux_sockets() {
+    local dir="$1" uid
+    uid="$(id -u)"
+    case "$dir" in
+        /*) : ;;
+        *) echo "Error: refusing to prune tmux sockets in '$dir': not an absolute path." >&2; return 1 ;;
+    esac
+    case "$dir" in
+        */./*|*/../*|*/.|*/..) echo "Error: refusing to prune tmux sockets in '$dir': it has a . or .. component." >&2; return 1 ;;
+    esac
+    case "$dir" in
+        */workspace/tmux/tmux-"$uid") : ;;
+        *) echo "Error: refusing to prune tmux sockets in '$dir': expected a path ending in /workspace/tmux/tmux-$uid." >&2; return 1 ;;
+    esac
+    [ -e "$dir" ] || [ -L "$dir" ] || return 0
+    if [ -L "$dir" ] || [ ! -d "$dir" ]; then
+        echo "Error: refusing to prune tmux sockets in '$dir': not a real directory." >&2
+        return 1
+    fi
+    command -v curl >/dev/null 2>&1 || { echo "Error: cannot prune tmux sockets in $dir: curl is missing." >&2; return 1; }
+    # A subshell, so the caller keeps its directory.
+    ( dx_usage_service_prune_children "$dir" )
+}
+
 # Launcher: runs as dx, ends in `exec` of the selected wrapper in the foreground.
 dx_usage_service_serve() {
     local root="${DX_USAGE_SERVICE_ROOT:-/persist/services/agent-stats}"
@@ -81,6 +142,8 @@ dx_usage_service_serve() {
     # Any tmux the package starts is namespaced under its own workspace, so
     # stopping the service can never reach another tmux server.
     export TMUX_TMPDIR="$root/workspace/tmux"
+    # Sockets of tmux servers killed without their exit path (see the prune function).
+    dx_usage_service_prune_tmux_sockets "$root/workspace/tmux/tmux-$(id -u)" || echo "Warning: could not prune stale tmux sockets." >&2
     cd "$root/workspace" || { dx_usage_service_fail "cannot enter $root/workspace."; return 1; }
     exec "$executable" --serve --bind 0.0.0.0:8787 --interval 900
 }
