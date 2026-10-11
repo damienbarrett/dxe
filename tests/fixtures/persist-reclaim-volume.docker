@@ -1,0 +1,36 @@
+version --format {{.Server.Version}}
+info --format {{.ID}}|{{.Name}}|{{.Architecture}}|{{.OperatingSystem}}
+container inspect --format {{.State.Running}} dx-rc
+system df -v --format {{range .Volumes}}{{if eq .Name "dxe-rc-nix"}}{{.Size}}{{end}}{{end}}
+system df -v --format {{range .Volumes}}{{if eq .Name "dxe-rc-persist"}}{{.Size}}{{end}}{{end}}
+exec dx-rc /usr/bin/bash -lc 
+        export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"
+        store_path="$1/store"
+        store_usage="$(du -sh "$store_path" 2>/dev/null)" || exit $?
+        store_size="${store_usage%%	*}"
+        [ "$store_size" = "$store_usage" ] && store_size="${store_usage%% *}"
+        printf "  %-14s %s\n" "$store_path" "$store_size"
+        df_output="$(df -h "$@")" || exit $?
+        while IFS= read -r line; do
+            printf "  %s\n" "$line"
+        done <<EOF
+$df_output
+EOF
+     bash /nix /persist
+exec -u dx dx-rc /usr/bin/bash -lc nix-collect-garbage -d
+system df -v --format {{range .Volumes}}{{if eq .Name "dxe-rc-nix"}}{{.Size}}{{end}}{{end}}
+system df -v --format {{range .Volumes}}{{if eq .Name "dxe-rc-persist"}}{{.Size}}{{end}}{{end}}
+exec dx-rc /usr/bin/bash -lc 
+        export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"
+        store_path="$1/store"
+        store_usage="$(du -sh "$store_path" 2>/dev/null)" || exit $?
+        store_size="${store_usage%%	*}"
+        [ "$store_size" = "$store_usage" ] && store_size="${store_usage%% *}"
+        printf "  %-14s %s\n" "$store_path" "$store_size"
+        df_output="$(df -h "$@")" || exit $?
+        while IFS= read -r line; do
+            printf "  %s\n" "$line"
+        done <<EOF
+$df_output
+EOF
+     bash /nix /persist

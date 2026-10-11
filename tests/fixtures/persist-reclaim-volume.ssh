@@ -1,0 +1,106 @@
+-o
+BatchMode=yes
+-o
+ConnectTimeout=15
+-o
+LogLevel=ERROR
+dxe-fixture-nas.invalid
+true
+-o
+BatchMode=yes
+-o
+ConnectTimeout=15
+-o
+LogLevel=ERROR
+dxe-fixture-nas.invalid
+uname -m
+-o
+BatchMode=yes
+-o
+ConnectTimeout=15
+-o
+LogLevel=ERROR
+dxe-fixture-nas.invalid
+DXE_DOCKER_BIN=""
+if command -v docker >/dev/null 2>&1; then DXE_DOCKER_BIN="$(command -v docker)"; else for dxe_cand in /share/*/.qpkg/container-station/bin/docker; do if [ -x "$dxe_cand" ]; then DXE_DOCKER_BIN="$dxe_cand"; break; fi; done; fi
+echo "${DXE_DOCKER_BIN:-NOTFOUND}"
+-o
+BatchMode=yes
+-o
+ConnectTimeout=15
+-o
+LogLevel=ERROR
+dxe-fixture-nas.invalid
+<TOOLS>/docker version --format \{\{.Server.Version\}\}
+-o
+BatchMode=yes
+-o
+ConnectTimeout=15
+-o
+LogLevel=ERROR
+dxe-fixture-nas.invalid
+<TOOLS>/docker info --format \{\{.ID\}\}\|\{\{.Name\}\}\|\{\{.Architecture\}\}\|\{\{.OperatingSystem\}\}
+-o
+BatchMode=yes
+-o
+ConnectTimeout=15
+-o
+LogLevel=ERROR
+dxe-fixture-nas.invalid
+<TOOLS>/docker container inspect --format \{\{.State.Running\}\} dx-rc
+-o
+BatchMode=yes
+-o
+ConnectTimeout=15
+-o
+LogLevel=ERROR
+dxe-fixture-nas.invalid
+<TOOLS>/docker system df -v --format \{\{range\ .Volumes\}\}\{\{if\ eq\ .Name\ \"dxe-rc-nix\"\}\}\{\{.Size\}\}\{\{end\}\}\{\{end\}\}
+-o
+BatchMode=yes
+-o
+ConnectTimeout=15
+-o
+LogLevel=ERROR
+dxe-fixture-nas.invalid
+<TOOLS>/docker system df -v --format \{\{range\ .Volumes\}\}\{\{if\ eq\ .Name\ \"dxe-rc-persist\"\}\}\{\{.Size\}\}\{\{end\}\}\{\{end\}\}
+-o
+BatchMode=yes
+-o
+ConnectTimeout=15
+-o
+LogLevel=ERROR
+dxe-fixture-nas.invalid
+<TOOLS>/docker exec dx-rc /usr/bin/bash -lc $'\n        export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"\n        store_path="$1/store"\n        store_usage="$(du -sh "$store_path" 2>/dev/null)" || exit $?\n        store_size="${store_usage%%\t*}"\n        [ "$store_size" = "$store_usage" ] && store_size="${store_usage%% *}"\n        printf "  %-14s %s\\n" "$store_path" "$store_size"\n        df_output="$(df -h "$@")" || exit $?\n        while IFS= read -r line; do\n            printf "  %s\\n" "$line"\n        done <<EOF\n$df_output\nEOF\n    ' bash /nix /persist
+-o
+BatchMode=yes
+-o
+ConnectTimeout=15
+-o
+LogLevel=ERROR
+dxe-fixture-nas.invalid
+<TOOLS>/docker exec -u dx dx-rc /usr/bin/bash -lc nix-collect-garbage\ -d
+-o
+BatchMode=yes
+-o
+ConnectTimeout=15
+-o
+LogLevel=ERROR
+dxe-fixture-nas.invalid
+<TOOLS>/docker system df -v --format \{\{range\ .Volumes\}\}\{\{if\ eq\ .Name\ \"dxe-rc-nix\"\}\}\{\{.Size\}\}\{\{end\}\}\{\{end\}\}
+-o
+BatchMode=yes
+-o
+ConnectTimeout=15
+-o
+LogLevel=ERROR
+dxe-fixture-nas.invalid
+<TOOLS>/docker system df -v --format \{\{range\ .Volumes\}\}\{\{if\ eq\ .Name\ \"dxe-rc-persist\"\}\}\{\{.Size\}\}\{\{end\}\}\{\{end\}\}
+-o
+BatchMode=yes
+-o
+ConnectTimeout=15
+-o
+LogLevel=ERROR
+dxe-fixture-nas.invalid
+<TOOLS>/docker exec dx-rc /usr/bin/bash -lc $'\n        export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"\n        store_path="$1/store"\n        store_usage="$(du -sh "$store_path" 2>/dev/null)" || exit $?\n        store_size="${store_usage%%\t*}"\n        [ "$store_size" = "$store_usage" ] && store_size="${store_usage%% *}"\n        printf "  %-14s %s\\n" "$store_path" "$store_size"\n        df_output="$(df -h "$@")" || exit $?\n        while IFS= read -r line; do\n            printf "  %s\\n" "$line"\n        done <<EOF\n$df_output\nEOF\n    ' bash /nix /persist
