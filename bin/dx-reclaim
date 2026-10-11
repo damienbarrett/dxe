@@ -22,7 +22,7 @@ run_in_guest() {
 report_host_images() {
     echo "Volume usage:"
     printf '  %-14s %s\n' "$DX_NIX_VOLUME" "$(dx_runtime_volume_usage "$DX_NIX_VOLUME")"
-    printf '  %-14s %s\n' "$DX_PERSIST_VOLUME" "$(dx_runtime_volume_usage "$DX_PERSIST_VOLUME")"
+    dx_persist_usage_line
 }
 
 report_guest_filesystems() {
@@ -85,7 +85,7 @@ if dx_runtime_capability host_filesystem_reclamation; then
     trim_mount "$DX_NIX_MOUNT"
     trim_mount /persist
 else
-    echo "Skipping filesystem trim: not supported against a Docker volume under this runtime (qnap-dxe-plan.md DQ4)."
+    dx_persist_trim_skip_message
 fi
 
 rule

@@ -701,6 +701,35 @@ dx_persist_warn_mismatch() {
     return 0
 }
 
+# dx-reclaim's persist line in its "Volume usage:" report (WP5.2; spec R29).
+# Volume mode prints the persist volume's size, as before. Host-path mode never
+# queries the volume: it prints the host directory and its KiB from
+# dx_runtime_host_dir_usage, or "unknown" when that read fails.
+dx_persist_usage_line() {
+    local dir usage
+    if [ "${DX_PERSIST_STORAGE:-volume}" != host-path ]; then
+        printf '  %-14s %s\n' "$DX_PERSIST_VOLUME" "$(dx_runtime_volume_usage "$DX_PERSIST_VOLUME")"
+        return 0
+    fi
+    dir="$(dx_persist_configured_source)"
+    if usage="$(dx_runtime_host_dir_usage "$dir" 2>/dev/null)"; then
+        printf '  %s %sK\n' "$dir" "${usage%%[[:space:]]*}"
+    else
+        printf '  %s unknown\n' "$dir"
+    fi
+    return 0
+}
+
+# The "Skipping filesystem trim" message dx-reclaim prints when the runtime
+# cannot trim (WP5.2): the persist side is named for what it is in this mode.
+dx_persist_trim_skip_message() {
+    local what="Docker volume"
+    if [ "${DX_PERSIST_STORAGE:-volume}" = host-path ]; then
+        what="host directory"
+    fi
+    printf 'Skipping filesystem trim: not supported against a %s under this runtime (qnap-dxe-plan.md DQ4).\n' "$what"
+}
+
 # Appends the guest environment for host-path mode to CREATE_ARGS; volume mode
 # appends nothing, so its create argv is byte-identical to before.
 dx_persist_create_env_args() {

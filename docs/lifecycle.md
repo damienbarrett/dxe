@@ -276,7 +276,10 @@ want to return unused space. The container must already be running.
 `dx-reclaim` prints volume usage (via `dx_runtime_volume_usage`: Apple's own
 host sparse-image size; a `docker-ssh` guest's Docker-visible volume size, or
 `unknown` when Docker cannot say) and guest filesystem usage before and after
-the operation. It then:
+the operation. With `DX_PERSIST_STORAGE=host-path` the persist line instead
+reports the persist host directory's size in KiB (`du -sk`), or `unknown` when
+that read fails, and the persist volume is never queried. The trim skip message
+then names the host directory rather than a Docker volume. It then:
 
 1. Deletes old Nix generations inside the guest with `nix-collect-garbage -d`
    (identical for both runtimes).
