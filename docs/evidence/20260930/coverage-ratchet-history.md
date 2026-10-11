@@ -1450,3 +1450,11 @@ script constants, the marker-stream and guest-name checks).
 line (the operations are reached through the already-sourced runtime
 facade). Measured with `tests/run-coverage-linux.sh`: covered=100%
 scope_exec_lines=4629 unscoped_prod_exec_lines=2640.
+
+Merge WP4.2 (2026-10-11): wp/4.2 was merged into feat/persist-host-dir and the
+interim floor of 4806 was replaced by the merged tree's measured scope:
+`scope_exec_lines_floor` 4806 -> 4910 (the WP4.2 NAS directory operations,
++33, on top of the previously merged work and the WP6.1 tool).
+`unscoped_prod_exec_lines_ceiling` unchanged at 2643. Measured with
+`tests/run-coverage-linux.sh`: covered=100% scope_exec_lines=4910
+unscoped_prod_exec_lines=2643.
