@@ -39,23 +39,38 @@ set -uo pipefail
 #    Defined in container/dx-nixos-26.05/bootstrap/system.sh (safe to
 #    source, as today). No arguments. Runs as root on every boot.
 #    Inputs:
-#      P = "$(essentials_profile_store_path)" (bootstrap/common.sh), so
-#          DX_ESSENTIALS_ROOT prefixes the profile lookup in tests.
+#      E = THIS BOOT's essentials: the parent directory of the first
+#          `nix-ld` on PATH, in PATH order -- i.e.
+#          dirname "$(dirname "$(command -v nix-ld)")" -- taken as is (not
+#          resolved further). install_essentials put the resolved
+#          bootstrap-essentials bin directory on PATH (essentials_profile_path),
+#          and PATH survives the apple-image /nix remount by design, so E is
+#          the essentials output this boot actually runs, e.g.
+#          /nix/store/<hash>-dx-bootstrap-essentials. (Amendment 3,
+#          coordinator 2026-10-12: on Mac guests -- apple-image storage
+#          mode -- the dx-nix volume's root profile is written only by
+#          nix_seed_volume on a fresh volume, so after the remount
+#          /nix/var/nix/profiles/per-user/root/profile can be a stale
+#          generation without nix-ld. The root profile is therefore NEVER
+#          consulted: not essentials_profile_store_path, not
+#          DX_ESSENTIALS_ROOT's profile.)
 #      R = "${DX_VSCODE_SERVER_ROOT:-}", a prefix for every guest path the
 #          step inspects or creates (the loader path, the nix-ld library
 #          directory, the /tmp marker). Production never sets it. It is
-#          never added to link TARGETS (those point into P).
+#          never added to link TARGETS (those point into E).
+#      DX_ESSENTIALS_ROOT is used only to name the store in rule 4
+#          ("${DX_ESSENTIALS_ROOT:-}/nix/store/"; production: /nix/store/).
 #    Preconditions, all checked before ANY change:
-#      1. P resolves and P/libexec/nix-ld exists. The nix-ld PACKAGE is the
-#         store directory two levels above that file's fully resolved path
-#         (readlink -f gives <pkg>/bin/nix-ld, since nixpkgs ships
-#         libexec/nix-ld -> ../bin/nix-ld). The profile itself has no
-#         nix-support/ (Nix's profile builder drops it).
+#      1. nix-ld is on PATH and E/libexec/nix-ld exists. The nix-ld PACKAGE
+#         is the store directory two levels above that file's fully
+#         resolved path (readlink -f gives <pkg>/bin/nix-ld, since nixpkgs
+#         ships libexec/nix-ld -> ../bin/nix-ld). E itself has no
+#         nix-support/ (buildEnv and Nix's profile builder drop it).
 #      2. LOADER = the first line of <pkg>/nix-support/ldpath: an absolute
 #         path whose directory is exactly /lib or /lib64
 #         (/lib/ld-linux-aarch64.so.1, /lib64/ld-linux-x86-64.so.2). It is
 #         never derived from uname or hard-coded (the QNAP is x86_64).
-#      3. P/share/nix-ld/lib/ provides ld.so, libstdc++.so.6, libgcc_s.so.1
+#      3. E/share/nix-ld/lib/ provides ld.so, libstdc++.so.6, libgcc_s.so.1
 #         and libz.so.1 (each resolving to an existing file).
 #      4. R$LOADER is absent, or a symlink (dangling or not) whose target
 #         TEXT (readlink, not resolved) begins with
@@ -64,27 +79,39 @@ set -uo pipefail
 #         (e.g. a real glibc loader on an FHS base, absolute or relative), a
 #         regular file, a directory or anything else there is NEVER replaced.
 #      5. R/tmp/vscode-skip-server-requirements-check is absent or a regular
-#         file; a symlink there is never followed or replaced.
+#         file with exactly ONE link (amendment 3: a hard-linked file there
+#         is refused, so chown/chmod can never reach another name of it); a
+#         symlink there is never followed or replaced.
 #      A failed precondition: exactly ONE line on stderr, starting
 #      "Warning:" and containing "VS Code" and the reason's key word --
-#        no profile, or no nix-ld in it        -> "nix-ld"
+#        no nix-ld on PATH, or none in E        -> "nix-ld"
 #        ldpath missing or not /lib|/lib64     -> "ldpath"
 #        a library missing                     -> that library's name
 #        loader path not ours to replace       -> LOADER (e.g. /lib/ld-linux-aarch64.so.1)
 #        unusable marker path                  -> "vscode-skip-server-requirements-check"
 #      -- nothing on stdout, NOTHING changed under R, no chown call, status 0.
 #    Changes:
-#      6. R$LOADER becomes a symlink that resolves to the same file as
-#         P/libexec/nix-ld, and its target text is itself under the store
-#         (P is a store path), so the next boot may replace it. An existing
-#         store symlink is replaced, including one that points at a
-#         directory (ln -sfn; a link must never be created inside that
-#         directory).
+#      6. R$LOADER becomes a symlink whose target text is EXACTLY
+#         "$E/libexec/nix-ld" (so it resolves to nix-ld and is itself under
+#         the store, and the next boot may replace it). An existing store
+#         symlink is replaced, including one that points at a directory
+#         (ln -sfn; a link must never be created inside that directory).
 #      7. R/run/current-system/sw/share/nix-ld/lib is a real directory
-#         holding exactly one symlink per library name, each resolving to
-#         the same file as P/share/nix-ld/lib/<name> (stale links replaced).
+#         holding exactly one symlink per library name, each with target
+#         text EXACTLY "$E/share/nix-ld/lib/<name>" (stale links replaced).
 #         nix-ld's built-in defaults then find ld.so and the libraries: no
 #         NIX_LD* variable is needed.
+#      GC (live-only, not observable at unit tier): every link targets E,
+#         this boot's bootstrap-essentials output. E is in the closure of
+#         the GC roots this boot keeps: in apple-image mode the import
+#         (nix_store_import_registered -> nix_install_image_essentials_root)
+#         publishes the resolved per-user root profile of the /nix that
+#         install_essentials just used (nix_image_bootstrap_store_paths),
+#         and that generation's closure holds E; in direct-volume mode the
+#         root profile itself is the GC root. Root sets are replaced only
+#         when the image identity changes, and this step re-links every
+#         boot, so a later `nix store gc` cannot dangle the links. The
+#         WP1.4 live check (recreate dx-test, then connect) is the proof.
 #      8. R/tmp/vscode-skip-server-requirements-check is a regular file,
 #         mode 0644, made root-owned with `chown root:root <marker>` (or
 #         0:0), run through the `chown` on PATH (the tests record it; never
@@ -147,6 +174,11 @@ set -uo pipefail
 #          its own rollback on failure);
 #        - success: PATH is re-resolved from essentials_profile_path (its
 #          output first on PATH) and hash -r, as the required path does;
+#          then the tool is checked again (amendment 3): if the upgrade
+#          reported success but essentials_first_missing_optional_tool
+#          still names it, exactly one stderr line containing "Warning:"
+#          and its name, no further upgrade, status 0 -- so the gap is not
+#          silently re-attempted every boot;
 #        - failure: exactly one stderr line containing "Warning:" and the
 #          tool's name (upgrade_essential_packages' own rollback warning
 #          may also appear), no "Error:" line, no "essentials installation
@@ -158,7 +190,11 @@ set -uo pipefail
 #    answers from a file, so no real Nix profile is ever touched.
 #
 #  Docs: docs/guest.md's "## Browsing /persist from the Mac" section names
-#    nix-ld, the "first connection" and the server "download"
+#    nix-ld, the "first connection" and the server "download"; and
+#    (amendment 3) says an existing guest gets nix-ld on its "next boot"
+#    naming "QNAP" as well as the Mac, and no longer claims it comes from an
+#    "upgrade of the root essentials profile" (false on Mac guests, whose
+#    volume profile bootstrap never rewrites)
 #    (tests/test_persist_mac_access_docs.sh).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -294,10 +330,25 @@ vs_store() {
     ln -s profile-1-link "$profiles/profile"
 }
 
-# The fixture's resolved profile generation (what essentials_profile_store_path
-# returns for it).
-vs_profile() { resolved "$1/store-root/nix/var/nix/profiles/per-user/root/profile"; }
+# The fixture's bootstrap-essentials output: this boot's essentials (E) by
+# default, its bin directory being what install_essentials put on PATH.
+vs_essentials() { printf '%s\n' "$1/store-root/nix/store/6666ffff-dx-bootstrap-essentials"; }
 vs_nixld_pkg() { printf '%s\n' "$1/store-root/nix/store/1111aaaa-nix-ld-2.0.6"; }
+
+# vs_stale_profile CASE -- apple-image mode: the volume's per-user root
+# profile is an older generation (seeded once, never rewritten) with no
+# nix-ld and no nix-ld library set, while this boot's essentials (on PATH)
+# have both.
+vs_stale_profile() {
+    local old="$1/store-root/nix/store/7000aaaa-profile"
+    local profiles="$1/store-root/nix/var/nix/profiles/per-user/root"
+    mkdir -p "$old/bin"
+    printf 'old useradd\n' > "$old/bin/useradd"
+    printf '{"elements":{},"version":3}\n' > "$old/manifest.json"
+    rm -f "$profiles/profile" "$profiles/profile-1-link"
+    ln -s "$old" "$profiles/profile-1-link"
+    ln -s profile-1-link "$profiles/profile"
+}
 
 # vs_stubs CASE OTHER_ARCH -- the recording stubs (see the contract).
 vs_stubs() {
@@ -372,15 +423,28 @@ vs_snapshot() {
 # Sets VS_RC, VS_OUT, VS_ERR and VS_CONTINUED (yes when the caller went on
 # after the call). Call it as a plain statement: an if/||/&& context would
 # switch errexit off inside it.
+#
+# PATH is: the stubs, then this boot's essentials bin directories (the file
+# CASE/essentials-path, colon-separated, if the case wrote one; otherwise
+# the fixture's bootstrap-essentials bin), then the ambient PATH with any
+# directory holding a real nix-ld removed, so only the fixture can supply it.
 vs_run() {
-    local dir="$1" mask="${2:-022}"
+    local dir="$1" mask="${2:-022}" essentials_path ambient="" entry rest
+    essentials_path="$(vs_essentials "$dir")/bin"
+    if [ -f "$dir/essentials-path" ]; then essentials_path="$(cat "$dir/essentials-path")"; fi
+    rest="$PATH"
+    while [ -n "$rest" ]; do
+        entry="${rest%%:*}"
+        case "$rest" in *:*) rest="${rest#*:}" ;; *) rest="" ;; esac
+        if [ -n "$entry" ] && [ ! -e "$entry/nix-ld" ]; then ambient="${ambient:+$ambient:}$entry"; fi
+    done
     : > "$dir/stdout"
     : > "$dir/stderr"
     rm -f "$dir/continued"
     (
         set -euo pipefail
         umask "$mask"
-        PATH="$dir/bin:$PATH"
+        PATH="$dir/bin${essentials_path:+:$essentials_path}:$ambient"
         DX_ESSENTIALS_ROOT="$dir/store-root"
         DX_VSCODE_SERVER_ROOT="$dir/guest-root"
         export DX_ESSENTIALS_ROOT DX_VSCODE_SERVER_ROOT
@@ -464,8 +528,8 @@ vs_assert_refused() {
 
 # vs_assert_configured LABEL CASE LOADER -- a successful run's final state.
 vs_assert_configured() {
-    local label="$1" dir="$2" loader="$3" guest="$2/guest-root" profile lib_dir name listing expected_listing
-    profile="$(vs_profile "$dir")"
+    local label="$1" dir="$2" loader="$3" guest="$2/guest-root" essentials lib_dir name listing expected_listing
+    essentials="${4:-$(vs_essentials "$dir")}"
     eq "$label: status 0" 0 "$VS_RC"
     eq "$label: the caller continues under errexit" yes "$VS_CONTINUED"
     eq "$label: nothing on stderr" "" "$VS_ERR"
@@ -475,7 +539,9 @@ vs_assert_configured() {
     lacks "$label: the line is not a warning" "$VS_OUT" "Warning"
 
     ok "$label: $loader is a symlink" test -L "$guest$loader"
-    eq "$label: $loader resolves to nix-ld" "$(resolved "$profile/libexec/nix-ld")" "$(resolved "$guest$loader")"
+    eq "$label: $loader targets this boot's essentials nix-ld exactly" \
+        "$essentials/libexec/nix-ld" "$(readlink "$guest$loader" 2>/dev/null)"
+    eq "$label: $loader resolves to nix-ld" "$(resolved "$essentials/libexec/nix-ld")" "$(resolved "$guest$loader")"
     eq "$label: the loader's directory is 0755" 755 "$(file_mode "$(dirname "$guest$loader")" 2>/dev/null)"
 
     lib_dir="$guest/$LIB_SUBDIR"
@@ -489,8 +555,10 @@ vs_assert_configured() {
     eq "$label: the nix-ld library directory holds exactly the four libraries" "$expected_listing" "$listing"
     for name in $LIB_NAMES; do
         ok "$label: $name is a symlink" test -L "$lib_dir/$name"
+        eq "$label: $name targets this boot's essentials exactly" \
+            "$essentials/share/nix-ld/lib/$name" "$(readlink "$lib_dir/$name" 2>/dev/null)"
         eq "$label: $name resolves to the library set's $name" \
-            "$(resolved "$profile/share/nix-ld/lib/$name")" "$(resolved "$lib_dir/$name")"
+            "$(resolved "$essentials/share/nix-ld/lib/$name")" "$(resolved "$lib_dir/$name")"
     done
     for name in run/current-system run/current-system/sw run/current-system/sw/share \
         run/current-system/sw/share/nix-ld "$LIB_SUBDIR"; do
@@ -592,13 +660,49 @@ vs_run "$C"
 vs_assert_configured "dangling" "$C" /lib/ld-linux-aarch64.so.1
 
 # ---------------------------------------------------------------------------
+test_section "WP1.4: nix-ld comes from this boot's essentials on PATH, never the root profile"
+
+# Apple-image mode (Mac guests): the volume's root profile is a stale
+# generation without nix-ld; this boot's essentials, on PATH, have it.
+C="$(vs_case appleimage)"
+vs_store "$C" aarch64
+vs_stubs "$C" x86_64
+vs_stale_profile "$C"
+vs_run "$C"
+vs_assert_configured "apple-image" "$C" /lib/ld-linux-aarch64.so.1
+
+# The root profile has nix-ld but this boot's essentials do not: no fallback.
+C="$(vs_case profileonly)"
+vs_store "$C" aarch64
+vs_stubs "$C" x86_64
+mkdir -p "$C/store-root/nix/store/6600aaaa-dx-bootstrap-essentials/bin"
+printf 'useradd\n' > "$C/store-root/nix/store/6600aaaa-dx-bootstrap-essentials/bin/useradd"
+chmod 0755 "$C/store-root/nix/store/6600aaaa-dx-bootstrap-essentials/bin/useradd"
+printf '%s\n' "$C/store-root/nix/store/6600aaaa-dx-bootstrap-essentials/bin" > "$C/essentials-path"
+BEFORE="$(vs_snapshot "$C/guest-root")"
+vs_run "$C"
+vs_assert_refused "nix-ld only in the root profile, not in this boot's essentials" "$C" "nix-ld" "$BEFORE"
+
+# After an upgrade this boot, install_essentials puts the new essentials
+# first on PATH ahead of the old ones: the first nix-ld on PATH wins.
+C="$(vs_case twoess)"
+vs_store "$C" aarch64
+vs_stubs "$C" x86_64
+vs_stale_profile "$C"
+NEW_ESSENTIALS="$C/store-root/nix/store/6667abcd-dx-bootstrap-essentials"
+cp -R "$(vs_essentials "$C")" "$NEW_ESSENTIALS"
+printf '%s\n' "$NEW_ESSENTIALS/bin:$(vs_essentials "$C")/bin" > "$C/essentials-path"
+vs_run "$C"
+vs_assert_configured "new essentials first on PATH" "$C" /lib/ld-linux-aarch64.so.1 "$NEW_ESSENTIALS"
+
+# ---------------------------------------------------------------------------
 test_section "WP1.4: a failed precondition warns, changes nothing, and boot goes on"
 
 C="$(vs_case noprofile)"
 vs_stubs "$C" x86_64
 BEFORE="$(vs_snapshot "$C/guest-root")"
 vs_run "$C"
-vs_assert_refused "no essentials profile" "$C" "nix-ld" "$BEFORE"
+vs_assert_refused "no essentials on PATH (and no profile)" "$C" "nix-ld" "$BEFORE"
 
 C="$(vs_case nonixld)"
 vs_store "$C" aarch64
@@ -698,6 +802,20 @@ BEFORE="$(vs_snapshot "$C/guest-root")"
 vs_run "$C"
 vs_assert_refused "a symlink at the marker path" "$C" "$MARKER_NAME" "$BEFORE"
 eq "a symlink at the marker path: its target keeps mode 0600" 600 "$(file_mode "$C/guest-root/etc/shadow")"
+
+# A regular file with a second name (a hard link) at the marker path: chown
+# and chmod would change the other name too, so it is refused.
+C="$(vs_case markerhardlink)"
+vs_store "$C" aarch64
+vs_stubs "$C" x86_64
+mkdir -p "$C/guest-root/var"
+printf 'keep me\n' > "$C/guest-root/var/other"
+chmod 0600 "$C/guest-root/var/other"
+ln "$C/guest-root/var/other" "$C/guest-root/tmp/$MARKER_NAME"
+BEFORE="$(vs_snapshot "$C/guest-root")"
+vs_run "$C"
+vs_assert_refused "a hard-linked file at the marker path" "$C" "$MARKER_NAME" "$BEFORE"
+eq "a hard-linked file at the marker path: its other name keeps mode 0600" 600 "$(file_mode "$C/guest-root/var/other")"
 
 # ---------------------------------------------------------------------------
 test_section "WP1.4: a failure while linking is a warning, not a boot failure"
@@ -1007,6 +1125,19 @@ $OE_ERR")" "Error:"
 lacks "failed optional upgrade: the phase is not reported as failed" "$OE_OUT
 $OE_ERR" "essentials installation failed"
 has "failed optional upgrade: the phase still completes" "$OE_OUT" "Bootstrap phase: essentials installation completed in"
+
+# The upgrade reports success, yet the profile still lacks nix-ld (e.g. a
+# bootstrap flake without it): say so once, do not retry, keep booting.
+C="$(mktemp -d "$WORK/oe-stillmissing.XXXXXX")"
+oe_run "$C" useradd bare 0 no
+eq "upgrade succeeded but nix-ld still missing: status 0" 0 "$OE_RC"
+eq "upgrade succeeded but nix-ld still missing: the boot continues under errexit" yes "$OE_CONTINUED"
+eq "upgrade succeeded but nix-ld still missing: one upgrade only (remove + install)" 2 "$(line_count "$C/nix.log")"
+eq "upgrade succeeded but nix-ld still missing: exactly one Warning line names nix-ld" 1 \
+    "$(grep -F 'Warning:' <<<"$OE_ERR" | grep -Fc 'nix-ld')"
+eq "upgrade succeeded but nix-ld still missing: nothing else on stderr" 1 "$(line_count "$C/stderr")"
+has "upgrade succeeded but nix-ld still missing: the phase still completes" "$OE_OUT" \
+    "Bootstrap phase: essentials installation completed in"
 
 C="$(mktemp -d "$WORK/oe-present.XXXXXX")"
 oe_run "$C" useradd nixld

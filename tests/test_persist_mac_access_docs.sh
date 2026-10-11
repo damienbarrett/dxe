@@ -42,6 +42,14 @@
 #       "first connection" and "download"
 #                           (the first connection downloads the server, so
 #                            it is slow once)
+#       "next boot" and "QNAP"
+#                           (amendment 3, 2026-10-12: an existing guest gets
+#                            nix-ld on its next boot, on the Mac and on the
+#                            QNAP alike)
+#     and the section must NOT contain "upgrade of the root essentials
+#     profile": on Mac guests bootstrap never rewrites the volume's root
+#     profile, so nix-ld comes from the essentials that boot runs, not from
+#     an upgrade of that profile.
 
 set -uo pipefail
 
@@ -207,6 +215,14 @@ assert_text "ssh-keygen -R dx-host" "the ssh-keygen -R dx-host remedy"
 assert_text "nix-ld" "the guest runs VS Code's server through nix-ld (WP1.4)"
 assert_text "first connection" "what the first connection does (WP1.4)"
 assert_text "download" "the first connection downloads the VS Code server (WP1.4)"
+# WP1.4 amendment 3: true for Mac and QNAP guests alike.
+assert_text "next boot" "an existing guest gets nix-ld on its next boot (WP1.4)"
+assert_text "QNAP" "the VS Code support statement covers QNAP guests too (WP1.4)"
+if has_text "upgrade of the root essentials profile"; then
+    test_fail "section no longer attributes nix-ld to an upgrade of the root essentials profile (false on Mac guests) (WP1.4)"
+else
+    test_pass "section no longer attributes nix-ld to an upgrade of the root essentials profile (false on Mac guests) (WP1.4)"
+fi
 
 if grep -Fiq 'enableRemoteCommand": true' <<<"$SECTION"; then
     test_pass "section shows the setting as \"remote.SSH.enableRemoteCommand\": true"
