@@ -333,15 +333,24 @@ Rules:
 
 - Read-only by default: no `mkdir`, `chown`, `chmod`, `rm`, `mv`, `cp`,
   `touch` or `ln` reaches the NAS, and the only docker subcommands are
-  `info` and `volume inspect`. Docker is always reached as
+  `info`, `volume inspect` and one `run --rm` of the read-only inspection
+  container (below). Docker is always reached as
   `<DXE_QNAP_DOCKER> ...` over ssh, never the local docker CLI.
+- Root-only facts (Q-2 filesystem and mount, Q-8 counts, Q-10 owner and mode)
+  come from ONE read-only one-off container: `docker run --rm --network none
+  -v <volume>:/v:ro --entrypoint sh <image> -c <script>`. The SSH account is
+  not root and Container Station's volume path is root-only, so the script
+  never reads the mountpoint host-side. A `df` that fails or prints only a
+  header makes the check `fail` with `df failed: <reason>` (Q-1 and Q-2),
+  never `fs=Filesystem`. A `find` that fails gives `n/a` for its count and a
+  `partial` Q-8.
 - `--write-probe` adds one write probe for Q-10: a single `docker run --rm`
   of a container named `dxe-spike-*`, labelled `dxe.role=spike`, that binds
-  only the share root. Inside it: `mkdir <root>/dxe/.dxe-spike-<random>`,
+  only the share root. Inside it: `mkdir <root>/.dxe-spike-<random>`,
   `chown`, a root-owned `0700` `mkdir`, then removal of that one directory.
   Every write operand is that `.dxe-spike-*` path; the removal always runs.
   If the ssh connection drops mid-probe, delete a leftover
-  `<root>/dxe/.dxe-spike-*` directory by hand (and run
+  `<root>/.dxe-spike-*` directory by hand (and run
   `phase0-spike.sh --cleanup` for a stray labelled container).
 - Run the read-only form first; use `--write-probe` only once its output
   looks right.

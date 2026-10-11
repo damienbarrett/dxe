@@ -16,6 +16,11 @@
 #                                 spike's pinned base image, tag only)
 #   DXE_QNAP_SSH_CONNECT_TIMEOUT  seconds (default: 10)
 #
+# Q-2 (filesystem + mount), Q-8 and Q-10 (owner + mode of the volume root)
+# are read by ONE read-only one-off container (`--network none`, the volume
+# mounted `:ro` on /v), because the SSH account is not root and the volume
+# path is root-only. Q-1 (the share root) is read host-side.
+#
 # Output: exactly ten lines `Q-<n> | <ok|fail|manual|unknown> | <evidence>`
 # on stdout and in the report file (default
 # $HOME/dxe-recovery/qnap/phase1-persist-inspect-<UTC date>.md, overwritten
@@ -114,15 +119,68 @@ QE[5]="manual: how 30033-owned and root-only files look in Finder and the NAS UI
 QE[6]="manual: SMB, NFS and file-station access paths to the share"
 QE[7]="manual: confirm the plan's mount and Finder behaviour on the Mac"
 
-# df_fields <df -P output>: sets DF_FS and DF_MOUNT from the data row.
+# df_fields <exit status> <df -P output, stderr merged>: sets DF_FS and
+# DF_MOUNT from the data row, or DF_ERR (and empty fs/mount) when df failed
+# or printed no data row. A header line is never treated as data.
 DF_FS=""
 DF_MOUNT=""
+DF_ERR=""
 df_fields() {
     local row
-    row="$(printf '%s\n' "$1" | tail -n1)"
+    DF_FS=""
+    DF_MOUNT=""
+    DF_ERR=""
+    if [ "$1" -ne 0 ]; then
+        DF_ERR="$(printf '%s\n' "$2" | grep . | head -n1)"
+        DF_ERR="${DF_ERR:-exit status $1}"
+        return
+    fi
+    row="$(printf '%s\n' "$2" | sed -n '2p')"
+    if [ -z "$row" ]; then
+        DF_ERR="no data row"
+        return
+    fi
     DF_FS="$(printf '%s' "$row" | awk '{print $1}')"
     DF_MOUNT="$(printf '%s' "$row" | awk '{print $NF}')"
 }
+
+# The read-only inspection container's script (POSIX sh, no write verb,
+# literal /v). Prints tagged lines; a failing command gives n/a, never a
+# partial number.
+INSPECT_SCRIPT=""
+read -r -d '' INSPECT_SCRIPT <<'EOS' || true
+o=$(df -P /v 2>&1); r=$?
+if [ "$r" -ne 0 ]; then
+  echo "df-error=$(printf '%s\n' "$o" | grep . | head -n1)"
+else
+  row=$(printf '%s\n' "$o" | sed -n 2p)
+  if [ -z "$row" ]; then echo "df-error=no data row"
+  else
+    printf '%s\n' "$row" | awk '{print "fs=" $1; print "mount=" $NF}'
+  fi
+fi
+o=$(du -sk /v 2>/dev/null); r=$?
+if [ "$r" -eq 0 ]; then echo "size_kb=$(printf '%s\n' "$o" | awk '{print $1; exit}')"; else echo size_kb=n/a; fi
+fcount() {
+  { find /v "$@" 2>/dev/null; echo "find-rc=$?"; } | awk '/^find-rc=/{rc=substr($0,9);next}{n++}END{if (rc+0==0) print n+0; else print "n/a"}'
+}
+echo "entries=$(fcount)"
+echo "hardlinks=$(fcount -type f -links +1)"
+o=$(find /v -name "._*" 2>/dev/null); r=$?
+if [ "$r" -eq 0 ]; then
+  echo "appledouble=$(printf '%s\n' "$o" | grep -c .)"
+  printf '%s\n' "$o" | grep . | head -n 20 | sed 's/^/apple=/'
+else echo appledouble=n/a; fi
+echo "special=$(fcount -type s -o -type p -o -type b -o -type c)"
+if command -v getfacl >/dev/null 2>&1; then echo "acl=$(getfacl -R -s -p /v 2>/dev/null | grep -c '^# file:')"; else echo acl=n/a; fi
+if command -v getfattr >/dev/null 2>&1; then echo "xattr=$(getfattr -R -h -d -m - /v 2>/dev/null | grep -c '^# file:')"; else echo xattr=n/a; fi
+s=$(stat -c '%u:%g %a' /v 2>/dev/null)
+if [ -n "$s" ]; then echo "owner=${s%% *}"; echo "mode=${s#* }"; else echo owner=n/a; echo mode=n/a; fi
+EOS
+
+# tag <name>: the first value of a `name=value` line in INSPECT_OUT.
+INSPECT_OUT=""
+tag() { printf '%s\n' "$INSPECT_OUT" | sed -n "s/^$1=//p" | head -n1; }
 
 # The probe's default image: the spike's pinned base image, tag only (the
 # NAS pulls by tag), falling back to the pinned nixos/nix release.
@@ -151,28 +209,49 @@ SHARE_Q="$(rq "$SHARE_ROOT")"
 remote "readlink -f $SHARE_Q"
 q1_canon="$(printf '%s' "$R_OUT" | tail -n1)"
 q1_rc=$R_RC
-remote "df -P $SHARE_Q"
-q1_df_rc=$R_RC
-df_fields "$R_OUT"
-if [ "$q1_rc" -eq 0 ] && [ "$q1_df_rc" -eq 0 ]; then q1_st=ok; else q1_st=fail; fi
-set_q 1 "$q1_st" "canonical=${q1_canon:-n/a} fs=${DF_FS:-n/a} mount=${DF_MOUNT:-n/a} given=$SHARE_ROOT"
+remote "df -P $SHARE_Q 2>&1"
+df_fields "$R_RC" "$R_OUT"
+if [ "$q1_rc" -eq 0 ] && [ -z "$DF_ERR" ]; then q1_st=ok; else q1_st=fail; fi
+if [ -n "$DF_ERR" ]; then
+    q1_df="df failed: $DF_ERR"
+else
+    q1_df="fs=$DF_FS mount=$DF_MOUNT"
+fi
+set_q 1 "$q1_st" "canonical=${q1_canon:-n/a} $q1_df given=$SHARE_ROOT"
 
-# --- Q-2: the volume's mountpoint and pool -------------------------------------
+# --- Q-2 / Q-8 / Q-10 inputs: the volume, read by ONE read-only container ------
+#
+# The management account is not root and Container Station's volume path is
+# root-only, so nothing reads the mountpoint host-side: a one-off container
+# mounts the volume read-only on /v and prints tagged lines. The mountpoint
+# from `volume inspect` is reported but is never an operand of an ssh call.
 
 MOUNTPOINT=""
-if [ -z "$DOCKER" ]; then
-    set_q 2 fail "mountpoint=n/a fs=n/a mount=n/a (docker CLI not found on the NAS)"
-else
+INSPECTED=0
+if [ -n "$DOCKER" ]; then
     remote "$DOCKER volume inspect --format '{{.Mountpoint}}' $(rq "$VOLUME")"
     if [ "$R_RC" -eq 0 ]; then MOUNTPOINT="$(printf '%s' "$R_OUT" | head -n1)"; fi
-    if [ -n "$MOUNTPOINT" ]; then
-        remote "df -P $(rq "$MOUNTPOINT")"
-        df_rc=$R_RC
-        df_fields "$R_OUT"
-        if [ "$df_rc" -eq 0 ]; then q2_st=ok; else q2_st=fail; fi
-        set_q 2 "$q2_st" "mountpoint=$MOUNTPOINT fs=${DF_FS:-n/a} mount=${DF_MOUNT:-n/a} volume=$VOLUME"
+fi
+if [ -n "$MOUNTPOINT" ]; then
+    remote "$DOCKER run --rm --network none -v $(rq "$VOLUME:/v:ro") --entrypoint sh $(rq "${DXE_QNAP_PROBE_IMAGE:-$(dxe_qnap_probe_image_default)}") -c $(rq "$INSPECT_SCRIPT")"
+    INSPECT_OUT="$R_OUT"
+    if [ "$R_RC" -eq 0 ]; then INSPECTED=1; fi
+fi
+
+if [ -z "$DOCKER" ]; then
+    set_q 2 fail "mountpoint=n/a fs=n/a mount=n/a (docker CLI not found on the NAS)"
+elif [ -z "$MOUNTPOINT" ]; then
+    set_q 2 fail "mountpoint=n/a fs=n/a mount=n/a (docker volume inspect $VOLUME failed)"
+elif [ "$INSPECTED" -eq 0 ]; then
+    set_q 2 fail "mountpoint=$MOUNTPOINT fs=n/a mount=n/a (inspection container failed) volume=$VOLUME"
+else
+    q2_fs="$(tag fs)"
+    q2_mount="$(tag mount)"
+    q2_err="$(tag df-error)"
+    if [ -n "$q2_err" ] || [ -z "$q2_fs" ]; then
+        set_q 2 fail "mountpoint=$MOUNTPOINT df failed: ${q2_err:-no data row} volume=$VOLUME"
     else
-        set_q 2 fail "mountpoint=n/a fs=n/a mount=n/a (docker volume inspect $VOLUME failed)"
+        set_q 2 ok "mountpoint=$MOUNTPOINT fs=$q2_fs mount=${q2_mount:-n/a} volume=$VOLUME"
     fi
 fi
 
@@ -187,76 +266,38 @@ else
     set_q 4 "$q4_st" "DockerRootDir=${q4_root:-n/a}"
 fi
 
-# --- Q-9 input needed by Q-8: the remote uid ------------------------------------
+# --- Q-9 input: the remote uid ---------------------------------------------------
 
 remote "id -u"
 uid_rc=$R_RC
 uid="$(printf '%s' "$R_OUT" | head -n1)"
 
-# --- Q-8: size and contents of the volume ----------------------------------------
+# --- Q-8: size and contents of the volume (from the container) -----------------------
 
-if [ -z "$MOUNTPOINT" ]; then
-    set_q 8 fail "size_kb=n/a entries=n/a hardlinks=n/a appledouble=n/a special=n/a acl=n/a xattr=n/a (no volume mountpoint)"
+if [ "$INSPECTED" -eq 0 ]; then
+    set_q 8 fail "size_kb=n/a entries=n/a hardlinks=n/a appledouble=n/a special=n/a acl=n/a xattr=n/a (no volume read)"
 else
-    MP="$(rq "$MOUNTPOINT")"
     q8_st=ok
     q8_partial=""
-    # count <label> <remote command>: sets COUNT; a failed command fails Q-8.
-    count() {
-        remote "$2"
-        if [ "$R_RC" -ne 0 ]; then q8_st=fail; fi
-        COUNT="$(int "$R_OUT")"
-    }
-    # find_rc <output>: splits the trailing find-rc=<n> status line off a
-    # find group's output; sets FIND_RC (0 if absent) and FIND_OUT.
-    find_rc() {
-        FIND_RC="$(printf '%s\n' "$1" | sed -n 's/^find-rc=\([0-9]*\)$/\1/p' | tail -n1)"
-        FIND_RC="${FIND_RC:-0}"
-        FIND_OUT="$(printf '%s\n' "$1" | sed '/^find-rc=[0-9]*$/d')"
-    }
-    # find_failed <label>: Q-8 fails and is marked partial.
-    find_failed() {
-        q8_st=fail
-        q8_partial="${q8_partial:+$q8_partial,}$1"
-    }
-    # fcount <label> <find arguments>: sets COUNT to the number of lines
-    # find printed, or n/a (and marks Q-8 partial) when find exited non-zero.
-    fcount() {
-        remote "{ find $MP $2; echo \"find-rc=\$?\"; } | awk '/^find-rc=/{rc=substr(\$0,9);next}{n++}END{print n+0, rc+0}'"
-        COUNT="$(int "$(printf '%s' "$R_OUT" | awk '{print $1; exit}')")"
-        FIND_RC="$(printf '%s' "$R_OUT" | awk '{print $2; exit}')"
-        if [ "$R_RC" -ne 0 ] || [ "$COUNT" = "n/a" ] || [ "${FIND_RC:-0}" != 0 ]; then
-            find_failed "$1"
-            COUNT="n/a"
-        fi
-    }
-    remote "du -sk $MP"
-    if [ "$R_RC" -ne 0 ]; then q8_st=fail; fi
-    size_kb="$(int "$(printf '%s' "$R_OUT" | awk '{print $1; exit}')")"
-    fcount entries ""; entries="$COUNT"
-    fcount hardlinks "-type f -links +1"; hardlinks="$COUNT"
-    remote "{ find $MP -name '._*'; echo \"find-rc=\$?\"; }"
-    find_rc "$R_OUT"
-    apple_out="$FIND_OUT"
+    # Each count is a bare integer or n/a (its find or du failed).
+    size_kb="$(int "$(tag size_kb)")"
+    entries="$(int "$(tag entries)")"
+    hardlinks="$(int "$(tag hardlinks)")"
+    appledouble="$(int "$(tag appledouble)")"
+    special="$(int "$(tag special)")"
+    acl="$(int "$(tag acl)")"
+    xattr="$(int "$(tag xattr)")"
+    [ "$size_kb" != "n/a" ] || q8_st=fail
+    for kv in "entries=$entries" "hardlinks=$hardlinks" "appledouble=$appledouble" "special=$special"; do
+        if [ "${kv#*=}" = "n/a" ]; then q8_st=fail; q8_partial="${q8_partial:+$q8_partial,}${kv%%=*}"; fi
+    done
     apple_paths=""
-    if [ "$R_RC" -ne 0 ] || [ "$FIND_RC" != 0 ]; then
-        find_failed appledouble
-        appledouble="n/a"
-    else
-        appledouble="$(printf '%s\n' "$apple_out" | grep -c .)"
-        apple_paths="$(printf '%s\n' "$apple_out" | grep . | head -n 20 | tr '\n' ' ')"
+    if [ "$appledouble" != "n/a" ]; then
+        apple_paths="$(printf '%s\n' "$INSPECT_OUT" | sed -n 's/^apple=//p' | tr '\n' ' ')"
         if [ "$appledouble" -gt 20 ]; then apple_paths="$apple_paths(+$((appledouble - 20)) more)"; fi
     fi
-    fcount special "-type s -o -type p -o -type b -o -type c"; special="$COUNT"
-    # A missing getfacl/getfattr on the NAS is reported as n/a, not a failure.
-    count acl "if command -v getfacl >/dev/null 2>&1; then getfacl -R -s -p $MP 2>/dev/null | grep -c '^# file:' || true; else echo n/a; fi"; acl="$COUNT"
-    count xattr "if command -v getfattr >/dev/null 2>&1; then getfattr -R -h -d -m - $MP 2>/dev/null | grep -c '^# file:' || true; else echo n/a; fi"; xattr="$COUNT"
     q8_notes=""
     if [ -n "$q8_partial" ]; then q8_notes=" partial (find failed: $q8_partial)"; fi
-    case "$uid" in
-        '' | *[!0-9]* | 0) : ;;
-        *) q8_notes="$q8_notes non-root (remote uid $uid: unreadable paths are possible)" ;;
-    esac
     set_q 8 "$q8_st" "size_kb=$size_kb entries=$entries hardlinks=$hardlinks appledouble=$appledouble special=$special acl=$acl xattr=$xattr appledouble_paths: ${apple_paths:-none}$q8_notes"
 fi
 
@@ -286,13 +327,12 @@ set_q 9 "$q9_st" "rsync=${rsync_ver:-n/a} hardlinks=$(yesno hardlinks) acls=$(ye
 q10_st=ok
 owner="n/a"
 mode="n/a"
-if [ -z "$MOUNTPOINT" ]; then
+if [ "$INSPECTED" -eq 0 ]; then
     q10_st=fail
 else
-    remote "stat -c '%u:%g %a' $(rq "$MOUNTPOINT")"
-    if [ "$R_RC" -ne 0 ]; then q10_st=fail; fi
-    owner="$(printf '%s' "$R_OUT" | awk '{print $1}')"
-    mode="$(printf '%s' "$R_OUT" | awk '{print $2}')"
+    owner="$(tag owner)"
+    mode="$(tag mode)"
+    if [ -z "$owner" ] || [ "$owner" = "n/a" ]; then q10_st=fail; fi
 fi
 probe_ev="write-probe=skipped"
 if [ "$WRITE_PROBE" -eq 1 ]; then
