@@ -1419,3 +1419,10 @@ host-path boot with one Error line naming the library when it is not
 loaded; volume mode is unaffected. `unscoped_prod_exec_lines_ceiling`
 unchanged at 2640. Measured with `tests/run-coverage-linux.sh`:
 covered=100% scope_exec_lines=4634 unscoped_prod_exec_lines=2640.
+
+Merge (2026-10-11): the 13 verified WP branches were merged into
+feat/persist-host-dir and the interim floor of 4634 was replaced by the merged
+tree's measured scope: `scope_exec_lines_floor` 4634 -> 4667 (WP3.3 + WP3.4 +
+WP4.5 additions combined). `unscoped_prod_exec_lines_ceiling` unchanged at
+2643. Measured with `tests/run-coverage-linux.sh`: covered=100%
+scope_exec_lines=4667 unscoped_prod_exec_lines=2643.
