@@ -414,6 +414,8 @@ Turn on the VS Code user setting `"remote.SSH.enableRemoteCommand": true`, then 
 code --remote ssh-remote+dx-host-vscode /persist
 ```
 
+The guest runs VS Code's server through nix-ld, set up at every boot with no manual step: bootstrap links nix-ld at the glibc loader path (`/lib` or `/lib64`, whichever nix-ld names for the architecture), fills nix-ld's default library directory with the four libraries the server needs, and creates VS Code's `/tmp/vscode-skip-server-requirements-check` marker. An existing guest picks nix-ld up on its next boot through a best-effort upgrade of the root essentials profile; if that fails the boot continues with a warning and VS Code is simply unsupported. The first connection to a guest downloads the VS Code server from Microsoft and installs it, so it is slow once (the downloaded server lives in the dx home and is reused afterwards). Delete the `/tmp` marker only if you want VS Code to check the host again; it comes back on the next boot.
+
 For an SFTP client, create a connection to the `dx-host` alias (or enter host `127.0.0.1`, the profile's port, user `dx` and the same key). SSHFS and Finder mounts are out of scope.
 
 Both paths run as `dx`, with `dx`'s permissions. Root-only entries such as `etc/ssh` stay unreadable. This is intended.

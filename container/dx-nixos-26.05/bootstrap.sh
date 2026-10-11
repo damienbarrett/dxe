@@ -41,6 +41,7 @@ bootstrap_phases() {
     configure_release_identity
     setup_persist
     configure_ssh
+    configure_vscode_server_support || echo "Warning: VS Code server support step failed; continuing without it." >&2
     configure_guest true
     verify_guest_tools
     configure_timezone

@@ -409,6 +409,80 @@ EOF
     fi
 }
 
+# WP1.4: VS Code's Remote-SSH server is a prebuilt glibc binary that expects a
+# loader at the FHS path and libstdc++ on the default search path; this guest
+# has neither. nix-ld (in root's essentials profile) supplies both: the loader
+# path becomes a symlink to it, and its default library directory holds the
+# four libraries VS Code needs. VS Code's own documented marker file skips its
+# (otherwise failing) host requirements check. Optional: every problem is one
+# warning and status 0. DX_VSCODE_SERVER_ROOT prefixes the guest paths the
+# step touches (tests only); links always point into the essentials profile.
+vscode_server_warn() {
+    echo "Warning: VS Code server support skipped: $1" >&2
+    return 0
+}
+
+# Everything that changes the guest; the caller turns a failure into a warning.
+vscode_server_apply() {
+    local root="$1" profile="$2" loader="$3" marker="$4" name libdir
+    libdir="$root/run/current-system/sw/share/nix-ld/lib"
+    (umask 022 && mkdir -p "${root}${loader%/*}" "$libdir") || return 1
+    ln -sfn "$profile/libexec/nix-ld" "${root}${loader}" || return 1
+    for name in ld.so libstdc++.so.6 libgcc_s.so.1 libz.so.1; do
+        ln -sfn "$profile/share/nix-ld/lib/$name" "$libdir/$name" || return 1
+    done
+    [ -e "$marker" ] || (umask 022 && : > "$marker") || return 1
+    chmod 0644 "$marker" || return 1
+    chown root:root "$marker" || return 1
+}
+
+configure_vscode_server_support() {
+    local root="${DX_VSCODE_SERVER_ROOT:-}"
+    local profile="" pkg="" ldpath="" loader="" target name
+    local marker="$root/tmp/vscode-skip-server-requirements-check"
+
+    profile="$(essentials_profile_store_path)" || profile=""
+    if [ -z "$profile" ] || [ ! -e "$profile/libexec/nix-ld" ]; then
+        vscode_server_warn "nix-ld is not in the root essentials profile"
+        return 0
+    fi
+    pkg="$(readlink -f "$profile/libexec/nix-ld")" || pkg=""
+    pkg="${pkg%/*/*}"
+    if [ -r "$pkg/nix-support/ldpath" ]; then read -r ldpath < "$pkg/nix-support/ldpath" || :; fi
+    loader="${ldpath##*/}"
+    case "${ldpath%/*}" in /lib|/lib64) : ;; *) ldpath="" ;; esac
+    case "$loader" in ""|.|..) ldpath="" ;; esac
+    if [ -z "$ldpath" ]; then
+        vscode_server_warn "nix-ld's ldpath is missing or not a /lib or /lib64 loader path"
+        return 0
+    fi
+    for name in ld.so libstdc++.so.6 libgcc_s.so.1 libz.so.1; do
+        if [ ! -e "$profile/share/nix-ld/lib/$name" ]; then
+            vscode_server_warn "the nix-ld library set lacks $name"
+            return 0
+        fi
+    done
+    if [ -L "${root}${ldpath}" ]; then
+        target="$(readlink "${root}${ldpath}")" || target=""
+        case "$target" in
+            "${DX_ESSENTIALS_ROOT:-}/nix/store/"*) : ;;
+            *) vscode_server_warn "$ldpath is a link outside the Nix store; leaving it alone"; return 0 ;;
+        esac
+    elif [ -e "${root}${ldpath}" ]; then
+        vscode_server_warn "$ldpath already exists and is not a Nix store link; leaving it alone"
+        return 0
+    fi
+    if [ -L "$marker" ] || { [ -e "$marker" ] && [ ! -f "$marker" ]; }; then
+        vscode_server_warn "$marker is not a regular file; leaving it alone"
+        return 0
+    fi
+    if ! vscode_server_apply "$root" "$profile" "$ldpath" "$marker" 2>/dev/null; then
+        echo "Warning: VS Code server support could not be set up (a filesystem step failed); continuing without it." >&2
+        return 0
+    fi
+    echo "VS Code server support: $ldpath -> nix-ld, libraries linked under /run/current-system/sw/share/nix-ld/lib."
+}
+
 # 4. Bootstrap guest tools (Section 6)
 
 
