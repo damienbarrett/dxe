@@ -14,20 +14,32 @@ DX_PERSIST_DIR_MARKER_SOURCE="$DX_PERSIST_DIR_PROJECT_ROOT/container/dx-nixos-26
 # shellcheck source=../../container/dx-nixos-26.05/scripts/lib/dx-persist-marker.sh
 source "$DX_PERSIST_DIR_MARKER_SOURCE"
 
+# The owner a new /persist directory gets (spec R15: the owner and mode
+# today's volume root has, which the Q-10 inspection found to be
+# 30033:30001, mode 0755). The repository fixes no UID or GID for the
+# guest's dx user: the bootstrap allocates it with groupadd/useradd on the
+# nixos/nix base (nixbld group 30000, nixbld users 30001-30032, so dx gets
+# UID 30033 and its own group 30001), or reuses the durable identity of an
+# existing /nix store, and setup_persist re-asserts dx:dx 0755 on /persist
+# at every boot. This is the one host-side copy of that result;
+# dx_persist_dir_establish reads it when it runs.
+DX_PERSIST_DIR_OWNER=30033:30001
+
 # --- The start decision (WP4.3; plans/do D-2, D-7, D-9; spec R15, R17, R18) --
 #
 # In host-path mode dx-create-volumes and dx-start-container both probe the
 # per-guest directory once (dx_runtime_host_dir_probe), ask whether the
 # guest's named persist volume and the D-7 record exist, and pass those facts
 # to the pure dx_persist_start_decision. dx-create-volumes acts on create,
-# adopt and ok-fresh-start through dx_persist_dir_establish (the WP4.4 seam);
+# adopt and ok-fresh-start through dx_persist_dir_establish (WP4.4, below);
 # dx-start-container starts only on ok. Every refusal is one `Error:` line
 # naming the fix, printed before anything is written to the share and before
 # any volume is created. Volume mode makes none of these calls.
 
 # The D-7 record of host-path use: one entry per profile, named by the DQ6
 # profile id (DX_REMOTE_HOST__DX_CONTAINER_NAME), under the controller's
-# state directory. Destroy and reset never delete it; WP4.4 writes it.
+# state directory. Destroy and reset never delete it; dx_persist_dir_establish
+# and the ok path's backfill write it (WP4.4).
 # Non-zero, printing nothing, when the path cannot be formed.
 dx_persist_dir_record_path() {
     local state="${XDG_STATE_HOME:-}"
@@ -46,6 +58,33 @@ dx_persist_dir_record_exists() {
     local path
     path="$(dx_persist_dir_record_path)" || return 0
     [ -e "$path" ] || [ -L "$path" ]
+}
+
+# dx_persist_dir_record_write PATH MODE CREATED_AT: the record itself, five
+# lines -- schema=1, guest=, root= (DX_PERSIST_HOST_ROOT as configured),
+# mode= (create, adopt, fresh-start or backfill) and created-at= (the
+# marker's) -- mode 0600, written atomically: missing parent directories are
+# made, then a temp file in the record's own directory and ONE mv onto PATH,
+# which replaces an existing record. A directory at PATH is refused (mv
+# would move the file into it). Silent; non-zero on any failure, with no
+# temp file left behind.
+dx_persist_dir_record_write() {
+    local path="$1" dir="${1%/*}" tmp
+    [ ! -d "$path" ] || return 1
+    mkdir -p -- "$dir" 2>/dev/null || return 1
+    tmp="$(mktemp "$dir/.${path##*/}.XXXXXX" 2>/dev/null)" || return 1
+    if printf 'schema=1\nguest=%s\nroot=%s\nmode=%s\ncreated-at=%s\n' \
+        "${DX_CONTAINER_NAME:-}" "${DX_PERSIST_HOST_ROOT:-}" "$2" "$3" >"$tmp" \
+        && chmod 0600 "$tmp" && mv -f -- "$tmp" "$path" 2>/dev/null; then
+        return 0
+    fi
+    rm -f -- "$tmp"
+    return 1
+}
+
+# The controller's clock, as the marker and the record spell it.
+dx_persist_dir_utc_now() {
+    date -u +%Y-%m-%dT%H:%M:%SZ
 }
 
 # _dx_persist_gate MOUNTED TOKEN: every outcome that writes into the share
@@ -206,20 +245,34 @@ dx_persist_refusal() {
     printf 'Error: %s\n' "$msg" >&2
 }
 
+# A guest name the derived directory can carry: a plain marker-class name,
+# because it is a path component on the NAS. Otherwise one Error line.
+dx_persist_host_dir_guest_ok() {
+    dx_persist_marker_valid_name "${DX_CONTAINER_NAME:-}" && return 0
+    echo "Error: DX_CONTAINER_NAME=${DX_CONTAINER_NAME:-} cannot name a /persist host directory (it must start with a letter or digit); rename the guest or use DX_PERSIST_STORAGE=volume." >&2
+    return 1
+}
+
 # Host-path mode, shared by dx-create-volumes and dx-start-container: one
 # probe, the volume and record lookups, then the decision. Prints the token
-# on stdout when it is not a refusal; otherwise one Error line, status 1.
+# on stdout when it is not a refusal -- with --report, followed by the probe
+# report it was decided on -- and otherwise one Error line, status 1. The
+# persist volume counts as absent only when the runtime says so
+# (dx_runtime_volume_state): one it cannot inspect stops here, because "no
+# volume" can lead to a new, empty /persist.
 dx_persist_host_dir_decide() {
-    local report volume=no record=no token
-    if ! dx_persist_marker_valid_name "${DX_CONTAINER_NAME:-}"; then
-        echo "Error: DX_CONTAINER_NAME=${DX_CONTAINER_NAME:-} cannot name a /persist host directory (it must start with a letter or digit); rename the guest or use DX_PERSIST_STORAGE=volume." >&2
+    local report volume=no record=no state token
+    dx_persist_host_dir_guest_ok || return 1
+    report="$(dx_runtime_host_dir_probe "$DX_PERSIST_HOST_ROOT" "$DX_CONTAINER_NAME")" || report=""
+    if ! state="$(dx_runtime_volume_state "$DX_PERSIST_VOLUME")"; then
+        echo "Error: cannot tell whether the persist volume $DX_PERSIST_VOLUME exists: docker volume inspect on ${DX_REMOTE_HOST:-the NAS} failed for a reason other than 'no such volume' (see above), and a missing volume can mean a new, empty /persist; fix the NAS connection or its Docker daemon, then retry. Nothing was changed." >&2
         return 1
     fi
-    report="$(dx_runtime_host_dir_probe "$DX_PERSIST_HOST_ROOT" "$DX_CONTAINER_NAME")" || report=""
-    if dx_runtime_volume_exists "$DX_PERSIST_VOLUME"; then volume=yes; fi
+    [ "$state" = absent ] || volume=yes
     if dx_persist_dir_record_exists; then record=yes; fi
     if token="$(printf '%s\n' "$report" | dx_persist_start_decision "$DX_CONTAINER_NAME" "$volume" "$record" "${DX_PERSIST_FRESH_START:-}")"; then
         printf '%s\n' "$token"
+        [ "${1:-}" != --report ] || printf '%s\n' "$report"
         return 0
     fi
     dx_persist_refusal "$token" "$report" "$volume" "$record"
@@ -227,26 +280,54 @@ dx_persist_host_dir_decide() {
 }
 
 # dx-create-volumes, before any volume is created: prints nothing in volume
-# mode; in host-path mode prints the decision token, or refuses (status 1).
+# mode; in host-path mode prints the decision token on its first line and the
+# probe report after it (the ok path reads the marker's created-at from it,
+# so nothing is probed twice), or refuses (status 1).
 dx_persist_create_decision() {
     [ "${DX_PERSIST_STORAGE:-volume}" = host-path ] || return 0
-    dx_persist_host_dir_decide
+    dx_persist_host_dir_decide --report
 }
 
-# dx-create-volumes' /persist step, given dx_persist_create_decision's token.
-# Volume mode ensures the named volume exactly as before. Host-path mode never
-# creates that volume: ok needs nothing, and create, adopt and ok-fresh-start
-# go to dx_persist_dir_establish once.
+# dx-create-volumes, after the nix volume: a legacy volume (LEGACY,
+# DX_LEGACY_WORKSPACE_VOLUME's dx-workspace default) whose data has not
+# reached DX_PERSIST_VOLUME yet stops the command before /persist storage is
+# set up, so it is never left behind. In host-path mode the way on is two
+# steps: dx-migrate-persist into the persist volume, then dx-persist-migrate
+# into the host directory.
+dx_persist_legacy_volume_check() {
+    local legacy="$1" next
+    if [ "$legacy" = "$DX_PERSIST_VOLUME" ] || ! dx_runtime_volume_exists "$legacy" \
+        || dx_runtime_volume_exists "$DX_PERSIST_VOLUME"; then
+        return 0
+    fi
+    next="Run bin/dx-migrate-persist before creating the new /persist volume."
+    if [ "${DX_PERSIST_STORAGE:-volume}" = host-path ]; then
+        next="Run bin/dx-migrate-persist to copy it into the persist volume $DX_PERSIST_VOLUME, then dx-persist-migrate to move that volume into the host directory $(dx_persist_configured_source)."
+    fi
+    printf 'Error: legacy persistence volume %s exists, but %s does not.\n%s\nSet DX_LEGACY_WORKSPACE_VOLUME=<old> and DX_PERSIST_VOLUME=<new> for custom volume names.\n' \
+        "$legacy" "$DX_PERSIST_VOLUME" "$next" >&2
+    return 1
+}
+
+# dx-create-volumes' /persist step, given what dx_persist_create_decision
+# printed (the token, then the probe report). Volume mode ensures the named
+# volume exactly as before. Host-path mode never creates that volume: ok
+# writes the record if it is missing (dx_persist_dir_record_backfill), and
+# create, adopt and ok-fresh-start go to dx_persist_dir_establish once.
 dx_persist_storage_ensure() {
-    local dir
+    local nl=$'\n' action="${1:-}" token report="" dir
     if [ "${DX_PERSIST_STORAGE:-volume}" != host-path ]; then
         echo "Ensuring persist volume $DX_PERSIST_VOLUME..."
         container_ensure_volume "$DX_PERSIST_VOLUME"
         return
     fi
+    token="${action%%"$nl"*}"
+    [ "$token" = "$action" ] || report="${action#*"$nl"}"
     dir="$(dx_persist_configured_source)"
-    case "${1:-}" in
-        ok) echo "Using /persist directory $dir (marker ready)." ;;
+    case "$token" in
+        ok)
+            echo "Using /persist directory $dir (marker ready)."
+            dx_persist_dir_record_backfill "$report" ;;
         create)
             echo "Creating /persist directory $dir..."
             dx_persist_dir_establish create ;;
@@ -257,7 +338,7 @@ dx_persist_storage_ensure() {
             echo "Fresh start (DX_PERSIST_FRESH_START): marking the empty /persist directory $dir ready; the persist volume $DX_PERSIST_VOLUME is kept..."
             dx_persist_dir_establish fresh-start ;;
         *)
-            echo "Error: no host-path /persist decision to act on ('${1:-}'); run dx-create-volumes again." >&2
+            echo "Error: no host-path /persist decision to act on ('$token'); run dx-create-volumes again." >&2
             return 1 ;;
     esac
 }
@@ -281,13 +362,77 @@ dx_persist_start_check() {
     return 1
 }
 
-# dx_persist_dir_establish create|adopt|fresh-start -- the seam WP4.4
-# implements: create the directory or write its `ready` marker on the NAS,
-# then write the D-7 record. Until then it fails closed: one Error line, no
-# runtime, remote or file-system call, status 1.
+# --- Creating the directory and the record (WP4.4; plans/do D-2, D-3, D-7;
+# spec R15, R18) ---------------------------------------------------------------
+
+# dx_persist_dir_establish create|adopt|fresh-start, dx-create-volumes' one
+# write to the share. It takes one UTC time T on the controller, then makes
+# ONE dx_runtime_host_dir_establish call, which on the NAS, as root: creates
+# <root>/dxe/<guest>/persist (create), or takes the existing empty directory
+# (adopt: the leftover of an interrupted create; fresh-start: the
+# DX_PERSIST_FRESH_START override); gives it DX_PERSIST_DIR_OWNER and mode
+# 0755; and writes the `ready` marker (created-at=T) last. Only after that
+# succeeds is the D-7 record written (mode=MODE, created-at=T), so a failure
+# anywhere leaves no record, and the next run, still for a new guest, adopts
+# the empty directory. Refusals come before any remote call; any failure is
+# one Error line and status 1, with an existing record left as it was.
 dx_persist_dir_establish() {
-    echo "Error: creating or marking the /persist host directory (${1:-}) is not implemented yet (plans/do WP4.4); nothing was changed, so use DX_PERSIST_STORAGE=volume until it is." >&2
-    return 1
+    local mode="${1:-}" dir rec now marker
+    dir="$(dx_persist_configured_source)"
+    case "$mode" in
+        create | adopt | fresh-start) : ;;
+        *)
+            echo "Error: unknown /persist directory action '$mode' (expected create, adopt or fresh-start); nothing was changed." >&2
+            return 1 ;;
+    esac
+    dx_persist_host_dir_guest_ok || return 1
+    if [ -z "${DX_PERSIST_HOST_MOUNT_SENTINEL:-}" ]; then
+        echo "Error: DX_PERSIST_HOST_MOUNT_SENTINEL is not set, so nothing proves the share root ${DX_PERSIST_HOST_ROOT:-} is mounted and $dir was not touched; set it in the private profile to a file that exists at the share root only while it is mounted, then retry." >&2
+        return 1
+    fi
+    if ! rec="$(dx_persist_dir_record_path)"; then
+        echo "Error: the host-path record path cannot be formed (it needs XDG_STATE_HOME or HOME, DX_REMOTE_HOST and DX_CONTAINER_NAME), so $dir was not touched; fix the environment, then retry." >&2
+        return 1
+    fi
+    now="$(dx_persist_dir_utc_now)"
+    if ! marker="$(dx_persist_marker_format "$DX_CONTAINER_NAME" ready "" "$now" 2>/dev/null)"; then
+        echo "Error: the controller's clock gave no usable UTC time ('$now'), so no marker could be made for $dir; nothing was changed." >&2
+        return 1
+    fi
+    if ! dx_runtime_host_dir_establish "$mode" "${DX_PERSIST_HOST_ROOT:-}" "$DX_CONTAINER_NAME" "$DX_PERSIST_DIR_OWNER" "$marker"; then
+        echo "Error: could not set up $dir on the NAS ($mode; see the lines above), so no host-path record was written; fix the cause, then run dx-create-volumes again." >&2
+        return 1
+    fi
+    if ! dx_persist_dir_record_write "$rec" "$mode" "$now"; then
+        echo "Error: $dir is ready, but its host-path record $rec could not be written; make that path writable, then run dx-create-volumes again, which writes the missing record." >&2
+        return 1
+    fi
+    echo "Recorded host-path use of $dir in $rec."
+}
+
+# dx_persist_dir_record_backfill REPORT (dx-create-volumes, on ok): a ready
+# directory whose record is missing -- an earlier run marked it but could not
+# write the record -- gets it now, with mode=backfill and the created-at of
+# the marker in REPORT (the probe report the decision was made on), or the
+# controller's time when that marker has none. Anything already at the record
+# path is left alone, and nothing is sent to the NAS. A failed write is one
+# Warning line and status 0: the directory is ready, and the next run tries
+# again.
+dx_persist_dir_record_backfill() {
+    local rec created="" dir
+    if dx_persist_dir_record_exists; then return 0; fi
+    rec="$(dx_persist_dir_record_path)" || return 0
+    dir="$(dx_persist_configured_source)"
+    if dx_persist_marker_parse 2>/dev/null <<<"$(printf '%s\n' "${1:-}" | sed '1,4d')"; then
+        created="$DX_PERSIST_MARKER_CREATED_AT"
+    fi
+    [ -n "$created" ] || created="$(dx_persist_dir_utc_now)"
+    if dx_persist_dir_record_write "$rec" backfill "$created"; then
+        echo "Recorded host-path use of $dir in $rec (it was missing)."
+        return 0
+    fi
+    echo "Warning: the host-path record $rec could not be written; $dir is ready and in use, and the next dx-create-volumes tries again." >&2
+    return 0
 }
 
 # --- dx-persist-inventory (WP6.3; plan D-10; spec R37) -------------------------

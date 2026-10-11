@@ -1607,3 +1607,41 @@ merged after WP6.2+WP6.2b+WP6.3. The merged tree's expected values are
 therefore scope 5117 + 165 = 5282 (floor unchanged) and unscoped 2627 + 5 (the
 bin/dx-persist-inventory wrapper) = 2632: `unscoped_prod_exec_lines_ceiling`
 2649 -> 2632, to be confirmed by the next integration coverage run.
+
+## WP4.4 (2026-10-12)
+
+`scope_exec_lines_floor` 5055 -> 5150 (+95, measured, 100% covered): host-path
+directory creation and the D-7 record. In the runtime facade and both adapters,
+`dx_runtime_volume_state` (Docker's present/absent/unknown reading of one
+`volume inspect`, Apple's two-state answer) and `dx_runtime_host_dir_establish`
+(the Docker pre-call checks, the constant single-line establish script and its
+one root one-off `docker run`; Apple's "unsupported"). In
+`bin/lib/dx-persist-dir.sh`, `DX_PERSIST_DIR_OWNER`, `dx_persist_dir_establish`
+(which replaces WP4.3's placeholder), the record writer
+`dx_persist_dir_record_write`, the `ok`-path `dx_persist_dir_record_backfill`,
+the shared `dx_persist_host_dir_guest_ok`, the unknown-volume refusal and the
+`--report` hand-off in `dx_persist_host_dir_decide`, and
+`dx_persist_legacy_volume_check` (dx-create-volumes' legacy dx-workspace check,
+moved out of the entry point and worded per storage mode). These are exercised by
+the acceptance suite `tests/test_persist_dir_create.sh` and the in-process
+cases in `tests/test_persist_dir_create_unit.sh`. Measured on a branch based on
+f65e19a (WP4.3 Green), so the merge reconciles this with feat's later floor.
+`unscoped_prod_exec_lines_ceiling` unchanged at 2644: no entry point gained a
+line. `bin/dx-create-volumes` shrank, because its legacy-volume block (the
+`legacy_volume` assignment, the three-test `if`, the heredoc and `exit 1`) became
+the one `dx_persist_legacy_volume_check ... || exit 1` call. Measured with
+`tests/run-coverage-linux.sh`: covered=100% scope_exec_lines=5150
+unscoped_prod_exec_lines=2634.
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP4.5, recorded in full above) moved here verbatim:
+
+    # 2026-10-11 WP4.5: floor 4596 -> 4630 -> 4634 (measured, 100% covered; dx_persist_storage_check, then its missing-marker-library refusal, in bootstrap/persistence.sh); ceiling unchanged at 2640 (no entry-point lines). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+Merge WP4.4 into feat/persist-host-dir (2026-10-12; verified by Opus): wp/4.4
+measured 5150 on a base whose scope was 5055 (+95) and unscoped 2634 against
+2644 (-10, the legacy block in bin/dx-create-volumes became one call). On a tree
+holding 5282 / 2632 the expected values are 5377 / 2622:
+`scope_exec_lines_floor` 5282 -> 5377, `unscoped_prod_exec_lines_ceiling`
+2632 -> 2622 (provisional). The WP4.3 dated line left ratchet.env; its full
+entry is the "WP4.3" section above.
