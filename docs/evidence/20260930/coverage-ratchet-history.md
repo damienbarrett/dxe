@@ -1662,3 +1662,13 @@ instead of `sed`, so it runs on the bare image (no sed, no awk). It is still one
 constant line, so the in-scope executable-line count is unchanged: measured
 `covered=100% scope_exec_lines=5377 unscoped_prod_exec_lines=2622`. Floor and
 ceiling stay at 5377 / 2622; ratchet.env is not edited.
+
+## WP-T1 (2026-10-12): docker adapter probes never read the caller's stdin
+
+`dx_runtime_docker_ssh_raw_noin` (one line in dx-runtime-docker-transport.sh)
+runs the bare ssh with stdin from /dev/null; binary discovery, the
+reachability probe and guest-address discovery use it. Measured with
+`tests/run-coverage-linux.sh` at the Green commit: `scope_exec_lines=5378`
+(floor 5377 -> 5378), `unscoped_prod_exec_lines=2622` (ceiling unchanged),
+scope coverage 100%. The WP5.1 dated line left ratchet.env; its full entry is
+the "WP5.1" section of this file.
