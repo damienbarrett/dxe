@@ -1842,3 +1842,51 @@ comment (WP4.4, recorded in full in the "WP4.4" section above) moved here
 verbatim:
 
     # 2026-10-12 WP4.4: floor 5055 -> 5150 (measured on a f65e19a base, 100% covered; volume_state and host_dir_establish in both adapters, establish/record/backfill/legacy check in dx-persist-dir.sh); ceiling unchanged at 2644 (measured 2634: bin/dx-create-volumes legacy block became one call). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+## WP6.5b (2026-10-12): rollback hardening
+
+`scope_exec_lines_floor` 5793 -> 5800 (measured, 100% covered).
+`unscoped_prod_exec_lines_ceiling` unchanged at 2633 (measured 2633; no entry
+point changed). Measured with `tests/run-coverage-linux.sh` on a `git
+archive` export of the Green commit `f5a346c` (the WP6.5 merge `c9ba2e6`,
+Red `de15c17`, Green): `covered=100% scope_exec_lines=5800
+unscoped_prod_exec_lines=2633`.
+
+The +8 are all in `bin/lib/dx-persist-dir.sh` (kcov's instrumented lines
+565 -> 573): the steps once the new volume exists moved from
+`dx_persist_rollback_run` into `dx_persist_rollback_fill` (its two `local`
+lines and its `shift`, +3), the guest re-check before the retired marker
+(+1), the one line of `dx_persist_rollback_kept` (+1), and in the run the
+call to the fill, the kept-volume line on a failure and the `return` (+3);
+the run's `local` line for the moved variables became a shorter one (0).
+Exercised in-process by the acceptance suite
+`tests/test_persist_rollback_hardening.sh`.
+
+Difference from the provisional 5793: the merged tree measures 5792 / 2633,
+one line under the simple sum, as the merge entry above anticipated (WP6.4b
+and WP6.5 both counted the conversion of migrate's first guest check into a
+helper, and the merge keeps one). The merge's own coverage run (an export of
+`c9ba2e6`) stopped in `tests/test_persist_rollback.sh` before the line
+check, so its total is read from its partial kcov report:
+`bin/lib/dx-persist-dir.sh` has 565 instrumented lines there and 573 in the
+Green tree, and the two trees differ in no other production file, so
+5800 - 8 = 5792. The ceiling's 2633 equals the provisional value.
+
+That stop was not caused by the merge. Under real rsync (the Linux coverage
+image, rsync 3.2.7) the locked WP6.5 suite's main case fails intermittently
+with exit 3, "changed mtime ./nested/a/b/c" and "./new-dir": it changes those
+two directories just before the rollback's copy, and with the default
+`--modify-window=0` rsync compares directory mtimes to the second when it
+re-touches directories, so a directory created in the destination within
+the same second keeps its own sub-second mtime, which the manifest
+(nanoseconds) reports. Reproduced alone in the same image: the WP6.5 tip
+`b58a5eb` failed 3 of 4 runs, the merge 2 of 3, the Green tree 1 of 3; an
+rsync run with `--modify-window=-1` keeps the nanoseconds. Reported to the
+coordinator (the D-10 argv is pinned by locked suites); the Green tree's
+coverage run above passed it.
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP-T1, recorded in full in the "WP-T1" section above) moved here
+verbatim:
+
+    # 2026-10-12 WP-T1: floor 5377 -> 5378 (measured, 100% covered; +1 line, the ssh_raw_noin helper in dx-runtime-docker-transport.sh); ceiling unchanged at 2622 (no entry-point line).
