@@ -940,6 +940,10 @@ dx_runtime_docker_host_rsync() {
         echo "Error: refusing to copy with volume '$volume': it is the guest's nix volume, already mounted at /nix (the persist volume is required)." >&2
         return 1
     fi
+    if [ "$volume" = "${DX_BOOTSTRAP_VOLUME-}" ]; then
+        echo "Error: refusing to copy with volume '$volume': it is the guest's bootstrap volume, never a copy's source or target (the persist volume is required)." >&2
+        return 1
+    fi
     dx_runtime_docker_volume_owned "$volume" copy || return 1
     dx_runtime_docker_rsync_nix_check || return 1
     dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never -v "$DX_RSYNC_NIX_VOLUME:/nix:ro" "${mounts[@]}" --entrypoint "$DX_RUNTIME_DOCKER_RSYNC_BIN" "${DX_IMAGE:?}" \
@@ -971,6 +975,30 @@ dx_runtime_docker_volume_inventory() {
     fi
     dx_runtime_docker_volume_owned "$1" inventory || return 1
     dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never -v "$1:/v:ro" --entrypoint sh "${DX_IMAGE:?}" \
+        -c "$DX_RUNTIME_DOCKER_VOLUME_INVENTORY_SCRIPT" sh /v
+}
+
+# dx_runtime_docker_host_dir_inventory DIR (WP6.5): the same inventory of a
+# host DIRECTORY on the NAS (the rollback's source), with the very script the
+# volume inventory runs -- one script for both, so its bare-image rule covers
+# both. DIR is bound read-only at /v with --mount (never -v, which would
+# create a missing path), so it must be absolute, not "/", and free of ","
+# (another mount option) and newlines. The checks before the one docker call
+# print a `dx:` reason (status 1, no call); the container's stdout, stderr and
+# status pass through.
+dx_runtime_docker_host_dir_inventory() {
+    local nl=$'\n' why=""
+    [ "$#" -eq 1 ] || why="expected one DIR"
+    case "${1-}" in
+        / | "" | [!/]* | *,* | *"$nl"*) why="${why:-the directory '${1-}' cannot be bound: it must be an absolute path other than / without ',' or a newline}" ;;
+    esac
+    [ -n "${DX_IMAGE:-}" ] || why="${why:-no DX_IMAGE to run the one-off container from}"
+    if [ -n "$why" ]; then
+        echo "dx: refusing to read the NAS directory: $why" >&2
+        return 1
+    fi
+    dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never \
+        --mount "type=bind,source=$1,target=/v,readonly" --entrypoint sh "$DX_IMAGE" \
         -c "$DX_RUNTIME_DOCKER_VOLUME_INVENTORY_SCRIPT" sh /v
 }
 

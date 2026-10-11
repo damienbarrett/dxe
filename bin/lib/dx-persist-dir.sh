@@ -486,7 +486,7 @@ dx_persist_inventory_lines() {
 # dx_persist_inventory_read VOLUME: validate the container's output (stdout,
 # merged with stderr) into DX_INV_OUT; one Error line on failure.
 dx_persist_inventory_read() {
-    local out rc=0 key value
+    local out rc=0
     out="$(dx_runtime_volume_inventory "$1" 2>&1)" || rc=$?
     if [ "$rc" -ne 0 ]; then
         if ! grep -q '^Error:' <<<"$out"; then
@@ -495,25 +495,28 @@ dx_persist_inventory_read() {
         [ -z "$out" ] || printf '%s\n' "$out" >&2
         return 1
     fi
-    if ! grep -Fqx status=ok <<<"$out"; then
-        echo "Error: the volume read of '$1' did not finish (no status=ok)." >&2
+    dx_persist_inventory_check "the volume read of '$1'" "$out"
+}
+
+# dx_persist_inventory_check WHAT OUTPUT [HINT]: a finished inventory report
+# (status=ok, plain numbers, acl/xattr a number or "unknown") goes into
+# DX_INV_OUT; otherwise one Error line about WHAT, ending with HINT if given.
+dx_persist_inventory_check() {
+    local key value
+    if ! grep -Fqx status=ok <<<"$2"; then
+        echo "Error: $1 did not finish (no status=ok).${3:+ $3}" >&2
         return 1
     fi
-    for key in size_kb entries hardlinks appledouble special df_avail_kb; do
-        value="$(dx_persist_inventory_value "$out" "$key")"
-        dx_persist_inventory_number "$value" || {
-            echo "Error: the volume read of '$1' returned no usable $key." >&2
-            return 1
-        }
+    for key in size_kb entries hardlinks appledouble special df_avail_kb acl xattr; do
+        value="$(dx_persist_inventory_value "$2" "$key")"
+        case "$key:$value" in
+            acl:unknown | xattr:unknown) continue ;;
+        esac
+        dx_persist_inventory_number "$value" && continue
+        echo "Error: $1 returned no usable $key.${3:+ $3}" >&2
+        return 1
     done
-    for key in acl xattr; do
-        value="$(dx_persist_inventory_value "$out" "$key")"
-        [ "$value" = unknown ] || dx_persist_inventory_number "$value" || {
-            echo "Error: the volume read of '$1' returned no usable $key." >&2
-            return 1
-        }
-    done
-    DX_INV_OUT="$out"
+    DX_INV_OUT="$2"
 }
 
 # dx_persist_inventory_rsync ACLS XATTRS: prints "VERSION|CHECK" -- the version
@@ -741,39 +744,50 @@ dx_persist_migrate_seconds() {
     esac
 }
 
+# dx_persist_appledouble_lines INVENTORY: the report lines for the dropped
+# `._*` files (R32): their count, then one line per apple= path in order, or
+# "none".
+dx_persist_appledouble_lines() {
+    local apple
+    apple="$(sed -n 's/^apple=//p' <<<"$1")"
+    printf 'appledouble_dropped_count: %s\n' "$(dx_persist_inventory_value "$1" appledouble)"
+    if [ -z "$apple" ]; then
+        printf 'appledouble_dropped: none\n'
+    else
+        printf '%s\n' "$apple" | sed 's/^/appledouble_dropped: /'
+    fi
+}
+
 # dx_persist_migrate_report DEST COPY VERIFY INVENTORY: the report that ends
 # stdout (spec section 6 step 3; R32: the dropped `._*` files, from the
 # inventory's apple= lines in order).
 dx_persist_migrate_report() {
-    local apple
-    apple="$(sed -n 's/^apple=//p' <<<"$4")"
     printf 'migrated: %s\n' "$1"
     printf 'source_volume: %s\n' "$DX_PERSIST_VOLUME"
     printf 'marker: ready\n'
     printf 'record: %s\n' "$DX_MIGRATE_RECORD"
     printf 'copy_seconds: %s\n' "$2"
     printf 'verify_seconds: %s\n' "$3"
-    printf 'appledouble_dropped_count: %s\n' "$(dx_persist_inventory_value "$4" appledouble)"
-    if [ -z "$apple" ]; then
-        printf 'appledouble_dropped: none\n'
-    else
-        printf '%s\n' "$apple" | sed 's/^/appledouble_dropped: /'
-    fi
+    dx_persist_appledouble_lines "$4"
     printf 'next: set DX_PERSIST_STORAGE=host-path in the profile, then run dx-recreate (the volume %s is kept).\n' "$DX_PERSIST_VOLUME"
 }
 
-# dx_persist_migrate_guest_stopped GUEST OUTCOME: status 0 when the guest is
-# stopped or absent (J1); otherwise one Error line, running or unknown, that
-# ends with OUTCOME (what the refusal leaves behind at that point), status 1.
-dx_persist_migrate_guest_stopped() {
-    local state
-    state="$(dx_runtime_container_state "$1")" || state=unknown
+# dx_persist_guest_stopped COMMAND OUTCOME: a copy needs the guest
+# (DX_CONTAINER_NAME) provably down (WP6.4 J1), when it starts and again right
+# before the marker that declares the copy good is set (WP6.4b). Status 0 when
+# the guest is stopped or absent; otherwise one Error line -- running, or a
+# state the runtime could not tell -- naming the fix (COMMAND is the command
+# to run again) and ending with OUTCOME (what the refusal leaves behind at
+# that point), status 1.
+dx_persist_guest_stopped() {
+    local guest="$DX_CONTAINER_NAME" state
+    state="$(dx_runtime_container_state "$guest")" || state=unknown
     case "$state" in
         stopped | absent) return 0 ;;
         running)
-            echo "Error: $1 is running; stop it with dx-stop-container first (it must stay stopped for the whole copy and verification), then run dx-persist-migrate again. $2" >&2 ;;
+            echo "Error: $guest is running; stop it with dx-stop-container first (it must stay stopped for the whole copy and verification), then run $1 again. $2" >&2 ;;
         *)
-            echo "Error: cannot tell whether $1 is stopped (Docker on ${DX_REMOTE_HOST:-the NAS} did not say; see above); make sure it is stopped and the NAS is reachable, then retry. $2" >&2 ;;
+            echo "Error: cannot tell whether $guest is stopped (Docker on ${DX_REMOTE_HOST:-the NAS} did not say; see above); make sure it is stopped and the NAS is reachable, then retry. $2" >&2 ;;
     esac
     return 1
 }
@@ -782,7 +796,7 @@ dx_persist_migrate_guest_stopped() {
 dx_persist_migrate_run() {
     local guest="$DX_CONTAINER_NAME" volume="$DX_PERSIST_VOLUME" report canon dest inv
     local flags=() created="" copying now ready t0 t1 t2 t3 rc=0
-    dx_persist_migrate_guest_stopped "$guest" "Nothing was changed." || return 1
+    dx_persist_guest_stopped dx-persist-migrate "Nothing was changed." || return 1
     dx_runtime_volume_owned "$volume" "migrate from" || return 1
     dx_runtime_volume_owned "${DX_NIX_VOLUME:-}" "run rsync from" || return 1
     report="$(dx_runtime_host_dir_probe "$DX_PERSIST_HOST_ROOT" "$guest")" || report=""
@@ -836,7 +850,7 @@ dx_persist_migrate_run() {
     # The guest must still be stopped when the copy is declared good (WP6.4b):
     # one started during the copy or the verification may have changed its
     # volume after rsync read it.
-    dx_persist_migrate_guest_stopped "$guest" "The copy verified, but $dest stays copying, because the guest may have changed its volume during the copy; the next run resumes and verifies again." || return 1
+    dx_persist_guest_stopped dx-persist-migrate "The copy verified, but $dest stays copying, because the guest may have changed its volume during the copy; the next run resumes and verifies again." || return 1
     if ! dx_runtime_host_dir_marker_set "$canon" "$guest" copying "$ready"; then
         echo "Error: $dest verified, but its marker could not be set to ready (see above), so it stays copying; run dx-persist-migrate again (it resumes and verifies again)." >&2
         return 1
@@ -858,6 +872,219 @@ dx_persist_migrate_main() {
     dx_persist_migrate_preconditions || return 1
     dx_lifecycle_lock_hold || return 1
     dx_persist_migrate_run || rc=$?
+    dx_lifecycle_lock_drop
+    return "$rc"
+}
+
+# --- dx-persist-rollback (WP6.5; plan D-3, D-6, D-7, D-8, D-10; spec R36,
+# section 6.1) -----------------------------------------------------------------
+# The rollback of a stopped guest's /persist from its NAS directory
+# <canonical root>/dxe/<guest>/persist into a NEW named volume. The directory
+# is only ever read (a read-only bind) until its marker goes from ready to
+# retired at the very end; the original volume (the marker's source-volume,
+# and the profile's DX_PERSIST_VOLUME) is never named by any call, so the
+# rollback also works after it was deleted. Order: refusals that need no
+# runtime call; the lifecycle lock (held to the end); the guest must be
+# stopped; the read-only pre-flight (the probe and a `ready` marker for this
+# guest, the new name against the marker and the runtime, the directory's
+# inventory, rsync_check); the new volume, created with this profile's DQ6
+# persist labels; rsync from the directory into it; the manifest verify; the
+# `retired` marker; the report. Nothing is ever deleted: a failed copy or
+# verification leaves the new volume as it is, and the next attempt needs a
+# new --volume name. It never starts the guest, never edits the profile and
+# never touches the D-7 record.
+#   exit 0  rolled back and verified;  1  refused, or failed anywhere but the
+#   verification;  2  usage;  3  the copy did not verify (the marker stays
+#   ready).
+
+dx_persist_rollback_usage() {
+    echo "Usage: dx-persist-rollback --volume NAME"
+    echo "  Copy the stopped guest's NAS directory (DX_PERSIST_HOST_ROOT/dxe/DX_CONTAINER_NAME/persist)"
+    echo "  into a NEW volume NAME, verify the copy, and mark the directory retired."
+    echo "  NAME must not exist yet; the original volume and the directory's data are kept."
+    echo "  Exit: 0 rolled back, 1 refused or failed, 2 usage, 3 the copy did not verify."
+}
+
+# dx_persist_rollback_preconditions NAME: the refusals that need no runtime
+# call, in the contract's order; one Error line each.
+dx_persist_rollback_preconditions() {
+    local name="$1" field
+    if [ "${DX_RUNTIME:-}" != docker-ssh ]; then
+        echo "Error: dx-persist-rollback needs DX_RUNTIME=docker-ssh (the host directory and the new volume are on a NAS Docker host)." >&2
+        return 1
+    fi
+    if [ -z "${DX_PERSIST_HOST_ROOT:-}" ]; then
+        echo "Error: DX_PERSIST_HOST_ROOT is empty; set the NAS share root that holds the guest's directory in the private profile." >&2
+        return 1
+    fi
+    if [ -z "${DX_PERSIST_HOST_MOUNT_SENTINEL:-}" ]; then
+        echo "Error: DX_PERSIST_HOST_MOUNT_SENTINEL is not set, so nothing proves the share root $DX_PERSIST_HOST_ROOT is mounted; set it in the private profile to a file that exists at the share root only while it is mounted, then retry." >&2
+        return 1
+    fi
+    for field in DX_PERSIST_VOLUME DX_NIX_VOLUME DX_BOOTSTRAP_VOLUME; do
+        if [ "$name" = "${!field:-}" ]; then
+            echo "Error: --volume $name is this profile's $field; the rollback fills only a NEW volume that no profile setting names yet, so choose another name (the profile's DX_PERSIST_VOLUME is switched to it afterwards)." >&2
+            return 1
+        fi
+    done
+    dx_persist_host_dir_guest_ok
+}
+
+# dx_persist_rollback_decide GUEST < REPORT: the directory decision on a
+# dx_runtime_host_dir_probe report, read by dx_persist_migrate_decide (pure: no
+# call). Status 0 only for a `ready` marker for GUEST, with DX_MIGRATE_ROOT the
+# canonical root and DX_PERSIST_MARKER_* that marker's fields. Otherwise
+# status 1 and DX_MIGRATE_WHY: root, unmounted, symlink, missing (absent),
+# unmarked (empty, or non-empty without a marker), marker, guest, copying or
+# retired.
+dx_persist_rollback_decide() {
+    if dx_persist_migrate_decide "$1" ""; then
+        case "$DX_MIGRATE_ACTION" in
+            create) DX_MIGRATE_WHY=missing ;;
+            adopt) DX_MIGRATE_WHY=unmarked ;;
+            *) DX_MIGRATE_WHY=copying ;;
+        esac
+        return 1
+    fi
+    [ "$DX_MIGRATE_WHY" = ready ]
+}
+
+# dx_persist_rollback_refusal DEST: the one Error line for DX_MIGRATE_WHY (the
+# marker fields are still those the decision parsed).
+dx_persist_rollback_refusal() {
+    local dest="$1" root="${DX_PERSIST_HOST_ROOT:-}" guest="$DX_CONTAINER_NAME" msg
+    case "$DX_MIGRATE_WHY" in
+        root)
+            msg="the share root DX_PERSIST_HOST_ROOT=$root could not be checked on ${DX_REMOTE_HOST:-the NAS}, or it does not resolve to an absolute directory other than / without a comma; fix DX_PERSIST_HOST_ROOT in the private profile or make the share available, then retry." ;;
+        unmounted)
+            msg="the share root $root does not look mounted: its sentinel file DX_PERSIST_HOST_MOUNT_SENTINEL=${DX_PERSIST_HOST_MOUNT_SENTINEL:-} is missing (an unmounted or locked volume can leave an empty mount point); mount or unlock the share, then retry." ;;
+        symlink)
+            msg="$dest, or a level above it under the share root (dxe, dxe/$guest), is a symlink; the rollback reads only a real directory, so replace the symlink with the directory itself, then retry." ;;
+        missing)
+            msg="$dest is missing, so there is nothing to roll back; check DX_PERSIST_HOST_ROOT and DX_CONTAINER_NAME in the profile, or restore the directory from a NAS snapshot or backup." ;;
+        unmarked)
+            msg="$dest has no $DX_PERSIST_MARKER_NAME marker, so it is not a migrated /persist directory; the rollback reads only a directory whose marker is ready for $guest, so check DX_PERSIST_HOST_ROOT and DX_CONTAINER_NAME in the profile." ;;
+        marker)
+            msg="$dest/$DX_PERSIST_MARKER_NAME is not a valid /persist marker; inspect the directory and restore a valid marker, then retry." ;;
+        guest)
+            msg="$dest/$DX_PERSIST_MARKER_NAME names guest $DX_PERSIST_MARKER_GUEST, not $guest; this directory belongs to another guest, so check DX_PERSIST_HOST_ROOT and DX_CONTAINER_NAME in the profile." ;;
+        copying)
+            msg="$dest is marked copying: a migration into it never finished, so $guest's data is still in its persist volume and there is nothing to roll back; keep DX_PERSIST_STORAGE=volume, or finish the migration with dx-persist-migrate." ;;
+        *)
+            msg="$dest is marked retired: it was already rolled back into a volume; set DX_PERSIST_STORAGE=volume and DX_PERSIST_VOLUME to that volume in the profile, then run dx-recreate." ;;
+    esac
+    printf 'Error: %s\n' "$msg" >&2
+}
+
+# dx_persist_rollback_inventory DEST: the directory's inventory (read-only),
+# checked like the volume's, into DX_INV_OUT. A failure is ONE Error line
+# naming DEST: the container's own output is passed on as `dx:` lines.
+dx_persist_rollback_inventory() {
+    local out rc=0
+    out="$(dx_runtime_host_dir_inventory "$1" 2>&1)" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        [ -z "$out" ] || printf '%s\n' "$out" | sed 's/^/dx: inventory: /' >&2
+        echo "Error: could not read $1 on the NAS (inventory exit $rc; see above); nothing was changed. Check the share and the NAS's Docker, then retry." >&2
+        return 1
+    fi
+    dx_persist_inventory_check "the inventory of $1" "$out" "Nothing was changed; check the share and the NAS's Docker, then retry."
+}
+
+# dx_persist_rollback_report DEST NAME SOURCE COPY VERIFY INVENTORY: the
+# report that ends stdout (the dropped `._*` files from the inventory's apple=
+# lines, in order).
+dx_persist_rollback_report() {
+    printf 'rolled_back: %s\n' "$1"
+    printf 'volume: %s\n' "$2"
+    printf 'original_volume: %s\n' "${3:-none}"
+    printf 'marker: retired\n'
+    printf 'copy_seconds: %s\n' "$4"
+    printf 'verify_seconds: %s\n' "$5"
+    dx_persist_appledouble_lines "$6"
+    printf 'next: set DX_PERSIST_STORAGE=volume and DX_PERSIST_VOLUME=%s in the profile, then run dx-recreate (the directory is kept, marked retired).\n' "$2"
+}
+
+# dx_persist_rollback_run NAME: everything after the lock (the caller holds
+# it). Steps from the new volume on run with DX_PERSIST_VOLUME=NAME, so NAME's
+# name-derived DQ6 role is persist for its creation, the copy and the verify.
+dx_persist_rollback_run() {
+    local name="$1" guest="$DX_CONTAINER_NAME" state report canon dest src created migrated inv
+    local flags=() now retired t0 t1 t2 t3 rc=0
+    dx_persist_guest_stopped dx-persist-rollback "Nothing was changed." || return 1
+    report="$(dx_runtime_host_dir_probe "$DX_PERSIST_HOST_ROOT" "$guest")" || report=""
+    if ! dx_persist_rollback_decide "$guest" <<<"$report"; then
+        dx_persist_rollback_refusal "${DX_MIGRATE_ROOT:-$DX_PERSIST_HOST_ROOT}/dxe/$guest/persist"
+        return 1
+    fi
+    canon="$DX_MIGRATE_ROOT"
+    dest="$canon/dxe/$guest/persist"
+    src="$DX_PERSIST_MARKER_SOURCE_VOLUME"
+    created="$DX_PERSIST_MARKER_CREATED_AT"
+    migrated="$DX_PERSIST_MARKER_MIGRATED_AT"
+    if [ -n "$src" ] && [ "$name" = "$src" ]; then
+        echo "Error: --volume $name is the original volume $dest was migrated from (its marker's source-volume); the rollback never writes into it, so choose a new volume name. Nothing was changed." >&2
+        return 1
+    fi
+    if ! state="$(dx_runtime_volume_state "$name")"; then
+        echo "Error: cannot tell whether the volume $name exists: docker volume inspect on ${DX_REMOTE_HOST:-the NAS} failed for a reason other than 'no such volume' (see above); fix the NAS connection or its Docker daemon, then retry. Nothing was changed." >&2
+        return 1
+    fi
+    if [ "$state" != absent ]; then
+        echo "Error: the volume $name already exists; the rollback copies only into a volume it creates itself, so run it again with a new --volume name. Nothing was changed." >&2
+        return 1
+    fi
+    dx_persist_rollback_inventory "$dest" || return 1
+    inv="$DX_INV_OUT"
+    [ "$(dx_persist_inventory_value "$inv" acl)" = 0 ] || flags+=(-A)
+    [ "$(dx_persist_inventory_value "$inv" xattr)" = 0 ] || flags+=(-X)
+    dx_runtime_host_rsync_check "${flags[@]+"${flags[@]}"}" >/dev/null || return 1
+    echo "Creating the volume $name (this profile's persist labels)..."
+    if ! DX_PERSIST_VOLUME="$name" dx_runtime_volume_create "$name" >/dev/null; then
+        echo "Error: could not create the volume $name on the NAS (see above); nothing was copied and $dest stays ready. Fix the cause, then run dx-persist-rollback again." >&2
+        return 1
+    fi
+    echo "Copying $dest into the new volume $name (the guest stays stopped)..."
+    t0="$(date +%s)"
+    DX_PERSIST_VOLUME="$name" dx_runtime_host_rsync reverse "$name" "$dest" "${flags[@]+"${flags[@]}"}" >&2 || rc=$?
+    t1="$(date +%s)"
+    if [ "$rc" -ne 0 ]; then
+        echo "Error: the copy into the new volume $name stopped before it finished (rsync exit $rc); $dest stays ready and $name is left as it is. Run dx-persist-rollback again with a new --volume name." >&2
+        return 1
+    fi
+    echo "Verifying $name against $dest (manifest)..."
+    t2="$(date +%s)"
+    DX_PERSIST_VOLUME="$name" dx_runtime_host_manifest_verify reverse "$name" "$dest" || rc=$?
+    t3="$(date +%s)"
+    if [ "$rc" -ne 0 ]; then
+        echo "Error: the new volume $name does not verify against $dest (manifest exit $rc; see above), so $dest stays ready and the guest can keep using it; $name is left for inspection. Investigate, then run dx-persist-rollback again with a new --volume name." >&2
+        return 3
+    fi
+    now="$(dx_persist_dir_utc_now)"
+    if ! retired="$(dx_persist_marker_format "$guest" retired "$src" "$created" "$migrated" "$now" 2>/dev/null)"; then
+        echo "Error: the controller's clock gave no usable UTC time ('$now'), so $dest stays ready although $name verified; fix the clock, then run dx-persist-rollback again with a new --volume name." >&2
+        return 1
+    fi
+    if ! dx_runtime_host_dir_marker_set "$canon" "$guest" ready "$retired"; then
+        echo "Error: $name verified, but the marker of $dest could not be set to retired (see above), so it stays ready; $name is kept. Fix the cause, then run dx-persist-rollback again with a new --volume name." >&2
+        return 1
+    fi
+    dx_persist_rollback_report "$dest" "$name" "$src" "$(dx_persist_migrate_seconds "$t0" "$t1")" "$(dx_persist_migrate_seconds "$t2" "$t3")" "$inv"
+}
+
+dx_persist_rollback_main() {
+    local rc=0
+    case "$#:${1:-}" in
+        1:-h | 1:--help) dx_persist_rollback_usage; return 0 ;;
+        2:--volume) : ;;
+        *) dx_persist_rollback_usage >&2; return 2 ;;
+    esac
+    if ! dx_persist_marker_valid_name "$2"; then
+        dx_persist_rollback_usage >&2
+        return 2
+    fi
+    dx_persist_rollback_preconditions "$2" || return 1
+    dx_lifecycle_lock_hold || return 1
+    dx_persist_rollback_run "$2" || rc=$?
     dx_lifecycle_lock_drop
     return "$rc"
 }

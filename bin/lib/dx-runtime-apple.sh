@@ -406,3 +406,4 @@ dx_runtime_apple_host_dir_free() { dx_runtime_apple_host_dir_unsupported; }
 dx_runtime_apple_host_dir_establish() { dx_runtime_apple_host_dir_unsupported; }
 dx_runtime_apple_host_dir_marker_set() { dx_runtime_apple_host_dir_unsupported; }
 dx_runtime_apple_host_manifest_verify() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_inventory() { dx_runtime_apple_host_dir_unsupported; }
