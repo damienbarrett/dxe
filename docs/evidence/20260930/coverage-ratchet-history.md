@@ -1450,3 +1450,18 @@ script constants, the marker-stream and guest-name checks).
 line (the operations are reached through the already-sourced runtime
 facade). Measured with `tests/run-coverage-linux.sh`: covered=100%
 scope_exec_lines=4629 unscoped_prod_exec_lines=2640.
+
+## WP5.1 (2026-10-11)
+
+`scope_exec_lines_floor` 4806 -> 4959 (+153, measured, 100% covered): the
+host-path destroy/reset helpers in `bin/lib/dx-container.sh`
+(`dx_destroy_volume_lists`, `dx_destroy_plan_and_verify`,
+`dx_destroy_volume_describe`, `dx_factory_reset_volume_lines`,
+`dx_persist_kept_volumes`, `dx_persist_record_file`, `dx_persist_kept_report`,
+`dx_persist_status_kept_lines`), exercised in-process by
+`tests/test_persist_destroy_reset_unit.sh`.
+`unscoped_prod_exec_lines_ceiling` unchanged at 2643: no entry-point line was
+added (`bin/dx-destroy-volumes` and `bin/dx-factory-reset` call the new
+helpers in place of inline loops and `case` blocks, and shrank; unscoped
+measured 2626). Measured with `tests/run-coverage-linux.sh`: covered=100%
+scope_exec_lines=4959 unscoped_prod_exec_lines=2626.

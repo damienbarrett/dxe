@@ -259,6 +259,14 @@ there — the same as it has always been.
 Back up first (section 5) if there is anything in `/persist` worth
 keeping; `dx-destroy-volumes`/`dx-factory-reset` delete it irreversibly.
 
+With `DX_PERSIST_STORAGE=host-path` they delete only `/nix` and the bootstrap
+volume: the NAS directory and every persist volume (the configured one and the
+one named by the directory marker's `source-volume`) are kept, outside the
+ownership plan, and the command prints the kept directory, the two manual
+removal steps (the NAS directory; the record file under
+`${XDG_STATE_HOME:-$HOME/.local/state}/dxe/persist-dirs/`) and a
+`docker volume rm` line for each kept volume. `dx-status` lists the kept volumes.
+
 ## 8. Emergency access when Tailscale is down
 
 Guest SSH (and the usage service's port, when enabled — section 10) publishes to
