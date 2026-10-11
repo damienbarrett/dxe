@@ -746,41 +746,56 @@ dx_persist_migrate_seconds() {
     esac
 }
 
+# dx_persist_appledouble_lines INVENTORY: the report lines for the dropped
+# `._*` files (R32): their count, then one line per apple= path in order, or
+# "none".
+dx_persist_appledouble_lines() {
+    local apple
+    apple="$(sed -n 's/^apple=//p' <<<"$1")"
+    printf 'appledouble_dropped_count: %s\n' "$(dx_persist_inventory_value "$1" appledouble)"
+    if [ -z "$apple" ]; then
+        printf 'appledouble_dropped: none\n'
+    else
+        printf '%s\n' "$apple" | sed 's/^/appledouble_dropped: /'
+    fi
+}
+
 # dx_persist_migrate_report DEST COPY VERIFY INVENTORY: the report that ends
 # stdout (spec section 6 step 3; R32: the dropped `._*` files, from the
 # inventory's apple= lines in order).
 dx_persist_migrate_report() {
-    local apple
-    apple="$(sed -n 's/^apple=//p' <<<"$4")"
     printf 'migrated: %s\n' "$1"
     printf 'source_volume: %s\n' "$DX_PERSIST_VOLUME"
     printf 'marker: ready\n'
     printf 'record: %s\n' "$DX_MIGRATE_RECORD"
     printf 'copy_seconds: %s\n' "$2"
     printf 'verify_seconds: %s\n' "$3"
-    printf 'appledouble_dropped_count: %s\n' "$(dx_persist_inventory_value "$4" appledouble)"
-    if [ -z "$apple" ]; then
-        printf 'appledouble_dropped: none\n'
-    else
-        printf '%s\n' "$apple" | sed 's/^/appledouble_dropped: /'
-    fi
+    dx_persist_appledouble_lines "$4"
     printf 'next: set DX_PERSIST_STORAGE=host-path in the profile, then run dx-recreate (the volume %s is kept).\n' "$DX_PERSIST_VOLUME"
+}
+
+# dx_persist_guest_stopped COMMAND: a copy needs the guest provably down
+# (WP6.4 J1). Stopped or absent goes on; running, or a state the runtime
+# could not tell, is one Error line naming the fix (COMMAND is the command to
+# run again).
+dx_persist_guest_stopped() {
+    local guest="$DX_CONTAINER_NAME" state
+    state="$(dx_runtime_container_state "$guest")" || state=unknown
+    case "$state" in
+        stopped | absent) return 0 ;;
+        running)
+            echo "Error: $guest is running; stop it with dx-stop-container first (it must stay stopped for the whole copy and verification), then run $1 again. Nothing was changed." >&2 ;;
+        *)
+            echo "Error: cannot tell whether $guest is stopped (Docker on ${DX_REMOTE_HOST:-the NAS} did not say; see above); make sure it is stopped and the NAS is reachable, then retry. Nothing was changed." >&2 ;;
+    esac
+    return 1
 }
 
 # dx_persist_migrate_run: everything after the lock (the caller holds it).
 dx_persist_migrate_run() {
-    local guest="$DX_CONTAINER_NAME" volume="$DX_PERSIST_VOLUME" state report canon dest inv
+    local guest="$DX_CONTAINER_NAME" volume="$DX_PERSIST_VOLUME" report canon dest inv
     local flags=() created="" copying now ready t0 t1 t2 t3 rc=0
-    state="$(dx_runtime_container_state "$guest")" || state=unknown
-    case "$state" in
-        stopped | absent) : ;;
-        running)
-            echo "Error: $guest is running; stop it with dx-stop-container first (it must stay stopped for the whole copy and verification), then run dx-persist-migrate again. Nothing was changed." >&2
-            return 1 ;;
-        *)
-            echo "Error: cannot tell whether $guest is stopped (Docker on ${DX_REMOTE_HOST:-the NAS} did not say; see above); make sure it is stopped and the NAS is reachable, then retry. Nothing was changed." >&2
-            return 1 ;;
-    esac
+    dx_persist_guest_stopped dx-persist-migrate || return 1
     dx_runtime_volume_owned "$volume" "migrate from" || return 1
     dx_runtime_volume_owned "${DX_NIX_VOLUME:-}" "run rsync from" || return 1
     report="$(dx_runtime_host_dir_probe "$DX_PERSIST_HOST_ROOT" "$guest")" || report=""
@@ -974,20 +989,13 @@ dx_persist_rollback_inventory() {
 # report that ends stdout (the dropped `._*` files from the inventory's apple=
 # lines, in order).
 dx_persist_rollback_report() {
-    local apple
-    apple="$(sed -n 's/^apple=//p' <<<"$6")"
     printf 'rolled_back: %s\n' "$1"
     printf 'volume: %s\n' "$2"
     printf 'original_volume: %s\n' "${3:-none}"
     printf 'marker: retired\n'
     printf 'copy_seconds: %s\n' "$4"
     printf 'verify_seconds: %s\n' "$5"
-    printf 'appledouble_dropped_count: %s\n' "$(dx_persist_inventory_value "$6" appledouble)"
-    if [ -z "$apple" ]; then
-        printf 'appledouble_dropped: none\n'
-    else
-        printf '%s\n' "$apple" | sed 's/^/appledouble_dropped: /'
-    fi
+    dx_persist_appledouble_lines "$6"
     printf 'next: set DX_PERSIST_STORAGE=volume and DX_PERSIST_VOLUME=%s in the profile, then run dx-recreate (the directory is kept, marked retired).\n' "$2"
 }
 
@@ -997,16 +1005,7 @@ dx_persist_rollback_report() {
 dx_persist_rollback_run() {
     local name="$1" guest="$DX_CONTAINER_NAME" state report canon dest src created migrated inv
     local flags=() now retired t0 t1 t2 t3 rc=0
-    state="$(dx_runtime_container_state "$guest")" || state=unknown
-    case "$state" in
-        stopped | absent) : ;;
-        running)
-            echo "Error: $guest is running; stop it with dx-stop-container first (it must stay stopped for the whole copy and verification), then run dx-persist-rollback again. Nothing was changed." >&2
-            return 1 ;;
-        *)
-            echo "Error: cannot tell whether $guest is stopped (Docker on ${DX_REMOTE_HOST:-the NAS} did not say; see above); make sure it is stopped and the NAS is reachable, then retry. Nothing was changed." >&2
-            return 1 ;;
-    esac
+    dx_persist_guest_stopped dx-persist-rollback || return 1
     report="$(dx_runtime_host_dir_probe "$DX_PERSIST_HOST_ROOT" "$guest")" || report=""
     if ! dx_persist_rollback_decide "$guest" <<<"$report"; then
         dx_persist_rollback_refusal "${DX_MIGRATE_ROOT:-$DX_PERSIST_HOST_ROOT}/dxe/$guest/persist"
