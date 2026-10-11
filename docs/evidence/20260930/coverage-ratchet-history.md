@@ -1365,3 +1365,9 @@ with `tests/run-coverage-linux.sh` on the Green commit `38d6380`:
 The ratchet.env dated line moved here to keep that file at ten lines:
 `2026-09-30 ceiling 2634 -> 2635: WP5.2 added one source line
 (dx-bootstrap-protocol.sh) to bin/dx-lib.sh's facade order.`
+
+Amendment 3 (2026-10-12, same WP): nix-ld now comes from this boot's
+essentials (first `nix-ld` on PATH), the post-upgrade check and the
+hard-link marker refusal landed. Measured with `tests/run-coverage-linux.sh`
+at the Green commit: `scope_exec_lines=4516` (floor 4510 -> 4516),
+`unscoped_prod_exec_lines=2639` (ceiling unchanged), scope coverage 100%.
