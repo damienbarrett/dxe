@@ -1645,3 +1645,11 @@ holding 5282 / 2632 the expected values are 5377 / 2622:
 `scope_exec_lines_floor` 5282 -> 5377, `unscoped_prod_exec_lines_ceiling`
 2632 -> 2622 (provisional). The WP4.3 dated line left ratchet.env; its full
 entry is the "WP4.3" section above.
+
+Integration after WP4.4 + WP7.1 (2026-10-12): the merged tree at 5071670
+(WP4.3, 4.4, 5.1, 5.2, 5.3, 6.2/6.2b/6.3, int-1 and the WP7.1 live suite's unit
+parts) measured with `tests/run-coverage-linux.sh`: covered=100%
+scope_exec_lines=5377 unscoped_prod_exec_lines=2622. Both equal the provisional
+values from the WP4.4 merge, so `tests/coverage/ratchet.env` keeps floor 5377 and
+ceiling 2622 unchanged; the per-WP arithmetic above holds with no overlap or
+shortfall.
