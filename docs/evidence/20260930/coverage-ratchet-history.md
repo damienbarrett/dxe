@@ -1679,3 +1679,40 @@ To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
 comment (WP5.1, recorded in full above) moved here verbatim:
 
     # 2026-10-11 WP5.1: floor 4806 -> 4959 (measured, 100% covered; host-path destroy/reset lists, kept report and status lines in dx-container.sh); ceiling unchanged at 2643 (no entry-point line added; the two entry points shrank, measured 2626). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+## WP6.5 (2026-10-12)
+
+`scope_exec_lines_floor` 5591 -> 5723 (+132, measured, 100% covered): the
+rollback from the NAS directory into a new volume. In
+`bin/lib/dx-persist-dir.sh` (+120, net of the two Refactor commits),
+`dx_persist_rollback_main` and its helpers: the usage, the refusals that need
+no runtime call, the directory decision (read through WP6.4's
+`dx_persist_migrate_decide`), the one Error line per refusal, the directory's
+inventory reader, the report and the run itself (guest state, probe, the new
+name against the marker's source-volume and the runtime, inventory,
+rsync_check, the volume create, the reverse copy and verify with
+`DX_PERSIST_VOLUME=NAME`, the retired marker); plus the helpers the two
+commands now share (`dx_persist_inventory_check`, `dx_persist_guest_stopped`,
+`dx_persist_appledouble_lines`). In `bin/lib/dx-runtime-docker-lifecycle.sh`
+(+12), `dx_runtime_docker_host_dir_inventory` (the WP6.3 inventory script
+over a read-only bind) and `dx_runtime_docker_host_rsync`'s refusal of
+`DX_BOOTSTRAP_VOLUME`. The one-line `dx_runtime_host_dir_inventory` dispatch
+and Apple "unsupported" definitions are not instrumented by kcov. Exercised by
+the acceptance suite `tests/test_persist_rollback.sh` (real rsync and the real
+manifest tool under kcov) and the in-process cases in
+`tests/test_persist_rollback_unit.sh`.
+`unscoped_prod_exec_lines_ceiling` 2627 -> 2632 (+5): the new entry point
+`bin/dx-persist-rollback` has, like `bin/dx-persist-migrate`, `set -euo
+pipefail`, the `SCRIPT_DIR` line, the `source` of `dx-lib.sh`, the
+`persist_rollback_main` definition and the `_main` call guard; no other entry
+point changed. Measured with `tests/run-coverage-linux.sh` on 57fb61f:
+covered=100% scope_exec_lines=5723 unscoped_prod_exec_lines=2632 (the run
+stopped at the unscoped check, 2632 > 2627, after the 100% line-coverage check
+passed). An earlier run on 4a94bce measured `bin/lib/dx-persist-dir.sh` at
+564/565: kcov never marks the `} ;;` that closes a brace group in a case arm,
+which 57fb61f removed.
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP6.3, recorded in full above) moved here verbatim:
+
+    # 2026-10-11 WP6.3: floor 4973 -> 5063 (measured, 100% covered; inventory/host_dir_free runtime operations and dx_persist_inventory_main); ceiling 2643 -> 2648 (+5 executable lines in the new entry point bin/dx-persist-inventory: set -euo pipefail, SCRIPT_DIR, source dx-lib.sh, the persist_inventory_main definition, the _main call guard). History: docs/evidence/20260930/coverage-ratchet-history.md.
