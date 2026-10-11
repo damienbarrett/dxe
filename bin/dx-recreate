@@ -2,14 +2,15 @@
 set -euo pipefail
 
 # dx-recreate
-# Tears down the rebuildable host-side state and re-runs dx. Persistent volumes
-# (/nix and /persist) and the SSH keypair are preserved.
+# Tears down the rebuildable host-side state and re-runs dx. /nix and the SSH
+# keypair are preserved, and so is /persist: the volume, or the host directory
+# in host-path mode.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
 
 recreate_main() {
-echo "Recreating DX environment (preserves /nix and /persist)..."
+echo "Recreating DX environment (preserves /nix; /persist is kept as the volume or the host directory)..."
 
 # Astra F4 / WP6.5: acquired once, here, so bin/dx-destroy below (a forked
 # child; it inherits DXE_LIFECYCLE_LOCK_OWNER and skips its own acquire)

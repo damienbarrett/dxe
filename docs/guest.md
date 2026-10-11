@@ -433,3 +433,22 @@ dx-ssh 'ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
 ```bash
 ssh-keygen -R dx-host
 ```
+
+## Changing /persist from the host
+
+This applies to a QNAP guest with `DX_PERSIST_STORAGE=host-path`, whose `/persist` is a directory on the NAS share (`<qnap-share>/dxe/<container name>/persist`) that you can open from the Mac over SMB. Host access is for browsing and file management; editing happens mostly in the guest, and guest tools manage their own live state. The rule for changing files from the host while the guest runs:
+
+- Browse anything.
+- Change project files and `inbox/` freely.
+
+Leave the guest's own state alone: the tool-state folders (`.claude`, `.codex`, `.gemini`, herdr, tmux, and `etc/ssh`, which holds the guest's SSH host keys) and any in-progress git operation (a rebase, merge or index lock) under `git/`. Tools keep these open and rewrite them, so a change from the host can be lost or corrupt them.
+
+During a migration (`dx-persist-migrate`) or a rollback, change nothing under the guest's `/persist`: the copy is verified against the source, and an edit from the host while it runs makes it fail or, worse, pass on stale data.
+
+Nothing enforces this rule. The share, the guest and the tooling all allow every change; keeping to it is up to you.
+
+A guest tool that watches files may not notice a change made from the host. Refresh it or restart the watcher; the remedy is in `troubleshooting.md` ("A guest tool does not notice a change made from the host").
+
+On the QNAP's Public share, every user with Read/Write access over SMB can read and modify everything in `/persist`, whatever the file owner or mode says. That includes `etc/ssh` (the guest's SSH host private keys) and all stored credentials (the `gh`, Claude, Codex and Gemini logins under the guest's home). This was observed on the NAS and is an accepted exposure; a dedicated private share, readable only by your own account, would remove it, and only `DX_PERSIST_HOST_ROOT` changes. Until then, treat anyone with Read/Write on Public as having the guest's secrets, and see section 11 of `docs/qnap-runbook.md`.
+
+Finder over SMB leaves no `.DS_Store` or `._*` files on the share (the NAS keeps Mac metadata in streams), so no remedy is needed. Files and folders made from Finder are owned by the account you logged in with, mode 0777, and the guest can use them; deletions go to the share's own `@Recycle` folder, outside `/persist`.

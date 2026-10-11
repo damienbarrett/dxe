@@ -356,7 +356,8 @@ dx_runtime_host_dir_marker_write() { dx_runtime_dispatch host_dir_marker_write "
 dx_runtime_host_dir_usage() { dx_runtime_dispatch host_dir_usage "$@"; }
 
 # rsync operations (WP6.2; plan D-10): rsync runs inside a one-off container
-# on the NAS, from $DX_IMAGE. Apple has no NAS: it answers "unsupported".
+# on the NAS, from the guest's nix volume (not $DX_IMAGE). Apple has no NAS:
+# it answers "unsupported".
 #   dx_runtime_host_rsync_check [-A] [-X]            facts, one per line
 #   dx_runtime_host_rsync forward|reverse VOL DIR [-A] [-X]
 dx_runtime_host_rsync_check() { dx_runtime_dispatch host_rsync_check "$@"; }
