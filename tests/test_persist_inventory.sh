@@ -151,6 +151,17 @@ set -uo pipefail
 #         A failing df: non-zero, nothing on stdout. ROOT empty or "-": refused
 #         host-side, non-zero, no ssh call.
 #
+#  6. WP6.3b -- the container script runs on the BARE image. On docker-ssh
+#     $DX_IMAGE is the bare nixos/nix base: it has sh and the coreutils/
+#     findutils/grep commands, and NO sed, NO awk (found on the live NAS, 2026-10-12).
+#     Every execution of the extracted script below therefore runs with
+#     PATH restricted to a temp dir of symlinks to exactly this allowed set:
+#         sh df du find grep sort head tail cat printf wc tr cut ls stat mktemp cksum
+#     (df is a POSIX-sh stub of the same table the fake df prints; getfacl and
+#     getfattr appear only as sh stubs when a case adds them). NO sed, NO awk, NO
+#     perl, NO other tool. The script must get by with those, so a sed/awk call in it
+#     makes the real-tree cases fail (sed/awk are verified absent first).
+#
 #  The fake `df` used below prints 1024-blocks when it is given a -k option and
 #  512-blocks (twice the numbers) when it is not, like a Mac's `df -P`.
 
@@ -925,9 +936,45 @@ else
     CWD_EMPTY="$SCRATCH/dxe-cwd"
     mkdir "$CWD_EMPTY"
     export DF_AVAIL=777000
+    # WP6.3b: the bare image's tools only (interface contract 6).
+    BARE="$SCRATCH/dxe-bare-bin"
+    mkdir "$BARE"
+    BARE_MISSING=""
+    for tool in sh du find grep sort head tail cat printf wc tr cut ls stat mktemp cksum; do
+        real=""
+        for cand in "/usr/bin/$tool" "/bin/$tool"; do
+            if [ -x "$cand" ]; then real="$cand"; break; fi
+        done
+        if [ -z "$real" ]; then real="$(command -v "$tool" 2>/dev/null || true)"; fi
+        case "$real" in
+            /*) ln -s "$real" "$BARE/$tool" ;;
+            *) BARE_MISSING="$BARE_MISSING $tool" ;;
+        esac
+    done
+    eq "bare PATH: every allowed tool exists on this host" "" "$BARE_MISSING"
+    cat >"$BARE/df" <<'DFSTUB'
+#!/bin/sh
+k=1
+for a in "$@"; do
+    case "$a" in -*k*) k=0 ;; esac
+done
+m=1; [ "$k" = 1 ] && m=2
+echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
+echo "/dev/fakeshare $(( 1000000 * m )) $(( 400000 * m )) $(( ${DF_AVAIL:-600000} * m )) 40% /share"
+DFSTUB
+    chmod 0755 "$BARE/df"
+    bare_run() { # EXTRA_PATH_DIR(or empty) ROOT -> stdout; PATH is the bare dir alone (plus the stub dir)
+        ( cd "$CWD_EMPTY" && PATH="${1:+$1:}$BARE" LC_ALL=en_US.UTF-8 /bin/sh "$SCRATCH/inventory-script.sh" "$2" 2>/dev/null )
+    }
+    bare_missing_rc=0
+    ( PATH="$BARE" /bin/sh -c 'command -v sed >/dev/null 2>&1 || command -v awk >/dev/null 2>&1' ) && bare_missing_rc=1
+    eq "bare PATH: sed and awk are absent (as on the bare nixos/nix image)" "0" "$bare_missing_rc"
+    sed_probe_rc=0
+    ( PATH="$BARE" /bin/sh -c 'sed p </dev/null' ) >/dev/null 2>&1 || sed_probe_rc=$?
+    eq "bare PATH: calling sed fails with 127" "127" "$sed_probe_rc"
     S_OUT="" S_RC=0
     script_run() { # ROOT -> sets S_OUT S_RC; run with an empty cwd and a non-C locale
-        S_OUT="$(cd "$CWD_EMPTY" && LC_ALL=en_US.UTF-8 sh "$SCRATCH/inventory-script.sh" "$1" 2>/dev/null)"
+        S_OUT="$(bare_run "" "$1")"
         S_RC=$?
     }
     key() { sed -n "s/^$1=//p" <<<"$S_OUT" | head -n 1; }
@@ -956,15 +1003,16 @@ special/sock" "$(keys special_path)"
         # ACL and xattr counts come from the tools' "# file:" headers.
         STUBS="$SCRATCH/dxe-acl-stubs"
         mkdir "$STUBS"
-        fake_tool_write "$STUBS" getfacl 'printf "# file: a\n# owner: x\n# file: b\n"'
-        fake_tool_write "$STUBS" getfattr 'printf "# file: a\n# file: b\n# file: c\nuser.x=\"1\"\n"'
-        S_OUT="$(cd "$CWD_EMPTY" && PATH="$STUBS:$PATH" sh "$SCRATCH/inventory-script.sh" "$TREE" 2>/dev/null)"
+        stub_sh() { printf '#!/bin/sh\n%s\n' "$3" >"$1/$2"; chmod 0755 "$1/$2"; }
+        stub_sh "$STUBS" getfacl 'printf "# file: a\n# owner: x\n# file: b\n"'
+        stub_sh "$STUBS" getfattr 'printf "# file: a\n# file: b\n# file: c\nuser.x=\"1\"\n"'
+        S_OUT="$(bare_run "$STUBS" "$TREE")"
         S_RC=$?
         eq "tools present: the script exits 0" "0" "$S_RC"
         eq "tools present: acl counts the # file: headers of getfacl" "2" "$(key acl)"
         eq "tools present: xattr counts the # file: headers of getfattr" "3" "$(key xattr)"
-        fake_tool_write "$STUBS" getfacl 'printf ""'
-        S_OUT="$(cd "$CWD_EMPTY" && PATH="$STUBS:$PATH" sh "$SCRATCH/inventory-script.sh" "$TREE" 2>/dev/null)"
+        stub_sh "$STUBS" getfacl 'printf ""'
+        S_OUT="$(bare_run "$STUBS" "$TREE")"
         eq "tools present, nothing to report: acl=0" "0" "$(key acl)"
     else
         test_fail "the WP0.2 fixture tree could be built"

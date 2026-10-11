@@ -1653,3 +1653,12 @@ scope_exec_lines=5377 unscoped_prod_exec_lines=2622. Both equal the provisional
 values from the WP4.4 merge, so `tests/coverage/ratchet.env` keeps floor 5377 and
 ceiling 2622 unchanged; the per-WP arithmetic above holds with no overlap or
 shortfall.
+
+## WP6.3b (2026-10-12)
+
+The inventory container script (`DX_RUNTIME_DOCKER_VOLUME_INVENTORY_SCRIPT`) now
+builds its `apple=` and `special_path=` lists with POSIX `while read` loops
+instead of `sed`, so it runs on the bare image (no sed, no awk). It is still one
+constant line, so the in-scope executable-line count is unchanged: measured
+`covered=100% scope_exec_lines=5377 unscoped_prod_exec_lines=2622`. Floor and
+ceiling stay at 5377 / 2622; ratchet.env is not edited.
