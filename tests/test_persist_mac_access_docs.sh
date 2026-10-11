@@ -34,6 +34,14 @@
 #       "factory reset", "fingerprint", "dx-ssh" and the literal command
 #       "ssh-keygen -R dx-host"; the first mention of "fingerprint" comes
 #       BEFORE the "ssh-keygen -R dx-host" line (confirm, then remove).
+#   - WP1.4 (VS Code server support in the guest; plans/do plan.md WP1.4,
+#     tests/test_persist_vscode_server.sh), same section, case-insensitive
+#     fixed strings:
+#       "nix-ld"            (the guest runs VS Code's server through nix-ld,
+#                            set up at boot with no manual step)
+#       "first connection" and "download"
+#                           (the first connection downloads the server, so
+#                            it is slow once)
 
 set -uo pipefail
 
@@ -194,6 +202,11 @@ assert_text "etc/ssh" "etc/ssh as the example"
 assert_text "factory reset" "the factory-reset case"
 assert_text "dx-ssh" "confirming from inside the guest via dx-ssh"
 assert_text "ssh-keygen -R dx-host" "the ssh-keygen -R dx-host remedy"
+# WP1.4: the guest supports VS Code's server through nix-ld, and the first
+# connection downloads the server (slow once).
+assert_text "nix-ld" "the guest runs VS Code's server through nix-ld (WP1.4)"
+assert_text "first connection" "what the first connection does (WP1.4)"
+assert_text "download" "the first connection downloads the VS Code server (WP1.4)"
 
 if grep -Fiq 'enableRemoteCommand": true' <<<"$SECTION"; then
     test_pass "section shows the setting as \"remote.SSH.enableRemoteCommand\": true"
