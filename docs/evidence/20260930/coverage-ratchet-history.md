@@ -1385,3 +1385,16 @@ and argv prepass, the Apple refusal arm, and `dx_persist_create_volume_spec` /
 persist `--volume` item changed in place and adds no line). Measured with
 `tests/run-coverage-linux.sh`: covered=100% scope_exec_lines=4596
 unscoped_prod_exec_lines=2640.
+
+## WP6.1 (2026-10-11)
+
+`scope_exec_lines_floor` 4596 -> 4806 (+210, measured, 100% covered): the new
+`/persist` migration manifest tool,
+`container/dx-nixos-26.05/scripts/lib/dx-persist-manifest.sh` (`generate`,
+`compare`, `verify`), exercised by the acceptance suite
+`tests/test_persist_manifest.sh` and the in-process cases in
+`tests/test_persist_manifest_unit.sh`. `unscoped_prod_exec_lines_ceiling`
+unchanged at 2640: the tool is run by file or as an inline script and adds no
+line to an excluded entry point.
+Measured with `tests/run-coverage-linux.sh`: covered=100% scope_exec_lines=4806
+unscoped_prod_exec_lines=2640.
