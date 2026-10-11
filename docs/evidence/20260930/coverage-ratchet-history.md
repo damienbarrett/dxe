@@ -1458,3 +1458,26 @@ interim floor of 4806 was replaced by the merged tree's measured scope:
 `unscoped_prod_exec_lines_ceiling` unchanged at 2643. Measured with
 `tests/run-coverage-linux.sh`: covered=100% scope_exec_lines=4910
 unscoped_prod_exec_lines=2643.
+
+## WP5.2 (2026-10-11)
+
+`scope_exec_lines_floor` 4806 -> 4923 (measured, 100% covered): the two
+persist reporting helpers in `bin/lib/dx-container.sh`,
+`dx_persist_usage_line` (volume mode unchanged; host-path mode prints the
+directory's `dx_runtime_host_dir_usage` KiB or `unknown`) and
+`dx_persist_trim_skip_message`, plus their in-process cases in
+`tests/test_persist_reclaim_unit.sh`. `unscoped_prod_exec_lines_ceiling`
+unchanged at 2643: `bin/dx-reclaim` replaces one `printf` line with one
+`dx_persist_usage_line` call and one `echo` with one
+`dx_persist_trim_skip_message` call, so no executable line is added to the
+excluded entry point. Measured with `tests/run-coverage-linux.sh`:
+covered=100% scope_exec_lines=4923 unscoped_prod_exec_lines=2643.
+The WP3.4 ratchet line was moved out of `tests/coverage/ratchet.env` here to
+keep that file at 10 lines; its full entry is the "WP3.4 (2026-10-11)" section
+above.
+
+Merge WP5.2 (2026-10-11): wp/5.2 was merged into feat/persist-host-dir after
+WP4.2b (no in-scope change) and WP2.1c (tests/qnap only). WP5.2 measured 4923 on
+a base whose actual scope was 4910 (+13), so the merged tree's expected scope is
+4923: `scope_exec_lines_floor` 4910 -> 4923, to be confirmed by the next
+integration coverage run. `unscoped_prod_exec_lines_ceiling` unchanged at 2643.
