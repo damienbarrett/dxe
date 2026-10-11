@@ -510,13 +510,11 @@ dx_persist_inventory_check() {
     for key in size_kb entries hardlinks appledouble special df_avail_kb acl xattr; do
         value="$(dx_persist_inventory_value "$2" "$key")"
         case "$key:$value" in
-            acl:unknown | xattr:unknown) : ;;
-            *)
-                dx_persist_inventory_number "$value" || {
-                    echo "Error: $1 returned no usable $key.${3:+ $3}" >&2
-                    return 1
-                } ;;
+            acl:unknown | xattr:unknown) continue ;;
         esac
+        dx_persist_inventory_number "$value" && continue
+        echo "Error: $1 returned no usable $key.${3:+ $3}" >&2
+        return 1
     done
     DX_INV_OUT="$2"
 }
