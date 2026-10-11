@@ -246,15 +246,21 @@ if ! has "$out" "rc=0" && has "$out" "DX_PERSIST_STORAGE" && ! has "$out" "unkno
 else test_fail "dx-profile rejects a bogus DX_PERSIST_STORAGE naming the field"; printf "%s\n" "$out" | tail -n 6; fi
 
 # --- Every tracked profile still validates ---------------------------------
+# Every tracked profile resolves to volume mode, except the one named
+# host-path example: WP7.1's disposable live-suite guest
+# (tests/profiles/qnap-persist-canary-example.env, pinned further by
+# tests/test_persist_host_dir_live_guard.sh).
 tracked=0
 for f in "$BASE_DIR"/tests/profiles/*.env; do
     name="$(basename "$f" .env)"
     tracked=$((tracked + 1))
+    expected_storage=volume
+    [ "$name" != qnap-persist-canary-example ] || expected_storage=host-path
     out="$(env -i HOME="$fixture/home" PATH="$tools:/usr/bin:/bin" DX_PROFILES_DIR="$BASE_DIR/tests/profiles" \
         "$BASE_DIR/bin/dx-profile" "$name" /usr/bin/env 2>&1; echo "rc=$?")"
-    if has "$out" "rc=0" && has "$out" "DX_PERSIST_STORAGE=volume"; then
-        test_pass "tracked profile $name validates and resolves to DX_PERSIST_STORAGE=volume"
-    else test_fail "tracked profile $name validates and resolves to DX_PERSIST_STORAGE=volume"; printf "%s\n" "$out" | tail -n 6; fi
+    if has "$out" "rc=0" && has "$out" "DX_PERSIST_STORAGE=$expected_storage"; then
+        test_pass "tracked profile $name validates and resolves to DX_PERSIST_STORAGE=$expected_storage"
+    else test_fail "tracked profile $name validates and resolves to DX_PERSIST_STORAGE=$expected_storage"; printf "%s\n" "$out" | tail -n 6; fi
 done
 [ "$tracked" -ge 5 ] && test_pass "tracked profile set is non-empty ($tracked)" || test_fail "tracked profile set is non-empty ($tracked)"
 
