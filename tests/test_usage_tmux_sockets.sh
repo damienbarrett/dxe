@@ -6,20 +6,20 @@
 # Stale tmux sockets left behind by the guest usage service
 # (container/dx-nixos-26.05/scripts/lib/dx-usage-service.sh).
 #
-# Root cause (read from the agent-stats sources, never from a real guest):
-# every scrape of the agent-stats package (Rust scraper.rs and Python tmux.py
-# alike) starts its OWN tmux server on a unique socket, `tmux -L
-# agent-stats-<uuid> -f /dev/null`, and relies on `kill-server` (or the
-# 120 s tmux-owned `run-shell -d 120 -C kill-server` timer) to end it. A
-# server that dies without running its exit path (SIGKILL of the whole
-# service, container stop, an s6 restart that kills the process group, OOM)
-# leaves its socket file behind, and nothing ever names that socket again, so
-# the files accumulate for ever: 1,440 sockets were seen under
-# services/agent-stats/workspace/tmux/tmux-<uid>/ on a real guest. The service
-# already sets TMUX_TMPDIR=<root>/workspace/tmux, so tmux keeps them in
-# <root>/workspace/tmux/tmux-<uid>/. If the cause were different from this
-# reading, the fix below is still correct for the general case: it removes
-# only dead sockets, whoever made them.
+# Root cause: every scrape of the agent-stats package (Rust scraper.rs and
+# Python tmux.py alike) starts its OWN tmux server on a unique socket, `tmux -L
+# agent-stats-<uuid> -f /dev/null`, and ends it with `kill-server` (or the
+# 120 s tmux-owned `run-shell -d 120 -C kill-server` timer). tmux NEVER
+# unlinks its socket file on any exit path (kill-server, the last session
+# ending, the timer, SIGKILL: server.c only unlinks a stale file before it
+# binds), and agent-stats does not remove the file either, so EVERY scrape
+# leaks one socket: about 2 per 15-minute cycle, ~192 a day; 1,440 sockets
+# (about a week) were seen under services/agent-stats/workspace/tmux/tmux-<uid>/
+# on a real guest. The service sets TMUX_TMPDIR=<root>/workspace/tmux, so tmux
+# keeps them in <root>/workspace/tmux/tmux-<uid>/. Pruning once at serve start
+# is therefore not enough on a long-running guest: the watchdog also prunes
+# periodically (amendment below). Dead sockets are removed whoever made them,
+# but only those owned by the service user.
 #
 # Interface contract:
 #   dx_usage_service_prune_tmux_sockets DIR   (scripts/lib/dx-usage-service.sh)
@@ -43,6 +43,9 @@
 #       stdout stays empty; n = 0 prints nothing. Idempotent.
 #     * Status 1 (with an "Error:" line) when a dead socket could not be
 #       removed.
+#     * Amendment: only entries owned by the calling user (test -O) are
+#       removed; a dead socket owned by another user is kept (a refused
+#       connect also covers permission denied, which proves nothing).
 #   dx_usage_service_serve calls it as
 #     dx_usage_service_prune_tmux_sockets "$root/workspace/tmux/tmux-$(id -u)"
 #   after prepare_state and before the final exec of the package, so it sees
@@ -51,6 +54,28 @@
 #   starts (exec) exactly as before. Liveness is judged by connecting, not by
 #   assuming a restart killed every earlier server, because an orphaned
 #   server of an earlier run can outlive an s6 restart.
+# Amendment contract (periodic prune, as dx):
+#   * scripts/dx-usage-service.sh gains the subcommand `prune` (as dx; extra
+#     arguments: usage on stderr, status 64): it runs
+#     dx_usage_service_prune_tmux_sockets
+#     "${DX_USAGE_SERVICE_ROOT:-/persist/services/agent-stats}/workspace/tmux/tmux-$(id -u)"
+#     and returns its status; the usage text names prune.
+#   * dx_usage_service_watchdog (runs as root) calls, at the START of every
+#     iteration k with k % DX_USAGE_PRUNE_EVERY == 0 (before that iteration's
+#     control-file check and probe), the command
+#       setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx
+#         bash <scripts>/dx-usage-service.sh prune
+#     (setpriv and env resolved through PATH, so tests substitute a recording
+#     setpriv that execs the rest). DX_USAGE_PRUNE_EVERY is a library constant,
+#     20 (about 10 minutes of 30 s probes), overridable after sourcing.
+#   * A failing prune never stops the watchdog: stderr gets "Warning: could not
+#     prune stale tmux sockets." and every iteration still runs. The one-line
+#     "Pruned <n> ..." summary reaches the watchdog log only when n > 0.
+#   * The refusal rules are the dispatcher's: a relative service root is refused
+#     inside the prune with nothing deleted.
+#   * Not exercised here: the real setpriv privilege drop (needs root and a dx
+#     user); the bootstrap run scripts use the identical setpriv words, and the
+#     live check belongs to the verifier/live gate.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -209,11 +234,16 @@ mk_stale "$fx/outside-dir" victim
 ln -s "$fx/outside-dir" "$fx/linkroot/workspace/tmux/tmux-$uid"
 : > "$fx/fileroot/workspace/tmux/tmux-$uid"
 refuse_case() {
-    # $1 = label, $2 = dir. Real rm & friends are replaced by recording stubs.
+    # $1 = label, $2 = dir. Real rm & friends are replaced by recording stubs;
+    # the log is reset per case and the stubs are asserted to be what resolves.
     pr_rc=0
+    : > "$fx/stub.log"
     (
         cd "$fx/cwd"
         PATH="$stubs:$PATH"
+        for t in rm find unlink mv chmod chown rmdir rsync; do
+            [ "$(command -v "$t")" = "$stubs/$t" ] || { echo "stub for $t is not first on PATH" >&2; exit 99; }
+        done
         # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-usage-service.sh
         source "$LIB"
         "$FN" "$2"
@@ -323,6 +353,134 @@ if [ "$s_rc" -eq 0 ] && grep -qx 'exe=agent-stats-rust' "$US_LOG" && grep -qF "W
     test_pass "a prune failure is only a warning: the service still starts"
 else
     test_fail "a prune failure is only a warning (rc $s_rc, log: $(cat "$US_LOG"), out: $(cat "$fx/serve.out"))"
+fi
+
+# --- ownership: a dead socket owned by another user is kept ----------------------
+# chown needs root, and this Mac suite does not run as root: the case runs only
+# as root (the Linux coverage container) and is skipped with a reason elsewhere.
+if [ "$uid" -eq 0 ] && command -v chown >/dev/null 2>&1; then
+    od="$fx/own/workspace/tmux/tmux-$uid"; mkdir -p "$od"
+    mk_stale "$od" mine
+    mk_stale "$od" foreign
+    chown 65534 "$od/foreign"
+    run_prune "$od"
+    if [ "$pr_rc" -eq 0 ] && [ ! -e "$od/mine" ] && [ -S "$od/foreign" ] && grep -qF "Pruned 1 stale tmux socket(s) from $od" "$fx/pr.err"; then
+        test_pass "a dead socket owned by another user is kept, the caller's own is pruned"
+    else
+        test_fail "a dead socket owned by another user is kept (rc $pr_rc, left: $(listing "$od" | tr '\n' '|'), err: $pr_err)"
+    fi
+else
+    test_skip "foreign-owned dead socket kept (needs root to chown; runs in the Linux coverage container)"
+fi
+
+# --- dispatcher: the new `prune` subcommand ----------------------------------------
+ENTRY="$GUEST_SCRIPTS/dx-usage-service.sh"
+pdir="$fx/dp/workspace/tmux/tmux-$uid"; mkdir -p "$pdir"
+mk_stale "$pdir" agent-stats-d1
+mk_live "$pdir" agent-stats-dlive
+out="$(DX_USAGE_SERVICE_ROOT="$fx/dp" bash "$ENTRY" prune 2>&1)" && rc=0 || rc=$?
+if [ "$rc" -eq 0 ] && [ ! -e "$pdir/agent-stats-d1" ] && [ -S "$pdir/agent-stats-dlive" ] && grep -qF "Pruned 1 stale tmux socket(s) from $pdir" <<<"$out"; then
+    test_pass "dx-usage-service.sh prune prunes <root>/workspace/tmux/tmux-<uid> and reports"
+else
+    test_fail "dx-usage-service.sh prune prunes the root's tmux dir (rc $rc, out: $out)"
+fi
+out="$(bash "$ENTRY" prune extra 2>&1)" && rc=0 || rc=$?
+if [ "$rc" -eq 64 ] && grep -qF "Usage: dx-usage-service" <<<"$out" && grep -qF "prune" <<<"$out"; then
+    test_pass "prune with extra arguments gives usage naming prune and status 64"
+else
+    test_fail "prune with extra arguments gives usage and status 64 (rc $rc, out: $out)"
+fi
+
+# --- watchdog: periodic prune, as dx ----------------------------------------------
+wbin="$fx/wbin"; mkdir -p "$wbin"
+real_curl="$(command -v curl)"
+export WD_LOG="$fx/wd.log" WD_REAL_CURL="$real_curl"
+printf '#!/bin/bash\nfor a in "$@"; do [ "$a" != --unix-socket ] || exec "$WD_REAL_CURL" "$@"; done\necho probe >> "$WD_LOG"\nprintf 200\n' > "$wbin/curl"
+printf '#!/bin/bash\necho "s6-svc $*" >> "$WD_LOG"\n' > "$wbin/s6-svc"
+cat > "$wbin/setpriv" <<'SP'
+#!/bin/bash
+echo "setpriv: $*" >> "$WD_LOG"
+[ "$1 $2 $3" = "--reuid=dx --regid=dx --init-groups" ] || exit 97
+shift 3
+[ -z "${WD_SETPRIV_RC:-}" ] || exit "$WD_SETPRIV_RC"
+exec "$@"
+SP
+chmod +x "$wbin/curl" "$wbin/s6-svc" "$wbin/setpriv"
+wroot="$fx/wd"; wdir="$wroot/workspace/tmux/tmux-$uid"
+wd_run() {
+    # $1 = iterations, $2 = DX_USAGE_PRUNE_EVERY override ("" keeps the default),
+    # $3 = service root, optional $4 = extra PATH prefix. Output (stdout+stderr)
+    # in $fx/watch.out, status in wd_rc.
+    : > "$WD_LOG"; wd_rc=0
+    (
+        # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-usage-service.sh
+        source "$LIB"
+        [ -z "$2" ] || export DX_USAGE_PRUNE_EVERY="$2"
+        wd_sleep() { echo "sleep:$1" >> "$WD_LOG"; }
+        PATH="${4:+$4:}$wbin:$PATH"
+        export DX_USAGE_SLEEP=wd_sleep DX_USAGE_WATCHDOG_MAX_ITERATIONS="$1" DX_USAGE_SCAN_DIR="$fx/scan" DX_USAGE_SERVICE_ROOT="$3"
+        dx_usage_service_watchdog
+    ) > "$fx/watch.out" 2>&1 || wd_rc=$?
+}
+wd_shape() { cut -d' ' -f1 "$WD_LOG" | cut -d: -f1 | tr '\n' ' '; }
+
+mkdir -p "$wdir"
+mk_stale "$wdir" agent-stats-w1
+mk_live "$wdir" agent-stats-wlive
+wd_run 7 3 "$wroot"
+want="probe sleep probe sleep setpriv probe sleep probe sleep probe sleep setpriv probe sleep probe sleep "
+if [ "$wd_rc" -eq 0 ] && [ "$(wd_shape)" = "$want" ]; then
+    test_pass "the watchdog prunes at the start of every 3rd iteration (before its probe), as dx via setpriv"
+else
+    test_fail "the watchdog prunes at the start of every 3rd iteration (rc $wd_rc, got: $(wd_shape))"
+fi
+if grep -F "setpriv: --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx" "$WD_LOG" | grep -qF "dx-usage-service.sh prune"; then
+    test_pass "the prune command is setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx bash <scripts>/dx-usage-service.sh prune"
+else
+    test_fail "the prune command line is as pinned (log: $(cat "$WD_LOG"))"
+fi
+{ [ ! -e "$wdir/agent-stats-w1" ] && [ -S "$wdir/agent-stats-wlive" ]; } \
+    && test_pass "the periodic prune removed the dead socket and kept the live one" \
+    || test_fail "the periodic prune removed the dead socket and kept the live one"
+if [ "$(grep -cF "Pruned 1 stale tmux socket(s) from $wdir" "$fx/watch.out")" -eq 1 ] && [ "$(grep -c "Pruned" "$fx/watch.out")" -eq 1 ]; then
+    test_pass "the summary reaches the watchdog log once, only for the prune that removed something"
+else
+    test_fail "the summary appears once (out: $(cat "$fx/watch.out"))"
+fi
+
+# A socket that dies between two ticks is caught by the next scheduled prune.
+mk_stale "$wdir" agent-stats-w2
+wd_run 3 3 "$wroot"
+[ ! -e "$wdir/agent-stats-w2" ] && test_pass "a socket leaked while the service runs is pruned at the next scheduled tick" || test_fail "a socket leaked while running is pruned at the next tick"
+
+# Default cadence: every 20th iteration.
+wd_run 19 "" "$wroot"; n19="$(grep -c '^setpriv' "$WD_LOG" || true)"
+wd_run 20 "" "$wroot"; n20="$(grep -c '^setpriv' "$WD_LOG" || true)"
+wd_run 40 "" "$wroot"; n40="$(grep -c '^setpriv' "$WD_LOG" || true)"
+if [ "$n19" -eq 0 ] && [ "$n20" -eq 1 ] && [ "$n40" -eq 2 ]; then
+    test_pass "by default the watchdog prunes every 20th iteration (about 10 minutes)"
+else
+    test_fail "by default the watchdog prunes every 20th iteration (19: $n19, 20: $n20, 40: $n40)"
+fi
+
+# Failure is only a warning.
+WD_SETPRIV_RC=1 wd_run 4 2 "$wroot"
+if [ "$wd_rc" -eq 0 ] && [ "$(grep -c '^probe' "$WD_LOG")" -eq 4 ] && [ "$(grep -c '^setpriv' "$WD_LOG")" -eq 2 ] \
+    && grep -qF "Warning: could not prune stale tmux sockets." "$fx/watch.out"; then
+    test_pass "a failing prune only warns: every iteration still probes and the watchdog exits 0"
+else
+    test_fail "a failing prune only warns (rc $wd_rc, log: $(cat "$WD_LOG"), out: $(cat "$fx/watch.out"))"
+fi
+
+# A refused path (relative service root) deletes nothing: rm and friends are
+# recording stubs first on PATH, and the watchdog carries on.
+: > "$fx/stub.log"
+wd_run 2 1 "rel" "$stubs"
+if [ "$wd_rc" -eq 0 ] && [ ! -s "$fx/stub.log" ] && grep -qF "refusing to prune" "$fx/watch.out" \
+    && grep -qF "Warning: could not prune stale tmux sockets." "$fx/watch.out" && [ "$(grep -c '^probe' "$WD_LOG")" -eq 2 ]; then
+    test_pass "a relative service root is refused by the periodic prune, nothing is run, the watchdog continues"
+else
+    test_fail "a relative service root is refused by the periodic prune (rc $wd_rc, stubs: $(cat "$fx/stub.log"), out: $(cat "$fx/watch.out"))"
 fi
 
 reap_live
