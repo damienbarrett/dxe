@@ -1752,3 +1752,35 @@ above.
 ## WP6.2c (2026-10-12): rsync on the optional essentials list
 
 Measured on wp/6.2c (feat/persist-host-dir at edec0d3 plus WP6.2c): covered=100%, scope_exec_lines=5444, unscoped_prod_exec_lines=2623. These equal the provisional integration values (5444 / 2623) exactly: the WP adds no executable line (the list gains an argument on an existing printf), so ratchet.env is unchanged. This run is the integration measurement for the merged Mac branch: the provisional 5444 / 2623 hold.
+
+## WP6.4b (2026-10-12): migration path hardening
+
+`scope_exec_lines_floor` 5658 -> 5661 (+3, measured, 100% covered).
+`unscoped_prod_exec_lines_ceiling` unchanged at 2628 (measured 2628; no entry
+point changed). Measured with `tests/run-coverage-linux.sh` on the wp/6.4b
+tree (Red `bae545b`, `6ac55ae`, `2b9642a` plus the Green change, based on
+feat/persist-host-dir `1f9eece`): `covered=100% scope_exec_lines=5661
+unscoped_prod_exec_lines=2628`.
+
+The +3 are, by kcov's instrumented lines: in `bin/lib/dx-persist-dir.sh`, +2
+net -- the first guest check of `dx_persist_migrate_run` (9 lines: its
+`local` lines, the state read, the case and its arms) became the shared
+`dx_persist_migrate_guest_stopped` helper plus its call (10 lines), and the new
+re-check between the manifest verify and the ready marker-set is one more
+call; in `bin/lib/dx-runtime-docker-lifecycle.sh`, +1, the case arm in
+`dx_runtime_docker_host_dir_marker_set` that refuses "/" and non-canonical
+roots. The marker step's new bytes check lives inside the constant
+single-line script literals, which kcov counts as the same one line each.
+
+Integration measurement after the WP6.4 merge: the merged tree was recorded
+as provisional 5658 / 2628 (WP6.4's 5591 / 2627 on a 5377 / 2622 base,
+carried onto 5444 / 2623). This run measures 5661 / 2628, and the WP6.4b
+change adds exactly +3 in scope and nothing exempt, so the merged base's
+actual values are 5658 / 2628: the provisional figures are confirmed, with
+no difference to explain.
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP1.4, recorded in full in the "VS Code server support via nix-ld"
+section above) moved here verbatim:
+
+    # 2026-10-11 floor 3935 -> 4516, ceiling 2638 -> 2639 (WP1.4): +1 exempt line, the configure_vscode_server_support call in bootstrap.sh bootstrap_phases; the logic is in bootstrap/system.sh (in scope). The 2026-09-30 WP5.2 line moved to the history doc.

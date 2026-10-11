@@ -762,20 +762,27 @@ dx_persist_migrate_report() {
     printf 'next: set DX_PERSIST_STORAGE=host-path in the profile, then run dx-recreate (the volume %s is kept).\n' "$DX_PERSIST_VOLUME"
 }
 
+# dx_persist_migrate_guest_stopped GUEST OUTCOME: status 0 when the guest is
+# stopped or absent (J1); otherwise one Error line, running or unknown, that
+# ends with OUTCOME (what the refusal leaves behind at that point), status 1.
+dx_persist_migrate_guest_stopped() {
+    local state
+    state="$(dx_runtime_container_state "$1")" || state=unknown
+    case "$state" in
+        stopped | absent) return 0 ;;
+        running)
+            echo "Error: $1 is running; stop it with dx-stop-container first (it must stay stopped for the whole copy and verification), then run dx-persist-migrate again. $2" >&2 ;;
+        *)
+            echo "Error: cannot tell whether $1 is stopped (Docker on ${DX_REMOTE_HOST:-the NAS} did not say; see above); make sure it is stopped and the NAS is reachable, then retry. $2" >&2 ;;
+    esac
+    return 1
+}
+
 # dx_persist_migrate_run: everything after the lock (the caller holds it).
 dx_persist_migrate_run() {
-    local guest="$DX_CONTAINER_NAME" volume="$DX_PERSIST_VOLUME" state report canon dest inv
+    local guest="$DX_CONTAINER_NAME" volume="$DX_PERSIST_VOLUME" report canon dest inv
     local flags=() created="" copying now ready t0 t1 t2 t3 rc=0
-    state="$(dx_runtime_container_state "$guest")" || state=unknown
-    case "$state" in
-        stopped | absent) : ;;
-        running)
-            echo "Error: $guest is running; stop it with dx-stop-container first (it must stay stopped for the whole copy and verification), then run dx-persist-migrate again. Nothing was changed." >&2
-            return 1 ;;
-        *)
-            echo "Error: cannot tell whether $guest is stopped (Docker on ${DX_REMOTE_HOST:-the NAS} did not say; see above); make sure it is stopped and the NAS is reachable, then retry. Nothing was changed." >&2
-            return 1 ;;
-    esac
+    dx_persist_migrate_guest_stopped "$guest" "Nothing was changed." || return 1
     dx_runtime_volume_owned "$volume" "migrate from" || return 1
     dx_runtime_volume_owned "${DX_NIX_VOLUME:-}" "run rsync from" || return 1
     report="$(dx_runtime_host_dir_probe "$DX_PERSIST_HOST_ROOT" "$guest")" || report=""
@@ -826,6 +833,10 @@ dx_persist_migrate_run() {
         echo "Error: the controller's clock gave no usable UTC time ('$now'), so $dest stays copying; run dx-persist-migrate again." >&2
         return 1
     fi
+    # The guest must still be stopped when the copy is declared good (WP6.4b):
+    # one started during the copy or the verification may have changed its
+    # volume after rsync read it.
+    dx_persist_migrate_guest_stopped "$guest" "The copy verified, but $dest stays copying, because the guest may have changed its volume during the copy; the next run resumes and verifies again." || return 1
     if ! dx_runtime_host_dir_marker_set "$canon" "$guest" copying "$ready"; then
         echo "Error: $dest verified, but its marker could not be set to ready (see above), so it stays copying; run dx-persist-migrate again (it resumes and verifies again)." >&2
         return 1
