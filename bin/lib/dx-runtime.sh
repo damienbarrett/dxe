@@ -121,6 +121,13 @@ dx_runtime_container_running() { dx_runtime_dispatch container_running "$@"; }
 # restarted the container (docker-ssh: its restart policy; Apple: always 0, it
 # has no restart policy). bin/dx-wait-ssh uses the rise to spot a crash loop.
 dx_runtime_container_restart_count() { dx_runtime_dispatch container_restart_count "$@"; }
+# dx_runtime_container_state <name> -- one line, `running`, `stopped` or
+# `absent` (status 0), or `unknown` (non-zero) when the runtime could not be
+# asked (plans/do WP6.4). Unlike container_running, it never mistakes a
+# runtime it could not reach for a stopped container: dx-persist-migrate
+# copies only while the guest is provably down. It prints no `Error:` line, so
+# the caller's refusal is the only one.
+dx_runtime_container_state() { dx_runtime_dispatch container_state "$@"; }
 dx_runtime_container_list() { dx_runtime_dispatch container_list "$@"; }
 # dx_runtime_container_mounts <name> -- the container's ACTUAL mounts, one
 # `type|source|destination|rw` line each (a named volume's source is its
@@ -362,3 +369,15 @@ dx_runtime_host_rsync() { dx_runtime_dispatch host_rsync "$@"; }
 dx_runtime_volume_inventory() { dx_runtime_dispatch volume_inventory "$@"; }
 dx_runtime_host_dir_free() { dx_runtime_dispatch host_dir_free "$@"; }
 dx_runtime_host_dir_establish() { dx_runtime_dispatch host_dir_establish "$@"; }
+
+# Migration operations (WP6.4; plan D-3, D-8, D-10; spec R16, R33). Both run in
+# a root one-off container on the NAS. Apple has no NAS: "unsupported".
+#   dx_runtime_host_dir_marker_set ROOT GUEST EXPECTED_STATE MARKER
+#       replace the marker of ROOT/dxe/GUEST/persist only while its current
+#       one is EXPECTED_STATE for this guest and MARKER's source volume
+#       (compare-and-set: a transition never jumps a state)
+#   dx_runtime_host_manifest_verify forward|reverse VOLUME DIR
+#       the WP6.1 manifest verify of VOLUME against DIR, both read-only;
+#       its output and status (0 match, 1 differ, 2 error) pass through
+dx_runtime_host_dir_marker_set() { dx_runtime_dispatch host_dir_marker_set "$@"; }
+dx_runtime_host_manifest_verify() { dx_runtime_dispatch host_manifest_verify "$@"; }

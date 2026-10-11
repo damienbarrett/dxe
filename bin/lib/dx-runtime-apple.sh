@@ -57,6 +57,24 @@ dx_runtime_apple_container_running() { dx_runtime_apple_container_list_names fal
 # Apple has no restart policy (dx_runtime_apple_capability restart_policy is
 # false), so a container is never restarted by the runtime: always 0.
 dx_runtime_apple_container_restart_count() { printf '0\n'; }
+# dx_runtime_container_state <name> (plans/do WP6.4): from `container list
+# [-a] --quiet`. Unknown (non-zero) for an empty name or when either listing
+# fails -- an older CLI without --quiet included, with no fallback to the
+# tabular form -- so a runtime this cannot read is never taken for "stopped".
+dx_runtime_apple_container_state() {
+    local all running
+    if [ -z "${1:-}" ] || ! all="$(container list -a --quiet 2>/dev/null)" || ! running="$(container list --quiet 2>/dev/null)"; then
+        printf 'unknown\n'
+        return 1
+    fi
+    if grep -Fqx -- "$1" <<<"$running"; then
+        printf 'running\n'
+    elif grep -Fqx -- "$1" <<<"$all"; then
+        printf 'stopped\n'
+    else
+        printf 'absent\n'
+    fi
+}
 dx_runtime_apple_container_list() { container list "$@"; }
 
 dx_runtime_apple_image_exists() {
@@ -386,3 +404,5 @@ dx_runtime_apple_host_rsync() { dx_runtime_apple_host_dir_unsupported; }
 dx_runtime_apple_volume_inventory() { dx_runtime_apple_host_dir_unsupported; }
 dx_runtime_apple_host_dir_free() { dx_runtime_apple_host_dir_unsupported; }
 dx_runtime_apple_host_dir_establish() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_marker_set() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_manifest_verify() { dx_runtime_apple_host_dir_unsupported; }
