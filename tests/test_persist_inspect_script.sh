@@ -85,7 +85,48 @@
 #    The probe's stdout is `chown=ok|fail` and `mkdir0700=ok|fail` lines;
 #    any `=fail` makes Q-10 `fail`, and the removal still happens.
 #  Without --write-probe: no write verb at all (mkdir chown chmod rm rmdir
-#    mv cp touch ln), no `docker run|create|rm|volume create|volume rm`.
+#    mv cp touch ln), no `docker create|rm|volume create|volume rm`; the only
+#    `docker run` is the read-only inspection container (WP2.1c below).
+#
+# WP2.1c (supersedes the host-side Q-2/Q-8/Q-10 lines above): root-only reads.
+#  The management ssh account is not root and Container Station's volume path
+#  is root-only, so the host-side `df`/`du`/`find`/`stat` of <mountpoint> are
+#  GONE. Q-2 (filesystem + mount), Q-8 and Q-10 (owner + mode of the volume
+#  root) are read by ONE read-only one-off container, one ssh call whose
+#  remote command starts exactly:
+#    <docker> run --rm --network none -v <volume>:/v:ro --entrypoint sh \
+#        <image> -c '<POSIX sh script>'
+#  (<image> = DXE_QNAP_PROBE_IMAGE, or the pinned default when unset/empty; no
+#  other flag, no --name/--label, no other -v; no write verb in the script;
+#  every tool is handed the literal path /v, never a cd; `stat -c '%u:%g %a'`
+#  is the only stat form). Q-1 (share root) stays host-side. The mountpoint
+#  from `docker volume inspect` is still reported (mountpoint=...) but is
+#  never an operand of any ssh call. If `volume inspect` fails, no inspection
+#  container is run and Q-2, Q-8, Q-10 fail.
+#  The script's stdout is tagged lines (order free; stderr is not relied on):
+#    fs=<df filesystem>        mount=<df mounted-on>     (df -P data row)
+#    df-error=<reason>         instead of fs=/mount= when df fails (first
+#                              stderr line) or prints no data row
+#    size_kb=<n|n/a>  entries=<n|n/a>  hardlinks=<n|n/a>  appledouble=<n|n/a>
+#    special=<n|n/a>  acl=<n|n/a>  xattr=<n|n/a>
+#                              (a count whose find exits non-zero is n/a)
+#    apple=<path>              one line per `._*` file
+#    owner=<uid:gid>  mode=<octal>   (n/a each when stat fails)
+#  The evidence keeps the old tokens: Q-2 `mountpoint=<p> fs=<fs> mount=<m>
+#  volume=<v>`; Q-8 `size_kb=.. entries=.. ... xattr=..` plus the paths and,
+#  when any find count is n/a, the word `partial` (Q-8 fail); Q-10
+#  `owner=<uid:gid> mode=<octal> write-probe=...`. No `non-root` note when the
+#  counts came from the container.
+#  df is never parsed blindly: a failed df, or output that is only the header
+#  line, makes the check `fail` with evidence `df failed: <first stderr line,
+#  or "no data row">` and never `fs=Filesystem`. This holds for Q-1 (host
+#  `df -P <share root>`, whose stderr must be captured) as well as Q-2.
+#  Docker subcommands without --write-probe: info, volume inspect, and ONE
+#  `run --rm` of the read-only inspection container. With --write-probe there
+#  is one more `run`, the dxe-spike-* probe.
+#  tests/qnap/README.md section 7 documents `<root>/.dxe-spike-<random>` (not
+#  `<root>/dxe/...`) and the read-only inspection container (`:/v:ro`).
+#
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -126,6 +167,23 @@ if [ -n "${DXE_TEST_FAIL_MATCH:-}" ]; then
     case "$all" in *"$DXE_TEST_FAIL_MATCH"*) echo "stub: injected failure" >&2; exit 1 ;; esac
 fi
 case "$all" in
+    *"$DXE_TEST_DOCKER run"*":/v:ro"*)
+        case "${DXE_TEST_INSPECT:-ok}" in
+            dferror) echo "df-error=df: /v: Permission denied" ;;
+            dfhdr) echo "df-error=no data row" ;;
+            *) echo "fs=/dev/fixture-hdd"; echo "mount=/opt/fixture-hdd" ;;
+        esac
+        echo "size_kb=2048"
+        echo "entries=4242"
+        echo "hardlinks=7"
+        echo "appledouble=2"
+        printf 'apple=./dxe/._fixture1\napple=./home/._fixture2\n'
+        echo "special=1"
+        echo "acl=5"
+        echo "xattr=3"
+        echo "owner=30033:30033"
+        echo "mode=755"
+        exit 0 ;;
     *"$DXE_TEST_DOCKER run"*)
         echo "chown=${DXE_TEST_PROBE_CHOWN:-ok}"
         echo "mkdir0700=${DXE_TEST_PROBE_MKDIR:-ok}"
@@ -133,23 +191,23 @@ case "$all" in
     *"volume inspect"*) echo "$DXE_TEST_MOUNTPOINT"; exit 0 ;;
     *"$DXE_TEST_DOCKER info"*) echo "DockerRootDir=/opt/fixture-docker"; echo "/opt/fixture-docker"; exit 0 ;;
     *"readlink -f"*) echo "$DXE_TEST_CANON"; exit 0 ;;
-    *"df -P"*"$DXE_TEST_MOUNTPOINT"*)
-        printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/fixture-hdd 1000 100 900 10%% /opt/fixture-hdd\n'; exit 0 ;;
     *"df -P"*)
+        case "${DXE_TEST_Q1_DF:-ok}" in
+            header) printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'; exit 0 ;;
+            fail)
+                # a real remote shell would merge stderr into stdout for `2>&1`
+                case "$all" in
+                    *"2>&1"*) echo "df: /opt/fixture-share: Permission denied" ;;
+                    *) echo "df: /opt/fixture-share: Permission denied" >&2 ;;
+                esac
+                exit 1 ;;
+        esac
         printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/fixture-ssd 1000 100 900 10%% /opt/fixture-ssd\n'; exit 0 ;;
-    *"du -sk"*) printf '2048\t%s\n' "$DXE_TEST_MOUNTPOINT"; exit 0 ;;
-    *"-links +1"*) echo 7; exit 0 ;;
-    *"-type s"*) echo 1; exit 0 ;;
-    *"._"*) printf './dxe/._fixture1\n./home/._fixture2\n'; exit 0 ;;
-    *"find "*) echo 4242; exit 0 ;;
-    *"getfacl"*) echo 5; exit 0 ;;
-    *"getfattr"*) echo 3; exit 0 ;;
     *"rsync --version"*)
         printf 'rsync  version 3.2.7  protocol version 31\nCapabilities:\n    64-bit files, 64-bit inums, hardlinks, symlinks, ACLs, xattrs\n'; exit 0 ;;
     *"rsync --help"*) echo "     --numeric-ids           don't map uid/gid values by user/group name"; exit 0 ;;
     *"id -u"*) echo 0; exit 0 ;;
     *"command -v "*) echo "/usr/bin/tool"; exit 0 ;;
-    *"stat -c"*) echo "30033:30033 755"; exit 0 ;;
 esac
 echo "stub: unexpected remote command: $all" >&2
 exit 97
@@ -184,11 +242,12 @@ run_inspect_in() {
     OUT="$(cd "$WORK" && env HOME="$home" PATH="$STUBS:$PATH" \
         DXE_QNAP_HOST="$HOST" DXE_QNAP_DOCKER="$FAKE_DOCKER" \
         DXE_QNAP_SHARE_ROOT="${DXE_TEST_SHARE_ROOT-$SHARE}" \
-        DXE_QNAP_PROBE_IMAGE="dxe-fixture-image:test" \
+        DXE_QNAP_PROBE_IMAGE="${DXE_TEST_IMAGE-dxe-fixture-image:test}" \
         DXE_TEST_CALLS="$calls" DXE_TEST_DOCKER="$FAKE_DOCKER" \
         DXE_TEST_MOUNTPOINT="$MOUNTPOINT" DXE_TEST_CANON="$CANON" \
         DXE_TEST_LOCAL_DOCKER="$LOCAL_DOCKER_LOG" \
-        DXE_TEST_FAIL_MATCH="${DXE_TEST_FAIL_MATCH:-}" \
+        DXE_TEST_FAIL_MATCH="${DXE_TEST_FAIL_MATCH:-}" DXE_TEST_INSPECT="${DXE_TEST_INSPECT:-ok}" \
+        DXE_TEST_Q1_DF="${DXE_TEST_Q1_DF:-ok}" \
         DXE_TEST_UNREACHABLE="${DXE_TEST_UNREACHABLE:-}" \
         DXE_TEST_PROBE_CHOWN="${DXE_TEST_PROBE_CHOWN:-ok}" \
         DXE_TEST_PROBE_MKDIR="${DXE_TEST_PROBE_MKDIR:-ok}" \
@@ -335,8 +394,8 @@ check "every ssh call is non-interactive and targets the alias" \
 check "docker is reached as <DXE_QNAP_DOCKER> over ssh" has "$(all_calls_text)" "$FAKE_DOCKER volume inspect"
 check "volume inspect names the configured volume" has "$(all_calls_text)" "$VOLUME"
 check "no write verb reaches the NAS without --write-probe (and calls were made)" test -n "$(call_files)" -a -z "$(all_writes)"
-check "docker subcommands are only info and volume inspect without the probe" \
-    test "$(docker_subs | sort -u | tr '\n' ',')" = "info,volume inspect,"
+check "docker subcommands are only info, volume inspect and the one inspection run without the probe" \
+    test "$(docker_subs | sort -u | tr "\n" ",")" = "info,run,volume inspect,"
 for t in readlink mv du mktemp; do
     check "Q-9 checks tool $t with command -v" has "$(all_calls_text)" "command -v $t"
 done
@@ -391,10 +450,8 @@ fail_case() { # fail_case <fragment> <Q> <description>
 }
 fail_case "readlink -f" 1 "failing readlink"
 fail_case "info" 4 "failing docker info"
-fail_case "du -sk" 8 "failing du"
 fail_case "rsync --version" 9 "failing rsync --version"
 fail_case "command -v mktemp" 9 "missing mktemp"
-fail_case "stat -c" 10 "failing stat"
 
 DXE_TEST_FAIL_MATCH="volume inspect" run_inspect
 check "failing volume inspect: exit 1" test "$RC" -eq 1
@@ -414,8 +471,8 @@ E10="$(q_ev 10 "$OUT")"
 for kv in write-probe=ok chown=ok mkdir0700=ok owner=30033:30033 mode=755; do
     check "probe Q-10 evidence has $kv" has "$E10" "$kv"
 done
-RUN_CALLS="$(for f in $(call_files); do norm_call "$f" | grep -Fq "$FAKE_DOCKER run" && echo "$f"; done)"
-check "exactly one docker run call" test "$(printf '%s\n' "$RUN_CALLS" | grep -c .)" = 1
+RUN_CALLS="$(for f in $(call_files); do norm_call "$f" | grep -Fq "$FAKE_DOCKER run --rm --name dxe-spike-" && echo "$f"; done)"
+check "exactly one probe docker run call (plus the one read-only inspection run)" test "$(printf '%s\n' "$RUN_CALLS" | grep -c .)" = 1
 RUN_TEXT="$(norm_call "${RUN_CALLS:-/nonexistent}" 2>/dev/null)"
 check "probe container is named dxe-spike-*" has "$RUN_TEXT" "--name dxe-spike-"
 check "probe container carries the spike label" has "$RUN_TEXT" "--label dxe.role=spike"
@@ -457,6 +514,87 @@ check "probe container failing to run: Q-10 fail, exit 1, nine others reported" 
     test "$(q_status 10 "$OUT")" = fail -a "$RC" -eq 1 -a "$(grep -cE '^Q-[0-9]+ \| ' <<<"$OUT")" = 10
 check "probe container failing to run: no crash" test -z "$(grep -E 'unbound variable|command not found|syntax error' <<<"$ERR")"
 DXE_TEST_FAIL_MATCH=""
+
+# 9. WP2.1c: root-only reads go through ONE read-only one-off container -------
+run_inspect
+INSPECT_CALLS="$(for f in $(call_files); do grep -Fq ':/v:ro' "$f" && echo "$f"; done)"
+check "exactly one inspection container call" test "$(printf '%s\n' "$INSPECT_CALLS" | grep -c .)" = 1
+check "that call is the only docker run without --write-probe" \
+    test "$(for f in $(call_files); do norm_call "$f" | grep -Fq "$FAKE_DOCKER run" && echo y; done | wc -l | tr -d ' ')" = 1
+INSPECT_RAW="$(cat "${INSPECT_CALLS:-/nonexistent}" 2>/dev/null)"
+check "inspection run: exact flags, the volume mounted read-only on /v" \
+    has "$INSPECT_RAW" "$FAKE_DOCKER run --rm --network none -v $VOLUME:/v:ro --entrypoint sh dxe-fixture-image:test -c "
+INSPECT_TEXT="$(norm_call "${INSPECT_CALLS:-/nonexistent}" 2>/dev/null)"
+check "inspection run: exactly one volume mount, and it is :ro" \
+    test "$(grep -Eo -- '(-v|--volume)[= ][^ ]+' <<<"$INSPECT_TEXT")" = "-v $VOLUME:/v:ro"
+check "inspection run: not named, not privileged, no docker socket" \
+    test -z "$(grep -E -- '--name|--label|--privileged|docker\.sock|--user| -u |--cap-add' <<<"$INSPECT_TEXT")"
+check "inspection run: carries no write verb" test -z "$(scan_writes "${INSPECT_CALLS:-/nonexistent}")"
+check "inspection run: reads /v with df, du, find and stat" \
+    test "$(for t in 'df ' 'du ' 'find ' 'stat '; do grep -Fq "$t" <<<"$INSPECT_TEXT" && echo y; done | wc -l | tr -d ' ')" = 4
+check "inspection run: stat uses the pinned format" has "$INSPECT_RAW" "%u:%g %a"
+check "no ssh call other than the inspection run names the volume mountpoint" \
+    test -z "$(for f in $(call_files); do [ "$f" = "$INSPECT_CALLS" ] || grep -F "$MOUNTPOINT" "$f"; done)"
+check "the inspection run does not name the mountpoint either" lacks_text "$INSPECT_RAW" "$MOUNTPOINT"
+check "no host-side du, stat or find remains" \
+    test -z "$(for f in $(call_files); do [ "$f" = "$INSPECT_CALLS" ] || norm_call "$f" | grep -E '(^| )(du|stat|find|getfacl|getfattr) '; done)"
+check "Q-1 stays host-side: readlink and df of the share root" \
+    test "$(for f in $(call_files); do norm_call "$f" | grep -Fq "df -P $SHARE" && echo y; done | wc -l | tr -d ' ')" = 1
+check "the container's df feeds Q-2 (not the host's share df)" \
+    has "$(q_ev 2 "$OUT")" "fs=/dev/fixture-hdd mount=/opt/fixture-hdd"
+check "Q-10 owner and mode come from the container" has "$(q_ev 10 "$OUT")" "owner=30033:30033 mode=755"
+check "Q-8 has no non-root note when the container read succeeded" lacks_text "$(q_ev 8 "$OUT")" non-root
+
+DXE_TEST_IMAGE="" run_inspect
+INSPECT_CALLS="$(for f in $(call_files); do grep -Fq ':/v:ro' "$f" && echo "$f"; done)"
+DEF_IMAGE="$(grep -Eo -- "--entrypoint sh [^ ]+ -c" "${INSPECT_CALLS:-/nonexistent}" | awk '{print $3}')"
+check "unset image: the pinned default is used" \
+    test -n "$DEF_IMAGE" -a "$DEF_IMAGE" != "dxe-fixture-image:test" -a "$DEF_IMAGE" != "-c"
+
+DXE_TEST_FAIL_MATCH=":/v:ro" run_inspect
+check "failing inspection container: exit 1, only Q-2, Q-8, Q-10 fail" \
+    test "$RC" -eq 1 -a "$(statuses "$OUT")" = "1=ok 2=fail 3=manual 4=ok 5=manual 6=manual 7=manual 8=fail 9=ok 10=fail "
+check "failing inspection container: Q-2 never parses a header as data" lacks_text "$(q_ev 2 "$OUT")" "fs=Filesystem"
+check "failing inspection container: evidence is not empty and keeps the mountpoint" has "$(q_ev 2 "$OUT")" "mountpoint=$MOUNTPOINT"
+check "failing inspection container: no crash" test -z "$(grep -E 'unbound variable|command not found|syntax error' <<<"$ERR")"
+check "failing inspection container: ten Q lines" test "$(grep -cE '^Q-[0-9]+ \| ' <<<"$OUT")" = 10
+DXE_TEST_FAIL_MATCH=""
+
+DXE_TEST_FAIL_MATCH="volume inspect" run_inspect
+check "failing volume inspect: no inspection container is run" \
+    test -z "$(for f in $(call_files); do grep -Fl ':/v:ro' "$f"; done)"
+DXE_TEST_FAIL_MATCH=""
+
+# 10. WP2.1c: df is never parsed blindly -----------------------------------------
+DXE_TEST_INSPECT=dferror run_inspect
+check "container df fails: Q-2 fail, exit 1" test "$RC" -eq 1 -a "$(q_status 2 "$OUT")" = fail
+check "container df fails: evidence carries the real reason" has "$(q_ev 2 "$OUT")" "df failed: df: /v: Permission denied"
+check "container df fails: the header is not data" lacks_text "$(q_ev 2 "$OUT")" "fs=Filesystem"
+check "container df fails: only Q-2 changes" \
+    test "$(statuses "$OUT")" = "1=ok 2=fail 3=manual 4=ok 5=manual 6=manual 7=manual 8=ok 9=ok 10=ok "
+DXE_TEST_INSPECT=dfhdr run_inspect
+check "container df prints no data row: Q-2 fail with df failed" \
+    test "$(q_status 2 "$OUT")" = fail -a "$RC" -eq 1
+check "container df prints no data row: says df failed, no fs=Filesystem" \
+    test "$(has "$(q_ev 2 "$OUT")" "df failed" && echo y)" = y -a "$(lacks_text "$(q_ev 2 "$OUT")" "fs=Filesystem" && echo y)" = y
+DXE_TEST_INSPECT=ok
+
+DXE_TEST_Q1_DF=header run_inspect
+check "host df prints only a header: Q-1 fail" test "$(q_status 1 "$OUT")" = fail -a "$RC" -eq 1
+check "host df prints only a header: df failed, no fs=Filesystem" \
+    test "$(has "$(q_ev 1 "$OUT")" "df failed" && echo y)" = y -a "$(lacks_text "$(q_ev 1 "$OUT")" "fs=Filesystem" && echo y)" = y
+DXE_TEST_Q1_DF=fail run_inspect
+check "host df fails: Q-1 fail with the stderr reason" \
+    test "$(q_status 1 "$OUT")" = fail -a "$(has "$(q_ev 1 "$OUT")" "df failed: df: /opt/fixture-share: Permission denied" && echo y)" = y
+check "host df fails: no fs=Filesystem" lacks_text "$(q_ev 1 "$OUT")" "fs=Filesystem"
+DXE_TEST_Q1_DF=ok
+
+# 11. WP2.1c: the README documents the probe location and the container reads --
+README="$BASE_DIR/tests/qnap/README.md"
+check "README: the write probe is at <root>/.dxe-spike-<random>" grep -Fq '<root>/.dxe-spike-<random>' "$README"
+check "README: no stale <root>/dxe/.dxe-spike path" test -z "$(grep -F '<root>/dxe/.dxe-spike' "$README")"
+check "README: the read-only inspection container (:/v:ro) is described" grep -Fq ':/v:ro' "$README"
+
 
 print_summary
 exit_with_code
