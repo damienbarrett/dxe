@@ -870,3 +870,36 @@ dx_runtime_docker_host_rsync() {
         -aH --numeric-ids "${extra[@]+"${extra[@]}"}" \
         --exclude=/.dxe-persist-dir '--exclude=._*' /src/ /dst/
 }
+
+# Inventory operations (WP6.3; plan D-10; spec R37). Read-only: the volume is
+# read by a one-off container that mounts it ":ro" with no network, and the
+# share root's free space by one `df` on the NAS. The container script is POSIX
+# sh in ONE line (kcov counts every line of a multi-line literal) and prints
+# tagged key=value lines; it computes everything first and prints last, so a
+# failing find/du/df exits non-zero without status=ok (never a partial number).
+# Counts use `-exec printf ".%.0s" {} +` and then the length of the dots, so a
+# name containing a newline is still one entry. It works from "." after a cd
+# (relative paths need no prefix stripping that a path's own characters could
+# disturb). The script holds no single quote, so the whole text is one
+# single-quoted bash literal.
+DX_RUNTIME_DOCKER_VOLUME_INVENTORY_SCRIPT='export LC_ALL=C; cd -- "$1" || exit 1; t=$(df -P -k .) || exit 1; set -- $(printf "%s\n" "$t" | tail -n 1); dt=$2; da=$4; s=$(du -sk .) || exit 1; s=${s%%[!0-9]*}; e=$(find . -mindepth 1 -exec printf ".%.0s" {} +) || exit 1; h=$(find . -mindepth 1 ! -type d -links +1 -exec printf ".%.0s" {} +) || exit 1; ac=$(find . -mindepth 1 -name "._*" -exec printf ".%.0s" {} +) || exit 1; al=$(find . -mindepth 1 -name "._*" -print) || exit 1; al=$(printf "%s\n" "$al" | sed "s|^\./||" | sort); sc=$(find . -mindepth 1 \( -type p -o -type s -o -type b -o -type c \) -exec printf ".%.0s" {} +) || exit 1; sl=$(find . -mindepth 1 \( -type p -o -type s -o -type b -o -type c \) -print) || exit 1; sl=$(printf "%s\n" "$sl" | sed "s|^\./||" | sort); acl=unknown; if command -v getfacl >/dev/null 2>&1; then a=$(getfacl -R -s -p . 2>/dev/null) && acl=$(printf "%s\n" "$a" | grep -c "^# file:"); fi; xa=unknown; if command -v getfattr >/dev/null 2>&1; then a=$(getfattr -R -h -d -m - . 2>/dev/null) && xa=$(printf "%s\n" "$a" | grep -c "^# file:"); fi; printf "df_total_kb=%s\ndf_avail_kb=%s\nsize_kb=%s\nentries=%s\nhardlinks=%s\nappledouble=%s\n" "$dt" "$da" "$s" "${#e}" "${#h}" "${#ac}"; if [ -n "$al" ]; then printf "%s\n" "$al" | sed "s/^/apple=/"; fi; printf "special=%s\n" "${#sc}"; if [ -n "$sl" ]; then printf "%s\n" "$sl" | sed "s/^/special_path=/"; fi; printf "acl=%s\nxattr=%s\nstatus=ok\n" "$acl" "$xa"'
+
+# $1 ROOT: prints fs=, total_kb=, avail_kb= (KiB) of the filesystem holding it.
+DX_RUNTIME_DOCKER_HOST_DIR_FREE_SCRIPT='t=$(df -P -k -- "$1") || exit 1; set -- $(printf "%s\n" "$t" | tail -n 1); printf "fs=%s\ntotal_kb=%s\navail_kb=%s\n" "$1" "$2" "$4"'
+
+# dx_runtime_docker_volume_inventory VOLUME
+dx_runtime_docker_volume_inventory() {
+    if [ "$#" -ne 1 ]; then
+        echo "Usage: dx_runtime_volume_inventory VOLUME" >&2
+        return 1
+    fi
+    dx_runtime_docker_volume_owned "$1" inventory || return 1
+    dx_runtime_docker_cli run --rm --network none -v "$1:/v:ro" --entrypoint sh "${DX_IMAGE:?}" \
+        -c "$DX_RUNTIME_DOCKER_VOLUME_INVENTORY_SCRIPT" sh /v
+}
+
+# dx_runtime_docker_host_dir_free ROOT
+dx_runtime_docker_host_dir_free() {
+    dx_runtime_docker_host_dir_operand_ok "${1-}" || return 1
+    dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_FREE_SCRIPT" sh "$1"
+}
