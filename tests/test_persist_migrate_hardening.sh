@@ -470,8 +470,11 @@ check "establish, stdin lost: non-zero" nonzero "$RC"
 same "establish, stdin lost: the leaf is left empty and unmarked" "" "$(entries_of "$R/dxe/$G/persist")"
 
 R="$(share)"
-REC="$(DX_PERSIST_HOST_ROOT="$R" dx_persist_dir_record_path)"
-DX_PERSIST_HOST_ROOT="$R" DX_PERSIST_DIR_OWNER="$OWNER" P_LOSE_STDIN=1 via dx_persist_dir_establish create
+# A state directory of its own, so no earlier case's record can be mistaken
+# for this one's.
+REC="$(XDG_STATE_HOME="$R-state" dx_persist_dir_record_path)"
+XDG_STATE_HOME="$R-state" DX_PERSIST_HOST_ROOT="$R" DX_PERSIST_DIR_OWNER="$OWNER" P_LOSE_STDIN=1 \
+    via dx_persist_dir_establish create
 same "dx_persist_dir_establish, stdin lost: status 1 with one Error line" "1|1" "$RC|$(error_lines "$ERR")"
 check "dx_persist_dir_establish, stdin lost: no D-7 record is written" test ! -e "$REC"
 check "dx_persist_dir_establish, stdin lost: no marker in the leaf" test ! -e "$R/dxe/$G/persist/$MARKER_NAME"
@@ -493,16 +496,19 @@ xattr=0
 status=ok'
 # mig_case STATE...: one dx_persist_migrate_main run on a new fixture share;
 # the guest's state answers are STATE... in call order (unknown = the
-# operation's non-zero "unknown"). Sets RC OUT ERR SEQ LEAF REC.
+# operation's non-zero "unknown"). Each case has a state directory of its own
+# (the D-7 record's path does not depend on the share). Sets RC OUT ERR SEQ
+# LEAF REC.
 mig_case() {
     R="$(share)"
     LEAF="$R/dxe/$G/persist"
     : >"$OPS"
     printf '%s\n' "$@" >"$STATES"
     echo 0 >"$STATE_N"
-    REC="$(DX_PERSIST_HOST_ROOT="$R" dx_persist_dir_record_path)"
+    REC="$(XDG_STATE_HOME="$R-state" dx_persist_dir_record_path)"
     OUT="$( (
         DX_PERSIST_HOST_ROOT="$R"
+        XDG_STATE_HOME="$R-state"
         dx_lifecycle_lock_hold() { echo lock >>"$OPS"; }
         dx_lifecycle_lock_drop() { echo unlock >>"$OPS"; }
         dx_runtime_container_state() {
