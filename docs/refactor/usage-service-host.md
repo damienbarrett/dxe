@@ -80,14 +80,15 @@ keyring.
 6. **Runbook**: enabling (profile edit + recreate in a window), release
    selection and rollback via the links, the publication-rule note, and the
    Apple client base URL `http://<NAS tailnet name>:8787/`.
-7. **Stale tmux sockets**: every scrape starts its own tmux server on a unique
-   socket under `workspace/tmux/tmux-<uid>/`, and a server killed without its
-   exit path (service kill, container stop, OOM) leaves the socket file behind
-   for ever. `serve` therefore prunes that directory before it execs the
-   package (`dx_usage_service_prune_tmux_sockets`): only direct-child sockets
-   that refuse a connection (probed with `curl --unix-socket`, which the dx
-   profile guarantees) are removed, the directory path is validated first, and
-   a failure is only a warning.
+7. **Stale tmux sockets**: tmux never unlinks its socket on any exit path, so
+   every scrape leaks one socket file under `workspace/tmux/tmux-<uid>/` (about
+   190 a day). `dx_usage_service_prune_tmux_sockets` removes the dead ones:
+   direct-child sockets owned by the caller that refuse a connection (probed
+   with `curl --unix-socket`, which the dx profile guarantees); the directory
+   path is validated first. `serve` runs it before it execs the package, and
+   the root-run watchdog has it run as dx (`dx-usage-service.sh prune`, via
+   `setpriv`) every `DX_USAGE_PRUNE_EVERY`-th iteration (20, about 10 minutes).
+   A failure is only a warning.
 
 ## What stays out
 

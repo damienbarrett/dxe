@@ -1351,14 +1351,14 @@ the logic (including the new restart-count abort) lives in the covered
 
 ## 2026-10-12: stale tmux socket prune (fix/usage-tmux-sockets)
 
-`scope_exec_lines_floor` 3935 -> 4478 (raised to the measured total, allowed
+`scope_exec_lines_floor` 3935 -> 4484 (raised to the measured total, allowed
 direction). `dx_usage_service_prune_tmux_sockets`, its helpers and the call in
-`dx_usage_service_serve` are all in `scripts/lib`, covered by
+`dx_usage_service_serve`, the watchdog hook (`DX_USAGE_PRUNE_EVERY`) and the `prune` subcommand are all in `scripts/lib`, covered by
 `tests/test_usage_tmux_sockets.sh` and `tests/test_usage_tmux_sockets_unit.sh`.
 `unscoped_prod_exec_lines_ceiling` is unchanged at 2638: no exempt entry point
 was touched. Measured with `tests/run-coverage-linux.sh` in a scratch worktree
 of the branch head with `wp/0.3` merged (main's sections 10 and 16 abort the
-runner without it): `covered=100%`, `scope_exec_lines=4478`,
+runner without it): `covered=100%`, `scope_exec_lines=4484`,
 `unscoped_prod_exec_lines=2638`. The coverage image gained the `curl` binary
 (`tests/coverage/Dockerfile`) because the probe uses `curl --unix-socket`.
 

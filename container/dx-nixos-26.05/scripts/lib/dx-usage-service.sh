@@ -21,6 +21,7 @@ DX_USAGE_PROBE_INTERVAL=30        # seconds between /health/progress probes
 DX_USAGE_DOWN_LIMIT=6             # consecutive unreachable probes before a restart (3 minutes)
 DX_USAGE_COOLDOWN=60              # first wait after a restart, doubling per consecutive restart
 DX_USAGE_COOLDOWN_MAX=900         # ... capped here
+DX_USAGE_PRUNE_EVERY=20            # watchdog iterations between stale tmux socket prunes (about 10 minutes)
 
 dx_usage_service_sleep() { "${DX_USAGE_SLEEP:-sleep}" "$1"; }
 
@@ -72,7 +73,7 @@ dx_usage_service_prune_children() {
     local dir="$1" entry removed=0 failed=0
     cd "$dir" || return 1
     for entry in ./* ./.[!.]* ./..?*; do
-        { [ -S "$entry" ] && [ ! -L "$entry" ]; } || continue
+        { [ -S "$entry" ] && [ ! -L "$entry" ] && [ -O "$entry" ]; } || continue
         dx_usage_service_tmux_socket_dead "$entry" || continue
         if rm -f -- "$entry"; then removed=$((removed + 1)); else
             echo "Error: could not remove stale tmux socket $dir/${entry#./}." >&2; failed=1
@@ -173,6 +174,7 @@ dx_usage_service_watchdog() {
     done
     while [ "$max" -eq 0 ] || [ "$iteration" -lt "$max" ]; do
         iteration=$((iteration + 1))
+        [ $((iteration % DX_USAGE_PRUNE_EVERY)) -ne 0 ] || dx_usage_service_watchdog_prune
         # A restart requested by the dx-ai hook (as dx, who cannot run s6-svc):
         # consume it and restart agent-stats at once. It is not a health failure,
         # so no probe, no cooldown and no back-off count this iteration.
@@ -206,12 +208,22 @@ dx_usage_service_watchdog() {
     done
 }
 
-dx_usage_service_usage() { echo "Usage: dx-usage-service <serve|watchdog>"; }
+# Every tmux server the package starts leaks its socket file, so the watchdog
+# (root) has the prune run as dx on a schedule; a failure is only a warning.
+dx_usage_service_watchdog_prune() {
+    local scripts
+    scripts="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || return 0
+    setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx \
+        bash "$scripts/dx-usage-service.sh" prune || echo "Warning: could not prune stale tmux sockets." >&2
+}
+
+dx_usage_service_usage() { echo "Usage: dx-usage-service <serve|watchdog|prune>"; }
 
 dx_usage_service_main() {
     case "${1:-}" in
         serve) [ "$#" -eq 1 ] || { dx_usage_service_usage >&2; return 64; }; dx_usage_service_serve ;;
         watchdog) [ "$#" -eq 1 ] || { dx_usage_service_usage >&2; return 64; }; dx_usage_service_watchdog ;;
+        prune) [ "$#" -eq 1 ] || { dx_usage_service_usage >&2; return 64; }; dx_usage_service_prune_tmux_sockets "${DX_USAGE_SERVICE_ROOT:-/persist/services/agent-stats}/workspace/tmux/tmux-$(id -u)" ;;
         *) dx_usage_service_usage >&2; return 64 ;;
     esac
 }

@@ -110,6 +110,9 @@ assert_grep_in_file "$DX_MIGRATE" \
 
 STALE_MATCHES=$(rg -n '/workspace|DX_WORKSPACE|WORKSPACE|~/workspace|DX_PERSIST_PATH' \
     --hidden -g '!.git' -g '!workspace-persist.md' "$BASE_DIR" 2>/dev/null || true)
+# The tmux-socket prune suites build fixtures under the usage service's
+# workspace/tmux/... directory shape; exempt them in a separate stage.
+STALE_MATCHES=$(printf '%s\n' "$STALE_MATCHES" | grep -vE 'tests/test_usage_tmux_sockets.*\.sh' || true)
 # WP8.4a split tests/test_docker_runtime_adapter.sh's ~3,900 lines into
 # tests/test_docker_adapter_{transport,identity,lifecycle,lock,health}.sh;
 # the migration-helper fixture that legitimately references
