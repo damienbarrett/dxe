@@ -94,6 +94,35 @@ dx_runtime_docker_container_restart_count() {
     printf '%s\n' "$count" | tail -n1 | tr -d '\r'
 }
 
+# dx_runtime_container_state's docker-ssh answer (plans/do WP6.4), from ONE
+# `container inspect --format {{.State.Running}}` (stdout and stderr read
+# together): a last line of true is running, false is stopped; a failure that
+# says "no such container" or "no such object" in any letter case is absent.
+# Anything else -- the daemon or the ssh connection down, an answer that is
+# neither true nor false, an empty name (no call) -- is unknown, non-zero, its
+# message passed on as `dx:` lines, never an `Error:` line.
+dx_runtime_docker_container_state() {
+    local out="" rc=0
+    if [ -z "${1:-}" ]; then
+        rc=1
+    else
+        out="$(dx_runtime_docker_cli container inspect --format '{{.State.Running}}' "$1" 2>&1)" || rc=$?
+    fi
+    if [ "$rc" -eq 0 ]; then
+        case "$(printf '%s\n' "$out" | tail -n 1 | tr -d '\r')" in
+            true) printf 'running\n'; return 0 ;;
+            false) printf 'stopped\n'; return 0 ;;
+        esac
+    else
+        case "$(printf '%s' "$out" | tr '[:upper:]' '[:lower:]')" in
+            *"no such container"* | *"no such object"*) printf 'absent\n'; return 0 ;;
+        esac
+    fi
+    [ -z "$out" ] || printf '%s\n' "$out" | sed 's/^/dx: container inspect: /' >&2
+    printf 'unknown\n'
+    return 1
+}
+
 dx_runtime_docker_container_list() {
     # io.dxe.system is appended as a fourth column, keeping {{.Names}} first
     # so bin/dx-status's own
@@ -999,4 +1028,89 @@ dx_runtime_docker_host_dir_establish() {
         --mount "type=bind,source=$2,target=$DX_RUNTIME_DOCKER_HOST_DIR_BIND_TARGET" \
         --entrypoint sh "$DX_IMAGE" -c "$DX_RUNTIME_DOCKER_HOST_DIR_ESTABLISH_SCRIPT" sh \
         "$DX_RUNTIME_DOCKER_HOST_DIR_BIND_TARGET" "$3" "$1" "$4" "$DX_PERSIST_HOST_MOUNT_SENTINEL" >&2
+}
+
+# Setting the marker during a migration (WP6.4; plans/do D-3; spec R16, R35)
+# needs root on the NAS for the same reason as establish, so it is ONE
+# one-off container from $DX_IMAGE with the share root bound at the same
+# target. It is a compare-and-set: the script reads everything from "$@" --
+# $1 the bind target, $2 GUEST, $3 EXPECTED_STATE, $4 SOURCE (the new marker's
+# source volume, "" for none) -- and the new marker bytes from stdin. It
+# refuses, writing nothing, unless dxe, dxe/GUEST and the leaf are no symlinks
+# and the leaf is a directory; the marker is a regular file (no symlink); and
+# its guest=, state= and source-volume= lines are exactly GUEST, EXPECTED_STATE
+# and SOURCE (one each; no source-volume line when SOURCE is ""). Then the
+# shared marker step (temp file, one mv), and no chown. $DX_IMAGE is the bare
+# nix base (no sed, no awk), so the script uses only sh built-ins and the
+# coreutils of the marker step (mktemp, cat, chmod, mv, rm).
+DX_RUNTIME_DOCKER_HOST_DIR_MARKER_SET_SCRIPT='unset CDPATH; umask 022; cd -P -- "$1" || exit 1; g="dxe/$2"; p="$g/persist"; if [ -L dxe ] || [ -L "$g" ] || [ -L "$p" ] || [ ! -d "$p" ]; then echo "dx: not a real directory: $p" >&2; exit 1; fi; cd -P -- "$p" || exit 1; if [ -L .dxe-persist-dir ] || [ ! -f .dxe-persist-dir ]; then echo "dx: no marker file in $p" >&2; exit 1; fi; ng=0; ns=0; nv=0; bad=0; while IFS= read -r l || [ -n "$l" ]; do case "$l" in guest=*) if [ "$l" = "guest=$2" ]; then ng=$((ng + 1)); else bad=1; fi ;; state=*) if [ "$l" = "state=$3" ]; then ns=$((ns + 1)); else bad=1; fi ;; source-volume=*) if [ -n "$4" ] && [ "$l" = "source-volume=$4" ]; then nv=$((nv + 1)); else bad=1; fi ;; esac; done <.dxe-persist-dir || exit 1; if [ -n "$4" ] && [ "$nv" -ne 1 ]; then bad=1; fi; if [ "$bad" -ne 0 ] || [ "$ng" -ne 1 ] || [ "$ns" -ne 1 ]; then echo "dx: the marker in $p is not $3 for this guest and source volume; nothing was changed" >&2; exit 1; fi; '"$DX_RUNTIME_DOCKER_HOST_DIR_MARKER_TAIL"
+
+# dx_runtime_docker_host_dir_marker_set ROOT GUEST EXPECTED_STATE MARKER_TEXT.
+# The checks before its one docker call print a `dx:` reason, so the caller's
+# own Error line is the only one: ROOT becomes part of a --mount option
+# (absolute, no ',' or newline); MARKER_TEXT must be a valid marker for GUEST.
+dx_runtime_docker_host_dir_marker_set() {
+    local nl=$'\n' why="" source="" stream
+    if [ "$#" -ne 4 ]; then
+        echo "dx: refusing to set the NAS directory's marker: expected ROOT GUEST EXPECTED_STATE MARKER_TEXT" >&2
+        return 1
+    fi
+    case "$1" in
+        "" | [!/]* | *,* | *"$nl"*) why="the share root '$1' cannot be bound: it must be an absolute path without ',' or a newline" ;;
+    esac
+    dx_persist_marker_valid_name "$2" || why="${why:-invalid guest name for the NAS directory: $2}"
+    dx_persist_marker_valid_state "$3" || why="${why:-unknown expected marker state '$3'}"
+    if dx_persist_marker_parse 2>/dev/null <<<"$4"; then
+        [ "$DX_PERSIST_MARKER_GUEST" = "$2" ] || why="${why:-the new marker names guest $DX_PERSIST_MARKER_GUEST, not $2}"
+        source="$DX_PERSIST_MARKER_SOURCE_VOLUME"
+    else
+        why="${why:-the new marker text is not a valid marker}"
+    fi
+    [ -n "${DX_IMAGE:-}" ] || why="${why:-no DX_IMAGE to run the one-off container from}"
+    if [ -n "$why" ]; then
+        echo "dx: refusing to set the NAS directory's marker: $why" >&2
+        return 1
+    fi
+    stream="$(dx_runtime_docker_host_dir_marker_stream "$4" && printf x)" || return 1
+    stream="${stream%x}"
+    printf '%s' "$stream" | dx_runtime_docker_cli run --rm -i --network none --user 0:0 --pull never \
+        --mount "type=bind,source=$1,target=$DX_RUNTIME_DOCKER_HOST_DIR_BIND_TARGET" \
+        --entrypoint sh "$DX_IMAGE" -c "$DX_RUNTIME_DOCKER_HOST_DIR_MARKER_SET_SCRIPT" sh \
+        "$DX_RUNTIME_DOCKER_HOST_DIR_BIND_TARGET" "$2" "$3" "$source" >&2
+}
+
+# The migration's verification (WP6.4; plans/do D-8; spec R33): the WP6.1
+# manifest tool's text is the inline script of ONE read-only one-off container
+# from $DX_IMAGE, whose own bash 5, coreutils and findutils run it (no nix
+# volume: the guest's root profile has no findutils). The volume is mounted
+# ":ro" after its DQ6 check and the host directory as a readonly bind, so the
+# verification cannot change either side. Read at call time, never at import.
+DX_RUNTIME_DOCKER_MANIFEST_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/container/dx-nixos-26.05/scripts/lib/dx-persist-manifest.sh"
+
+# dx_runtime_docker_host_manifest_verify forward|reverse VOLUME DIR. The
+# checks before any call print a `dx:` reason (status 1); the tool's stdout,
+# stderr and status (0 match, 1 differ, 2 error) pass through unchanged.
+dx_runtime_docker_host_manifest_verify() {
+    local nl=$'\n' direction="${1:-}" volume="${2:-}" dir="${3:-}" mounts=() why="" tool
+    [ "$#" -eq 3 ] || why="expected forward|reverse VOLUME DIR"
+    case "$direction" in
+        forward) mounts=(-v "$volume:/src:ro" --mount "type=bind,source=$dir,target=/dst,readonly") ;;
+        reverse) mounts=(--mount "type=bind,source=$dir,target=/src,readonly" -v "$volume:/dst:ro") ;;
+        *) why="${why:-unknown direction '$direction' (forward or reverse)}" ;;
+    esac
+    case "$dir" in
+        / | *,* | *"$nl"* | [!/]* | "") why="${why:-the directory '$dir' cannot be bound: it must be an absolute path other than / without ',' or a newline}" ;;
+    esac
+    [ -n "${DX_IMAGE:-}" ] || why="${why:-no DX_IMAGE to run the one-off container from}"
+    if [ -n "$why" ]; then
+        echo "dx: refusing to verify the manifest: $why" >&2
+        return 1
+    fi
+    if ! tool="$(cat -- "$DX_RUNTIME_DOCKER_MANIFEST_TOOL" 2>/dev/null)" || [ -z "$tool" ]; then
+        echo "Error: cannot read the manifest tool $DX_RUNTIME_DOCKER_MANIFEST_TOOL." >&2
+        return 2
+    fi
+    dx_runtime_docker_volume_owned "$volume" verify || return 1
+    dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never "${mounts[@]}" \
+        --entrypoint bash "$DX_IMAGE" -c "$tool" dx-persist-manifest verify /src /dst
 }

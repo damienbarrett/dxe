@@ -591,3 +591,262 @@ dx_persist_inventory_main() {
     [ "$blocked" -eq 0 ] || rc=3
     return "$rc"
 }
+
+# --- dx-persist-migrate (WP6.4; plan D-3, D-6, D-7, D-8, D-10; spec R31-R35,
+# section 6) -------------------------------------------------------------------
+# The forward migration of a stopped guest's /persist volume into its NAS
+# directory <canonical root>/dxe/<guest>/persist. Every write into the share is
+# a root one-off container (establish, the rsync copy, the marker change); the
+# volume is only ever mounted read-only. Order: refusals that need no runtime
+# call; the lifecycle lock (held to the end); the guest must be stopped; the
+# read-only pre-flight (DQ6 checks, the probe, the inventory, rsync_check); the
+# destination with a `copying` marker; rsync; the manifest verify; the `ready`
+# marker; the D-7 record; the report. An interrupted run is resumed by running
+# the command again: a `copying` marker for this guest and volume is the only
+# non-empty destination it accepts. It never starts the guest and never edits
+# the profile.
+#   exit 0  migrated and verified;  1  refused, or failed before the
+#   verification;  2  usage;  3  the copy did not verify (the marker stays
+#   copying).
+
+dx_persist_migrate_usage() {
+    echo "Usage: dx-persist-migrate"
+    echo "  Copy the stopped guest's /persist volume into its NAS directory"
+    echo "  (DX_PERSIST_HOST_ROOT/dxe/DX_CONTAINER_NAME/persist), verify the copy, and mark it ready."
+    echo "  After an interruption, run it again: it resumes into the same directory."
+    echo "  Exit: 0 migrated, 1 refused or failed, 2 usage, 3 the copy did not verify."
+}
+
+# The refusals that need no runtime call, in the contract's order; one Error
+# line each. Sets DX_MIGRATE_RECORD (the D-7 record path).
+dx_persist_migrate_preconditions() {
+    if [ "${DX_RUNTIME:-}" != docker-ssh ]; then
+        echo "Error: dx-persist-migrate needs DX_RUNTIME=docker-ssh (the volume and the host directory are on a NAS Docker host)." >&2
+        return 1
+    fi
+    if [ -z "${DX_PERSIST_HOST_ROOT:-}" ]; then
+        echo "Error: DX_PERSIST_HOST_ROOT is empty; set the NAS share root to migrate into in the private profile." >&2
+        return 1
+    fi
+    if [ -z "${DX_PERSIST_HOST_MOUNT_SENTINEL:-}" ]; then
+        echo "Error: DX_PERSIST_HOST_MOUNT_SENTINEL is not set, so nothing proves the share root $DX_PERSIST_HOST_ROOT is mounted; set it in the private profile to a file that exists at the share root only while it is mounted, then retry." >&2
+        return 1
+    fi
+    if ! DX_MIGRATE_RECORD="$(dx_persist_dir_record_path)"; then
+        echo "Error: the host-path record path cannot be formed (it needs XDG_STATE_HOME or HOME, DX_REMOTE_HOST and DX_CONTAINER_NAME); fix the environment, then retry." >&2
+        return 1
+    fi
+    dx_persist_host_dir_guest_ok
+}
+
+# dx_persist_migrate_decide GUEST VOLUME < REPORT: the destination decision on
+# a dx_runtime_host_dir_probe report (root=, mounted=, state=, marker=, then
+# the marker bytes when marker=present). Pure: no call. Sets DX_MIGRATE_ACTION
+# to create, adopt or resume (status 0) or refuse (status 1, with the reason
+# in DX_MIGRATE_WHY: root, unmounted, symlink, unmarked, marker, guest,
+# copying, ready or retired); DX_MIGRATE_ROOT to the canonical root once it is
+# usable; DX_MIGRATE_CREATED to a resumed marker's created-at. First match:
+#   malformed report; root= not absolute, "/" or holding ","   root
+#   mounted= other than yes                                   unmounted
+#   state=symlink                                             symlink
+#   state=absent / empty                                      create / adopt
+#   non-empty without a marker                                unmarked
+#   a marker: invalid / another guest                         marker / guest
+#     copying from VOLUME                                     resume
+#     copying from another or no volume / ready / retired     copying / ready / retired
+dx_persist_migrate_decide() {
+    local guest="$1" volume="$2" root="" mounted="" state="" marker="" extra=""
+    DX_MIGRATE_ACTION=refuse
+    DX_MIGRATE_WHY=root
+    DX_MIGRATE_ROOT=""
+    DX_MIGRATE_CREATED=""
+    IFS= read -r root || :
+    IFS= read -r mounted || :
+    IFS= read -r state || :
+    IFS= read -r marker || :
+    case "$root" in
+        root=/ | root=*,* | root=) return 1 ;;
+        root=/*) : ;;
+        *) return 1 ;;
+    esac
+    case "$state:$marker" in
+        state=nonempty:marker=present) : ;;
+        state=absent:marker=absent | state=symlink:marker=absent | state=empty:marker=absent | state=nonempty:marker=absent)
+            if IFS= read -r extra || [ -n "$extra" ]; then return 1; fi ;;
+        *) return 1 ;;
+    esac
+    case "$mounted" in
+        mounted=yes) : ;;
+        mounted=no | mounted=unknown) DX_MIGRATE_WHY=unmounted; return 1 ;;
+        *) return 1 ;;
+    esac
+    DX_MIGRATE_ROOT="${root#root=}"
+    case "$state:$marker" in
+        state=symlink:*) DX_MIGRATE_WHY=symlink; return 1 ;;
+        state=absent:*) DX_MIGRATE_ACTION=create; return 0 ;;
+        state=empty:*) DX_MIGRATE_ACTION=adopt; return 0 ;;
+        *:marker=absent) DX_MIGRATE_WHY=unmarked; return 1 ;;
+    esac
+    if ! dx_persist_marker_parse 2>/dev/null; then
+        DX_MIGRATE_WHY=marker
+        return 1
+    fi
+    if [ "$DX_PERSIST_MARKER_GUEST" != "$guest" ]; then
+        DX_MIGRATE_WHY=guest
+        return 1
+    fi
+    DX_MIGRATE_WHY="$DX_PERSIST_MARKER_STATE"
+    if [ "$DX_PERSIST_MARKER_STATE" = copying ] && [ "$DX_PERSIST_MARKER_SOURCE_VOLUME" = "$volume" ]; then
+        DX_MIGRATE_ACTION=resume
+        DX_MIGRATE_CREATED="$DX_PERSIST_MARKER_CREATED_AT"
+        return 0
+    fi
+    return 1
+}
+
+# dx_persist_migrate_refusal DEST: the one Error line for DX_MIGRATE_WHY (the
+# marker fields are still those dx_persist_migrate_decide parsed).
+dx_persist_migrate_refusal() {
+    local dest="$1" root="${DX_PERSIST_HOST_ROOT:-}" msg from
+    case "$DX_MIGRATE_WHY" in
+        root)
+            msg="the share root DX_PERSIST_HOST_ROOT=$root could not be checked on ${DX_REMOTE_HOST:-the NAS}, or it does not resolve to an absolute directory other than / without a comma; fix DX_PERSIST_HOST_ROOT in the private profile or make the share available, then retry." ;;
+        unmounted)
+            msg="the share root $root does not look mounted: its sentinel file DX_PERSIST_HOST_MOUNT_SENTINEL=${DX_PERSIST_HOST_MOUNT_SENTINEL:-} is missing (an unmounted or locked volume can leave an empty mount point); mount or unlock the share, then retry." ;;
+        symlink)
+            msg="$dest, or a level above it under the share root (dxe, dxe/$DX_CONTAINER_NAME), is a symlink; the migration copies only into a real directory, so replace the symlink with a directory, then retry." ;;
+        unmarked)
+            msg="$dest is not empty and has no $DX_PERSIST_MARKER_NAME marker; the migration copies only into an empty directory and never merges, so move its contents aside, then retry." ;;
+        marker)
+            msg="$dest/$DX_PERSIST_MARKER_NAME is not a valid /persist marker; inspect the directory, then move it aside, then retry." ;;
+        guest)
+            msg="$dest/$DX_PERSIST_MARKER_NAME names guest $DX_PERSIST_MARKER_GUEST, not $DX_CONTAINER_NAME; this directory belongs to another guest, so check DX_PERSIST_HOST_ROOT and DX_CONTAINER_NAME in the profile." ;;
+        copying)
+            from="${DX_PERSIST_MARKER_SOURCE_VOLUME:-no recorded volume}"
+            msg="$dest is marked copying from another source ($from), not the persist volume $DX_PERSIST_VOLUME, so this migration cannot resume into it; finish or abandon that copy (move the directory aside), then retry." ;;
+        ready)
+            msg="$dest is already migrated (marker ready); to use it, set DX_PERSIST_STORAGE=host-path in the profile and run dx-recreate. Migrating again needs a new empty directory." ;;
+        *)
+            msg="$dest is marked retired (a rollback returned $DX_CONTAINER_NAME to a volume); migrating again needs a new empty directory, so move the retired one aside by hand first." ;;
+    esac
+    printf 'Error: %s\n' "$msg" >&2
+}
+
+# dx_persist_migrate_seconds START END: whole seconds between two `date +%s`
+# readings, or "unknown" when either is not a plain number.
+dx_persist_migrate_seconds() {
+    case "$1:$2" in
+        *[!0-9:]* | :* | *:) echo unknown ;;
+        *) echo "$(($2 - $1))" ;;
+    esac
+}
+
+# dx_persist_migrate_report DEST COPY VERIFY INVENTORY: the report that ends
+# stdout (spec section 6 step 3; R32: the dropped `._*` files, from the
+# inventory's apple= lines in order).
+dx_persist_migrate_report() {
+    local apple
+    apple="$(sed -n 's/^apple=//p' <<<"$4")"
+    printf 'migrated: %s\n' "$1"
+    printf 'source_volume: %s\n' "$DX_PERSIST_VOLUME"
+    printf 'marker: ready\n'
+    printf 'record: %s\n' "$DX_MIGRATE_RECORD"
+    printf 'copy_seconds: %s\n' "$2"
+    printf 'verify_seconds: %s\n' "$3"
+    printf 'appledouble_dropped_count: %s\n' "$(dx_persist_inventory_value "$4" appledouble)"
+    if [ -z "$apple" ]; then
+        printf 'appledouble_dropped: none\n'
+    else
+        printf '%s\n' "$apple" | sed 's/^/appledouble_dropped: /'
+    fi
+    printf 'next: set DX_PERSIST_STORAGE=host-path in the profile, then run dx-recreate (the volume %s is kept).\n' "$DX_PERSIST_VOLUME"
+}
+
+# dx_persist_migrate_run: everything after the lock (the caller holds it).
+dx_persist_migrate_run() {
+    local guest="$DX_CONTAINER_NAME" volume="$DX_PERSIST_VOLUME" state report canon dest inv
+    local flags=() created="" copying now ready t0 t1 t2 t3 rc=0
+    state="$(dx_runtime_container_state "$guest")" || state=unknown
+    case "$state" in
+        stopped | absent) : ;;
+        running)
+            echo "Error: $guest is running; stop it with dx-stop-container first (it must stay stopped for the whole copy and verification), then run dx-persist-migrate again. Nothing was changed." >&2
+            return 1 ;;
+        *)
+            echo "Error: cannot tell whether $guest is stopped (Docker on ${DX_REMOTE_HOST:-the NAS} did not say; see above); make sure it is stopped and the NAS is reachable, then retry. Nothing was changed." >&2
+            return 1 ;;
+    esac
+    dx_runtime_volume_owned "$volume" "migrate from" || return 1
+    dx_runtime_volume_owned "${DX_NIX_VOLUME:-}" "run rsync from" || return 1
+    report="$(dx_runtime_host_dir_probe "$DX_PERSIST_HOST_ROOT" "$guest")" || report=""
+    if ! dx_persist_migrate_decide "$guest" "$volume" <<<"$report"; then
+        dx_persist_migrate_refusal "${DX_MIGRATE_ROOT:-$DX_PERSIST_HOST_ROOT}/dxe/$guest/persist"
+        return 1
+    fi
+    canon="$DX_MIGRATE_ROOT"
+    dest="$canon/dxe/$guest/persist"
+    dx_persist_inventory_read "$volume" || return 1
+    inv="$DX_INV_OUT"
+    [ "$(dx_persist_inventory_value "$inv" acl)" = 0 ] || flags+=(-A)
+    [ "$(dx_persist_inventory_value "$inv" xattr)" = 0 ] || flags+=(-X)
+    dx_runtime_host_rsync_check "${flags[@]+"${flags[@]}"}" >/dev/null || return 1
+    if [ "$DX_MIGRATE_ACTION" = resume ]; then
+        created="$DX_MIGRATE_CREATED"
+        echo "Resuming the interrupted copy into $dest (marker copying)..."
+    else
+        created="$(dx_persist_dir_utc_now)"
+        if ! copying="$(dx_persist_marker_format "$guest" copying "$volume" "$created" 2>/dev/null)"; then
+            echo "Error: the controller's clock gave no usable UTC time ('$created'), so no marker could be made for $dest; nothing was changed." >&2
+            return 1
+        fi
+        echo "Creating $dest with the marker copying..."
+        if ! dx_runtime_host_dir_establish "$DX_MIGRATE_ACTION" "$canon" "$guest" "$DX_PERSIST_DIR_OWNER" "$copying"; then
+            echo "Error: could not set up $dest on the NAS ($DX_MIGRATE_ACTION; see the lines above); nothing was copied. Fix the cause, then run dx-persist-migrate again." >&2
+            return 1
+        fi
+    fi
+    echo "Copying the persist volume $volume into $dest (the guest stays stopped)..."
+    t0="$(date +%s)"
+    dx_runtime_host_rsync forward "$volume" "$dest" "${flags[@]+"${flags[@]}"}" >&2 || rc=$?
+    t1="$(date +%s)"
+    if [ "$rc" -ne 0 ]; then
+        echo "Error: the copy into $dest stopped before it finished (rsync exit $rc); its marker stays copying, so the guest cannot start on it. Run dx-persist-migrate again to resume the copy." >&2
+        return 1
+    fi
+    echo "Verifying $dest against $volume (manifest)..."
+    t2="$(date +%s)"
+    dx_runtime_host_manifest_verify forward "$volume" "$dest" || rc=$?
+    t3="$(date +%s)"
+    if [ "$rc" -ne 0 ]; then
+        echo "Error: $dest does not verify against the persist volume $volume (manifest exit $rc; see above), so its marker stays copying and the guest cannot start on it. Investigate, then run dx-persist-migrate again (it resumes and verifies again), or abandon it: the profile is still in volume mode and the volume is unchanged." >&2
+        return 3
+    fi
+    now="$(dx_persist_dir_utc_now)"
+    if ! ready="$(dx_persist_marker_format "$guest" ready "$volume" "${created:-$now}" "$now" 2>/dev/null)"; then
+        echo "Error: the controller's clock gave no usable UTC time ('$now'), so $dest stays copying; run dx-persist-migrate again." >&2
+        return 1
+    fi
+    if ! dx_runtime_host_dir_marker_set "$canon" "$guest" copying "$ready"; then
+        echo "Error: $dest verified, but its marker could not be set to ready (see above), so it stays copying; run dx-persist-migrate again (it resumes and verifies again)." >&2
+        return 1
+    fi
+    if ! dx_persist_dir_record_write "$DX_MIGRATE_RECORD" migrate "${created:-$now}"; then
+        echo "Error: $dest is migrated and ready, but its host-path record $DX_MIGRATE_RECORD could not be written; make that path writable. dx-create-volumes writes the missing record once the profile uses DX_PERSIST_STORAGE=host-path (dx-recreate)." >&2
+        return 1
+    fi
+    dx_persist_migrate_report "$dest" "$(dx_persist_migrate_seconds "$t0" "$t1")" "$(dx_persist_migrate_seconds "$t2" "$t3")" "$inv"
+}
+
+dx_persist_migrate_main() {
+    local rc=0
+    case "$#:${1:-}" in
+        0:) : ;;
+        1:-h | 1:--help) dx_persist_migrate_usage; return 0 ;;
+        *) dx_persist_migrate_usage >&2; return 2 ;;
+    esac
+    dx_persist_migrate_preconditions || return 1
+    dx_lifecycle_lock_hold || return 1
+    dx_persist_migrate_run || rc=$?
+    dx_lifecycle_lock_drop
+    return "$rc"
+}
