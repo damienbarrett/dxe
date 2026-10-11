@@ -1388,11 +1388,11 @@ unscoped_prod_exec_lines=2640.
 
 ## WP4.2 (2026-10-11)
 
-`scope_exec_lines_floor` 4596 -> 4622 (+26, measured, 100% covered): the four
+`scope_exec_lines_floor` 4596 -> 4629 (+33, measured, 100% covered): the four
 `dx_runtime_host_dir_*` dispatchers, the Apple "unsupported" arms, and the
 Docker NAS directory operations (the POSIX probe/create/marker-write/usage
 script constants, the marker-stream and guest-name checks).
 `unscoped_prod_exec_lines_ceiling` unchanged at 2640: no entry point gained a
 line (the operations are reached through the already-sourced runtime
 facade). Measured with `tests/run-coverage-linux.sh`: covered=100%
-scope_exec_lines=4622 unscoped_prod_exec_lines=2640.
+scope_exec_lines=4629 unscoped_prod_exec_lines=2640.

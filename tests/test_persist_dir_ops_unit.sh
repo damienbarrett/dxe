@@ -94,7 +94,7 @@ fake_tool_write "$STUBS" mv 'exit 1'
     export DXE_FAKE_SSH_REMOTE_PATH="$STUBS:$PATH"
     fails "create: a failing mv is non-zero" dx_runtime_host_dir_create "$ROOT3" "$GUEST" "$TEXT"
 )
-if [ -z "$(find "$ROOT3/dxe/$GUEST" -mindepth 1 2>/dev/null | head -n1)" ]; then test_pass "create: a failing mv leaves no persist directory or temp directory"; else test_fail "create: a failing mv leaves no persist directory or temp directory"; fi
+if [ -z "$(find "$ROOT3/dxe/$GUEST/persist" -mindepth 1 2>/dev/null | head -n1)" ] && [ -d "$ROOT3/dxe/$GUEST/persist" ]; then test_pass "create: a failing mv leaves an empty unmarked leaf and no temp file"; else test_fail "create: a failing mv leaves an empty unmarked leaf and no temp file"; fi
 
 print_summary
 exit_with_code

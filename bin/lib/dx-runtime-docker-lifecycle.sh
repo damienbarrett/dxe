@@ -676,15 +676,21 @@ dx_runtime_docker_capability() {
 # is validated here with dx_persist_marker_parse and travels on stdin.
 
 # $1 ROOT, $2 GUEST, $3 sentinel (empty = none). Reports facts only.
-DX_RUNTIME_DOCKER_HOST_DIR_PROBE_SCRIPT='cd -P -- "$1" 2>/dev/null || { echo "dx: not a directory: $1" >&2; exit 1; }; r=$(pwd -P) || exit 1; mt=unknown; if [ -n "$3" ]; then mt=no; if [ -f "$r/$3" ] && [ ! -L "$r/$3" ]; then mt=yes; fi; fi; p="$r/dxe/$2/persist"; k="$p/.dxe-persist-dir"; mk=absent; if [ -L "$p" ]; then st=symlink; elif [ -d "$p" ]; then l=$(ls -A -- "$p") || { echo "dx: cannot list: $p" >&2; exit 1; }; if [ -n "$l" ]; then st=nonempty; else st=empty; fi; if [ -f "$k" ] && [ ! -L "$k" ]; then mk=present; fi; elif [ -e "$p" ]; then echo "dx: not a directory: $p" >&2; exit 1; else st=absent; fi; printf "root=%s\nmounted=%s\nstate=%s\nmarker=%s\n" "$r" "$mt" "$st" "$mk"; if [ "$mk" = present ]; then cat -- "$k"; fi'
+DX_RUNTIME_DOCKER_HOST_DIR_PROBE_SCRIPT='cd -P -- "$1" 2>/dev/null || { echo "dx: not a directory: $1" >&2; exit 1; }; r=$(pwd -P) || exit 1; mt=unknown; if [ -n "$3" ]; then mt=no; if [ -f "$r/$3" ] && [ ! -L "$r/$3" ]; then mt=yes; fi; fi; p="$r/dxe/$2/persist"; k="$p/.dxe-persist-dir"; mk=absent; if [ -L "$r/dxe" ] || [ -L "$r/dxe/$2" ] || [ -L "$p" ]; then st=symlink; elif [ -d "$p" ]; then l=$(ls -A -- "$p") || { echo "dx: cannot list: $p" >&2; exit 1; }; if [ -n "$l" ]; then st=nonempty; else st=empty; fi; if [ -f "$k" ] && [ ! -L "$k" ]; then mk=present; fi; elif [ -e "$p" ]; then echo "dx: not a directory: $p" >&2; exit 1; else st=absent; fi; printf "root=%s\nmounted=%s\nstate=%s\nmarker=%s\n" "$r" "$mt" "$st" "$mk"; if [ "$mk" = present ]; then cat -- "$k"; fi'
+
+# The marker step shared by create and marker_write, run with the target
+# directory as cwd: the slot may be replaced only if missing or a regular file;
+# a temp file in the directory, then ONE mv onto the marker; on failure only
+# that temp file is removed.
+DX_RUNTIME_DOCKER_HOST_DIR_MARKER_TAIL='s=.dxe-persist-dir; if [ -L "$s" ] || { [ -e "$s" ] && [ ! -f "$s" ]; }; then echo "dx: marker slot is not a regular file: $s" >&2; exit 1; fi; t=$(mktemp ./.dxe-persist-dir.XXXXXX) || exit 1; if cat >"$t" && chmod 0644 "$t" && mv -- "$t" "$s"; then exit 0; fi; rm -f -- "$t"; exit 1'
 
 # $1 ROOT, $2 GUEST; marker bytes on stdin. Creates exactly dxe/$2/persist
-# (built under a temporary name, then renamed into place) holding the marker.
-DX_RUNTIME_DOCKER_HOST_DIR_CREATE_SCRIPT='cd -P -- "$1" 2>/dev/null || { echo "dx: not a directory: $1" >&2; exit 1; }; g="dxe/$2"; p="$g/persist"; if [ -L dxe ] || [ -L "$g" ]; then echo "dx: refusing a symlinked path: $g" >&2; exit 1; fi; if [ -e "$p" ] || [ -L "$p" ]; then echo "dx: exists: $p" >&2; exit 1; fi; mkdir -p -- "$g" || exit 1; t="$g/.persist-new.$$"; mkdir -- "$t" || exit 1; if cat >"$t/.dxe-persist-dir" && chmod 0644 "$t/.dxe-persist-dir" && mv -- "$t" "$p"; then exit 0; fi; rm -f -- "$t/.dxe-persist-dir"; rmdir -- "$t"; exit 1'
+# (plain mkdir of the leaf, then the marker step) holding the marker.
+DX_RUNTIME_DOCKER_HOST_DIR_CREATE_SCRIPT='cd -P -- "$1" 2>/dev/null || { echo "dx: not a directory: $1" >&2; exit 1; }; g="dxe/$2"; p="$g/persist"; if [ -L dxe ] || [ -L "$g" ]; then echo "dx: refusing a symlinked path: $g" >&2; exit 1; fi; if [ -e "$p" ] || [ -L "$p" ]; then echo "dx: exists: $p" >&2; exit 1; fi; if [ ! -d dxe ]; then mkdir -- dxe || exit 1; fi; if [ ! -d "$g" ]; then mkdir -- "$g" || exit 1; fi; mkdir -- "$p" || exit 1; cd -P -- "$p" || exit 1; '"$DX_RUNTIME_DOCKER_HOST_DIR_MARKER_TAIL"
 
 # $1 PATH (the persist directory); marker bytes on stdin. Temp file in PATH,
 # then mv onto the marker; a failed mv leaves the old marker and no temp file.
-DX_RUNTIME_DOCKER_HOST_DIR_MARKER_WRITE_SCRIPT='if [ -L "$1" ] || [ ! -d "$1" ]; then echo "dx: not a directory: $1" >&2; exit 1; fi; cd -P -- "$1" || exit 1; t=$(mktemp ./.dxe-persist-dir.XXXXXX) || exit 1; if cat >"$t" && chmod 0644 "$t" && mv -- "$t" .dxe-persist-dir; then exit 0; fi; rm -f -- "$t"; exit 1'
+DX_RUNTIME_DOCKER_HOST_DIR_MARKER_WRITE_SCRIPT='if [ -L "$1" ] || [ ! -d "$1" ]; then echo "dx: not a directory: $1" >&2; exit 1; fi; cd -P -- "$1" || exit 1; '"$DX_RUNTIME_DOCKER_HOST_DIR_MARKER_TAIL"
 
 DX_RUNTIME_DOCKER_HOST_DIR_USAGE_SCRIPT='du -sk -- "$1"'
 
@@ -708,13 +714,21 @@ dx_runtime_docker_host_dir_guest_ok() {
     return 1
 }
 
+dx_runtime_docker_host_dir_operand_ok() {
+    case "$1" in
+        ""|-) echo "Error: refusing an empty or '-' NAS path." >&2; return 1 ;;
+    esac
+}
+
 dx_runtime_docker_host_dir_probe() {
+    dx_runtime_docker_host_dir_operand_ok "$1" || return 1
     dx_runtime_docker_host_dir_guest_ok "$2" || return 1
     dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_PROBE_SCRIPT" sh "$1" "$2" "${DX_PERSIST_HOST_MOUNT_SENTINEL:-}"
 }
 
 dx_runtime_docker_host_dir_create() {
     local stream
+    dx_runtime_docker_host_dir_operand_ok "$1" || return 1
     dx_runtime_docker_host_dir_guest_ok "$2" || return 1
     stream="$(dx_runtime_docker_host_dir_marker_stream "$3" && printf x)" || return 1
     stream="${stream%x}"
@@ -723,11 +737,13 @@ dx_runtime_docker_host_dir_create() {
 
 dx_runtime_docker_host_dir_marker_write() {
     local stream
+    dx_runtime_docker_host_dir_operand_ok "$1" || return 1
     stream="$(dx_runtime_docker_host_dir_marker_stream "$2" && printf x)" || return 1
     stream="${stream%x}"
     printf '%s' "$stream" | dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_MARKER_WRITE_SCRIPT" sh "$1"
 }
 
 dx_runtime_docker_host_dir_usage() {
+    dx_runtime_docker_host_dir_operand_ok "$1" || return 1
     dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_USAGE_SCRIPT" sh "$1"
 }
