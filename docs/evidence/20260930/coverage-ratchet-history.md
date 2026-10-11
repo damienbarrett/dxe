@@ -1348,3 +1348,20 @@ the logic (including the new restart-count abort) lives in the covered
 `bin/lib/dx-container.sh`. Measured on a clean export at `c1beafa` with
 `tests/run-coverage-linux.sh`: `scope_exec_lines=4402`,
 `unscoped_prod_exec_lines=2641`, scope coverage 100%.
+
+## 2026-10-11: VS Code server support via nix-ld (WP1.4, wp/1.4)
+
+`scope_exec_lines_floor` 3935 -> 4510 (the measured in-scope total, now that
+`configure_vscode_server_support`, `vscode_server_apply`, the optional
+essentials tools helpers and the best-effort upgrade branch of
+`install_essentials` joined `container/dx-nixos-26.05/bootstrap`).
+`unscoped_prod_exec_lines_ceiling` 2638 -> 2639 (+1): the single
+`configure_vscode_server_support || echo "Warning: ..." >&2` line in
+`container/dx-nixos-26.05/bootstrap.sh`'s `bootstrap_phases`, an exempt entry
+point whose phase order is pinned by `tests/test_section3_bootstrap.sh`. Measured
+with `tests/run-coverage-linux.sh` on the Green commit `38d6380`:
+`scope_exec_lines=4510`, `unscoped_prod_exec_lines=2639`, scope coverage 100%.
+
+The ratchet.env dated line moved here to keep that file at ten lines:
+`2026-09-30 ceiling 2634 -> 2635: WP5.2 added one source line
+(dx-bootstrap-protocol.sh) to bin/dx-lib.sh's facade order.`
