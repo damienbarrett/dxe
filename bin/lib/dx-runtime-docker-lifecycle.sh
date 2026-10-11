@@ -758,3 +758,115 @@ dx_runtime_docker_host_dir_usage() {
     dx_runtime_docker_host_dir_operand_ok "$1" || return 1
     dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_USAGE_SCRIPT" sh "$1"
 }
+
+# rsync operations (WP6.2; plan D-10 as revised 2026-10-11; spec R31, R32).
+# QTS ships rsync 3.0.7 and the NAS account is not root, so rsync runs INSIDE
+# a one-off container on the NAS (root via Docker) from $DX_IMAGE, whose root
+# toolchain (bootstrapEssentials) ships a modern rsync. Every docker call goes
+# through dx_runtime_docker_cli, so paths are only ever quoted argv words.
+
+# Facts from `rsync --version` on stdin, one per line: version=N.N.N (or
+# nothing when no version line exists), then hard_links, acls, xattrs as
+# yes/no. A capability counts only as an exact comma-separated token between
+# "Capabilities:" and "Optimizations:"; "hard links" is the older spelling.
+DX_RUNTIME_DOCKER_RSYNC_FACTS_AWK='$1 == "rsync" && $2 == "version" && v == "" && $3 ~ /^[0-9]+[.][0-9]+([.][0-9]+)?$/ { v = $3 } /^Optimizations:/ { on = 0 } on { caps = caps "," $0 } /^Capabilities:/ { on = 1; caps = caps "," substr($0, 14) } END { n = split(caps, t, ","); for (i = 1; i <= n; i++) { s = t[i]; gsub(/^[ \t]+|[ \t]+$/, "", s); if (s == "hardlinks" || s == "hard links") hl = "yes"; if (s == "ACLs") acl = "yes"; if (s == "xattrs") xa = "yes" } if (v != "") print "version=" v; print "hard_links=" (hl == "yes" ? "yes" : "no"); print "acls=" (acl == "yes" ? "yes" : "no"); print "xattrs=" (xa == "yes" ? "yes" : "no") }'
+
+# dx_runtime_docker_rsync_options_parse OPTION... -> sets DX_RSYNC_ACL/_XATTR
+# (yes|no); anything but -A / -X is a usage error (the caller prints it).
+dx_runtime_docker_rsync_options_parse() {
+    local opt
+    DX_RSYNC_ACL=no
+    DX_RSYNC_XATTR=no
+    for opt in "$@"; do
+        case "$opt" in
+            -A) DX_RSYNC_ACL=yes ;;
+            -X) DX_RSYNC_XATTR=yes ;;
+            *) return 1 ;;
+        esac
+    done
+}
+
+# dx_runtime_docker_rsync_gap FACTS ACL_NEEDED XATTR_NEEDED: print the first
+# missing requirement (naming only that one) and return 1, or return 0.
+dx_runtime_docker_rsync_gap() {
+    local facts="$1" version major rest minor
+    version="$(sed -n 's/^version=//p' <<<"$facts")"
+    major="${version%%.*}"
+    rest="${version#*.}"
+    minor="${rest%%.*}"
+    if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 1 ]; }; then
+        echo "Error: rsync $version in the image is below 3.1 (the migration needs nanosecond mtimes)." >&2
+        return 1
+    fi
+    if ! grep -Fqx hard_links=yes <<<"$facts"; then
+        echo "Error: rsync $version in the image lacks hard links support." >&2
+        return 1
+    fi
+    if [ "$2" = yes ] && ! grep -Fqx acls=yes <<<"$facts"; then
+        echo "Error: rsync $version in the image lacks ACLs support (needed here)." >&2
+        return 1
+    fi
+    if [ "$3" = yes ] && ! grep -Fqx xattrs=yes <<<"$facts"; then
+        echo "Error: rsync $version in the image lacks xattrs support (needed here)." >&2
+        return 1
+    fi
+}
+
+# dx_runtime_docker_host_rsync_check [-A] [-X]
+dx_runtime_docker_host_rsync_check() {
+    local out facts
+    dx_runtime_docker_rsync_options_parse "$@" || {
+        echo "Usage: dx_runtime_host_rsync_check [-A] [-X]" >&2
+        return 1
+    }
+    out="$(dx_runtime_docker_cli run --rm --network none --entrypoint rsync "${DX_IMAGE:?}" --version)" || {
+        echo "Error: could not run rsync in the image '$DX_IMAGE' on the NAS." >&2
+        return 1
+    }
+    facts="$(awk "$DX_RUNTIME_DOCKER_RSYNC_FACTS_AWK" <<<"$out")"
+    if ! grep -Fq version= <<<"$facts"; then
+        echo "Error: could not parse the rsync version from the image's output." >&2
+        return 1
+    fi
+    dx_runtime_docker_rsync_gap "$facts" "$DX_RSYNC_ACL" "$DX_RSYNC_XATTR" || return 1
+    printf '%s\n' "$facts"
+}
+
+# dx_runtime_docker_rsync_dir_ok DIR: an absolute NAS path that is neither "/"
+# nor able to carry extra --mount options (",") or a second line.
+dx_runtime_docker_rsync_dir_ok() {
+    local nl=$'\n'
+    case "$1" in
+        /) : ;;
+        /*,*|*"$nl"*) : ;;
+        /*) return 0 ;;
+    esac
+    echo "Error: refusing the rsync directory '$1': it must be an absolute path other than / without a comma or newline." >&2
+    return 1
+}
+
+# dx_runtime_docker_host_rsync forward|reverse VOLUME DIR [-A] [-X]
+dx_runtime_docker_host_rsync() {
+    local direction="${1:-}" volume="${2:-}" dir="${3:-}" extra=() mounts=()
+    if [ "$#" -lt 3 ]; then
+        echo "Usage: dx_runtime_host_rsync forward|reverse VOLUME DIR [-A] [-X]" >&2
+        return 1
+    fi
+    shift 3
+    case "$direction" in
+        forward) mounts=(-v "$volume:/src:ro" --mount "type=bind,source=$dir,target=/dst") ;;
+        reverse) mounts=(--mount "type=bind,source=$dir,target=/src,readonly" -v "$volume:/dst") ;;
+        *) echo "Error: unknown rsync direction '$direction' (forward or reverse)." >&2; return 1 ;;
+    esac
+    dx_runtime_docker_rsync_options_parse "$@" || {
+        echo "Error: unsupported rsync option (only -A and -X are accepted)." >&2
+        return 1
+    }
+    if [ "$DX_RSYNC_ACL" = yes ]; then extra+=(-A); fi
+    if [ "$DX_RSYNC_XATTR" = yes ]; then extra+=(-X); fi
+    dx_runtime_docker_rsync_dir_ok "$dir" || return 1
+    dx_runtime_docker_volume_owned "$volume" copy || return 1
+    dx_runtime_docker_cli run --rm --network none "${mounts[@]}" --entrypoint rsync "${DX_IMAGE:?}" \
+        -aH --numeric-ids "${extra[@]+"${extra[@]}"}" \
+        --exclude=/.dxe-persist-dir '--exclude=._*' /src/ /dst/
+}

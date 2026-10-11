@@ -1450,3 +1450,14 @@ script constants, the marker-stream and guest-name checks).
 line (the operations are reached through the already-sourced runtime
 facade). Measured with `tests/run-coverage-linux.sh`: covered=100%
 scope_exec_lines=4629 unscoped_prod_exec_lines=2640.
+
+## WP6.2 (2026-10-11)
+
+`scope_exec_lines_floor` 4806 -> 4973 (+167, measured, 100% covered): the two
+`dx_runtime_host_rsync*` dispatchers, the Apple "unsupported" arms, and the
+docker-ssh rsync check (single-line awk facts program, version and capability
+gap checks) and copy operation (direction, option and directory validation,
+ownership check, one-off container run).
+`unscoped_prod_exec_lines_ceiling` unchanged at 2643: no entry point gained a
+line. Measured with `tests/run-coverage-linux.sh`: covered=100%
+scope_exec_lines=4973 unscoped_prod_exec_lines=2643.
