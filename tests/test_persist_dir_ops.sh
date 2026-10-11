@@ -37,6 +37,12 @@ set -uo pipefail
 #   without any ssh call.
 #   Only POSIX/busybox-safe tools; the dir-state test does not follow links.
 #
+#   Host-side refusal of degenerate locations (every op, Docker side): a ROOT
+#   (probe, create) or PATH (marker_write, usage) that is EMPTY or exactly
+#   "-" returns non-zero, prints nothing on stdout and a reason on stderr,
+#   and makes NO ssh call (in the NAS shell an empty operand is the cwd and
+#   `cd -- -` is $OLDPWD). No rm/chmod/chown/mv/find runs on the host either.
+#
 #   probe ROOT GUEST   stdout, exactly, then exit 0:
 #       root=<canonical ROOT: cd -P -- ROOT && pwd -P in the NAS shell>
 #       mounted=yes|no|unknown
@@ -56,7 +62,10 @@ set -uo pipefail
 #     proves itself through its marker; creating a new directory requires
 #     mounted=yes) belongs to WP4.3 and is not tested here.
 #     state: symlink = the persist path is a symbolic link (even dangling; never
-#     followed, so then marker=absent); empty = a directory with no entries
+#     followed, so then marker=absent), and ALSO when the dxe level or the
+#     dxe/<GUEST> level is a symbolic link (even dangling): such a level is
+#     never followed and nothing below it is read, so then marker=absent and
+#     no marker text is printed; empty = a directory with no entries
 #     at all (dotfiles count as entries); nonempty = a directory with any
 #     entry (the marker alone makes it nonempty); absent = nothing there.
 #     An unusable ROOT (not a directory): non-zero, empty stdout, stderr
@@ -70,13 +79,36 @@ set -uo pipefail
 #     in the same directory + mv, text from stdin), nothing else. Prints
 #     nothing on stdout. Refuses (non-zero, stderr containing "exists",
 #     existing content untouched) when <ROOT>/dxe/<GUEST>/persist already
-#     exists in any form; refuses a missing ROOT (stderr "not a directory",
-#     nothing created).
+#     exists in any form (directory, symlink even dangling, regular file,
+#     FIFO, ...); refuses a missing ROOT (stderr "not a directory", nothing
+#     created); refuses a symlinked dxe or dxe/<GUEST> level (non-zero,
+#     nothing created or written through it).
+#     The sequence is fixed: after those checks, make dxe and dxe/<GUEST>
+#     when missing, then create the leaf with a plain
+#         mkdir -- <ROOT>/dxe/<GUEST>/persist
+#     (`mkdir` found through PATH, as `mv` is; its operand names the leaf,
+#     absolute or relative to the NAS shell's cwd; no -p and never the
+#     rename of a prepared temp DIRECTORY), so that if anything appeared at
+#     the leaf meanwhile, that mkdir fails, create returns non-zero and what
+#     appeared is left untouched (nothing written into or through it). Then
+#     write the marker inside the new leaf exactly as marker_write does: the
+#     same slot check, a temp FILE in the leaf, ONE `mv` onto the marker --
+#     the only mv create ever runs. If anything fails after the mkdir,
+#     create removes only its own temp FILE (never the leaf: no rmdir, no
+#     rm -r), so an EMPTY, UNMARKED leaf remains (probe: state=empty,
+#     marker=absent; WP4.4 adopts it with marker_write on the next run) and
+#     create returns non-zero.
 #   marker_write PATH MARKER_TEXT   PATH is the persist directory. Replaces
 #     PATH/.dxe-persist-dir atomically: temp file in PATH, then `mv` (found
 #     through PATH) onto the marker; if mv fails the old marker is intact,
 #     no temp file is left and the status is non-zero. A PATH that is not a
 #     directory: non-zero, nothing created.
+#     The marker SLOT PATH/.dxe-persist-dir may be replaced only when it is
+#     missing or a regular file. A slot that is a symlink (to a directory, to
+#     a file, or dangling) or any other non-regular file (a directory, a
+#     FIFO, ...) is refused: non-zero, a reason on stderr, nothing on stdout,
+#     nothing written anywhere (not through the link, not into the slot, no
+#     temp file left) and the slot itself left exactly as it was.
 #   usage PATH   stdout is byte-for-byte what `du -sk -- PATH` prints in the
 #     NAS shell (KiB, tab, PATH as given); a missing PATH: non-zero, empty
 #     stdout.
@@ -638,6 +670,441 @@ usage_cases() {
     eq "usage of a missing path: empty stdout" "" "$out"
 }
 usage_cases
+
+# ---------------------------------------------------------------------------
+# Safety additions (F1-F4). Every case works on its own fixture root. A
+# symlink a case plants points only into an "outside" directory: inside this
+# run's scratch, outside every fixture root; each case asserts nothing
+# landed there. The remote-shell cases run once with the host's `sh` and,
+# when dash exists, once more with dash as the NAS shell.
+nonzero() { # LABEL STATUS
+    if [ "$2" != 0 ]; then test_pass "$1"; else test_fail "$1 (status 0)"; fi
+}
+nonempty_file() { # LABEL FILE
+    if [ -s "$2" ]; then test_pass "$1"; else test_fail "$1 (empty)"; fi
+}
+outside_new() { mktemp -d "$SCRATCH/dxe-outside.XXXXXX"; }
+same_link() { # LABEL PATH TARGET: PATH is still a symlink to exactly TARGET
+    if [ -L "$2" ] && [ "$(readlink "$2")" = "$3" ]; then test_pass "$1"; else test_fail "$1"; fi
+}
+real_dir() { [ -d "$1" ] && [ ! -L "$1" ]; }
+real_file() { [ -f "$1" ] && [ ! -L "$1" ]; }
+real_fifo() { [ -p "$1" ] && [ ! -L "$1" ]; }
+
+SHELL_MODES="sh"
+DASH_SHIM="$SCRATCH/dash-shim-bin"
+DASH_LOG="$SCRATCH/dash-shim.log"
+if [ "$HAVE_DASH" = 1 ]; then
+    SHELL_MODES="sh dash"
+    fake_tool_write "$DASH_SHIM" sh "$(printf 'printf "dash\\n" >> %q\nexec %q "$@"' "$DASH_LOG" "$(command -v dash)")"
+fi
+# in_shell MODE CMD...: run CMD with the NAS shell's `sh` being the host's
+# own sh, or dash (a shim first on PATH that logs each use).
+in_shell() {
+    local mode="$1"
+    shift
+    : >"$DASH_LOG"
+    if [ "$mode" = dash ]; then PATH="$DASH_SHIM:$PATH" "$@"; else "$@"; fi
+}
+ran_under() { # LABEL MODE: in dash mode, the remote script really ran under dash
+    if [ "$2" = dash ]; then nonempty_file "$1: the NAS shell was dash" "$DASH_LOG"; fi
+}
+
+# mv stubs for the remote shell (found through PATH like the real one). Both
+# log one block per call: @@call, the physical cwd, each argv word, @@end.
+# MVREC then runs the next mv on PATH; MVFAIL fails without moving anything.
+MVREC="$SCRATCH/mvrec-bin"
+MVFAIL="$SCRATCH/mvfail-bin"
+fake_tool_write "$MVREC" mv '{ echo @@call; pwd -P; printf "%s\n" "$@"; echo @@end; } >> "${DXE_MV_LOG:?}"
+self="$(cd -P "$(dirname "$0")" && pwd -P)"
+IFS=:
+for p in $PATH; do
+    [ -n "$p" ] || continue
+    [ "$(cd -P "$p" 2>/dev/null && pwd -P)" = "$self" ] && continue
+    if [ -x "$p/mv" ]; then exec "$p/mv" "$@"; fi
+done
+echo "mvrec: no real mv on PATH" >&2
+exit 127'
+fake_tool_write "$MVFAIL" mv '{ echo @@call; pwd -P; printf "%s\n" "$@"; echo @@end; } >> "${DXE_MV_LOG:?}"
+exit 1'
+mv_calls() { # LOG: number of recorded mv calls
+    grep -c '^@@call$' "$1" 2>/dev/null || true
+}
+# mv_first_check LABEL LOG PERSIST_DIR: the first recorded mv moved a temp
+# FILE that sits in PERSIST_DIR itself onto PERSIST_DIR/.dxe-persist-dir.
+mv_first_check() {
+    local label="$1" log="$2" pd cwd src dst
+    pd="$(physical "$3")"
+    awk '/^@@call$/ { n++; next } /^@@end$/ { next } n == 1' "$log" >"$SCRATCH/mv.first"
+    cwd="$(sed -n 1p "$SCRATCH/mv.first")"
+    sed 1d "$SCRATCH/mv.first" | grep -v '^-' >"$SCRATCH/mv.ops"
+    eq "$label: mv got exactly two operands" "2" "$(wc -l <"$SCRATCH/mv.ops" | tr -d ' ')"
+    src="$(sed -n 1p "$SCRATCH/mv.ops")"
+    dst="$(sed -n 2p "$SCRATCH/mv.ops")"
+    case "$src" in /*) : ;; *) src="$cwd/$src" ;; esac
+    case "$dst" in /*) : ;; *) dst="$cwd/$dst" ;; esac
+    eq "$label: mv destination is the marker in the persist directory" \
+        "$pd/$MARKER_NAME" "$(physical "$(dirname "$dst")")/$(basename "$dst")"
+    eq "$label: mv source sits in the persist directory itself" "$pd" "$(physical "$(dirname "$src")")"
+    if [ "$(basename "$src")" != "$MARKER_NAME" ]; then
+        test_pass "$label: mv source is not the marker name"
+    else
+        test_fail "$label: mv source is not the marker name"
+    fi
+}
+
+# A `mkdir` for the remote shell that races create. When an operand is the
+# leaf (last component "persist", physical parent $DXE_RACE_PARENT), it
+# fires once ($DXE_RACE_FLAG records that it did):
+#   pre-symlink  plants a symlink to $DXE_RACE_OUTSIDE at the leaf first;
+#   pre-dir      plants a real directory holding "keep" at the leaf first;
+#   post-slot    after the real mkdir succeeds, plants a symlink to
+#                $DXE_RACE_OUTSIDE at the leaf's marker slot.
+# Then (or otherwise) it runs the next mkdir on PATH with the same argv.
+RACE="$SCRATCH/race-bin"
+fake_tool_write "$RACE" mkdir 'mode="${DXE_RACE_MODE:?}"; parent="${DXE_RACE_PARENT:?}"
+out="${DXE_RACE_OUTSIDE:?}"; flag="${DXE_RACE_FLAG:?}"
+self="$(cd -P "$(dirname "$0")" && pwd -P)"
+real=""
+oldifs="$IFS"
+IFS=:
+for p in $PATH; do
+    [ -n "$p" ] || continue
+    [ "$(cd -P "$p" 2>/dev/null && pwd -P)" = "$self" ] && continue
+    if [ -x "$p/mkdir" ]; then real="$p/mkdir"; break; fi
+done
+IFS="$oldifs"
+[ -n "$real" ] || { echo "race-mkdir: no real mkdir on PATH" >&2; exit 127; }
+post=""
+for a in "$@"; do
+    case "$a" in -*) continue ;; esac
+    b="${a%/}"
+    [ "${b##*/}" = persist ] || continue
+    case "$b" in */*) par="${b%/*}" ;; *) par=. ;; esac
+    [ "$(cd -P "$par" 2>/dev/null && pwd -P)" = "$parent" ] || continue
+    [ ! -e "$flag" ] || continue
+    : > "$flag"
+    case "$mode" in
+        pre-symlink) ln -s "$out" "$b" ;;
+        pre-dir) "$real" "$b" && printf "precious\n" > "$b/keep" ;;
+        post-slot) post="$b" ;;
+    esac
+done
+"$real" "$@"
+rc=$?
+if [ -n "$post" ] && [ "$rc" = 0 ]; then ln -s "$out" "$post/.dxe-persist-dir"; fi
+exit "$rc"'
+
+# ---------------------------------------------------------------------------
+test_section "WP4.2: marker_write replaces only a missing or regular-file marker slot (F1)"
+# slot_refused MODE KIND: the slot is KIND; marker_write must refuse it.
+slot_refused() {
+    local mode="$1" kind="$2" root d out link="" rc before_root before_out label
+    label="[$mode] marker slot is $kind"
+    root="$(new_root)"
+    use_root "$root"
+    d="$root/dxe/$GUEST/persist"
+    mkdir -p "$d"
+    printf 'payload\n' >"$d/payload"
+    out="$(outside_new)"
+    case "$kind" in
+        "a symlink to a directory") link="$out"; ln -s "$link" "$d/$MARKER_NAME" ;;
+        "a symlink to a file") printf 'victim\n' >"$out/victim"; link="$out/victim"; ln -s "$link" "$d/$MARKER_NAME" ;;
+        "a dangling symlink") link="$out/ghost"; ln -s "$link" "$d/$MARKER_NAME" ;;
+        "a directory") mkdir "$d/$MARKER_NAME" ;;
+        "a FIFO") mkfifo "$d/$MARKER_NAME" ;;
+    esac
+    before_root="$(tree_of "$root")"
+    before_out="$(tree_of "$out")"
+    in_shell "$mode" nas dx_runtime_host_dir_marker_write "$d" "$MARKER_TEXT_B" >"$SCRATCH/slot.out" 2>"$SCRATCH/slot.err"
+    rc=$?
+    ran_under "$label" "$mode"
+    nonzero "$label: marker_write refuses (non-zero)" "$rc"
+    eq "$label: nothing on stdout" "0" "$(wc -c <"$SCRATCH/slot.out" | tr -d ' ')"
+    nonempty_file "$label: a reason on stderr" "$SCRATCH/slot.err"
+    eq "$label: the share tree is unchanged (no temp file, nothing renamed)" "$before_root" "$(tree_of "$root")"
+    eq "$label: nothing landed in the outside directory" "$before_out" "$(tree_of "$out")"
+    case "$kind" in
+        *symlink*) same_link "$label: the slot is still the same symlink" "$d/$MARKER_NAME" "$link" ;;
+        "a directory") check "$label: the slot is still a directory" real_dir "$d/$MARKER_NAME" ;;
+        "a FIFO") check "$label: the slot is still a FIFO" real_fifo "$d/$MARKER_NAME" ;;
+    esac
+    if [ "$kind" = "a symlink to a file" ]; then
+        file_eq "$label: the link's target file is unchanged" "$out/victim" "victim$NL"
+    fi
+    if [ "$kind" = "a dangling symlink" ]; then
+        check_not "$label: the dangling link's target was not created" test -e "$out/ghost"
+    fi
+    file_eq "$label: the payload is untouched" "$d/payload" "payload$NL"
+}
+# slot_replaced MODE KIND: a missing or regular-file slot is (re)written.
+slot_replaced() {
+    local mode="$1" kind="$2" root d rc label
+    label="[$mode] marker slot is $kind"
+    root="$(new_root)"
+    use_root "$root"
+    d="$root/dxe/$GUEST/persist"
+    mkdir -p "$d"
+    printf 'payload\n' >"$d/payload"
+    if [ "$kind" = "a regular file" ]; then printf '%s\n' "$MARKER_TEXT" >"$d/$MARKER_NAME"; fi
+    in_shell "$mode" nas dx_runtime_host_dir_marker_write "$d" "$MARKER_TEXT_B" >/dev/null 2>&1
+    rc=$?
+    ran_under "$label" "$mode"
+    eq "$label: marker_write succeeds" "0" "$rc"
+    check "$label: the marker is a regular file" real_file "$d/$MARKER_NAME"
+    file_eq "$label: the marker holds the new text" "$d/$MARKER_NAME" "$MARKER_TEXT_B$NL"
+    eq "$label: only the marker and the payload are there" "./$MARKER_NAME${NL}./payload" \
+        "$(cd "$d" && find . -mindepth 1 | LC_ALL=C sort)"
+}
+for mode in $SHELL_MODES; do
+    for kind in "a symlink to a directory" "a symlink to a file" "a dangling symlink" "a directory" "a FIFO"; do
+        slot_refused "$mode" "$kind"
+    done
+    slot_replaced "$mode" "missing"
+    slot_replaced "$mode" "a regular file"
+done
+
+# ---------------------------------------------------------------------------
+test_section "WP4.2: create makes the leaf with mkdir, then marks it (F2)"
+# create_marks MODE: the one mv is the marker's; no directory is renamed.
+create_marks() {
+    local mode="$1" root d rc label
+    label="[$mode] create"
+    root="$(new_root)"
+    use_root "$root"
+    d="$root/dxe/$GUEST/persist"
+    : >"$SCRATCH/mvrec.log"
+    DXE_MV_LOG="$SCRATCH/mvrec.log" PATH="$MVREC:$PATH" in_shell "$mode" nas dx_runtime_host_dir_create "$root" "$GUEST" "$MARKER_TEXT" >/dev/null 2>&1
+    rc=$?
+    ran_under "$label" "$mode"
+    eq "$label: status 0" "0" "$rc"
+    eq "$label: exactly the three levels and the marker" \
+        ".${NL}./dxe${NL}./dxe/$GUEST${NL}./dxe/$GUEST/persist${NL}./dxe/$GUEST/persist/$MARKER_NAME" "$(tree_of "$root")"
+    eq "$label: exactly one mv (the marker's; no directory is renamed)" "1" "$(mv_calls "$SCRATCH/mvrec.log")"
+    mv_first_check "$label" "$SCRATCH/mvrec.log" "$d"
+}
+# create_mark_fails MODE: the marker mv fails after the mkdir.
+create_mark_fails() {
+    local mode="$1" root d rc label
+    label="[$mode] create whose marker mv fails"
+    root="$(new_root)"
+    use_root "$root"
+    d="$root/dxe/$GUEST/persist"
+    : >"$SCRATCH/mvfail.log"
+    DXE_MV_LOG="$SCRATCH/mvfail.log" PATH="$MVFAIL:$PATH" in_shell "$mode" nas dx_runtime_host_dir_create "$root" "$GUEST" "$MARKER_TEXT" >"$SCRATCH/cf.out" 2>/dev/null
+    rc=$?
+    ran_under "$label" "$mode"
+    nonzero "$label: non-zero" "$rc"
+    eq "$label: nothing on stdout" "0" "$(wc -c <"$SCRATCH/cf.out" | tr -d ' ')"
+    eq "$label: an EMPTY, UNMARKED leaf remains (no temp file, no marker)" \
+        ".${NL}./dxe${NL}./dxe/$GUEST${NL}./dxe/$GUEST/persist" "$(tree_of "$root")"
+    check "$label: the leaf is a real directory" real_dir "$d"
+    eq "$label: exactly one mv was attempted" "1" "$(mv_calls "$SCRATCH/mvfail.log")"
+    mv_first_check "$label" "$SCRATCH/mvfail.log" "$d"
+    nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
+    file_eq_out "$label: probe then sees state=empty, marker=absent" \
+        "root=$(physical "$root")${NL}mounted=unknown${NL}state=empty${NL}marker=absent${NL}" "$SCRATCH/probe.out"
+    nas dx_runtime_host_dir_create "$root" "$GUEST" "$MARKER_TEXT" >/dev/null 2>"$SCRATCH/cf.err"
+    rc=$?
+    nonzero "$label: a second create refuses the leftover leaf" "$rc"
+    has "$label: ... saying it exists" "$SCRATCH/cf.err" "exists"
+    nas dx_runtime_host_dir_marker_write "$d" "$MARKER_TEXT" >/dev/null 2>&1
+    rc=$?
+    eq "$label: marker_write adopts the leftover leaf" "0" "$rc"
+    file_eq "$label: ... which then holds the marker" "$d/$MARKER_NAME" "$MARKER_TEXT$NL"
+}
+# create_race MODE RACE_MODE: something appears at the leaf (or its slot).
+create_race() {
+    local mode="$1" race="$2" root d out rc label parent flag
+    label="[$mode] create racing $race"
+    root="$(new_root)"
+    use_root "$root"
+    d="$root/dxe/$GUEST/persist"
+    mkdir -p "$root/dxe/$GUEST"
+    parent="$(physical "$root/dxe/$GUEST")"
+    out="$(outside_new)"
+    flag="$SCRATCH/race.$race.$mode.fired"
+    rm -f "$flag"
+    DXE_RACE_MODE="$race" DXE_RACE_PARENT="$parent" DXE_RACE_OUTSIDE="$out" DXE_RACE_FLAG="$flag" \
+        PATH="$RACE:$PATH" in_shell "$mode" nas dx_runtime_host_dir_create "$root" "$GUEST" "$MARKER_TEXT" >/dev/null 2>&1
+    rc=$?
+    ran_under "$label" "$mode"
+    check "$label: the leaf was made by a mkdir naming <ROOT>/dxe/<GUEST>/persist" test -e "$flag"
+    nonzero "$label: create fails" "$rc"
+    eq "$label: nothing landed in the outside directory" "." "$(tree_of "$out")"
+    case "$race" in
+        pre-symlink)
+            eq "$label: the share tree is exactly what was there" \
+                ".${NL}./dxe${NL}./dxe/$GUEST${NL}./dxe/$GUEST/persist" "$(tree_of "$root")"
+            same_link "$label: the planted symlink is untouched" "$d" "$out"
+            ;;
+        pre-dir)
+            eq "$label: nothing was written into the planted directory" \
+                ".${NL}./dxe${NL}./dxe/$GUEST${NL}./dxe/$GUEST/persist${NL}./dxe/$GUEST/persist/keep" "$(tree_of "$root")"
+            file_eq "$label: its content is untouched" "$d/keep" "precious$NL"
+            ;;
+        post-slot)
+            eq "$label: the leaf stays, holding only the planted slot (no temp file)" \
+                ".${NL}./dxe${NL}./dxe/$GUEST${NL}./dxe/$GUEST/persist${NL}./dxe/$GUEST/persist/$MARKER_NAME" "$(tree_of "$root")"
+            same_link "$label: the planted slot symlink is untouched" "$d/$MARKER_NAME" "$out"
+            ;;
+    esac
+}
+# create_existing MODE KIND: an existing leaf of KIND is refused untouched.
+create_existing() {
+    local mode="$1" kind="$2" root d out rc before label
+    label="[$mode] create over a leaf that is $kind"
+    root="$(new_root)"
+    use_root "$root"
+    d="$root/dxe/$GUEST/persist"
+    mkdir -p "$root/dxe/$GUEST"
+    out="$(outside_new)"
+    case "$kind" in
+        "a regular file") printf 'precious\n' >"$d" ;;
+        "a FIFO") mkfifo "$d" ;;
+        "a dangling symlink") ln -s "$out/ghost" "$d" ;;
+    esac
+    before="$(tree_of "$root")"
+    in_shell "$mode" nas dx_runtime_host_dir_create "$root" "$GUEST" "$MARKER_TEXT" >/dev/null 2>"$SCRATCH/ce.err"
+    rc=$?
+    ran_under "$label" "$mode"
+    nonzero "$label: non-zero" "$rc"
+    has "$label: stderr says exists" "$SCRATCH/ce.err" "exists"
+    eq "$label: the share tree is unchanged" "$before" "$(tree_of "$root")"
+    eq "$label: nothing landed in the outside directory" "." "$(tree_of "$out")"
+    case "$kind" in
+        "a regular file") check "$label: still a regular file" real_file "$d"; file_eq "$label: content untouched" "$d" "precious$NL" ;;
+        "a FIFO") check "$label: still a FIFO" real_fifo "$d" ;;
+        "a dangling symlink") same_link "$label: still the same symlink" "$d" "$out/ghost" ;;
+    esac
+}
+# create_level_link MODE LEVEL: a symlinked dxe or dxe/<GUEST> level.
+create_level_link() {
+    local mode="$1" level="$2" root out rc before label
+    label="[$mode] create under a symlinked $level level"
+    root="$(new_root)"
+    use_root "$root"
+    out="$(outside_new)"
+    if [ "$level" = dxe ]; then
+        ln -s "$out" "$root/dxe"
+    else
+        mkdir "$root/dxe"
+        ln -s "$out" "$root/dxe/$GUEST"
+    fi
+    before="$(tree_of "$root")"
+    in_shell "$mode" nas dx_runtime_host_dir_create "$root" "$GUEST" "$MARKER_TEXT" >/dev/null 2>/dev/null
+    rc=$?
+    ran_under "$label" "$mode"
+    nonzero "$label: non-zero" "$rc"
+    eq "$label: nothing was written through the link" "." "$(tree_of "$out")"
+    eq "$label: the share tree is unchanged" "$before" "$(tree_of "$root")"
+}
+for mode in $SHELL_MODES; do
+    create_marks "$mode"
+    create_mark_fails "$mode"
+    for race in pre-symlink pre-dir post-slot; do
+        create_race "$mode" "$race"
+    done
+    for kind in "a regular file" "a FIFO" "a dangling symlink"; do
+        create_existing "$mode" "$kind"
+    done
+    create_level_link "$mode" dxe
+    create_level_link "$mode" "dxe/<GUEST>"
+done
+
+# ---------------------------------------------------------------------------
+test_section "WP4.2: probe never reads through a symlinked dxe or dxe/<GUEST> level (F3)"
+# level_probe MODE LABEL ROOT: the exact report for a symlinked level.
+level_probe() {
+    local mode="$1" label="$2" root="$3" rc
+    in_shell "$mode" nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
+    rc=$?
+    ran_under "$label" "$mode"
+    eq "$label: status 0" "0" "$rc"
+    file_eq_out "$label: state=symlink, marker=absent, nothing read through it" \
+        "root=$(physical "$root")${NL}mounted=unknown${NL}state=symlink${NL}marker=absent${NL}" "$SCRATCH/probe.out"
+}
+level_cases() {
+    local mode="$1" root out1 out2 before1 before2
+    root="$(new_root)"
+    use_root "$root"
+    # The link targets hold a marked, populated persist directory for GUEST.
+    out1="$(outside_new)"
+    mkdir -p "$out1/$GUEST/persist"
+    printf '%s\n' "$MARKER_TEXT" >"$out1/$GUEST/persist/$MARKER_NAME"
+    printf 'data\n' >"$out1/$GUEST/persist/file"
+    out2="$(outside_new)"
+    mkdir -p "$out2/persist"
+    printf '%s\n' "$MARKER_TEXT" >"$out2/persist/$MARKER_NAME"
+    printf 'data\n' >"$out2/persist/file"
+    before1="$(tree_of "$out1")"
+    before2="$(tree_of "$out2")"
+
+    ln -s "$out1" "$root/dxe"
+    level_probe "$mode" "[$mode] probe, dxe is a symlink to a marked tree" "$root"
+    rm -f "$root/dxe"
+    ln -s "$out1/no-such-dxe" "$root/dxe"
+    level_probe "$mode" "[$mode] probe, dxe is a dangling symlink" "$root"
+    rm -f "$root/dxe"
+    mkdir "$root/dxe"
+    ln -s "$out2" "$root/dxe/$GUEST"
+    level_probe "$mode" "[$mode] probe, dxe/<GUEST> is a symlink to a marked tree" "$root"
+    rm -f "$root/dxe/$GUEST"
+    ln -s "$out2/no-such-guest" "$root/dxe/$GUEST"
+    level_probe "$mode" "[$mode] probe, dxe/<GUEST> is a dangling symlink" "$root"
+    rm -f "$root/dxe/$GUEST"
+
+    eq "[$mode] probe through symlinked levels: the first outside tree is unchanged" "$before1" "$(tree_of "$out1")"
+    eq "[$mode] probe through symlinked levels: the second outside tree is unchanged" "$before2" "$(tree_of "$out2")"
+}
+for mode in $SHELL_MODES; do
+    level_cases "$mode"
+done
+
+# ---------------------------------------------------------------------------
+test_section "WP4.2: an empty or \"-\" ROOT/PATH is refused on the host, with no ssh call (F4)"
+# These calls must never reach a shell: ssh only records (exit 99), and
+# recording no-op rm/chmod/chown/mv/find stand first on PATH; the cwd and
+# OLDPWD are empty scratch directories that must stay empty.
+NORUN_TOOLS="$(fake_tool_dir_create "$SCRATCH")"
+NORUN_SSH_LOG="$SCRATCH/norun-ssh.log"
+NORUN_TOOL_LOG="$SCRATCH/norun-tools.log"
+fake_tool_write "$NORUN_TOOLS" ssh "$(printf 'printf "%%s\\n" "$*" >> %q\nexit 99' "$NORUN_SSH_LOG")"
+for t in rm chmod chown mv find; do
+    fake_tool_write "$NORUN_TOOLS" "$t" "$(printf 'printf "%%s %%s\\n" %q "$*" >> %q\nexit 0' "$t" "$NORUN_TOOL_LOG")"
+done
+F4_CWD="$(mktemp -d "$SCRATCH/dxe-f4-cwd.XXXXXX")"
+F4_OLD="$(mktemp -d "$SCRATCH/dxe-f4-oldpwd.XXXXXX")"
+nas_norun() {
+    (
+        cd "$F4_OLD" && cd "$F4_CWD" || exit 1
+        export DX_RUNTIME=docker-ssh DX_REMOTE_HOST="$PERSIST_FIXTURE_NAS_HOST"
+        PATH="$NORUN_TOOLS:$PATH"
+        export PATH
+        "$@" </dev/null
+    )
+}
+degenerate_case() { # LABEL OP ARGS...
+    local label="$1" op="$2" out rc
+    shift 2
+    : >"$NORUN_SSH_LOG"
+    : >"$NORUN_TOOL_LOG"
+    out="$(nas_norun "dx_runtime_host_dir_$op" "$@" 2>"$SCRATCH/f4.err")"
+    rc=$?
+    nonzero "$label: non-zero" "$rc"
+    eq "$label: nothing on stdout" "" "$out"
+    nonempty_file "$label: a reason on stderr" "$SCRATCH/f4.err"
+    eq "$label: no ssh call" "0" "$(wc -l <"$NORUN_SSH_LOG" | tr -d ' ')"
+    eq "$label: no rm/chmod/chown/mv/find ran" "" "$(cat "$NORUN_TOOL_LOG")"
+}
+for v in "" "-"; do
+    degenerate_case "probe ROOT=[$v]" probe "$v" "$GUEST"
+    degenerate_case "create ROOT=[$v]" create "$v" "$GUEST" "$MARKER_TEXT"
+    degenerate_case "marker_write PATH=[$v]" marker_write "$v" "$MARKER_TEXT"
+    degenerate_case "usage PATH=[$v]" usage "$v"
+done
+eq "degenerate locations: the cwd stayed empty" "." "$(tree_of "$F4_CWD")"
+eq "degenerate locations: OLDPWD stayed empty" "." "$(tree_of "$F4_OLD")"
 
 # ---------------------------------------------------------------------------
 test_section "WP4.2: the runtime boundary audit still passes"
