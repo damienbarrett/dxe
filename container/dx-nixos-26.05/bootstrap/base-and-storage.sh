@@ -70,6 +70,9 @@ install_essentials() {
                 export PATH="$essentials_path:$PATH"
             fi
             hash -r 2>/dev/null || true
+            if missing="$(essentials_first_missing_optional_tool)"; then
+                echo "Warning: the optional essentials upgrade succeeded but '$missing' is still missing; not retrying this boot." >&2
+            fi
         else
             echo "Warning: the optional essentials upgrade for '$missing' failed; continuing without it." >&2
         fi

@@ -409,14 +409,19 @@ EOF
     fi
 }
 
+# Link count of a file: GNU stat first, BSD stat as the fallback (macOS).
+vscode_server_link_count() {
+    stat -c %h "$1" 2>/dev/null || stat -f %l "$1" 2>/dev/null || echo 0
+}
+
 # WP1.4: VS Code's Remote-SSH server is a prebuilt glibc binary that expects a
 # loader at the FHS path and libstdc++ on the default search path; this guest
-# has neither. nix-ld (in root's essentials profile) supplies both: the loader
+# has neither. nix-ld (from this boot's essentials) supplies both: the loader
 # path becomes a symlink to it, and its default library directory holds the
 # four libraries VS Code needs. VS Code's own documented marker file skips its
 # (otherwise failing) host requirements check. Optional: every problem is one
 # warning and status 0. DX_VSCODE_SERVER_ROOT prefixes the guest paths the
-# step touches (tests only); links always point into the essentials profile.
+# step touches (tests only); links always point into this boot's essentials output.
 vscode_server_warn() {
     echo "Warning: VS Code server support skipped: $1" >&2
     return 0
@@ -438,12 +443,18 @@ vscode_server_apply() {
 
 configure_vscode_server_support() {
     local root="${DX_VSCODE_SERVER_ROOT:-}"
-    local profile="" pkg="" ldpath="" loader="" target name
+    local profile="" nixld="" pkg="" ldpath="" loader="" target name
     local marker="$root/tmp/vscode-skip-server-requirements-check"
 
-    profile="$(essentials_profile_store_path)" || profile=""
+    # This boot's essentials (the first nix-ld on PATH), never the root profile:
+    # on Mac guests the volume's profile can be a stale first-seed generation.
+    nixld="$(command -v nix-ld)" || nixld=""
+    case "$nixld" in
+        /*) profile="${nixld%/*/*}" ;;
+        *) profile="" ;;
+    esac
     if [ -z "$profile" ] || [ ! -e "$profile/libexec/nix-ld" ]; then
-        vscode_server_warn "nix-ld is not in the root essentials profile"
+        vscode_server_warn "nix-ld is not on PATH (or not in its essentials)"
         return 0
     fi
     pkg="$(readlink -f "$profile/libexec/nix-ld")" || pkg=""
@@ -472,7 +483,7 @@ configure_vscode_server_support() {
         vscode_server_warn "$ldpath already exists and is not a Nix store link; leaving it alone"
         return 0
     fi
-    if [ -L "$marker" ] || { [ -e "$marker" ] && [ ! -f "$marker" ]; }; then
+    if [ -L "$marker" ] || { [ -e "$marker" ] && { [ ! -f "$marker" ] || [ "$(vscode_server_link_count "$marker")" != 1 ]; }; }; then
         vscode_server_warn "$marker is not a regular file; leaving it alone"
         return 0
     fi
