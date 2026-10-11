@@ -83,6 +83,14 @@ dx_runtime_image_identity() { dx_runtime_dispatch image_identity "$@"; }
 
 # Volume: exists, create, delete, usage.
 dx_runtime_volume_exists() { dx_runtime_dispatch volume_exists "$@"; }
+
+# dx_runtime_volume_state <name> -- one line, `present`, `absent` or
+# `unknown` (plans/do WP4.4): unlike volume_exists, it never mistakes a
+# runtime it could not ask for an absent volume. Status 0 for present and
+# absent, non-zero for unknown; it prints no `Error:` line, so the caller's
+# refusal is the only one. Host-path mode decides on it, because "no persist
+# volume" there can mean "create a new, empty /persist".
+dx_runtime_volume_state() { dx_runtime_dispatch volume_state "$@"; }
 dx_runtime_volume_create() { dx_runtime_dispatch volume_create "$@"; }
 dx_runtime_volume_delete() { dx_runtime_dispatch volume_delete "$@"; }
 
@@ -331,7 +339,12 @@ dx_runtime_lock_path() { dx_runtime_dispatch lock_path "$@"; }
 #   dx_runtime_host_dir_create ROOT GUEST MARKER    new directory + marker
 #   dx_runtime_host_dir_marker_write PATH MARKER    atomic marker replace
 #   dx_runtime_host_dir_usage PATH                  `du -sk -- PATH`
+#   dx_runtime_host_dir_establish MODE ROOT GUEST OWNER MARKER
+#       (WP4.4) as root, in one one-off container: create the directory, or
+#       take the existing empty one (MODE adopt or fresh-start), give it
+#       OWNER and mode 0755, then write MARKER last
 dx_runtime_host_dir_probe() { dx_runtime_dispatch host_dir_probe "$@"; }
 dx_runtime_host_dir_create() { dx_runtime_dispatch host_dir_create "$@"; }
 dx_runtime_host_dir_marker_write() { dx_runtime_dispatch host_dir_marker_write "$@"; }
 dx_runtime_host_dir_usage() { dx_runtime_dispatch host_dir_usage "$@"; }
+dx_runtime_host_dir_establish() { dx_runtime_dispatch host_dir_establish "$@"; }

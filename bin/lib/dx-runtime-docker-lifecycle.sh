@@ -57,6 +57,26 @@ dx_runtime_docker_volume_exists() {
     dx_runtime_docker_cli volume inspect "$1" >/dev/null 2>&1
 }
 
+# dx_runtime_volume_state's docker-ssh answer, from the same single
+# `volume inspect`: success is present; a failure that says "no such volume"
+# in any letter case (the CLI's "Error: No such volume: NAME", the daemon's
+# "get NAME: no such volume") is absent; any other failure -- the daemon or
+# the ssh connection down, permission denied -- is unknown, and its message
+# is passed on as `dx:` lines, never an `Error:` line.
+dx_runtime_docker_volume_state() {
+    local err
+    if err="$(dx_runtime_docker_cli volume inspect "$1" 2>&1 >/dev/null)"; then
+        printf 'present\n'
+        return 0
+    fi
+    case "$(printf '%s' "$err" | tr '[:upper:]' '[:lower:]')" in
+        *"no such volume"*) printf 'absent\n'; return 0 ;;
+    esac
+    [ -z "$err" ] || printf '%s\n' "$err" | sed 's/^/dx: volume inspect: /' >&2
+    printf 'unknown\n'
+    return 1
+}
+
 dx_runtime_docker_container_exists() {
     dx_runtime_docker_cli container inspect "$1" >/dev/null 2>&1
 }
@@ -757,4 +777,61 @@ dx_runtime_docker_host_dir_marker_write() {
 dx_runtime_docker_host_dir_usage() {
     dx_runtime_docker_host_dir_operand_ok "$1" || return 1
     dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_USAGE_SCRIPT" sh "$1"
+}
+
+# Establishing a directory (WP4.4; spec R15, R18; plans/do D-3, D-10) needs
+# root on the NAS -- the new directory belongs to the guest's dx user, and
+# the management SSH account is not root -- so it runs in ONE one-off
+# container from $DX_IMAGE: --user 0:0, no network, never pulled, the share
+# root bound with --mount (never -v, which would create a missing root) at
+# this target. The script reads everything from "$@": $1 the bind target,
+# $2 GUEST, $3 MODE, $4 OWNER, $5 the mount sentinel; the marker bytes come
+# on stdin. In order it: refuses unless the sentinel is a regular file at
+# the root (the share may have been unmounted since the probe); refuses a
+# symlink at dxe, dxe/GUEST or the leaf; for create, refuses a leaf that
+# exists in any form, makes the missing parents (never chowned or chmodded)
+# and the leaf; for adopt and fresh-start, needs the leaf to be a directory
+# with no entries at all; then chowns the leaf to OWNER and sets mode 0755;
+# and writes the marker last through the shared marker step (temp file, one
+# mv). A refusal writes nothing; a later failure leaves the leaf empty and
+# unmarked, which the next dx-create-volumes adopts.
+DX_RUNTIME_DOCKER_HOST_DIR_BIND_TARGET=/dxe-share
+DX_RUNTIME_DOCKER_HOST_DIR_ESTABLISH_SCRIPT='unset CDPATH; umask 022; cd -P -- "$1" || exit 1; m="$5"; if [ ! -f "$m" ] || [ -L "$m" ]; then echo "dx: the share does not look mounted: no sentinel file $m at its root" >&2; exit 1; fi; g="dxe/$2"; p="$g/persist"; if [ -L dxe ] || [ -L "$g" ] || [ -L "$p" ]; then echo "dx: refusing a symlinked path: $p" >&2; exit 1; fi; case "$3" in create) if [ -e "$p" ]; then echo "dx: exists: $p" >&2; exit 1; fi; if [ ! -d dxe ]; then mkdir -- dxe || exit 1; fi; if [ ! -d "$g" ]; then mkdir -- "$g" || exit 1; fi; mkdir -- "$p" || exit 1 ;; adopt | fresh-start) if [ ! -d "$p" ]; then echo "dx: not a directory: $p" >&2; exit 1; fi; l=$(ls -A -- "$p") || exit 1; if [ -n "$l" ]; then echo "dx: not empty: $p" >&2; exit 1; fi ;; *) echo "dx: unknown mode: $3" >&2; exit 1 ;; esac; chown "$4" "$p" || exit 1; chmod 0755 "$p" || exit 1; cd -P -- "$p" || exit 1; '"$DX_RUNTIME_DOCKER_HOST_DIR_MARKER_TAIL"
+
+# dx_runtime_docker_host_dir_establish_ok MODE ROOT GUEST OWNER: the checks
+# made before establish's one docker call. ROOT becomes part of a --mount
+# option, so it must be absolute and free of ',' (another option) and
+# newlines; OWNER is UID:GID in digits. Each reason is a `dx:` line, so the
+# caller's own Error line is the only one.
+dx_runtime_docker_host_dir_establish_ok() {
+    local nl=$'\n' why="" owner=bad
+    case "$1" in
+        create | adopt | fresh-start) : ;;
+        *) why="unknown mode '$1' (expected create, adopt or fresh-start)" ;;
+    esac
+    case "$2" in
+        "" | [!/]* | *,* | *"$nl"*) why="${why:-the share root '$2' cannot be bound: it must be an absolute path without ',' or a newline}" ;;
+    esac
+    dx_persist_marker_valid_name "$3" || why="${why:-invalid guest name for the NAS directory: $3}"
+    case "$4" in
+        *[!0-9:]* | *:*:*) : ;;
+        [0-9]*:[0-9]*) owner=ok ;;
+    esac
+    [ "$owner" = ok ] || why="${why:-the owner '$4' is not UID:GID in digits}"
+    [ -n "${DX_PERSIST_HOST_MOUNT_SENTINEL:-}" ] || why="${why:-no DX_PERSIST_HOST_MOUNT_SENTINEL, so nothing would prove the share is mounted}"
+    [ -n "${DX_IMAGE:-}" ] || why="${why:-no DX_IMAGE to run the one-off container from}"
+    [ -n "$why" ] || return 0
+    echo "dx: refusing to establish the NAS directory: $why" >&2
+    return 1
+}
+
+dx_runtime_docker_host_dir_establish() {
+    local stream
+    dx_runtime_docker_host_dir_establish_ok "$1" "$2" "$3" "$4" || return 1
+    stream="$(dx_runtime_docker_host_dir_marker_stream "$5" && printf x)" || return 1
+    stream="${stream%x}"
+    printf '%s' "$stream" | dx_runtime_docker_cli run --rm -i --network none --user 0:0 --pull never \
+        --mount "type=bind,source=$2,target=$DX_RUNTIME_DOCKER_HOST_DIR_BIND_TARGET" \
+        --entrypoint sh "$DX_IMAGE" -c "$DX_RUNTIME_DOCKER_HOST_DIR_ESTABLISH_SCRIPT" sh \
+        "$DX_RUNTIME_DOCKER_HOST_DIR_BIND_TARGET" "$3" "$1" "$4" "$DX_PERSIST_HOST_MOUNT_SENTINEL" >&2
 }

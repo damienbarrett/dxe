@@ -91,6 +91,19 @@ dx_runtime_apple_image_identity() {
 }
 
 dx_runtime_apple_volume_exists() { container volume inspect "$1" >/dev/null 2>&1; }
+
+# dx_runtime_volume_state's Apple answer is two-state: present, or absent on
+# any inspect failure, the reading volume_exists has always made. The runtime
+# is local, and dx_require_container_cli proves it running before any
+# command gets this far; host-path mode, the reason for `unknown`, is refused
+# under Apple by the configuration.
+dx_runtime_apple_volume_state() {
+    if dx_runtime_apple_volume_exists "$1"; then
+        printf 'present\n'
+    else
+        printf 'absent\n'
+    fi
+}
 dx_runtime_apple_volume_create() { container volume create "$@"; }
 dx_runtime_apple_volume_delete() { container volume rm "$@"; }
 
@@ -368,3 +381,4 @@ dx_runtime_apple_host_dir_probe() { dx_runtime_apple_host_dir_unsupported; }
 dx_runtime_apple_host_dir_create() { dx_runtime_apple_host_dir_unsupported; }
 dx_runtime_apple_host_dir_marker_write() { dx_runtime_apple_host_dir_unsupported; }
 dx_runtime_apple_host_dir_usage() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_establish() { dx_runtime_apple_host_dir_unsupported; }

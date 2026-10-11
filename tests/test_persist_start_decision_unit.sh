@@ -7,9 +7,10 @@ set -uo pipefail
 # WP4.3 (implementer unit cases): in-process coverage for the start decision
 # helpers in bin/lib/dx-persist-dir.sh that the acceptance suite
 # (tests/test_persist_start_decision.sh) does not reach: the fail-closed arms
-# of the record lookup and the report parser, every refusal message, the
-# per-token wiring helpers with the runtime replaced by recorders, and the
-# WP4.4 placeholder for dx_persist_dir_establish.
+# of the record lookup and the report parser, every refusal message, and the
+# per-token wiring helpers with the runtime replaced by recorders. WP4.4
+# replaced the dx_persist_dir_establish placeholder these cases also pinned;
+# its in-process cases are in tests/test_persist_dir_create_unit.sh.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
@@ -48,16 +49,6 @@ has() { grep -Fq -- "$2" <<<"$1"; }
 same() { # LABEL WANT GOT
     if [ "$2" = "$3" ]; then test_pass "$1"; else test_fail "$1 (want [$2] got [$3])"; fi
 }
-
-# --- dx_persist_dir_establish: the WP4.4 placeholder fails closed ------------
-out="$(PATH="$BIN:$PATH" dx_persist_dir_establish create 2>"$fixture/err")"
-rc=$?
-err="$(cat "$fixture/err")"
-check "establish placeholder: status 1" [ "$rc" -eq 1 ]
-check "establish placeholder: exactly one Error line, nothing on stdout" one_error "$err"
-check "establish placeholder: stdout is empty" [ -z "$out" ]
-check "establish placeholder: says it is not implemented yet" has "$err" "not implemented yet"
-check "establish placeholder: no runtime, remote or file-system call" [ ! -s "$CALLS" ]
 
 # --- dx_persist_dir_record_path / _exists: fail-closed arms ------------------
 got="$(XDG_STATE_HOME="" HOME="" dx_persist_dir_record_path)"
@@ -99,7 +90,12 @@ dx_runtime_host_dir_probe() {
     [ "$P_PROBE_RC" = 0 ] || return "$P_PROBE_RC"
     printf '%s\n' "$P_REPORT"
 }
-dx_runtime_volume_exists() { echo "volume_exists $1" >>"$P_LOG"; [ "$P_VOLUME" = 0 ]; }
+# The persist volume's state (WP4.4: dx_runtime_volume_state): P_VOLUME=0 is
+# present, anything else absent.
+dx_runtime_volume_state() {
+    echo "volume_state $1" >>"$P_LOG"
+    if [ "$P_VOLUME" = 0 ]; then echo present; else echo absent; fi
+}
 container_ensure_volume() { echo "ensure $1" >>"$P_LOG"; return "$P_ENSURE_RC"; }
 rep() { # MOUNTED STATE MARKER [MARKER-TEXT]
     if [ "$3" = present ]; then
@@ -142,7 +138,7 @@ P_PROBE_RC=1
 run_fn dx_persist_host_dir_decide
 refused "decide, the probe fails" DX_PERSIST_HOST_ROOT=/share-u nas-u
 check "decide: one probe of the configured root and guest, one volume lookup" \
-    [ "$LOG" = "$(printf 'probe /share-u dx-u\nvolume_exists dx-u-persist')" ]
+    [ "$LOG" = "$(printf 'probe /share-u dx-u\nvolume_state dx-u-persist')" ]
 P_PROBE_RC=0
 
 P_REPORT="$(rep unknown nonempty present $'schema=1\nguest=dx-u\nstate=ready')"
@@ -222,7 +218,8 @@ DX_PERSIST_STORAGE=volume run_fn dx_persist_create_decision
 same "create decision, volume mode: status 0, silent, no call" "0|||" "$RC|$OUT|$ERR|$LOG"
 P_REPORT="$(rep yes absent absent)"
 run_fn dx_persist_create_decision
-same "create decision, host-path, new guest on a mounted share: create" "0|create" "$RC|$OUT"
+same "create decision, host-path, new guest on a mounted share: create, then the probe report" \
+    "0|$(printf 'create\n%s' "$P_REPORT")" "$RC|$OUT"
 
 # --- dx_persist_storage_ensure -------------------------------------------------
 establish_log() { echo "establish $*" >>"$P_LOG"; return "${P_ESTABLISH_RC:-0}"; }
@@ -234,8 +231,11 @@ DX_PERSIST_STORAGE=volume run_fn dx_persist_storage_ensure ""
 check "ensure, volume mode: a failing ensure is returned" [ "$RC" -eq 4 ]
 P_ENSURE_RC=0
 dx_persist_dir_establish() { establish_log "$@"; }
+dx_persist_dir_record_backfill() { echo "backfill $(printf '%s' "$*" | tr '\n' '|')" >>"$P_LOG"; }
 run_fn dx_persist_storage_ensure ok
-same "ensure, host-path ok: no volume, no establish" "0|" "$RC|$LOG"
+same "ensure, host-path ok: the record backfill (no report), no volume, no establish" "0|backfill " "$RC|$LOG"
+run_fn dx_persist_storage_ensure "$(printf 'ok\nroot=/share-u\nmounted=yes')"
+same "ensure, host-path ok: the backfill gets the report after the token" "0|backfill root=/share-u|mounted=yes" "$RC|$LOG"
 check "ensure, host-path ok: names the directory" has "$OUT" "$DIR"
 for pair in create:create adopt:adopt ok-fresh-start:fresh-start; do
     run_fn dx_persist_storage_ensure "${pair%%:*}"
