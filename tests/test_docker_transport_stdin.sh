@@ -34,7 +34,6 @@ printf "%s" "$last" > "$DXE_FAKE_CALLS/c$n.cmd"
 cat > "$DXE_FAKE_CALLS/c$n.stdin"
 case "$last" in
     *"command -v docker"*) echo /fake/docker ;;
-    *"command -v tailscale"*) echo 100.64.0.7 ;;
 esac'
 source "$BASE_DIR/bin/lib/dx-runtime-docker.sh"
 
