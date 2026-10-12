@@ -69,9 +69,12 @@ set -uo pipefail
 #    `--pull never`) does NOT say "boot the guest once".
 #    It parses the run's stdout:
 #      - the version is the first "rsync  version N.N.N" line; it is
-#        compared NUMERICALLY by (major, minor): 3.10.0 and 4.0.0 pass,
-#        3.0.7 and 2.6.9 are refused ("below 3.1" in the message, with the
-#        version found named in it);
+#        compared NUMERICALLY by (major, minor, patch; a missing patch is 0)
+#        against the floor 3.1.3 (WP6.7: the copy's --modify-window=-1
+#        compares nanoseconds only from 3.1.3): 3.1.3, 3.10.0 and 4.0.0
+#        pass, 3.0.7 and 2.6.9 are refused ("below 3.1.3" in the message,
+#        with the version found named in it; 3.1.2 and the rest of the
+#        floor are pinned by tests/test_persist_followup_hardening.sh B);
 #      - capabilities are the comma-separated tokens after "Capabilities:"
 #        up to the "Optimizations:" line (or the end), whitespace-trimmed,
 #        across the wrapped lines. A capability is present only as an
@@ -87,7 +90,7 @@ set -uo pipefail
 #        acls=yes|no
 #        xattrs=yes|no
 #    On refusal: non-zero, nothing on stdout, and ONE line starting "Error:"
-#    on stderr naming rsync and the gap only: "below 3.1" plus the version,
+#    on stderr naming rsync and the gap only: "below 3.1.3" plus the version,
 #    "hard links", "ACLs" or "xattrs" respectively (the message for one gap
 #    does not mention the others). Unparseable output (no version line) is
 #    refused with "could not parse" in the message; a failing docker run is
@@ -385,7 +388,7 @@ xattrs=yes" "$CHECK_RC:$CHECK_OUT"
     check_rsync "$V_307" 0
     if [ "$CHECK_RC" != 0 ]; then test_pass "3.0.7 (the QTS build) is refused"; else test_fail "3.0.7 (the QTS build) is refused"; fi
     has "3.0.7: the message names the version" "$CHECK_ERR" "3.0.7"
-    has "3.0.7: the message says below 3.1" "$CHECK_ERR" "below 3.1"
+    has "3.0.7: the message says below 3.1.3 (WP6.7: the floor is 3.1.3)" "$CHECK_ERR" "below 3.1.3"
     eq "3.0.7: Error: line, nothing on stdout" "Error:|" "$(printf '%s' "$CHECK_ERR" | cut -d' ' -f1)|$CHECK_OUT"
     check_rsync "$V_269" 0
     if [ "$CHECK_RC" != 0 ]; then test_pass "2.6.9 is refused"; else test_fail "2.6.9 is refused"; fi
