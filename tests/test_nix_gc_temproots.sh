@@ -116,6 +116,9 @@ GCT_RULE="------------------------------------------------------------"
 #     (GCT_TEMPROOTS, GCT_PROC), or simulates a failure (GCT_PROGRAM_MODE);
 #   - a GC/optimise call snapshots the fixture temp-roots directory at that
 #     moment (proving what GC would see) and prints "FAKE-GC <command>";
+#   - the root-owned paths hand-back (fix/gc-rootpaths; its own suite,
+#     tests/test_nix_gc_rootpaths.sh, runs its program) reports nothing
+#     root-owned ("0");
 #   - anything else (dx-reclaim's reports and trims) succeeds silently.
 fake_tool_write "$FAKE_DIR" gct-guest-exec '
 record="exec"
@@ -158,6 +161,11 @@ if [ "$user" = dx ] && [ "$#" -eq 6 ] && [ "$1" = bash ] && [ "$2" = -c ] && [ "
         garbage) printf "%s\n" "removed some files"; exit 0 ;;
     esac
     exec bash -c "$3" "$4" "$GCT_TEMPROOTS" "$GCT_PROC"
+fi
+if [ "$user" = root ] && [ "$#" -eq 6 ] && [ "$1" = bash ] && [ "$2" = -c ] && [ "$4" = bash ] \
+    && [ "$5" = /nix/store ] && [ "$6" = /nix/var/log/nix ]; then
+    printf "0\n"
+    exit 0
 fi
 exit 0'
 
@@ -247,6 +255,9 @@ GCT_FULL_MIX=".hidden-123:f
 888:l
 notapid:f"
 GCT_CLEAR_RECORD="exec [-u] [dx] [$GCT_CONTAINER] [bash] [-c] [<program>] [bash] [/nix/var/nix/temproots] [/proc]"
+# fix/gc-rootpaths: dx-gc and dx-reclaim hand root-owned store paths back,
+# as root, right after the clear and before GC.
+GCT_HANDBACK_RECORD="exec [-u] [root] [$GCT_CONTAINER] [bash] [-c] [<program>] [bash] [/nix/store] [/nix/var/log/nix]"
 
 gct_listing() { PATH="$FAKE_DIR:$PATH" gct-listing "$1"; }
 
@@ -391,8 +402,9 @@ gct_check "clear (docker-ssh): reports the count and returns 0" \
 
 gct_new_case stale
 gct_entry dx-gc
-gct_check "dx-gc: clears stale temp roots, then collects, then optimises -- three exec calls in that order, all as dx" \
+gct_check "dx-gc: clears stale temp roots (as dx), hands root-owned paths back (as root), then collects and optimises (as dx) -- four exec calls in that order" \
     gct_transcript_is "$GCT_CLEAR_RECORD
+$GCT_HANDBACK_RECORD
 exec [-u] [dx] [$GCT_CONTAINER] [bash] [-lc] [nix-collect-garbage --delete-older-than 14d]
 exec [-u] [dx] [$GCT_CONTAINER] [bash] [-lc] [nix-store --optimise]"
 gct_check "dx-gc: by the time GC runs, the stale files (including the unreadable one) are already gone" \
@@ -417,6 +429,7 @@ FAKE-GC nix-store --optimise
 Nix maintenance complete."
 gct_check "dx-gc (nothing stale): the clear call still precedes GC" \
     gct_transcript_is "$GCT_CLEAR_RECORD
+$GCT_HANDBACK_RECORD
 exec [-u] [dx] [$GCT_CONTAINER] [bash] [-lc] [nix-collect-garbage --delete-older-than 14d]
 exec [-u] [dx] [$GCT_CONTAINER] [bash] [-lc] [nix-store --optimise]"
 
@@ -427,17 +440,19 @@ gct_entry dx-gc
 unset GCT_PROGRAM_MODE
 gct_check "dx-gc (clear fails): GC and optimisation still run, in order" \
     gct_transcript_is "$GCT_CLEAR_RECORD
+$GCT_HANDBACK_RECORD
 exec [-u] [dx] [$GCT_CONTAINER] [bash] [-lc] [nix-collect-garbage --delete-older-than 14d]
 exec [-u] [dx] [$GCT_CONTAINER] [bash] [-lc] [nix-store --optimise]"
 gct_check "dx-gc (clear fails): exits 0, warns on stderr, prints no Cleared line" \
     eval '[ "$gct_rc" -eq 0 ] && gct_warning_line_has "(exit 125)" && ! grep -F Cleared "$GCT_CASE/out" >/dev/null'
 
 # =============================================================================
-# bin/dx-reclaim end to end (Apple: reports, clear, GC, trims, reports).
+# bin/dx-reclaim end to end (Apple: reports, clear, hand-back, GC, trims, reports).
 # =============================================================================
 
 GCT_RECLAIM_TRANSCRIPT="exec [$GCT_CONTAINER] [/usr/bin/bash] [-lc] [<script>] [bash] [/nix] [/persist]
 $GCT_CLEAR_RECORD
+$GCT_HANDBACK_RECORD
 exec [-u] [dx] [$GCT_CONTAINER] [/usr/bin/bash] [-lc] [nix-collect-garbage -d]
 exec [$GCT_CONTAINER] [/usr/bin/bash] [-lc] [<script>] [bash] [/nix]
 exec [$GCT_CONTAINER] [/usr/bin/bash] [-lc] [<script>] [bash] [/persist]
@@ -451,7 +466,7 @@ gct_reclaim_gc_segment_is() { [ "$(gct_reclaim_gc_segment)" = "$1" ]; }
 
 gct_new_case stale
 gct_entry dx-reclaim
-gct_check "dx-reclaim: the clear call sits immediately before GC; every other guest call is unchanged" \
+gct_check "dx-reclaim: the clear call is followed only by the root-owned paths hand-back, then GC; every other guest call is unchanged" \
     gct_transcript_is "$GCT_RECLAIM_TRANSCRIPT"
 gct_check "dx-reclaim: by the time GC runs, the stale files are already gone" \
     gct_gc_saw_is 1 "$GCT_SURVIVORS"
