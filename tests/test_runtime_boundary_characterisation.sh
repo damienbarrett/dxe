@@ -531,8 +531,11 @@ fi
 rm -rf "$ex_fixture"
 
 # =============================================================================
-# bin/dx-gc: refuses when not running; when running, two plain (non-captured)
-# `-u dx` exec calls in a fixed order, output streamed straight through.
+# bin/dx-gc: refuses when not running; when running, three `-u dx` exec calls
+# in a fixed order: the stale temporary-roots clear (fix/gc-temproots; its
+# guest program text is the author's, so this fake logs it as <program> --
+# tests/test_nix_gc_temproots.sh runs it for real), then two plain
+# (non-captured) maintenance calls, output streamed straight through.
 # =============================================================================
 
 gc_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rtb-gc.XXXXXX")"
@@ -545,7 +548,11 @@ case "$1" in
         ;;
     exec)
         shift
-        printf "%s\n" "$@" >> "$DX_FAKE_ARGV_LOG"
+        prev=""
+        for a in "$@"; do
+            if [ "$prev" = "-c" ]; then printf "%s\n" "<program>"; else printf "%s\n" "$a"; fi
+            prev="$a"
+        done >> "$DX_FAKE_ARGV_LOG"
         printf "\f\n" >> "$DX_FAKE_ARGV_LOG"
         exit 0
         ;;
@@ -568,11 +575,11 @@ fi
 env PATH="$gc_fixture/bin:/usr/bin:/bin" HOME="$(fresh_home "$gc_fixture/home2")" \
     DX_CONTAINER_NAME=dxe-rtb-gc DX_FAKE_RUNNING=1 DX_FAKE_ARGV_LOG="$log" \
     "$BASE_DIR/bin/dx-gc" >/dev/null 2>&1
-expected=$'-u\ndx\ndxe-rtb-gc\nbash\n-lc\nnix-collect-garbage --delete-older-than 14d\n\f\n-u\ndx\ndxe-rtb-gc\nbash\n-lc\nnix-store --optimise\n\f'
+expected=$'-u\ndx\ndxe-rtb-gc\nbash\n-c\n<program>\nbash\n/nix/var/nix/temproots\n/proc\n\f\n-u\ndx\ndxe-rtb-gc\nbash\n-lc\nnix-collect-garbage --delete-older-than 14d\n\f\n-u\ndx\ndxe-rtb-gc\nbash\n-lc\nnix-store --optimise\n\f'
 if [ "$(cat "$log")" = "$expected" ]; then
-    test_pass "dx-gc runs garbage collection then store optimisation, in order, as dx, with the exact commands"
+    test_pass "dx-gc clears stale temporary roots, then runs garbage collection then store optimisation, in order, as dx, with the exact commands"
 else
-    test_fail "dx-gc runs the two maintenance commands as dx in order (got: $(cat "$log"))"
+    test_fail "dx-gc clears stale temporary roots, then runs the two maintenance commands, as dx in order (got: $(cat "$log"))"
 fi
 rm -rf "$gc_fixture"
 
