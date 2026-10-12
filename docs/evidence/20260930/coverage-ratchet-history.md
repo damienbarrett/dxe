@@ -1382,3 +1382,42 @@ without it): `covered=100%` (4468/4468), `scope_exec_lines=4468`,
 The oldest dated ratchet.env line was moved here to keep that file at 10 lines:
 
     # 2026-09-30 ceiling 2634 -> 2635: WP5.2 added one `source` line (dx-bootstrap-protocol.sh) to bin/dx-lib.sh's facade order.
+
+## 2026-10-13: root-owned Nix paths handed back before guest GC (fix/gc-rootpaths)
+
+`scope_exec_lines_floor` 4468 -> 4505 (raised to the measured total, allowed
+direction): `bin/lib/dx-nix-gc.sh` 12 -> 24 executable lines
+(`dx_nix_gc_hand_back_root_paths`, the shared `dx_nix_gc_guest_count` that
+the temp-roots clear now uses too, and `dx_nix_gc_prepare`; the root guest
+program is a heredoc constant, which kcov does not count) and
+`container/dx-nixos-26.05/bootstrap/common.sh` +25
+(`hand_back_root_nix_paths` and its call in `run_root_nix`). Both are 100%
+covered by `tests/test_nix_gc_rootpaths.sh`,
+`tests/test_nix_gc_rootpaths_unit.sh`,
+`tests/test_bootstrap_nix_rootpaths.sh` (its real-ownership cases run only
+as root, i.e. in this runner) and `tests/test_bootstrap_nix_rootpaths_unit.sh`.
+
+`unscoped_prod_exec_lines_ceiling` unchanged at 2642. The entry points gain
+no line: `bin/dx-gc` and `bin/dx-reclaim` each replace their one
+`dx_nix_gc_clear_stale_temproots "$DX_CONTAINER_NAME" || true` line with one
+`dx_nix_gc_prepare "$DX_CONTAINER_NAME"` line (the clear, then the hand-back,
+each best effort), instead of adding a second call line each (+2).
+
+| File | Base | Head | Growth |
+| --- | --- | --- | --- |
+| `bin/dx-gc` | 18 | 18 | 0 (the clear call replaced by `dx_nix_gc_prepare`) |
+| `bin/dx-reclaim` | 79 | 79 | 0 (the same) |
+
+Measured with `tests/run-coverage-linux.sh` in a scratch worktree of the
+branch head with `wp/0.3` merged (main's sections 10 and 16 abort the runner
+without it). The first run, on `bfc6077`, reported 4504/4505 (99.98%): one
+line, the log loop's failure branch in `hand_back_root_nix_paths`, had no
+case; `3c84b5c` adds one (mutation-checked). The final run, on `3c84b5c` with
+this ratchet: `covered=100%` (4505/4505), `scope_exec_lines=4505`,
+`unscoped_prod_exec_lines=2642`, ratchet check passed; in that root runner
+`tests/test_nix_gc_rootpaths.sh` 40/40, `tests/test_bootstrap_nix_rootpaths.sh`
+25/25, the two unit suites 6/6 and 7/7, none skipped.
+
+The oldest dated ratchet.env line was moved here to keep that file at 10 lines:
+
+    # 2026-10-03 ceiling 2635 -> 2650: the usage service adds 15 irreducible exempt-set lines after moving every movable line into bin/lib/dx-usage-service.sh and bootstrap/usage-service.sh: bin/dx-usage-service 6 (set -e, SCRIPT_DIR, two sources, the usage_service_main wrapper the entrypoint contract requires, the main guard), scripts/dx-usage-service.sh 3, bin/dx-create-container 3 (one source, one check call, one args call), bootstrap.sh 2 (one dispatch call, one source), scripts/dx-ai.sh 1 (the hook call). See docs/evidence/20260930/coverage-ratchet-history.md.
