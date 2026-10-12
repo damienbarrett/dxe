@@ -3,6 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+# Sourced here, not in dx-lib.sh's facade: only this entrypoint and
+# bin/dx-gc use it, and the facade's order is a tested contract.
+# shellcheck source=lib/dx-nix-gc.sh
+source "$SCRIPT_DIR/lib/dx-nix-gc.sh"
 
 rule() {
     printf '%s\n' "------------------------------------------------------------"
@@ -76,6 +80,9 @@ report_usage
 rule
 echo "Running Nix garbage collection in guest..."
 rule
+# One stale root-owned temporary-roots file stops the whole collection;
+# clear those first. Best effort: a failed clear warns and GC still runs.
+dx_nix_gc_clear_stale_temproots "$DX_CONTAINER_NAME" || true
 run_in_guest "nix-collect-garbage -d"
 
 rule
