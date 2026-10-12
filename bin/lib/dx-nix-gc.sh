@@ -76,6 +76,31 @@ printf '%s\n' "$removed"
 exit "$status"
 DX_NIX_GC_CLEAR_TEMPROOTS
 
+# dx_nix_gc_guest_count USER CONTAINER WHAT PROGRAM ARG...
+#
+# Runs one guest program with exactly one runtime call,
+#   dx_runtime_exec -u USER CONTAINER bash -c PROGRAM bash ARG...
+# and prints the lone decimal count it reported on stdout. A call that exits
+# non-zero, or that does not print a lone count, prints one
+#   Warning: could not WHAT (exit N|the guest reported no count); garbage collection runs anyway.
+# line on stderr and returns 1.
+dx_nix_gc_guest_count() {
+    local user="$1" container="$2" what="$3" program="$4" output status=0
+    shift 4
+    output="$(dx_runtime_exec -u "$user" "$container" bash -c "$program" bash "$@")" || status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "Warning: could not $what (exit $status); garbage collection runs anyway." >&2
+        return 1
+    fi
+    case "$output" in
+        '' | *[!0-9]*)
+            echo "Warning: could not $what (the guest reported no count); garbage collection runs anyway." >&2
+            return 1
+            ;;
+    esac
+    printf '%s\n' "$output"
+}
+
 # dx_nix_gc_clear_stale_temproots CONTAINER
 #
 # Removes stale Nix temporary-roots files in the guest before a GC, with
@@ -86,20 +111,10 @@ DX_NIX_GC_CLEAR_TEMPROOTS
 # returns 1; callers carry on with the GC regardless (Nix stays the
 # authority, so a failed clear is never worse than no clear).
 dx_nix_gc_clear_stale_temproots() {
-    local container="$1" output status=0
-    output="$(dx_runtime_exec -u dx "$container" bash -c "$dx_nix_gc_clear_temproots_program" bash /nix/var/nix/temproots /proc)" || status=$?
-    if [ "$status" -ne 0 ]; then
-        echo "Warning: could not clear stale Nix temporary roots files (exit $status); garbage collection runs anyway." >&2
-        return 1
-    fi
-    case "$output" in
-        '' | *[!0-9]*)
-            echo "Warning: could not clear stale Nix temporary roots files (the guest reported no count); garbage collection runs anyway." >&2
-            return 1
-            ;;
-    esac
-    if [ "$output" != 0 ]; then
-        echo "Cleared $output stale Nix temporary roots file(s)."
+    local count
+    count="$(dx_nix_gc_guest_count dx "$1" "clear stale Nix temporary roots files" "$dx_nix_gc_clear_temproots_program" /nix/var/nix/temproots /proc)" || return 1
+    if [ "$count" != 0 ]; then
+        echo "Cleared $count stale Nix temporary roots file(s)."
     fi
     return 0
 }
@@ -199,20 +214,10 @@ DX_NIX_GC_HAND_BACK_ROOT_PATHS
 # stderr and returns 1; callers carry on with the GC regardless (it then
 # fails exactly as it would have without the hand-back).
 dx_nix_gc_hand_back_root_paths() {
-    local container="$1" output status=0
-    output="$(dx_runtime_exec -u root "$container" bash -c "$dx_nix_gc_hand_back_root_paths_program" bash /nix/store /nix/var/log/nix)" || status=$?
-    if [ "$status" -ne 0 ]; then
-        echo "Warning: could not hand root-owned Nix paths back to the store owner (exit $status); garbage collection runs anyway." >&2
-        return 1
-    fi
-    case "$output" in
-        '' | *[!0-9]*)
-            echo "Warning: could not hand root-owned Nix paths back to the store owner (the guest reported no count); garbage collection runs anyway." >&2
-            return 1
-            ;;
-    esac
-    if [ "$output" != 0 ]; then
-        echo "Handed $output root-owned Nix path(s) back to the store owner."
+    local count
+    count="$(dx_nix_gc_guest_count root "$1" "hand root-owned Nix paths back to the store owner" "$dx_nix_gc_hand_back_root_paths_program" /nix/store /nix/var/log/nix)" || return 1
+    if [ "$count" != 0 ]; then
+        echo "Handed $count root-owned Nix path(s) back to the store owner."
     fi
     return 0
 }
