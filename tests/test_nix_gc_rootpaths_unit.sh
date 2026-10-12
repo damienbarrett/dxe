@@ -153,6 +153,13 @@ ru_program "$FAKE_DIR:/usr/bin:/bin"
 ru_check "program: one chown fails -- every other entry is still tried, only real hand-backs are counted, and it exits non-zero" \
     eval '[ "$ru_rc" -ne 0 ] && ru_out_is 4 && [ "$(ru_chown_count)" -eq 5 ]'
 
+ru_new_case
+RU_CHOWN_FAIL=r-x.drv.bz2
+export RU_CHOWN_FAIL
+ru_program "$FAKE_DIR:/usr/bin:/bin"
+ru_check "program: one log entry's chown fails -- the same: the rest tried, only real hand-backs counted, non-zero exit" \
+    eval '[ "$ru_rc" -ne 0 ] && ru_out_is 4 && [ "$(ru_chown_count)" -eq 5 ]'
+
 # --- A missing tool is a failure, not "nothing to hand back" ----------------
 ru_new_case
 if (PATH="$NOFIND_DIR:$RU_FALLBACKS"; command -v find >/dev/null 2>&1); then

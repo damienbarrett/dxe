@@ -155,6 +155,13 @@ br_run "$BR_PATH" hand_back_root_nix_paths
 br_check "one chown fails: every other entry is still tried, the Handed line counts only the real hand-backs, then it warns and returns non-zero" \
     eval '[ "$br_rc" -ne 0 ] && br_out_is "Handed 3 root-owned Nix path(s) back to the store owner 4242:4243." && [ "$(br_chown_count)" -eq 4 ] && br_warning_given'
 
+br_new_case
+BR_CHOWN_FAIL=r-x.drv.bz2
+export BR_CHOWN_FAIL
+br_run "$BR_PATH" hand_back_root_nix_paths
+br_check "one log entry's chown fails: the same -- every other entry handed back and counted, then the warning, non-zero" \
+    eval '[ "$br_rc" -ne 0 ] && br_out_is "Handed 3 root-owned Nix path(s) back to the store owner 4242:4243." && [ "$(br_chown_count)" -eq 4 ] && br_warning_given'
+
 # --- Missing tools and an unreadable owner are failures ---------------------
 br_new_case
 br_run "$NOFIND_DIR" hand_back_root_nix_paths
