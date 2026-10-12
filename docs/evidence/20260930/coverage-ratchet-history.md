@@ -1348,3 +1348,37 @@ the logic (including the new restart-count abort) lives in the covered
 `bin/lib/dx-container.sh`. Measured on a clean export at `c1beafa` with
 `tests/run-coverage-linux.sh`: `scope_exec_lines=4402`,
 `unscoped_prod_exec_lines=2641`, scope coverage 100%.
+
+## 2026-10-12: stale Nix temp-roots clear before guest GC (fix/gc-temproots)
+
+`scope_exec_lines_floor` 3935 -> 4468 (raised to the measured total, allowed
+direction): `bin/lib/dx-nix-gc.sh` is new (12 executable lines; its guest
+program is a heredoc constant, which kcov does not count) and
+`container/dx-nixos-26.05/bootstrap/common.sh` gained `run_root_nix` (+6). Both
+are 100% covered by `tests/test_nix_gc_temproots.sh`,
+`tests/test_nix_gc_temproots_unit.sh`, `tests/test_bootstrap_nix_temproots.sh`
+and `tests/test_bootstrap_nix_temproots_unit.sh`.
+
+`unscoped_prod_exec_lines_ceiling` 2638 -> 2642 (+4). All logic is in the
+covered module; each entry point gains only the lines needed to load it and
+call it once:
+
+| File | Base | Head | Growth |
+| --- | --- | --- | --- |
+| `bin/dx-gc` | 16 | 18 | +2 (`source "$SCRIPT_DIR/lib/dx-nix-gc.sh"`, `dx_nix_gc_clear_stale_temproots "$DX_CONTAINER_NAME" \|\| true`) |
+| `bin/dx-reclaim` | 77 | 79 | +2 (the same two lines) |
+
+The module is sourced by the two entry points directly, not through the
+`bin/dx-lib.sh` facade, following `bin/dx-create-container`'s
+`dx-usage-service.sh` pattern (only these two callers use it, and the facade's
+order is a tested contract); the facade route would have been +3 instead of +4
+but would load the module into every entry point.
+
+Measured with `tests/run-coverage-linux.sh` in a scratch worktree of the
+branch head with `wp/0.3` merged (main's sections 10 and 16 abort the runner
+without it): `covered=100%` (4468/4468), `scope_exec_lines=4468`,
+`unscoped_prod_exec_lines=2642`.
+
+The oldest dated ratchet.env line was moved here to keep that file at 10 lines:
+
+    # 2026-09-30 ceiling 2634 -> 2635: WP5.2 added one `source` line (dx-bootstrap-protocol.sh) to bin/dx-lib.sh's facade order.
