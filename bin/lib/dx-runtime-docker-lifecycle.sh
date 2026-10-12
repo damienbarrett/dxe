@@ -852,16 +852,30 @@ dx_runtime_docker_rsync_options_parse() {
     done
 }
 
+# The oldest rsync the copy accepts (WP6.7). The copy runs --modify-window=-1,
+# which compares modification times to the nanosecond only when the receiving
+# rsync is at least 3.1.3 (rsync's NEWS for 3.1.3; rsync(1), --modify-window).
+DX_RUNTIME_DOCKER_RSYNC_FLOOR=3.1.3
+
+# dx_runtime_docker_version_below VERSION FLOOR: status 0 when VERSION is below
+# FLOOR, compared numerically by (major, minor, patch), a missing part counting
+# as 0 (so 3.1 is 3.1.0, and 3.1.10 is above 3.1.3). Both are N.N or N.N.N.
+dx_runtime_docker_version_below() {
+    local v1 v2 v3 f1 f2 f3
+    IFS=. read -r v1 v2 v3 <<<"$1"
+    IFS=. read -r f1 f2 f3 <<<"$2"
+    [ "$v1" -eq "$f1" ] || { [ "$v1" -lt "$f1" ]; return; }
+    [ "$v2" -eq "$f2" ] || { [ "$v2" -lt "$f2" ]; return; }
+    [ "${v3:-0}" -lt "${f3:-0}" ]
+}
+
 # dx_runtime_docker_rsync_gap FACTS ACL_NEEDED XATTR_NEEDED: print the first
 # missing requirement (naming only that one) and return 1, or return 0.
 dx_runtime_docker_rsync_gap() {
-    local facts="$1" version major rest minor
+    local facts="$1" version
     version="$(sed -n 's/^version=//p' <<<"$facts")"
-    major="${version%%.*}"
-    rest="${version#*.}"
-    minor="${rest%%.*}"
-    if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 1 ]; }; then
-        echo "Error: rsync $version in the guest's nix volume is below 3.1 (the migration needs nanosecond mtimes)." >&2
+    if dx_runtime_docker_version_below "$version" "$DX_RUNTIME_DOCKER_RSYNC_FLOOR"; then
+        echo "Error: rsync $version in the guest's nix volume is below $DX_RUNTIME_DOCKER_RSYNC_FLOOR (the copy compares modification times to the nanosecond with --modify-window=-1, which needs $DX_RUNTIME_DOCKER_RSYNC_FLOOR or newer)." >&2
         return 1
     fi
     if ! grep -Fqx hard_links=yes <<<"$facts"; then
@@ -1080,8 +1094,10 @@ DX_RUNTIME_DOCKER_HOST_DIR_ESTABLISH_SCRIPT='unset CDPATH; umask 022; mg=$2; ms=
 # dx_runtime_docker_host_dir_establish_ok MODE ROOT GUEST OWNER: the checks
 # made before establish's one docker call. ROOT becomes part of a --mount
 # option, so it must be absolute and free of ',' (another option) and
-# newlines; OWNER is UID:GID in digits. Each reason is a `dx:` line, so the
-# caller's own Error line is the only one.
+# newlines; it is bound read-write into a root container, so it must not name
+# the filesystem root in any spelling (WP6.7; dx_path_names_filesystem_root,
+# bin/lib/dx-config.sh); OWNER is UID:GID in digits. Each reason is a `dx:`
+# line, so the caller's own Error line is the only one.
 dx_runtime_docker_host_dir_establish_ok() {
     local nl=$'\n' why="" owner=bad
     case "$1" in
@@ -1091,6 +1107,9 @@ dx_runtime_docker_host_dir_establish_ok() {
     case "$2" in
         "" | [!/]* | *,* | *"$nl"*) why="${why:-the share root '$2' cannot be bound: it must be an absolute path without ',' or a newline}" ;;
     esac
+    if dx_path_names_filesystem_root "$2"; then
+        why="${why:-the share root '$2' names the filesystem root, which is never a share root}"
+    fi
     dx_persist_marker_valid_name "$3" || why="${why:-invalid guest name for the NAS directory: $3}"
     case "$4" in
         *[!0-9:]* | *:*:*) : ;;

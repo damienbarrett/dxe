@@ -297,7 +297,7 @@ With `DX_PERSIST_STORAGE=host-path`, `dx-create-volumes`, `dx-start-container` a
 
 `<dir> is marked retired`. A rollback returned the guest to the persist volume. Set `DX_PERSIST_STORAGE=volume` in the profile, or move the retired directory aside first and then migrate again with `dx-persist-migrate` (into a new, empty directory).
 
-`<dir> is not empty and has no .dxe-persist-dir marker`. Existing data is never adopted automatically. Move it aside (the directory, or its contents), then retry. If the data matters, keep it aside and import the persist volume with `dx-persist-migrate` into the now-empty directory (`dx-persist-migrate` itself refuses a non-empty unmarked directory; it copies only into an empty one).
+`<dir> is not empty and has no .dxe-persist-dir marker`. Data that dxe did not mark is never adopted. Move it aside first (the directory, or its contents; keep it if it matters), then start fresh with `dx-create-volumes`, or copy the guest's persist volume into the now-absent or now-empty directory with `dx-persist-migrate` (`dx-persist-migrate` itself refuses a non-empty unmarked directory; it copies only into an empty or absent one). If the guest has used other `/persist` storage before (its persist volume or the record exists), starting fresh needs the emptied directory and `DX_PERSIST_FRESH_START=<container name>`, as in the next entry.
 
 `<dir> is empty and unmarked, but <guest> has used other /persist storage before`. An empty directory is not proof of a new guest while the old volume or the record exists. To start fresh on purpose (new SSH host keys, no credentials; the old volume is kept), run `DX_PERSIST_FRESH_START=<container name> ./bin/dx-create-volumes` once; the value must equal `DX_CONTAINER_NAME`. Otherwise restore the data and do not use that variable. Two cases make `dx-create-volumes` mark an existing empty directory: finishing an interrupted create (when no old volume or record exists), and a fresh start (`DX_PERSIST_FRESH_START=<container name>`, only when the old volume or record exists).
 
@@ -310,6 +310,8 @@ With `DX_PERSIST_STORAGE=host-path`, `dx-create-volumes`, `dx-start-container` a
 `<dir>/.dxe-persist-dir is not a valid /persist marker`. Inspect the directory and restore a valid marker, or move the directory aside, then retry.
 
 `the share root DX_PERSIST_HOST_ROOT=<root> is not a usable directory`. The root is wrong, unavailable, or could not be checked. Fix `DX_PERSIST_HOST_ROOT` in the private profile or make the share available, then retry.
+
+`the share root DX_PERSIST_HOST_ROOT=<root> resolves to the filesystem root`. The root, or a symlink it goes through, leads to `/` on the NAS, which is never a share root. Set `DX_PERSIST_HOST_ROOT` in the private profile to the share itself, then retry. A profile whose `DX_PERSIST_HOST_ROOT` is `/` itself (or `//`, `/.`, `/..`) is refused before anything runs: `DX_PERSIST_HOST_ROOT must not be the filesystem root`.
 
 The guest runs its own check, too, before it changes anything under `/persist` or starts `sshd`. This self-check stops the guest on any of the following, so a guest that Docker restarts after a NAS reboot never runs on an empty or foreign `/persist`:
 
