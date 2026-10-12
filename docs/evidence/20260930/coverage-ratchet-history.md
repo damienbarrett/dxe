@@ -1929,3 +1929,42 @@ comment (WP6.4, recorded in full in the "WP6.4" section above) moved here
 verbatim:
 
     # 2026-10-12 WP6.4: floor 5377 -> 5591 (measured, 100% covered; dx_persist_migrate_main and its helpers, container_state, host_dir_marker_set and host_manifest_verify in both adapters); ceiling 2622 -> 2627 (+5 executable lines in the new entry point bin/dx-persist-migrate: set -euo pipefail, SCRIPT_DIR, source dx-lib.sh, the persist_migrate_main definition, the _main call guard). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+## WP6.7 (2026-10-12): follow-up hardening
+
+`scope_exec_lines_floor` 5827 -> 5852 (measured, 100% covered).
+`unscoped_prod_exec_lines_ceiling` unchanged at 2633 (measured 2633; no entry
+point changed). Measured with `tests/run-coverage-linux.sh` on the worktree
+of the Green commit `70aa70f` (base `1de3301`, the feat line with WP6.4c;
+Red `7ee427b`): `covered=100% scope_exec_lines=5852
+unscoped_prod_exec_lines=2633`. The first run, on `dcd4db1`, stopped at
+99.98%: kcov counted the `fi ;;` that ended the new `refuse:root` arm in
+`bin/lib/dx-persist-dir.sh` and never marked it hit; `70aa70f` puts `;;` on
+its own line, as the rest of the module does.
+
+The +25, from kcov's per-file instrumented lines:
+
+- `bin/lib/dx-config.sh` +12: `dx_path_names_filesystem_root` (the one
+  "names the filesystem root" rule, here because the module comes first in
+  the `bin/dx-lib.sh` facade and `bin/dx-profile` sources it alone) and its
+  refusal in the host-path cross-field rules;
+- `bin/lib/dx-runtime-docker-lifecycle.sh` +6: the `3.1.3` floor constant and
+  `dx_runtime_docker_version_below` (+7) in place of the inline major/minor
+  split (-3), and establish's filesystem-root check (+2);
+- `bin/lib/dx-persist-dir.sh` 585 -> 592 (+7): the start decision's
+  filesystem-root check, the refusal's canonical root and its
+  filesystem-root message, the unmarked refusal's fresh-start hint, the
+  paused and removing arms of `dx_persist_copy_containers_none`, and the
+  migration decision's use of the shared rule;
+- `bin/lib/dx-ssh-common.sh` unchanged (the probe's ssh line gained
+  `</dev/null`).
+
+Exercised in-process by the acceptance suite
+`tests/test_persist_followup_hardening.sh` (32 cases) and by the implementer
+suite `tests/test_persist_followup_unit.sh` (46 cases).
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP6.4b, recorded in full in the "WP6.4b" section above) moved here
+verbatim:
+
+    # 2026-10-12 WP6.4b: floor 5658 -> 5661 (measured, 100% covered; +3: the migration's guest re-check and its shared helper in dx-persist-dir.sh, +2; marker_set's canonical-root refusal, +1; this run also confirms the provisional 5658/2628 after the WP6.4 merge); ceiling unchanged at 2628 (measured 2628, no entry-point line). History: docs/evidence/20260930/coverage-ratchet-history.md.

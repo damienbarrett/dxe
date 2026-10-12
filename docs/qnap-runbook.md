@@ -720,8 +720,10 @@ not edit the profile until that report is printed. Two reasons:
 ### 11.2 Prerequisites (found on a live NAS)
 
 1. **Boot the guest once** on the current checkout before you start. The copy
-   runs `rsync` (version 3.1 or newer) from the guest's own tools, because the
-   NAS's `rsync` is 3.0.x and its SSH account is not root. Existing guests only
+   runs `rsync` (version 3.1.3 or newer) from the guest's own tools, because the
+   NAS's `rsync` is 3.0.x and its SSH account is not root. The copy compares
+   modification times to the nanosecond (`--modify-window=-1`), which an older
+   `rsync` cannot do, so `rsync_check` refuses one below 3.1.3. Existing guests only
    get `rsync` (and `nix-ld`, for VS Code's server) on a boot of a checkout
    that includes them. The inventory's `rsync_check` line tells you if it is
    still missing.
@@ -749,6 +751,26 @@ not edit the profile until that report is printed. Two reasons:
    credentials. This was observed on the NAS and is accepted; a dedicated
    private share would remove it (only `DX_PERSIST_HOST_ROOT` changes). Leave
    `etc/ssh` and tool state alone when browsing the directory.
+5. **Free inodes on the NAS Docker data root.** Check the filesystem that holds
+   Docker's data on the NAS (in an SSH shell there):
+   ```sh
+   df -i "$(docker info --format '{{.DockerRootDir}}')"
+   ```
+   If the NAS account may not read that directory, run the same check as root
+   in a one-off container:
+   ```sh
+   docker run --rm --network none --user 0:0 --pull never \
+     --mount type=bind,source="$(docker info --format '{{.DockerRootDir}}')",target=/r,readonly \
+     --entrypoint df <DX_IMAGE> -i /r
+   ```
+   On the NAS this filesystem is ext4 with a fixed inode count, and it is shared
+   by every container, image and Docker volume, the guest's own nix volume included.
+   When its inodes run out, every write there fails with "No space left on
+   device" although `df -h` still shows free blocks, and the running guest is
+   hit as well. A full guest nix store alone takes hundreds of thousands of
+   inodes. Before a rehearsal on a disposable guest (11.9), which builds its
+   own nix store, or a rollback (11.7), whose new volume needs about the
+   inventory's `entries`, make sure `IFree` covers it with room to spare.
 
 ### 11.3 Steps
 
@@ -866,6 +888,8 @@ delete it later, `dx-status` lists it as `kept volume:` and
   The copy runs `rsync --inplace`, so an interrupted copy leaves no rsync temp file:
   at most the file it was writing is left partial, under its own name, and the
   rerun rewrites it. Nothing needs cleaning up by hand before the rerun.
+  If the controller lost its connection while the copy container kept running
+  on the NAS, the rerun refuses until that container is gone: see "A copy or verify container is left on the NAS" below.
 - **A hard kill** (for example `kill -9` of the controller process at the wrong
   moment) can leave one temporary file next to the marker, named
   `.dxe-persist-dir.XXXXXX` (six random characters). Look, then remove that one
@@ -882,6 +906,10 @@ delete it later, `dx-status` lists it as `kept volume:` and
   tooling never stops or removes these containers itself:
   - If it is still running, an earlier copy or verification is still at work: wait for it to finish
     (it then removes itself), or stop it with `docker stop <name>`; then run the command again.
+  - If it is paused, Docker refuses to remove it: resume it with `docker unpause <name>` (it then
+    finishes and removes itself) or end it with `docker stop <name>`; then run the command again.
+  - If it is removing, Docker is already deleting it: wait until `docker ps -a` no longer lists it,
+    then run the command again.
   - Otherwise (created, exited or dead), look at it first (`docker inspect <name>`,
     `docker logs <name>`), then remove it with `docker rm <name>` and run the command again.
 - **Between the profile change and the recreate.** `dx-status` shows

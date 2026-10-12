@@ -107,7 +107,9 @@ _dx_persist_gate() {
 # argument and never from the environment. Prints one token -- ok, create,
 # adopt or ok-fresh-start (status 0), or refuse:<reason> (status 1) -- and
 # makes no runtime, remote or file-system call. First match wins:
-#   unusable or malformed report         refuse:root
+#   unusable or malformed report, or     refuse:root
+#   root= names the filesystem root (/, //; WP6.7: a root that is a
+#   symlink to /), whatever the state and marker
 #   a symlinked level                    refuse:symlink
 #   a marker: invalid / another guest / copying / retired / ready
 #                                        refuse:marker-invalid / -guest /
@@ -126,7 +128,8 @@ dx_persist_start_decision() {
     IFS= read -r state || :
     IFS= read -r marker || :
     case "$root" in
-        root=/*) : ;;
+        root=/*)
+            if dx_path_names_filesystem_root "${root#root=}"; then valid=no; fi ;;
         *) valid=no ;;
     esac
     case "$mounted" in
@@ -199,15 +202,21 @@ dx_persist_refusal() {
     local token="$1" report="$2" volume="$3" record="$4"
     local guest="${DX_CONTAINER_NAME:-}" root="${DX_PERSIST_HOST_ROOT:-}"
     local sentinel="${DX_PERSIST_HOST_MOUNT_SENTINEL:-}" override="${DX_PERSIST_FRESH_START:-}"
-    local dir mounted src rec evidence="" hint="" msg
+    local dir mounted canon src rec evidence="" hint="" msg
     dir="$(dx_persist_configured_source)"
+    canon="$(printf '%s\n' "$report" | sed -n '1s/^root=//p')"
     mounted="$(printf '%s\n' "$report" | sed -n '2s/^mounted=//p')"
     dx_persist_marker_parse 2>/dev/null <<<"$(printf '%s\n' "$report" | sed '1,4d')" || :
     src="${DX_PERSIST_MARKER_SOURCE_VOLUME:-}"
     src="${src:+ $src}"
     case "$token" in
         refuse:root)
-            msg="the share root DX_PERSIST_HOST_ROOT=$root is not a usable directory on ${DX_REMOTE_HOST:-the NAS}, or it could not be checked; fix DX_PERSIST_HOST_ROOT in the private profile or make the share available, then retry." ;;
+            if dx_path_names_filesystem_root "$canon"; then
+                msg="the share root DX_PERSIST_HOST_ROOT=$root resolves to the filesystem root ($canon) on ${DX_REMOTE_HOST:-the NAS} (through a symlink or ..), and the filesystem root is never a share root; set DX_PERSIST_HOST_ROOT in the private profile to the share itself, then retry."
+            else
+                msg="the share root DX_PERSIST_HOST_ROOT=$root is not a usable directory on ${DX_REMOTE_HOST:-the NAS}, or it could not be checked; fix DX_PERSIST_HOST_ROOT in the private profile or make the share available, then retry."
+            fi
+            ;;
         refuse:symlink)
             msg="$dir, or a level above it under the share root (dxe, dxe/$guest), is a symlink; /persist must be a real directory, so replace the symlink with the directory itself, then retry." ;;
         refuse:marker-invalid)
@@ -219,7 +228,14 @@ dx_persist_refusal() {
         refuse:retired)
             msg="$dir is marked retired: a rollback returned $guest to the persist volume$src; set DX_PERSIST_STORAGE=volume in the profile, or migrate again with dx-persist-migrate." ;;
         refuse:unmarked)
-            msg="$dir is not empty and has no $DX_PERSIST_MARKER_NAME marker; existing data is never adopted automatically, so import it with dx-persist-migrate or move it aside, then retry." ;;
+            # WP6.7: dx-persist-migrate refuses a non-empty unmarked directory
+            # too, so the way on is to move it aside first, then start fresh
+            # or copy the persist volume into the now-absent (or now-empty)
+            # directory; an earlier guest needs the fresh-start override.
+            if [ "$volume" != no ] || [ "$record" != no ]; then
+                hint=" Because $guest has used other /persist storage before, starting fresh needs the emptied directory and DX_PERSIST_FRESH_START=$guest."
+            fi
+            msg="$dir is not empty and has no $DX_PERSIST_MARKER_NAME marker; data dxe did not mark is never adopted, so move it aside (the directory, or its contents; keep it if it matters), then start fresh with dx-create-volumes, or copy the guest's persist volume into the now-absent or now-empty directory with dx-persist-migrate.$hint" ;;
         refuse:empty)
             [ "$volume" = no ] || evidence="the persist volume $DX_PERSIST_VOLUME exists"
             [ "$record" = no ] || evidence="${evidence:+$evidence and }a host-path record exists"
@@ -650,7 +666,8 @@ dx_persist_migrate_preconditions() {
 # in DX_MIGRATE_WHY: root, unmounted, symlink, unmarked, marker, guest,
 # copying, ready or retired); DX_MIGRATE_ROOT to the canonical root once it is
 # usable; DX_MIGRATE_CREATED to a resumed marker's created-at. First match:
-#   malformed report; root= not absolute, "/" or holding ","   root
+#   malformed report; root= not absolute, holding ",", or     root
+#     naming the filesystem root ("/", "//", ...; WP6.7)
 #   mounted= other than yes                                   unmounted
 #   state=symlink                                             symlink
 #   state=absent / empty                                      create / adopt
@@ -669,8 +686,9 @@ dx_persist_migrate_decide() {
     IFS= read -r state || :
     IFS= read -r marker || :
     case "$root" in
-        root=/ | root=*,* | root=) return 1 ;;
-        root=/*) : ;;
+        root=*,* | root=) return 1 ;;
+        root=/*)
+            if dx_path_names_filesystem_root "${root#root=}"; then return 1; fi ;;
         *) return 1 ;;
     esac
     case "$state:$marker" in
@@ -801,6 +819,9 @@ dx_persist_guest_stopped() {
 # there is none; otherwise one Error line naming the fix (COMMAND is the
 # command to run again), status 1. Only the user stops or removes a
 # container: a running one is never to be removed while it may still write.
+# Docker refuses `docker rm` of a paused container and of one it is already
+# removing (WP6.7), so those two get their own fix: unpause or stop a paused
+# one (it runs with --rm, so it then removes itself), wait for a removing one.
 dx_persist_copy_containers_none() {
     local found name state where="${DX_REMOTE_HOST:-the NAS}"
     if ! found="$(dx_runtime_host_copy_containers)"; then
@@ -809,11 +830,16 @@ dx_persist_copy_containers_none() {
     fi
     [ -n "$found" ] || return 0
     IFS=' ' read -r name state <<<"$found"
-    if [ "$state" = running ]; then
-        echo "Error: the container $name of an earlier migration or rollback is still running on $where; wait for it to finish, or stop it there with docker stop $name, then run $1 again. Nothing was changed." >&2
-    else
-        echo "Error: the container $name of an earlier migration or rollback is left on $where in state $state; inspect it there (docker inspect $name, docker logs $name), then remove it with docker rm $name and run $1 again. Nothing was changed." >&2
-    fi
+    case "$state" in
+        running)
+            echo "Error: the container $name of an earlier migration or rollback is still running on $where; wait for it to finish, or stop it there with docker stop $name, then run $1 again. Nothing was changed." >&2 ;;
+        paused)
+            echo "Error: the container $name of an earlier migration or rollback is paused on $where; resume it there with docker unpause $name (it then finishes and removes itself), or end it with docker stop $name, then run $1 again. Nothing was changed." >&2 ;;
+        removing)
+            echo "Error: Docker is removing the container $name of an earlier migration or rollback on $where; wait until docker ps -a no longer lists it, then run $1 again. Nothing was changed." >&2 ;;
+        *)
+            echo "Error: the container $name of an earlier migration or rollback is left on $where in state $state; inspect it there (docker inspect $name, docker logs $name), then remove it with docker rm $name and run $1 again. Nothing was changed." >&2 ;;
+    esac
     return 1
 }
 

@@ -225,6 +225,31 @@ dx_config_validate_value() {
     esac
 }
 
+# dx_path_names_filesystem_root PATH: status 0 when PATH is absolute and every
+# one of its "/"-separated components is empty, "." or ".." -- "/", "//", "/.",
+# "/./", "/.." and the like all name the filesystem root -- and 1 otherwise
+# ("/share/x/" with its trailing slash, "/...", a relative or empty PATH). Pure
+# string work, no file-system call. The filesystem root is never a NAS share
+# root (WP6.7), and every check of that uses this one rule:
+# DX_PERSIST_HOST_ROOT's cross-field rule below, the docker adapter's
+# establish (before its root container binds the root read-write) and the
+# /persist start and migration decisions on the probe's canonical root
+# (bin/lib/dx-persist-dir.sh). This file comes first in the bin/dx-lib.sh
+# facade, and bin/dx-profile sources it alone, so it is defined here.
+dx_path_names_filesystem_root() {
+    local rest
+    case "${1-}" in /*) rest="$1/" ;; *) return 1 ;; esac
+    while :; do
+        case "$rest" in
+            /) return 0 ;;
+            //*) rest="${rest#/}" ;;
+            /./*) rest="${rest#/.}" ;;
+            /../*) rest="${rest#/..}" ;;
+            *) return 1 ;;
+        esac
+    done
+}
+
 # Cross-field checks that need more than one already-resolved field at once
 # (qnap-dxe-plan.md DQ3: "Invalid cross-field combinations fail before
 # contacting either runtime"). Called only after every field in
@@ -279,7 +304,9 @@ dx_config_validate_cross_fields() {
     # ownership checks and are slow), so it is refused here with a pointer to
     # the Mac access docs. The guest directory is derived from the root and
     # DX_CONTAINER_NAME, never configured; the root must be non-empty and
-    # colon-free because the volume spec splits on ':'. volume mode ignores
+    # colon-free because the volume spec splits on ':', and never the
+    # filesystem root in any spelling (WP6.7: establish binds the root
+    # read-write into a root container). volume mode ignores
     # DX_PERSIST_HOST_ROOT entirely.
     if [ "${DX_PERSIST_STORAGE:-}" = host-path ]; then
         [ "${DX_RUNTIME:-}" = docker-ssh ] || {
@@ -296,6 +323,10 @@ dx_config_validate_cross_fields() {
                 return 1
                 ;;
         esac
+        if dx_path_names_filesystem_root "$DX_PERSIST_HOST_ROOT"; then
+            echo "Error: DX_PERSIST_HOST_ROOT must not be the filesystem root (it is '$DX_PERSIST_HOST_ROOT'); set it to the NAS share root the guest directories go under." >&2
+            return 1
+        fi
     fi
 
     # The three named-volume roles must never collide (Astra F10, Muse C1):
