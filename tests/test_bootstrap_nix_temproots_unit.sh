@@ -45,15 +45,25 @@ fake_tool_write "$STUB_DIR" rm '
 printf "%s\n" "$*" >> "$BU_RM_LOG"
 exit 0'
 
+# fix/gc-rootpaths: run_root_nix also hands root-owned store and log paths
+# back after nix, with chown. A recording `chown` that changes nothing keeps
+# the production-prefix case below from ever reaching a real /nix with the
+# real chown, whatever the host has there.
+fake_tool_write "$STUB_DIR" chown '
+printf "%s\n" "$*" >> "$BU_CHOWN_LOG"
+exit 0'
+
 bu_new_case() {
     BU_CASE="$(mktemp -d "$BU_ROOT/case.XXXXXX")"
     BU_NIX_LOG="$BU_CASE/nix.log"
     BU_STDIN_CAPTURE="$BU_CASE/stdin"
     BU_RM_LOG="$BU_CASE/rm.log"
+    BU_CHOWN_LOG="$BU_CASE/chown.log"
     : > "$BU_NIX_LOG"
     : > "$BU_RM_LOG"
+    : > "$BU_CHOWN_LOG"
     mkdir -p "$BU_CASE/nix/var/nix/temproots"
-    export BU_NIX_LOG BU_STDIN_CAPTURE BU_RM_LOG
+    export BU_NIX_LOG BU_STDIN_CAPTURE BU_RM_LOG BU_CHOWN_LOG
 }
 
 bu_check() {
@@ -91,11 +101,13 @@ bu_rc=0
     unset DX_ESSENTIALS_ROOT
     DX_BOOTSTRAP_ROOT=/guest-bootstrap
     export PATH DX_BOOTSTRAP_ROOT
-    # Fail closed: never reach the wrapper unless `rm` is the recording stub.
+    # Fail closed: never reach the wrapper unless `rm` and `chown` are the
+    # recording stubs.
     [ "$(command -v rm)" = "$STUB_DIR/rm" ] || exit 97
+    [ "$(command -v chown)" = "$STUB_DIR/chown" ] || exit 97
     install_essential_packages </dev/null
 ) > "$BU_CASE/out" 2> "$BU_CASE/err" || bu_rc=$?
-bu_check "install (no DX_ESSENTIALS_ROOT): the recording rm stub is the rm the wrapper finds" \
+bu_check "install (no DX_ESSENTIALS_ROOT): the recording rm and chown stubs are the ones the wrapper finds" \
     [ "$bu_rc" -ne 97 ]
 bu_check "install (no DX_ESSENTIALS_ROOT): exactly one non-recursive rm -f -- /nix/var/nix/temproots/<nix's own pid>" \
     eval '[ "$bu_rc" -eq 0 ] && [ "$(wc -l < "$BU_NIX_LOG" | tr -d " ")" -eq 1 ] && [ "$(cat "$BU_RM_LOG")" = "-f -- /nix/var/nix/temproots/$(cat "$BU_NIX_LOG")" ]'
