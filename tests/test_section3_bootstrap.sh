@@ -147,6 +147,9 @@ install_argv_fixture="$fixture/install-argv.log"
 if (
     nix() { printf '%s\n' "$*" >> "$install_argv_fixture"; }
     DX_BOOTSTRAP_ROOT=/guest-bootstrap
+    # fix/gc-temproots: the root nix wrapper removes its child's temp-roots
+    # file under this prefix; keep that inside this fixture.
+    export DX_ESSENTIALS_ROOT="$fixture/install-argv-root"
     install_essential_packages
     stdin_matches -F -- '--profile /nix/var/nix/profiles/per-user/root/profile' < "$install_argv_fixture"
 ); then
@@ -653,6 +656,8 @@ es_up() {
     (
         nix() { printf 'nix %s\n' "$*" >> "$fixture/es-nix.log"; case "$*" in *"profile remove"*) return "$remove_rc" ;; esac; return 0; }
         install_essential_packages() { printf 'install_essential_packages\n' >> "$fixture/es-nix.log"; return "$install_rc"; }
+        # fix/gc-temproots: keep the root nix wrapper's temp-roots cleanup in this fixture.
+        export DX_ESSENTIALS_ROOT="$fixture/es-up-root"
         # shellcheck disable=SC2034 # read by upgrade_essential_packages, which ShellCheck cannot see
         DX_NIX_FEAT_OPTS=(--extra-experimental-features "nix-command flakes")
         upgrade_essential_packages
