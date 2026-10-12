@@ -916,6 +916,49 @@ dx_runtime_docker_rsync_dir_ok() {
     return 1
 }
 
+# The copy and verify containers (WP6.4c; spec R35). The one rsync copy run
+# and the one manifest verify run carry a fixed name per profile,
+# dxe-persist-copy-<profile id> and dxe-persist-verify-<profile id> (named like
+# the lock, dxe-lock-<profile id>), and the DQ6 labels of role persist-copy and
+# persist-verify. A container an earlier run left on the NAS -- still running
+# after the controller lost its connection, or stopped by a NAS restart -- is
+# then found by name (dx_runtime_docker_host_copy_containers), and Docker
+# itself refuses a second container of that name.
+
+# dx_runtime_docker_copy_container_name copy|verify
+dx_runtime_docker_copy_container_name() {
+    printf 'dxe-persist-%s-%s' "$1" "$(dx_runtime_docker_profile_id)"
+}
+
+# dx_runtime_docker_copy_id_flags copy|verify: sets DX_RUNTIME_DOCKER_COPY_ID_ARGV
+# to `--name <that container's name>` and its DQ6 labels (role persist-ROLE),
+# the words a copy or verify run puts right before --entrypoint.
+dx_runtime_docker_copy_id_flags() {
+    dx_runtime_docker_label_flags "persist-$1"
+    DX_RUNTIME_DOCKER_COPY_ID_ARGV=(--name "$(dx_runtime_docker_copy_container_name "$1")" "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}")
+}
+
+# dx_runtime_docker_host_copy_containers: one `ps -a` per container, filtered
+# on its exact name; prints "<name> <state>" (Docker's state word, the last
+# line of the answer) for each that exists, the copy container first, and
+# nothing when neither does. Read-only: it never stops or removes anything. A
+# failing `ps` makes it fail with nothing on stdout, Docker's own message
+# passed on unchanged (the caller prints the one Error line).
+dx_runtime_docker_host_copy_containers() {
+    local nl=$'\n' role name out state lines=""
+    if [ "$#" -ne 0 ]; then
+        echo "Usage: dx_runtime_host_copy_containers (it takes no arguments)" >&2
+        return 1
+    fi
+    for role in copy verify; do
+        name="$(dx_runtime_docker_copy_container_name "$role")"
+        out="$(dx_runtime_docker_cli ps -a --filter "name=^/$name\$" --format '{{.State}}')" || return 1
+        state="$(printf '%s\n' "$out" | tail -n 1 | tr -d '\r')"
+        [ -z "$state" ] || lines="$lines$name $state$nl"
+    done
+    printf '%s' "$lines"
+}
+
 # dx_runtime_docker_host_rsync forward|reverse VOLUME DIR [-A] [-X]
 dx_runtime_docker_host_rsync() {
     local direction="${1:-}" volume="${2:-}" dir="${3:-}" extra=() mounts=()
@@ -946,8 +989,14 @@ dx_runtime_docker_host_rsync() {
     fi
     dx_runtime_docker_volume_owned "$volume" copy || return 1
     dx_runtime_docker_rsync_nix_check || return 1
-    dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never -v "$DX_RSYNC_NIX_VOLUME:/nix:ro" "${mounts[@]}" --entrypoint "$DX_RUNTIME_DOCKER_RSYNC_BIN" "${DX_IMAGE:?}" \
-        -aH --numeric-ids "${extra[@]+"${extra[@]}"}" \
+    dx_runtime_docker_copy_id_flags copy
+    # --inplace (WP6.4c): an interrupted copy leaves no rsync temp file, only
+    # a possibly partial file under its final name, which the rerun rewrites.
+    # --modify-window=-1: mtimes compare to the nanosecond, as the manifest
+    # does, so a change within the same second is copied again.
+    dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never -v "$DX_RSYNC_NIX_VOLUME:/nix:ro" "${mounts[@]}" \
+        "${DX_RUNTIME_DOCKER_COPY_ID_ARGV[@]}" --entrypoint "$DX_RUNTIME_DOCKER_RSYNC_BIN" "${DX_IMAGE:?}" \
+        -aH --numeric-ids --inplace --modify-window=-1 "${extra[@]+"${extra[@]}"}" \
         --exclude=/.dxe-persist-dir '--exclude=._*' /src/ /dst/
 }
 
@@ -1155,6 +1204,7 @@ dx_runtime_docker_host_manifest_verify() {
         return 2
     fi
     dx_runtime_docker_volume_owned "$volume" verify || return 1
+    dx_runtime_docker_copy_id_flags verify
     dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never "${mounts[@]}" \
-        --entrypoint bash "$DX_IMAGE" -c "$tool" dx-persist-manifest verify /src /dst
+        "${DX_RUNTIME_DOCKER_COPY_ID_ARGV[@]}" --entrypoint bash "$DX_IMAGE" -c "$tool" dx-persist-manifest verify /src /dst
 }
