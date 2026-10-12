@@ -4,7 +4,9 @@
 # WP7.2 (plans/do; spec section 9 W4, section 6 and 6.1; R31-R37): the /persist
 # MIGRATION dry run, LIVE, on a disposable QNAP guest -- inventory, migrate,
 # interrupt and resume, verify, switch, change files, roll back into a new
-# volume, refuse the retired directory, move it aside and migrate again.
+# volume, refuse the retired directory, move it aside and migrate again, with
+# the controller dropped mid-copy (WP7.2b: WP6.4c's refusal and copy-container
+# labels, validated against the real NAS once).
 #
 # This suite talks to a real NAS and destroys and resets the guest it runs on.
 # It runs only when ALL of these hold, and otherwise makes no remote call:
@@ -32,12 +34,16 @@
 # record and SSH pins; default: a new mktemp directory);
 # DXE_PERSIST_LIVE_ROLLBACK_VOLUME (default <DX_PERSIST_VOLUME>-rollback);
 # DXE_PERSIST_LIVE_BULK_MIB (64..16384, default 2048: the incompressible file
-# whose copy the interrupt lands in; raise it if the copy finishes before the
-# interrupt); DXE_PERSIST_LIVE_INTERRUPT_DEADLINE (seconds, 10..3600, default
-# 900); DXE_PERSIST_LIVE_KEEP=1 (skip the final cleanup);
-# DXE_PERSIST_LIVE_KEEP_RUNNING=1 (after a failure, do not stop the canary);
-# DXE_PERSIST_LIVE_CLEANUP_ONLY=1 (run only the final cleanup; pass the same
-# DXE_PERSIST_LIVE_RUN_DIR).
+# whose copy the interrupt lands in, and whose copy must outlast the
+# controller drop; raise it if the copy finishes before the interrupt, or when
+# the controller-drop case reports NOT VALIDATED with a suggested size);
+# DXE_PERSIST_LIVE_INTERRUPT_DEADLINE (seconds, 10..3600, default 900: the
+# NAS watchers' bounded waits); DXE_PERSIST_LIVE_MIN_FREE_INODES
+# (600000..99999999, default 700000: the preflight refuses to start with fewer
+# free inodes on the NAS's Docker data root); DXE_PERSIST_LIVE_KEEP=1 (skip
+# the final cleanup); DXE_PERSIST_LIVE_KEEP_RUNNING=1 (after a failure, do not
+# stop the canary); DXE_PERSIST_LIVE_CLEANUP_ONLY=1 (run only the final
+# cleanup; pass the same DXE_PERSIST_LIVE_RUN_DIR).
 #
 # A SEPARATE, opt-in run: DXE_PERSIST_LIVE_INVENTORY_REAL=dx-qnap runs ONLY
 # the read-only dx-persist-inventory of the production guest through the
@@ -50,17 +56,33 @@
 # /persist/dxe-live-bulk/dxe-live-blob.bin. dx-persist-migrate runs in the
 # background; meanwhile ONE ssh call runs PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INTERRUPT
 # in the NAS shell (the management account): it waits for exactly one RUNNING
-# container that mounts the canary persist volume, runs the guest-volume rsync
-# with "... /src/ /dst/" and binds the canary directory at /dst -- those three
-# single out the copy, which carries no name or label of its own; the
-# `ancestor=<canary image>` filter only narrows the list, since the canary
-# image is a tag of the shared base the production guest runs too -- then for
-# rsync's temp file of the blob (.dxe-live-blob.bin.XXXXXX; with rsync
-# --inplace there would be none, see tests/lib/persist-migrate-live.sh),
+# container named dxe-persist-copy-<profile id> (WP6.4c's copy container) that
+# mounts the canary persist volume, runs the guest-volume rsync with
+# "... --inplace ... /src/ /dst/" and binds the canary directory at /dst --
+# then for the blob to be part-way across under its own name (rsync
+# --inplace, WP6.4c: no temp file; more than 0 and fewer than its full bytes),
 # and at that moment sends that one container `docker kill` (SIGKILL) -- a NAS
 # reboot or an OOM kill in the middle of the largest file -- and waits until
 # --rm has removed it. The migrate command then reports the stopped copy
-# (exit 1, marker copying) and the suite runs it again.
+# (exit 1, marker copying), and the FIRST rerun must resume and verify.
+#
+# How the controller drop works (the controller side, WP7.2b). Before the
+# second migration, dx-persist-migrate runs in the background in a process
+# group of its own. ONE read-only ssh call waits on the NAS (docker ps once a
+# second, bounded) for the running container named dxe-persist-copy-<profile
+# id> and reports its labels and mounts; the suite then SIGKILLs the whole
+# controller process group (the controller and its ssh clients: a dropped
+# session or a killed terminal, with no EXIT trap run), so the remote copy
+# keeps running and the per-profile lock stays behind. `dx-lock status` must
+# show that lock held by the killed pid, and only then `dx-lock unlock
+# --force` clears it. dx-persist-migrate then runs again at once: it must
+# refuse (exit 1, one Error line naming the copy container and "running") and
+# change nothing, and the copy container must still run, untouched. The suite waits (bounded) until
+# the orphaned copy has ended and removed itself, checks that it ran to its
+# end on its own, and the next migration resumes and verifies. When a full
+# copy of the seed took under 30 s earlier in the run, the case is NOT
+# VALIDATED (a FINDING naming a bulk size that would do), as it is when the
+# rerun does not meet the copy still running.
 #
 # Behaviour (as WP7.1):
 #   - Fail-fast: the first failing check stops the run; the background
@@ -70,11 +92,11 @@
 #   - FINDINGS are recorded as failures ("FINDING: ...", listed at the end) but
 #     the run goes on, so the later cases and the cleanup still run:
 #       * the inventory exiting 3 with a named blocker;
-#       * the resume failing its verification because the killed rsync left
-#         its temp file in the destination (forward rsync has no --delete):
-#         the suite then moves that one file aside (mv, canary directory only)
-#         and runs the migration a third time;
+#       * the controller-drop case NOT VALIDATED (see above);
 #       * the /persist bind source reported resolved (as WP7.1).
+#     A first rerun after the interrupted copy that does not verify (or an
+#     rsync temp file in the destination) is a REGRESSION of WP6.4c: a FAIL
+#     that stops the run, with the destination's listing as diagnostics.
 #   - Everything the suite changes on the share it changes from a root one-off
 #     container whose only bind is <root>/dxe/<canary> (tests/lib's fixed
 #     scripts); it never deletes anything on the NAS recursively: it moves the
@@ -82,15 +104,21 @@
 #     and the final cleanup moves the leaf to persist.dxe-live-removed-<UTC>
 #     and prints the manual removal for the user. Volumes are read only through
 #     `-v <volume>:/v:ro` after their DQ6 check; volumes are deleted only by
-#     exact canary name through the DQ6-checked delete.
+#     exact canary name through the DQ6-checked delete. The only containers
+#     the suite itself kills are the canary's own copy container (the NAS
+#     watcher, by its name) and its own background controller (by process
+#     group, on the Mac).
 #
 # Cases, in order (each name is its PASS/FAIL prefix):
 #   preflight            no canary container, volume (nix, persist, bootstrap,
-#                        rollback), directory or record yet; the share root
-#                        is mounted (sentinel).
+#                        rollback), directory or record yet; at least
+#                        DXE_PERSIST_LIVE_MIN_FREE_INODES free inodes on the
+#                        NAS's Docker data root (docker info, df -P -i); the
+#                        share root is mounted (sentinel).
 #   volume bring-up      `dx true` in volume mode: /persist is the persist
 #                        volume, dx-status configured == actual, nothing on
-#                        the share; the SSH host key is recorded.
+#                        the share; the SSH host key is recorded; the inodes
+#                        the bring-up took go to results.txt.
 #   seed                 through the guest: nested directories, hard links (a
 #                        group of three across directories), two ._* files, a
 #                        FIFO, a socket (tmux; reported if it cannot), relative,
@@ -105,11 +133,12 @@
 #                        volume's seeded tree and bulk file (L0).
 #   interrupted copy     migrate in the background, killed mid-blob: exit 1,
 #                        "stopped before it finished", marker copying for this
-#                        guest and volume, the blob not complete, no record.
-#   resumed copy         migrate again: resumes into the same directory, exit
-#                        0, marker ready (the first created-at), record
-#                        mode=migrate, report (copy/verify seconds, both ._*
-#                        files); the directory's listing == L0 without ._*.
+#                        guest and volume, the blob part-way under its own
+#                        name, no rsync temp file, no record.
+#   resumed copy         the FIRST rerun resumes into the same directory and
+#                        verifies: exit 0, marker ready (the first created-at),
+#                        record mode=migrate, report (copy/verify seconds, both
+#                        ._* files); the directory's listing == L0 without ._*.
 #   switch to directory  DX_PERSIST_STORAGE=host-path + dx-recreate: one rw
 #                        bind of the leaf, the guest's own check line,
 #                        dx-status configured == actual, the same host key,
@@ -127,13 +156,21 @@
 #                        dx-start-container refuse the retired directory.
 #   retired aside        mv persist persist.retired-<UTC> (root container,
 #                        canary directory only; only a retired leaf moves).
-#   migrate again        from the rollback volume into a fresh directory:
-#                        exit 0, marker ready, no ._* file; listing == the
-#                        rollback volume's.
+#   controller drop      migrate from the rollback volume into a fresh
+#                        directory, the controller SIGKILLed mid-copy (above):
+#                        the copy container's DQ6 labels, the lock left and
+#                        cleared, the refusal while the copy runs, nothing
+#                        changed (marker copying, record, volumes), the copy
+#                        container untouched, then ended by itself with the
+#                        directory complete (listing == the rollback volume's).
+#   migrate again        the rerun resumes the dropped run's directory: exit
+#                        0, marker ready (the dropped run's created-at), no ._*
+#                        file; listing == the rollback volume's.
 #   switch again         host-path + dx-recreate, confirmed as before.
-#   final cleanup        leaf moved aside, dx-factory-reset --force, both
-#                        persist volumes deleted by exact name (DQ6), the
-#                        record deleted; the manual NAS removal is printed.
+#   final cleanup        no copy or verify container left (bounded wait), leaf
+#                        moved aside, dx-factory-reset --force, both persist
+#                        volumes deleted by exact name (DQ6), the record
+#                        deleted; the manual NAS removal is printed.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -229,6 +266,11 @@ LV_BG_PID=""
 LV_BG_OUT=""
 LV_BG_ERR=""
 LV_ASIDES=""
+LV_DOCKER_ROOT=""
+LV_INODES_FREE0=""
+LV_REF_COPY=""
+LV_DROP_STATE=""
+LV_DROP_CREATED=""
 
 lv_case() {
     LV_CASE="$1"
@@ -582,6 +624,15 @@ lv_stop() {
         lv_bg_wait
         echo "  It exited $LV_RC (see $LV_ERR)."
     fi
+    if [ -n "${PERSIST_MIGRATE_LIVE_DROP_ORPHAN:-}" ]; then
+        echo "  The copy container $(persist_migrate_live_copy_name copy 2>/dev/null) that the dropped controller started may"
+        echo "  still run on the NAS: it ends by itself (the cleanup waits up to $LV_INTERRUPT_DEADLINE s for it)."
+    fi
+    if [ -n "${PERSIST_MIGRATE_LIVE_DROP_LOCK_LEFT:-}" ]; then
+        echo "  The dropped controller (pid ${PERSIST_MIGRATE_LIVE_DROP_PID:-?}) may still hold the canary's lifecycle lock, and the"
+        echo "  cleanup needs it: ./bin/dx-profile $LV_PROFILE_NAME ./bin/dx-lock status, then, once it names that pid,"
+        echo "  ./bin/dx-profile $LV_PROFILE_NAME ./bin/dx-lock unlock --force"
+    fi
     if [ -n "$LV_REAL" ]; then
         echo "The production inventory run touched nothing of the canary. Logs: $LV_RUN_DIR/logs"
         return 0
@@ -600,6 +651,37 @@ lv_stop() {
     echo "To remove it afterwards: $LV_CLEANUP_COMMAND"
 }
 
+# lv_inodes LABEL: the Docker data root's `<total> <used> <free>` (read-only),
+# into LV_OUT; LV_RC as lv_run sets it.
+lv_inodes() { lv_run "$1" -- persist_migrate_live_inodes "$LV_DOCKER_ROOT"; }
+lv_inodes_field() { awk -v i="$1" 'NR == 1 { print $i }' "$LV_OUT"; }
+
+# lv_preflight_inodes: the NAS's Docker data root (ext4 on a zvol, a fixed
+# inode count, shared with the production guest's volumes) has at least
+# persist_migrate_live_min_free_inodes free inodes. Run 1 (2026-10-12) ran it
+# out of inodes with 61 GB of blocks free.
+lv_preflight_inodes() {
+    local min free total
+    min="$(persist_migrate_live_min_free_inodes)"
+    lv_run docker-root -- persist_migrate_live_docker_root
+    lv_check "docker info names the NAS's Docker data root" lv_rc_zero || return 1
+    LV_DOCKER_ROOT="$(sed -n '1p' "$LV_OUT")"
+    lv_inodes inodes-before
+    lv_check "df -P -i of the Docker data root answers" lv_rc_zero || return 1
+    total="$(lv_inodes_field 1)"
+    free="$(lv_inodes_field 3)"
+    lv_result docker_root_inodes_total "$total"
+    lv_result docker_root_inodes_free_before "$free"
+    echo "    Docker data root: $free of $total inodes free (the run needs at least $min)"
+    if ! lv_check "at least $min inodes are free on the NAS's Docker data root ($free free)" test "$free" -ge "$min"; then
+        echo "    A fresh canary nix store takes about 300,000 to 550,000 inodes of that filesystem, which the"
+        echo "    production guest's volumes share. Free inodes there first (or, after measuring, set"
+        echo "    DXE_PERSIST_LIVE_MIN_FREE_INODES); nothing was created."
+        return 1
+    fi
+    LV_INODES_FREE0="$free"
+}
+
 # --- Cases --------------------------------------------------------------------
 c_preflight() {
     local report vol
@@ -609,6 +691,7 @@ c_preflight() {
     for vol in "$DX_NIX_VOLUME" "$LV_ORIG" "$DX_BOOTSTRAP_VOLUME" "$LV_ROLLBACK"; do
         lv_check "volume $vol does not exist yet" lv_volume_is absent "$vol" || return 1
     done
+    lv_preflight_inodes || return 1
     report="$(lv_probe)"
     lv_check "the read-only probe of the share root answers" test -n "$report" || return 1
     LV_CANON_LEAF="$(persist_live_kv root "$report")/dxe/$DX_CONTAINER_NAME/persist"
@@ -631,6 +714,15 @@ c_volume_bring_up() {
     lv_check "dx-status reports no mismatch" lv_out_lacks "mismatch:" || return 1
     lv_check "volume mode created nothing on the share" lv_equal "$(persist_live_kv state "$(lv_probe)")" absent || return 1
     lv_check "and wrote no D-7 record" test ! -e "$LV_RECORD" || return 1
+    lv_inodes inodes-after-bring-up
+    if [ "$LV_RC" -eq 0 ] && lv_number "$(lv_inodes_field 3)" && lv_number "$LV_INODES_FREE0"; then
+        lv_result docker_root_inodes_free_after_bringup "$(lv_inodes_field 3)"
+        lv_result canary_inodes_used "$((LV_INODES_FREE0 - $(lv_inodes_field 3)))"
+        echo "    the bring-up took $((LV_INODES_FREE0 - $(lv_inodes_field 3))) inodes of the Docker data root ($(lv_inodes_field 3) free now)"
+    else
+        lv_result canary_inodes_used unknown
+        echo "    (df -P -i of the Docker data root did not answer after the bring-up; the canary's inode cost is not measured)"
+    fi
     LV_FPR0="$(lv_host_fingerprint)"
     lv_check "the guest's SSH host key fingerprint is readable" test -n "$LV_FPR0" || return 1
     echo "    host key: $LV_FPR0"
@@ -726,12 +818,12 @@ c_stop_and_list() {
 }
 
 c_migrate_interrupted() {
-    local docker_bin watch_rc watch_out temp report marker stat rec
+    local docker_bin watch_rc watch_out seen report marker stat rec
     lv_case "interrupted copy"
     docker_bin="$(dxe_runtime_call dx_runtime_docker_require_bin 2>/dev/null)" || docker_bin=""
     lv_check "the NAS's docker CLI path is known" test -n "$docker_bin" || return 1
     lv_run_bg migrate-interrupted -- "$BIN_DIR/dx-persist-migrate"
-    lv_run interrupt -- persist_migrate_live_interrupt "$docker_bin" "$LV_CANON_LEAF" "$LV_INTERRUPT_DEADLINE"
+    lv_run interrupt -- persist_migrate_live_interrupt "$docker_bin" "$LV_CANON_LEAF" "$LV_INTERRUPT_DEADLINE" "$LV_BULK_BYTES"
     watch_rc="$LV_RC"
     watch_out="$LV_OUT"
     cp "$LV_OUT" "$LV_RUN_DIR/logs/interrupt-watcher.out" 2>/dev/null
@@ -740,19 +832,21 @@ c_migrate_interrupted() {
         echo "    the NAS-side watcher exited $watch_rc:"
         sed 's/^/    | /' "$watch_out" "${watch_out%.out}.err" 2>/dev/null
         case "$watch_rc" in
-            3) lv_bad "the copy ended before rsync started on the $LV_BULK_MIB MiB file, so nothing was interrupted mid-copy; raise DXE_PERSIST_LIVE_BULK_MIB" ;;
+            3) lv_bad "the copy ended before the $LV_BULK_MIB MiB file was seen part-way, so nothing was interrupted mid-copy; raise DXE_PERSIST_LIVE_BULK_MIB" ;;
             7) lv_bad "the NAS management account cannot list the destination's bulk directory, so the watcher cannot see the copy's progress (nothing was killed; the copy ran to its end)" ;;
-            2) lv_bad "no copy container (canary volume, guest-volume rsync, /dst on $LV_CANON_LEAF) appeared, or rsync never reached the bulk file, within $LV_INTERRUPT_DEADLINE s; nothing was killed (see the migration's log: it may have refused or failed before copying)" ;;
+            2) lv_bad "no copy container (named dxe-persist-copy-<profile id>, canary volume, guest-volume rsync, /dst on $LV_CANON_LEAF) appeared, or the bulk file was not seen part-way, within $LV_INTERRUPT_DEADLINE s; nothing was killed (see the migration's log: it may have refused or failed before copying)" ;;
             4) lv_bad "a docker call of the NAS-side watcher failed (ps, inspect or kill); see its log above" ;;
             5) lv_bad "the killed copy container did not go away within $LV_INTERRUPT_DEADLINE s (--rm); look at it on the NAS before going on" ;;
             6) lv_bad "more than one copy container matched (two copies into the canary directory at once?); the watcher touched none -- stop and inspect the NAS" ;;
+            8) lv_bad "REGRESSION: the copy container runs rsync without --inplace, so WP6.4c is not in this checkout; nothing was killed (the copy ran to its end)" ;;
             *) lv_bad "the NAS-side watcher found the copy container and killed it mid-copy (exit $watch_rc)" ;;
         esac
         return 1
     fi
     lv_ok "the NAS-side watcher found the one copy container and sent it SIGKILL while rsync wrote the bulk file"
-    temp="$(sed -n 's/^interrupted=[0-9a-f]* temp=//p' "$watch_out" | sed -n '1p')"
-    echo "    killed while rsync wrote $temp"
+    seen="$(sed -n 's/^interrupted=[0-9a-f]* bytes=//p' "$watch_out" | sed -n '1p')"
+    echo "    killed with $seen of $LV_BULK_BYTES bytes of the bulk file across"
+    lv_result interrupt_bytes_seen "$seen"
     lv_check "the killed copy container is gone (--rm)" grep -q '^gone=' "$watch_out" || return 1
     lv_check "dx-persist-migrate exits 1 after the interrupted copy" lv_rc_is 1 || return 1
     lv_check "it created the directory with the copying marker" lv_out_has "Creating $LV_CANON_LEAF with the marker copying..." || return 1
@@ -771,7 +865,10 @@ c_migrate_interrupted() {
     lv_check "with mode 0755" lv_has_line "$stat" "leaf_mode=755" || return 1
     lv_list_dir dir1-bulk-partial "$PERSIST_MIGRATE_LIVE_BULK" || return 1
     rec="$(lv_record "$LV_RUN_DIR/listings/dir1-bulk-partial" "./$PERSIST_MIGRATE_LIVE_BLOB")"
-    lv_check "the bulk file never completed: the interrupt landed mid-copy" test -z "$rec" || return 1
+    lv_check "the bulk file stopped part-way under its own name (rsync --inplace): the interrupt landed mid-copy" \
+        persist_migrate_live_partial_record "$rec" "$LV_BULK_BYTES" || return 1
+    lv_check "with no rsync temp file of it beside it" \
+        lv_equal "$(persist_migrate_live_temp_count "$LV_RUN_DIR/listings/dir1-bulk-partial")" 0 || return 1
     echo "    the destination's bulk directory after the kill:"
     lv_records "$LV_RUN_DIR/listings/dir1-bulk-partial" | awk -F'\t' '{ print "      " $1 " " $4 " " $NF }'
     lv_check "no D-7 record before the verification" test ! -e "$LV_RECORD"
@@ -805,26 +902,43 @@ LV_LAST_COPY=""
 LV_LAST_VERIFY=""
 LV_STATUS_OUT=""
 
+# lv_resume_regression: the first rerun after the interrupted copy did not
+# exit 0. Since WP6.4c (rsync --inplace) that is a regression: show why, with
+# the destination's bulk directory as it is now, and stop the run.
+lv_resume_regression() {
+    local rc="$LV_RC" out="$LV_OUT" err="$LV_ERR" file="$LV_RUN_DIR/listings/dir1-bulk-after-resume" temps why
+    lv_show_logs
+    lv_run list-dir1-bulk-after-resume -- persist_migrate_live_dir_read "$PERSIST_MIGRATE_LIVE_SCRIPT_LIST" "persist/$PERSIST_MIGRATE_LIVE_BULK"
+    cp "$LV_OUT" "$file" 2>/dev/null
+    if [ "$LV_RC" -eq 0 ] && persist_migrate_live_listing_ok "$file"; then
+        echo "    the destination's bulk directory after the failed resume:"
+        persist_migrate_live_records "$file" | awk -F'\t' '{ print "      " $1 " " $4 " " $NF }'
+        temps="$(persist_migrate_live_temp_count "$file")"
+    else
+        temps=unknown
+        echo "    (the destination's bulk directory could not be listed; see $LV_ERR)"
+    fi
+    case "$temps" in
+        0) why="no rsync temp file is there to explain it" ;;
+        unknown) why="the destination could not be listed" ;;
+        *) why="$temps rsync temp file(s) ./$PERSIST_MIGRATE_LIVE_BULK/.$PERSIST_MIGRATE_LIVE_BLOB.XXXXXX were left in the destination (the copy did not run --inplace)" ;;
+    esac
+    lv_result resume_finding "regression: exit $rc; $why"
+    LV_RC="$rc"
+    LV_OUT="$out"
+    LV_ERR="$err"
+    lv_bad "REGRESSION: the first rerun after the interrupted copy resumes and verifies (WP6.4c) -- it exited $rc; $why"
+}
+
 c_migrate_resume() {
     local migrated expected stat
     lv_case "resumed copy"
     lv_run migrate-resume -- "$BIN_DIR/dx-persist-migrate"
-    if [ "$LV_RC" -eq 3 ]; then
-        lv_check "the resume says it resumes" lv_out_has "Resuming the interrupted copy into $LV_CANON_LEAF (marker copying)..." || return 1
-        lv_list_dir dir1-bulk-after-resume "$PERSIST_MIGRATE_LIVE_BULK" || return 1
-        if lv_records "$LV_RUN_DIR/listings/dir1-bulk-after-resume" | LV_P="./.$PERSIST_MIGRATE_LIVE_BLOB." awk -F'\t' \
-            'index($NF, ENVIRON["LV_P"]) == 1 && length($NF) == length(ENVIRON["LV_P"]) + 6 { found = 1 } END { exit !found }'; then
-            lv_finding "the resumed migration does not verify (exit 3): the killed rsync left its temp file ./$PERSIST_MIGRATE_LIVE_BULK/.$PERSIST_MIGRATE_LIVE_BLOB.XXXXXX in the destination, and the forward copy (no --delete) keeps it, so 'run it again' never succeeds after a hard kill (R35; runbook 11.4 covers only the marker's temp file)"
-            lv_share temp-aside "$PERSIST_MIGRATE_LIVE_SCRIPT_TEMP_ASIDE" "$PERSIST_MIGRATE_LIVE_BULK" "$PERSIST_MIGRATE_LIVE_BLOB" || return 1
-            LV_ASIDES="$LV_ASIDES $PERSIST_MIGRATE_LIVE_TEMP_ASIDE"
-            lv_result resume_finding "stale rsync temp file; moved aside and resumed again"
-            lv_run migrate-resume-again -- "$BIN_DIR/dx-persist-migrate"
-        else
-            lv_show_logs
-            lv_bad "the resumed migration verifies (exit 3 with no stale rsync temp file to explain it)"
-            return 1
-        fi
+    if [ "$LV_RC" -ne 0 ]; then
+        lv_resume_regression
+        return 1
     fi
+    lv_result resume_finding none
     lv_check "the resumed migration exits 0" lv_rc_zero || return 1
     lv_check "it resumed into the same directory" lv_out_has "Resuming the interrupted copy into $LV_CANON_LEAF (marker copying)..." || return 1
     lv_check "it created nothing new" lv_out_lacks "Creating $LV_CANON_LEAF" || return 1
@@ -832,6 +946,7 @@ c_migrate_resume() {
     lv_migrate_report_ok "$LV_ORIG" $PERSIST_MIGRATE_LIVE_SEED_APPLE || return 1
     lv_result migrate1_copy_seconds "$LV_LAST_COPY"
     lv_result migrate1_verify_seconds "$LV_LAST_VERIFY"
+    LV_REF_COPY="$LV_LAST_COPY"
     LV_MARKER1="$(lv_marker_now)"
     migrated="$(persist_live_kv migrated-at "$LV_MARKER1")"
     lv_check "migrated-at is a UTC timestamp" lv_timestamp_ok "$migrated" || return 1
@@ -975,13 +1090,70 @@ c_retired_aside() {
     lv_check "the record still exists (it refuses an empty replacement until migrated again)" test -f "$LV_RECORD"
 }
 
+# c_controller_drop: the second migration (from the rollback volume into a
+# fresh directory) with its controller dropped mid-copy; the orchestration is
+# persist_migrate_live_controller_drop (tests/lib/persist-migrate-live.sh).
+c_controller_drop() {
+    local docker_bin hint marker created migrated
+    lv_case "controller drop"
+    LV_DROP_STATE=skipped
+    if lv_number "$LV_REF_COPY" && [ "$LV_REF_COPY" -lt "$PERSIST_MIGRATE_LIVE_DROP_MIN_COPY_SECONDS" ]; then
+        hint="$(persist_migrate_live_drop_bulk_hint "$LV_BULK_MIB" "$LV_REF_COPY")"
+        lv_result drop_outcome skipped
+        lv_finding "NOT VALIDATED: the controller drop needs a copy that outlasts the drop, the unlock and the rerun's first checks, but a full copy of the $LV_BULK_MIB MiB seed took only $LV_REF_COPY s here (at least $PERSIST_MIGRATE_LIVE_DROP_MIN_COPY_SECONDS s needed); run again with DXE_PERSIST_LIVE_BULK_MIB=$hint (the second migration below creates its directory as usual)"
+        return 0
+    fi
+    echo "    a full copy of the seed took ${LV_REF_COPY:-?} s in the first migration; the drop has to land well inside that"
+    docker_bin="$(dxe_runtime_call dx_runtime_docker_require_bin 2>/dev/null)" || docker_bin=""
+    lv_check "the NAS's docker CLI path is known" test -n "$docker_bin" || return 1
+    persist_migrate_live_controller_drop "$docker_bin" "$BIN_DIR/dx-persist-migrate" "$BIN_DIR/dx-lock" "$LV_CANON_LEAF" "$LV_INTERRUPT_DEADLINE" || return 1
+    LV_DROP_STATE="$PERSIST_MIGRATE_LIVE_DROP_OUTCOME"
+    lv_result drop_outcome "$LV_DROP_STATE"
+    lv_result drop_rerun_after_seconds "$PERSIST_MIGRATE_LIVE_DROP_WINDOW"
+    marker="$(lv_marker_now)"
+    created="$(persist_live_kv created-at "$marker")"
+    lv_check "the dropped run's marker has a UTC created-at" lv_timestamp_ok "$created" || return 1
+    LV_DROP_CREATED="$created"
+    if [ "$LV_DROP_STATE" = completed ]; then
+        migrated="$(persist_live_kv migrated-at "$marker")"
+        lv_check "the rerun completed the dropped run's migration: marker ready from the rollback volume" \
+            lv_equal "$marker" "$(persist_live_marker_text "$DX_CONTAINER_NAME" ready "$LV_ROLLBACK" "$created" "$migrated")"
+        return
+    fi
+    lv_check "the marker stays copying, for this guest and the rollback volume: the drop and the refused rerun set nothing" \
+        lv_equal "$marker" "$(persist_live_marker_text "$DX_CONTAINER_NAME" copying "$LV_ROLLBACK" "$created")" || return 1
+    lv_check "the D-7 record is unchanged" lv_equal "$(lv_record_text)" "$LV_RECORD1" || return 1
+    lv_check "the guest is still stopped" lv_container_stopped || return 1
+    lv_check "the original volume is still there" lv_volume_is present "$LV_ORIG" || return 1
+    lv_check "and the rollback volume" lv_volume_is present "$LV_ROLLBACK" || return 1
+    lv_list_dir dir2-orphan-seed "$PERSIST_MIGRATE_LIVE_SEED" || return 1
+    lv_list_dir dir2-orphan-bulk "$PERSIST_MIGRATE_LIVE_BULK" || return 1
+    lv_compare "the orphaned copy ran to its end on its own: the directory's tree equals the rollback volume's" rb-seed dir2-orphan-seed || return 1
+    lv_compare "and its bulk file is whole" L0-bulk dir2-orphan-bulk
+}
+
 c_migrate_again() {
     local marker created migrated expected
     lv_case "migrate again"
-    lv_run migrate-again -- "$BIN_DIR/dx-persist-migrate"
+    if [ "$LV_DROP_STATE" = completed ]; then
+        echo "    (the controller-drop case's rerun already completed this migration; its output is checked here)"
+        LV_RC=0
+        LV_OUT="$PERSIST_MIGRATE_LIVE_DROP_OUT"
+        LV_ERR="$PERSIST_MIGRATE_LIVE_DROP_ERR"
+    else
+        lv_run migrate-again -- "$BIN_DIR/dx-persist-migrate"
+    fi
     lv_check "dx-persist-migrate from the rollback volume exits 0" lv_rc_zero || return 1
-    lv_check "it created a fresh directory" lv_out_has "Creating $LV_CANON_LEAF with the marker copying..." || return 1
-    lv_check "it did not resume anything" lv_out_lacks "Resuming" || return 1
+    case "$LV_DROP_STATE" in
+        refused | missed | completed)
+            lv_check "it resumed the directory the dropped controller's copy filled" lv_out_has "Resuming the interrupted copy into $LV_CANON_LEAF (marker copying)..." || return 1
+            lv_check "it created nothing new" lv_out_lacks "Creating $LV_CANON_LEAF" || return 1
+            ;;
+        *)
+            lv_check "it created a fresh directory" lv_out_has "Creating $LV_CANON_LEAF with the marker copying..." || return 1
+            lv_check "it did not resume anything" lv_out_lacks "Resuming" || return 1
+            ;;
+    esac
     lv_migrate_report_ok "$LV_ROLLBACK" || return 1
     lv_result migrate2_copy_seconds "$LV_LAST_COPY"
     lv_result migrate2_verify_seconds "$LV_LAST_VERIFY"
@@ -989,6 +1161,9 @@ c_migrate_again() {
     created="$(persist_live_kv created-at "$marker")"
     migrated="$(persist_live_kv migrated-at "$marker")"
     lv_check "the new marker's times are UTC timestamps" lv_timestamp_ok "$created" || return 1
+    if [ -n "$LV_DROP_CREATED" ] && [ "$LV_DROP_STATE" != skipped ]; then
+        lv_check "created-at is the dropped run's: the directory was resumed, not made again" lv_equal "$created" "$LV_DROP_CREATED" || return 1
+    fi
     lv_check "and migrated-at too" lv_timestamp_ok "$migrated" || return 1
     lv_check "the fresh directory's marker is ready from the rollback volume" \
         lv_equal "$marker" "$(persist_live_marker_text "$DX_CONTAINER_NAME" ready "$LV_ROLLBACK" "$created" "$migrated")" || return 1
@@ -1024,6 +1199,10 @@ c_final_cleanup() {
     lv_mode host-path "$LV_ORIG"
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     lv_bg_wait
+    docker_bin="$(dxe_runtime_call dx_runtime_docker_require_bin 2>/dev/null)" || docker_bin=""
+    lv_check "the NAS's docker CLI path is known" test -n "$docker_bin" || return 1
+    lv_run copy-gone-before-cleanup -- persist_migrate_live_copy_watch "$docker_bin" gone "$LV_INTERRUPT_DEADLINE"
+    lv_check "no copy or verify container of the canary is left on the NAS (one still running is waited for, up to $LV_INTERRUPT_DEADLINE s)" lv_rc_zero || return 1
     if lv_container_running; then
         lv_run_ok "dx-stop-container stops the guest" stop-for-cleanup -- "$BIN_DIR/dx-stop-container" || return 1
     fi
@@ -1049,8 +1228,6 @@ c_final_cleanup() {
     for vol in "$DX_NIX_VOLUME" "$LV_ORIG" "$DX_BOOTSTRAP_VOLUME" "$LV_ROLLBACK"; do
         lv_check "no volume $vol is left" lv_volume_is absent "$vol" || return 1
     done
-    docker_bin="$(dxe_runtime_call dx_runtime_docker_require_bin 2>/dev/null)" || docker_bin=""
-    [ -n "$docker_bin" ] || docker_bin=docker
     base_ref="$(sed -n 's/^FROM[[:space:]]\{1,\}\([^[:space:]]\{1,\}\).*/\1/p' "${DX_CONTEXT_DIR:-$BASE_DIR/container/dx-nixos-26.05}/Containerfile" | sed -n '1p')"
     echo ""
     echo "  Nothing on the NAS was deleted. The canary's directory $LV_DIR now holds:"
@@ -1104,7 +1281,7 @@ c_real_inventory() {
 if [ -n "$LV_REAL" ]; then
     LV_CASES="c_real_inventory"
 else
-    LV_CASES="c_preflight c_volume_bring_up c_seed c_inventory c_stop_and_list c_migrate_interrupted c_migrate_resume c_switch_to_dir c_changes c_rollback c_switch_back c_retired_refused c_retired_aside c_migrate_again c_switch_again"
+    LV_CASES="c_preflight c_volume_bring_up c_seed c_inventory c_stop_and_list c_migrate_interrupted c_migrate_resume c_switch_to_dir c_changes c_rollback c_switch_back c_retired_refused c_retired_aside c_controller_drop c_migrate_again c_switch_again"
     if [ "${DXE_PERSIST_LIVE_KEEP:-}" != 1 ]; then
         LV_CASES="$LV_CASES c_final_cleanup"
     fi
@@ -1112,8 +1289,9 @@ else
         LV_CASES="c_final_cleanup"
     fi
     if [ "${DXE_PERSIST_LIVE_CLEANUP_ONLY:-}" != 1 ]; then
-        echo "  Expected duration: one full guest bootstrap on the NAS, the $LV_BULK_MIB MiB seed, three or"
-        echo "  four copies and verifications of it, four recreates -- typically 45 to 120 minutes."
+        echo "  Expected duration: one full guest bootstrap on the NAS, the $LV_BULK_MIB MiB seed, four copies"
+        echo "  and verifications of it (one killed on the NAS, one whose controller is dropped), four recreates --"
+        echo "  typically 45 to 120 minutes."
     fi
 fi
 lv_result started "$LV_STAMP0"
