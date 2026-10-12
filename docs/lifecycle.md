@@ -347,7 +347,12 @@ symlink, or is owned by root (the image's own store, or a volume before its
 one-time ownership migration: there is no one to hand back to). It prints
 `Handed N root-owned Nix path(s) back to the store owner.` when it handed
 any back and nothing otherwise; a failed hand-back prints a warning and the
-GC still runs. Running GC as root instead is not an option (a root `nix`
+GC still runs. The bootstrap also runs the same hand-back once per boot, as its own
+step right after the essentials closure is verified and before the store
+identity is published (the store is then in its final place in both image
+modes), so a hard link to a root-owned `.links` copy or an earlier root Nix
+call against the volume cannot leave root-owned entries behind; a failed
+hand-back there warns and never fails the boot. Running GC as root instead is not an option (a root `nix`
 re-owns the store's state); `chown` is not Nix. This heals an existing guest
 at its next `dx-gc` or `dx-reclaim`, with no restart and no bootstrap sync.
 The bootstrap applies the same rule after each of its own root Nix calls
