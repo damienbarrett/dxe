@@ -1730,6 +1730,7 @@ p10b_output="$({
     verify_remount_prerequisites() { printf '%s\n' "${FUNCNAME[0]}"; }
     nix_restore_image_default_profile() { printf '%s\n' "${FUNCNAME[0]}"; }
     ensure_essentials_valid() { printf '%s\n' "${FUNCNAME[0]}"; }
+    hand_back_root_nix_paths() { printf '%s\n' "${FUNCNAME[0]}"; }
     publish_nix_image_store_identity() { printf '%s\n' "${FUNCNAME[0]}"; }
     configure_release_identity() { printf '%s\n' "${FUNCNAME[0]}"; }
     setup_persist() { printf '%s\n' "${FUNCNAME[0]}"; }
@@ -1750,6 +1751,7 @@ populate_prepared_nix_volume
 verify_remount_prerequisites
 nix_restore_image_default_profile
 ensure_essentials_valid
+hand_back_root_nix_paths
 publish_nix_image_store_identity
 configure_release_identity
 setup_persist
@@ -1771,6 +1773,21 @@ if [ -n "$p10b_populate_idx" ] && [ -n "$p10b_verify_idx" ] && [ -n "$p10b_resto
     test_pass "bootstrap_phases (behavioural log) runs verify_remount_prerequisites strictly between populate_prepared_nix_volume and nix_restore_image_default_profile"
 else
     test_fail "bootstrap_phases (behavioural log) runs verify_remount_prerequisites strictly between populate_prepared_nix_volume and nix_restore_image_default_profile (log: $p10b_output)"
+fi
+
+# fix/gc-rootpaths-remount (tests/test_bootstrap_nix_rootpaths_final_store.sh
+# holds the contract and the behaviour): once the store is in its final
+# place and ensure_essentials_valid has verified the essentials closure in
+# it, the boot hands root-owned store and log entries back to the store owner
+# exactly once, before anything else runs against that store.
+p10b_ensure_idx="$(printf '%s\n' "$p10b_output" | grep -n -x 'ensure_essentials_valid' | cut -d: -f1)" || true
+p10b_handback_idx="$(printf '%s\n' "$p10b_output" | grep -n -x 'hand_back_root_nix_paths' | cut -d: -f1)" || true
+p10b_publish_idx="$(printf '%s\n' "$p10b_output" | grep -n -x 'publish_nix_image_store_identity' | cut -d: -f1)" || true
+if [ -n "$p10b_ensure_idx" ] && [ -n "$p10b_publish_idx" ] && [ "$p10b_handback_idx" = $((p10b_ensure_idx + 1)) ] \
+    && [ "$p10b_publish_idx" = $((p10b_ensure_idx + 2)) ]; then
+    test_pass "bootstrap_phases (behavioural log) runs hand_back_root_nix_paths exactly once, right after ensure_essentials_valid and right before publish_nix_image_store_identity"
+else
+    test_fail "bootstrap_phases (behavioural log) runs hand_back_root_nix_paths exactly once, right after ensure_essentials_valid and right before publish_nix_image_store_identity (log: $p10b_output)"
 fi
 
 # All healthy: every named tool resolves and execs cleanly, and run_as_dx
