@@ -651,6 +651,25 @@ exit 0
 EOF
 chmod +x "$WATCH/bin/docker" "$WATCH/bin/sleep"
 ln -s "$(command -v date)" "$WATCH/bin/date"
+# A NAS whose sleep takes whole seconds only (QTS's may): this fake sleep
+# refuses a fraction, logs every call, starts the copy on its first accepted
+# call and makes the temp file appear on its third.
+mkdir -p "$WATCH/bin-int"
+ln -s "$WATCH/bin/docker" "$WATCH/bin-int/docker"
+ln -s "$(command -v date)" "$WATCH/bin-int/date"
+cat >"$WATCH/bin-int/sleep" <<'EOF'
+#!/bin/sh
+st="$WATCH_STATE"
+case "$1" in *.*) printf "rejected %s\n" "$1" >>"$st/sleep-log"; echo "sleep: invalid number $1" >&2; exit 1 ;; esac
+printf "%s\n" "$1" >>"$st/sleep-log"
+n=$(cat "$st/sleeps" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" >"$st/sleeps"
+: >"$st/started"
+if [ "$n" -ge 3 ] && [ -n "${TEMP_FILE:-}" ]; then : >"$TEMP_FILE"; fi
+exit 0
+EOF
+chmod +x "$WATCH/bin-int/sleep"
 RSYNC_BIN="$PERSIST_MIGRATE_LIVE_RSYNC_BIN"
 LEAF="$SCRATCH/watch-share/dxe/dx-live-canary/persist"
 COPY_ID=aaaaaaaaaaaa1111111111111111111111111111111111111111111111111111
@@ -673,7 +692,7 @@ watch_setup() {
 }
 watch_run() {
     local shell="$1" deadline="$2"
-    WATCH_STATE="$WS" TEMP_FILE="${TEMP_FILE-$LEAF/dxe-live-bulk/.dxe-live-blob.bin.Zz9Yy8}" PATH="$WATCH/bin:$BARE_TOOLS" \
+    WATCH_STATE="$WS" TEMP_FILE="${TEMP_FILE-$LEAF/dxe-live-bulk/.dxe-live-blob.bin.Zz9Yy8}" PATH="${WATCH_BIN:-$WATCH/bin}:$BARE_TOOLS" \
         "$(command -v "$shell")" -c "$PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INTERRUPT" dxe-live-interrupt "$WATCH/bin/docker" \
         dx-live-canary-image dx-live-canary-persist "${WATCH_LEAF:-$LEAF}" dxe-live-bulk dxe-live-blob.bin "$deadline"
 }
@@ -765,6 +784,17 @@ for sh_name in $SHELLS; do
     if [ "$rc" = 2 ] && [ "$(kills)" = 0 ]; then
         test_pass "[$sh_name] a copy into another destination is never a match"
     else test_fail "[$sh_name] a copy into another destination is never a match (rc $rc)"; fi
+
+    watch_setup "intsleep-$sh_name"
+    WATCH_BIN="$WATCH/bin-int" watch_run "$sh_name" 5 >"$WS/out" 2>"$WS/err"
+    rc=$?
+    accepted="$(grep -vc '^rejected ' "$WS/sleep-log" 2>/dev/null || true)"
+    whole="$(awk '$0 == "1" { n++ } END { print n + 0 }' "$WS/sleep-log" 2>/dev/null)"
+    running_checks="$(awk '$1 == "inspect" && $3 ~ /State\.Running/ { n++ } END { print n + 0 }' "$WS/calls" 2>/dev/null)"
+    if [ "$rc" = 0 ] && [ "$(kills)" = 1 ] && grep -qx 'rejected 0.05' "$WS/sleep-log" && [ "$accepted" = 3 ] && [ "$whole" = 3 ] \
+        && [ "$running_checks" -ge 1 ] && [ "$running_checks" -lt "$accepted" ]; then
+        test_pass "[$sh_name] with a sleep that takes whole seconds only, the watcher sleeps 1 s between polls (no busy loop) and still kills the copy"
+    else test_fail "[$sh_name] whole-second sleep: no busy loop (rc $rc, kills $(kills), sleeps $(tr '\n' ' ' <"$WS/sleep-log" 2>/dev/null), running checks $running_checks; $(tr '\n' ' ' <"$WS/err"))"; fi
 
     watch_setup "args-$sh_name"
     rc_list=""

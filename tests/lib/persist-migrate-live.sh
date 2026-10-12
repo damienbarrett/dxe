@@ -110,12 +110,19 @@
 #     and the target is free. Deletes nothing.
 #   PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INTERRUPT (sh in the NAS shell; see
 #     persist_migrate_live_interrupt): waits (sleep 1 between docker ps calls,
-#     DEADLINE seconds in all) for exactly one RUNNING container that comes
-#     from the image $2, mounts the volume $3, runs the guest-volume rsync
-#     with "-aH --numeric-ids ... /src/ /dst/" and binds $4 at /dst; then
-#     waits for rsync's temp file of the blob ($4/$5/.$6.??????) and sends
+#     DEADLINE seconds in all) for exactly one RUNNING container that mounts
+#     the volume $3, runs the guest-volume rsync with
+#     "-aH --numeric-ids ... /src/ /dst/" and binds $4 at /dst. Those three
+#     are what single out the copy; `--filter ancestor=$2` only narrows the
+#     list (a tag of the shared nixos/nix base, so the production guest's
+#     containers can match it too). Then it waits for rsync's temp file of
+#     the blob ($4/$5/.$6.??????), polling every 0.05 s and checking the
+#     container every 20 polls when the NAS's sleep takes fractions, else
+#     every second (never a busy loop against the Docker daemon), and sends
 #     that one container `docker kill` (SIGKILL) at once, then waits until
-#     --rm has removed it. Prints copy=<id12>, interrupted=<id12>
+#     --rm has removed it. The trigger is rsync's temp file: if the copy ever
+#     uses rsync --inplace (no temp file; a WP6.4 follow-up may), this
+#     trigger never fires and needs another progress signal. Prints copy=<id12>, interrupted=<id12>
 #     temp=<name>, gone=<id12>. Status: 0 done; 1 bad arguments; 2 no copy
 #     container before the deadline; 3 the copy container ended before the
 #     temp file appeared; 4 a docker call failed; 5 the killed container did
@@ -195,13 +202,17 @@ PERSIST_MIGRATE_LIVE_SCRIPT_RETIRED_ASIDE="$PERSIST_LIVE_SCRIPT_PRELUDE"\
 't="persist.retired-$3"; if [ -e "$t" ] || [ -L "$t" ]; then echo "dxe-live: $t already exists" >&2; exit 1; fi; '\
 'mv -- persist "$t"'
 
+# The trigger below is rsync's temp file of the bulk file. A copy run with
+# rsync --inplace (a possible WP6.4 follow-up for the stale-temp-file gap)
+# writes no temp file, so this trigger would never fire: give the watcher
+# another progress signal before changing the copy's options.
 PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INTERRUPT='d=$1; img=$2; vol=$3; dst=$4; tmp="$4/$5/.$6"; '\
 'rs=/nix/var/nix/profiles/per-user/root/profile/bin/rsync; '\
 'case "$1" in /*) : ;; *) echo "dxe-live-interrupt: the docker CLI path must be absolute" >&2; exit 1 ;; esac; '\
 'case "$7" in "" | *[!0-9]*) echo "dxe-live-interrupt: bad deadline $7" >&2; exit 1 ;; esac; '\
 'if [ -z "$2" ] || [ -z "$3" ] || [ -z "$5" ] || [ -z "$6" ]; then echo "dxe-live-interrupt: missing arguments" >&2; exit 1; fi; '\
 'case "$4" in /*/persist) : ;; *) echo "dxe-live-interrupt: bad destination $4" >&2; exit 1 ;; esac; '\
-'now() { date +%s; }; end=$(( $(now) + $7 )); fs=0; if sleep 0.05 2>/dev/null; then fs=1; fi; '\
+'now() { date +%s; }; end=$(( $(now) + $7 )); fs=0; ev=1; if sleep 0.05 2>/dev/null; then fs=1; ev=20; fi; '\
 'id=""; while [ -z "$id" ]; do '\
 'ids=$("$d" ps -q --no-trunc --filter "ancestor=$img" --filter "volume=$vol" --filter status=running) || { echo "dxe-live-interrupt: docker ps failed" >&2; exit 4; }; '\
 'n=0; c=""; for i in $ids; do '\
@@ -216,11 +227,11 @@ PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INTERRUPT='d=$1; img=$2; vol=$3; dst=$4; tmp="$4
 'hit=""; k=0; while [ -z "$hit" ]; do '\
 'for f in "$tmp".??????; do if [ -f "$f" ] && [ ! -L "$f" ]; then hit=$f; fi; done; '\
 'if [ -n "$hit" ]; then break; fi; k=$((k + 1)); '\
-'if [ $((k % 20)) -eq 0 ]; then if [ -d "$4/$5" ] && { [ ! -r "$4/$5" ] || [ ! -x "$4/$5" ]; }; then echo "dxe-live-interrupt: this account cannot list $4/$5, so it cannot see the copy progress; nothing was killed" >&2; exit 7; fi; '\
+'if [ $((k % ev)) -eq 0 ]; then if [ -d "$4/$5" ] && { [ ! -r "$4/$5" ] || [ ! -x "$4/$5" ]; }; then echo "dxe-live-interrupt: this account cannot list $4/$5, so it cannot see the copy progress; nothing was killed" >&2; exit 7; fi; '\
 'r=$("$d" inspect --format "{{.State.Running}}" "$id" 2>/dev/null) || r=gone; '\
 'if [ "$r" != true ]; then echo "dxe-live-interrupt: the copy container ended before the temp file of $6 appeared" >&2; exit 3; fi; '\
 'if [ "$(now)" -ge "$end" ]; then echo "dxe-live-interrupt: no temp file of $6 within $7 s" >&2; exit 2; fi; fi; '\
-'if [ "$fs" = 1 ]; then sleep 0.05; fi; done; '\
+'if [ "$fs" = 1 ]; then sleep 0.05; else sleep 1; fi; done; '\
 '"$d" kill "$id" >/dev/null || { echo "dxe-live-interrupt: docker kill failed" >&2; exit 4; }; '\
 'echo "interrupted=$(printf "%.12s" "$id") temp=${hit##*/}"; '\
 'while "$d" inspect "$id" >/dev/null 2>&1; do if [ "$(now)" -ge "$end" ]; then echo "dxe-live-interrupt: the killed container did not go away" >&2; exit 5; fi; sleep 1; done; '\

@@ -50,10 +50,13 @@
 # /persist/dxe-live-bulk/dxe-live-blob.bin. dx-persist-migrate runs in the
 # background; meanwhile ONE ssh call runs PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INTERRUPT
 # in the NAS shell (the management account): it waits for exactly one RUNNING
-# container that comes from the canary image, mounts the canary persist
-# volume, runs the guest-volume rsync with "... /src/ /dst/" and binds the
-# canary directory at /dst (the copy container carries no name or label of its
-# own), then for rsync's temp file of the blob (.dxe-live-blob.bin.XXXXXX),
+# container that mounts the canary persist volume, runs the guest-volume rsync
+# with "... /src/ /dst/" and binds the canary directory at /dst -- those three
+# single out the copy, which carries no name or label of its own; the
+# `ancestor=<canary image>` filter only narrows the list, since the canary
+# image is a tag of the shared base the production guest runs too -- then for
+# rsync's temp file of the blob (.dxe-live-blob.bin.XXXXXX; with rsync
+# --inplace there would be none, see tests/lib/persist-migrate-live.sh),
 # and at that moment sends that one container `docker kill` (SIGKILL) -- a NAS
 # reboot or an OOM kill in the middle of the largest file -- and waits until
 # --rm has removed it. The migrate command then reports the stopped copy
@@ -739,6 +742,10 @@ c_migrate_interrupted() {
         case "$watch_rc" in
             3) lv_bad "the copy ended before rsync started on the $LV_BULK_MIB MiB file, so nothing was interrupted mid-copy; raise DXE_PERSIST_LIVE_BULK_MIB" ;;
             7) lv_bad "the NAS management account cannot list the destination's bulk directory, so the watcher cannot see the copy's progress (nothing was killed; the copy ran to its end)" ;;
+            2) lv_bad "no copy container (canary volume, guest-volume rsync, /dst on $LV_CANON_LEAF) appeared, or rsync never reached the bulk file, within $LV_INTERRUPT_DEADLINE s; nothing was killed (see the migration's log: it may have refused or failed before copying)" ;;
+            4) lv_bad "a docker call of the NAS-side watcher failed (ps, inspect or kill); see its log above" ;;
+            5) lv_bad "the killed copy container did not go away within $LV_INTERRUPT_DEADLINE s (--rm); look at it on the NAS before going on" ;;
+            6) lv_bad "more than one copy container matched (two copies into the canary directory at once?); the watcher touched none -- stop and inspect the NAS" ;;
             *) lv_bad "the NAS-side watcher found the copy container and killed it mid-copy (exit $watch_rc)" ;;
         esac
         return 1
@@ -1085,6 +1092,7 @@ c_real_inventory() {
     file="$LV_RUN_DIR/real-inventory.txt"
     {
         printf 'measured_seconds=%s\n' "$seconds"
+        printf 'measures=the dx-persist-inventory run only (no manifest pass)\n'
         for key in volume size_kb entries hard_links appledouble_count special_count acls xattrs rsync_version rsync_check target_free_kb target_room rollback_free_kb rollback_room; do
             printf '%s=%s\n' "$key" "$(lv_report "$key")"
         done
