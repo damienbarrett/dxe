@@ -309,10 +309,11 @@ essentials_first_missing_tool() {
 
 # Tools an installed root profile should have but the boot does not strictly
 # need: one "<name> <path relative to the profile>" line each, in priority
-# order (WP1.4: nix-ld for VS Code's server). A missing one triggers a
+# order (WP1.4: nix-ld for VS Code's server; WP6.2c: rsync, so an existing
+# guest has it for the /persist migration). A missing one triggers a
 # best-effort upgrade in install_essentials, never a boot failure.
 essentials_optional_tools() {
-    printf '%s\n' 'nix-ld libexec/nix-ld'
+    printf '%s\n' 'nix-ld libexec/nix-ld' 'rsync bin/rsync'
 }
 
 # The NAME of the first optional tool the installed root profile lacks (a

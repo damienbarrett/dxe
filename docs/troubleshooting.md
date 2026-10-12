@@ -283,6 +283,50 @@ banner exchange that is blocking new connections, so running
 `ps -eo pcpu,pid,etime,args --sort=-pcpu | head -20` in a terminal that is
 already attached will still work when nothing else does.
 
+### /persist host directory refusals
+
+With `DX_PERSIST_STORAGE=host-path`, `dx-create-volumes`, `dx-start-container` and `dx-persist-migrate` check the guest's NAS directory (`<DX_PERSIST_HOST_ROOT>/dxe/<container name>/persist`, shown as `<dir>` below) before they write anything, and refuse with one `Error:` line that names the fix. Nothing is changed by a refusal. The fragments below are the stable part of each message.
+
+`<dir> is missing, but <guest> already has /persist data: ...`. The directory is gone although the guest used it (a persist volume exists, or the per-profile record says so). The tooling never creates an empty replacement. Restore the directory from a NAS snapshot or backup, or import the volume with `dx-persist-migrate`; if you removed the directory on purpose, delete the record file named in the message too. If the message adds that the share may not be mounted, mount or unlock it first.
+
+`<dir>, or a level above it under the share root (dxe, dxe/<guest>), is a symlink`. `/persist` must be a real directory. Replace the symlink with the directory itself, then retry.
+
+`<dir>/.dxe-persist-dir names guest X, not Y; this directory belongs to another guest`. The marker belongs to a different guest. Check `DX_PERSIST_HOST_ROOT` and `DX_CONTAINER_NAME` in the profile (`dx-persist-migrate` says the same).
+
+`<dir> is marked copying`. A migration into it from the persist volume has not finished. Resume it with `dx-persist-migrate`, or roll it back, before starting the guest. The guest never starts on a `copying` directory.
+
+`<dir> is marked retired`. A rollback returned the guest to the persist volume. Set `DX_PERSIST_STORAGE=volume` in the profile, or move the retired directory aside first and then migrate again with `dx-persist-migrate` (into a new, empty directory).
+
+`<dir> is not empty and has no .dxe-persist-dir marker`. Existing data is never adopted automatically. Move it aside (the directory, or its contents), then retry. If the data matters, keep it aside and import the persist volume with `dx-persist-migrate` into the now-empty directory (`dx-persist-migrate` itself refuses a non-empty unmarked directory; it copies only into an empty one).
+
+`<dir> is empty and unmarked, but <guest> has used other /persist storage before`. An empty directory is not proof of a new guest while the old volume or the record exists. To start fresh on purpose (new SSH host keys, no credentials; the old volume is kept), run `DX_PERSIST_FRESH_START=<container name> ./bin/dx-create-volumes` once; the value must equal `DX_CONTAINER_NAME`. Otherwise restore the data and do not use that variable. Two cases make `dx-create-volumes` mark an existing empty directory: finishing an interrupted create (when no old volume or record exists), and a fresh start (`DX_PERSIST_FRESH_START=<container name>`, only when the old volume or record exists).
+
+`the share root <root> does not look mounted: its sentinel file DX_PERSIST_HOST_MOUNT_SENTINEL=<name> is missing`. An unmounted or locked share can leave an empty mount point. Mount or unlock the share, then retry.
+
+`cannot tell whether the share root <root> is mounted`. Creating or marking a directory needs proof the share is mounted, and `DX_PERSIST_HOST_MOUNT_SENTINEL` is not set. Set it in the private profile to a file that exists at the share root only while it is mounted.
+
+`cannot tell whether the persist volume <name> exists`. `docker volume inspect` failed for a reason other than "no such volume" (the Docker daemon or the SSH connection is down, or permission was denied), and a missing volume could mean a new, empty `/persist`. Fix the NAS connection or its Docker daemon, then retry. Nothing was changed.
+
+`<dir>/.dxe-persist-dir is not a valid /persist marker`. Inspect the directory and restore a valid marker, or move the directory aside, then retry.
+
+`the share root DX_PERSIST_HOST_ROOT=<root> is not a usable directory`. The root is wrong, unavailable, or could not be checked. Fix `DX_PERSIST_HOST_ROOT` in the private profile or make the share available, then retry.
+
+The guest runs its own check, too, before it changes anything under `/persist` or starts `sshd`. This self-check stops the guest on any of the following, so a guest that Docker restarts after a NAS reboot never runs on an empty or foreign `/persist`:
+
+`/persist is not a mount point`. The share directory is not bound there, so data would land on the container's own filesystem. Check the bind, then run `./bin/dx-recreate`.
+
+`<marker> is missing, so /persist is not a prepared directory for guest <guest>`. The marker is absent, or the NAS share is not unlocked yet. Check the share, then run `./bin/dx`, whose host-side checks say what to do.
+
+`<marker> is malformed`. It is not a regular file, or its fields are not the expected ones. Inspect it on the NAS (`schema=1`, the right `guest=`, `state=ready`) before starting the guest again.
+
+`<marker> names guest X, not Y` or `has state copying, not ready`. For a foreign marker, check the profile as above. For a marker that is not ready, finish the migration, or after a rollback set the profile back to volume mode and run `./bin/dx-recreate`.
+
+A healthy start prints `Verified host-path /persist for guest <guest>: a mount point with a ready .dxe-persist-dir.` in the bootstrap log (`Checking Bootstrap Logs`, below).
+
+### A guest tool does not notice a change made from the host
+
+Files changed under `/persist` from the Mac (through the NAS share) can reach the guest without a file-system event, so a long-running watcher in the guest, such as an editor, a dev server or a build tool, can miss the change. The change is on disk and a fresh read sees it. Refresh the tool's view (reload the folder, or touch the file from inside the guest), or restart the watcher. Prefer making such edits from inside the guest.
+
 ### Checking Bootstrap Logs
 After a factory reset, `./bin/dx` must repopulate the complete Nix store before
 SSH starts. The command waits for the full bounded retry period and prints a

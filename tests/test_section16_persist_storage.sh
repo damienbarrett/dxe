@@ -137,11 +137,13 @@ STALE_MATCHES=$(rg -n '/workspace|DX_WORKSPACE|WORKSPACE|~/workspace|DX_PERSIST_
 # check, whose message names DX_LEGACY_WORKSPACE_VOLUME, into
 # bin/lib/dx-persist-dir.sh, and tests/test_persist_dir_create_unit.sh pins
 # that message.
-# tests/test_persist_migrate.sh (WP6.4) unsets it for the same isolation.
+# tests/test_persist_migrate.sh (WP6.4), tests/test_persist_rollback.sh (WP6.5)
+# and tests/test_persist_copy_resume.sh (WP6.4c) unset it for the same
+# isolation.
 # That state-directory path is exempt wherever it appears (e.g. in plan and
 # docs references), because the name alone is not a workspace-volume reference.
 UNEXPECTED_STALE=$(printf '%s\n' "$STALE_MATCHES" | grep -vE \
-    'bin/dx-lib.sh|bin/lib/dx-config.sh|bin/dx-create-volumes|bin/dx-migrate-persist|bin/dx-mount|README.md|refactor-plan.md|docs/|tests/test_section9_host_scripts.sh|tests/test_section10_docs.sh|tests/test_section16_persist_storage.sh|tests/test_section18_mount_git.sh|tests/test_runtime_boundary_characterisation.sh|tests/test_docker_runtime_adapter.sh|tests/test_docker_adapter_.*\.sh|tests/fixtures/config-registry-defaults.txt|scripts/lib/dx-usage-service.sh|tests/test_usage_service.sh|tests/test_persist_status_mounts.sh|tests/test_persist_start_decision.sh|tests/test_persist_dir_create(_unit)?\.sh|tests/test_persist_migrate\.sh|bin/lib/dx-persist-dir.sh' \
+    'bin/dx-lib.sh|bin/lib/dx-config.sh|bin/dx-create-volumes|bin/dx-migrate-persist|bin/dx-mount|README.md|refactor-plan.md|docs/|tests/test_section9_host_scripts.sh|tests/test_section10_docs.sh|tests/test_section16_persist_storage.sh|tests/test_section18_mount_git.sh|tests/test_runtime_boundary_characterisation.sh|tests/test_docker_runtime_adapter.sh|tests/test_docker_adapter_.*\.sh|tests/fixtures/config-registry-defaults.txt|scripts/lib/dx-usage-service.sh|tests/test_usage_service.sh|tests/test_persist_status_mounts.sh|tests/test_persist_start_decision.sh|tests/test_persist_dir_create(_unit)?\.sh|tests/test_persist_migrate\.sh|tests/test_persist_rollback\.sh|tests/test_persist_copy_resume\.sh|bin/lib/dx-persist-dir.sh' \
     | grep -vF 'services/agent-stats/workspace' || true)
 if [ -z "$UNEXPECTED_STALE" ]; then
     test_pass "no stale workspace runtime references outside explicit legacy docs/tests"

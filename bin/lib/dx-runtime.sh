@@ -356,7 +356,8 @@ dx_runtime_host_dir_marker_write() { dx_runtime_dispatch host_dir_marker_write "
 dx_runtime_host_dir_usage() { dx_runtime_dispatch host_dir_usage "$@"; }
 
 # rsync operations (WP6.2; plan D-10): rsync runs inside a one-off container
-# on the NAS, from $DX_IMAGE. Apple has no NAS: it answers "unsupported".
+# on the NAS, from the guest's nix volume (not $DX_IMAGE). Apple has no NAS:
+# it answers "unsupported".
 #   dx_runtime_host_rsync_check [-A] [-X]            facts, one per line
 #   dx_runtime_host_rsync forward|reverse VOL DIR [-A] [-X]
 dx_runtime_host_rsync_check() { dx_runtime_dispatch host_rsync_check "$@"; }
@@ -381,3 +382,22 @@ dx_runtime_host_dir_establish() { dx_runtime_dispatch host_dir_establish "$@"; }
 #       its output and status (0 match, 1 differ, 2 error) pass through
 dx_runtime_host_dir_marker_set() { dx_runtime_dispatch host_dir_marker_set "$@"; }
 dx_runtime_host_manifest_verify() { dx_runtime_dispatch host_manifest_verify "$@"; }
+
+# Rollback operation (WP6.5; plan D-6, D-10; spec R36, R37). Read-only, in a
+# root one-off container on the NAS. Apple has no NAS: "unsupported".
+#   dx_runtime_host_dir_inventory DIR
+#       dx_runtime_volume_inventory's report (the same script) for a host
+#       DIRECTORY, bound read-only; its output and status pass through
+dx_runtime_host_dir_inventory() { dx_runtime_dispatch host_dir_inventory "$@"; }
+
+# Copy-container check (WP6.4c; spec R35). Read-only. The rsync copy and the
+# manifest verify of host_rsync and host_manifest_verify run in containers
+# named per profile (dxe-persist-copy-<profile id>, dxe-persist-verify-<profile
+# id>); this tells whether an earlier run left either one on the NAS. Apple has
+# no NAS: "unsupported".
+#   dx_runtime_host_copy_containers
+#       one "<container name> <state>" line per existing container (Docker's
+#       state word: running, created, exited, ...), the copy container
+#       first; nothing when neither exists. Non-zero, with nothing on stdout,
+#       when the runtime could not tell.
+dx_runtime_host_copy_containers() { dx_runtime_dispatch host_copy_containers "$@"; }

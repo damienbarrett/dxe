@@ -1748,3 +1748,184 @@ bin/dx-persist-migrate wrapper). On a tree holding 5444 / 2623 the expected
 values are 5658 / 2628 (provisional until the next integration coverage run).
 The WP6.2b dated line left ratchet.env; its full entry is the "WP6.2b" section
 above.
+
+## WP6.2c (2026-10-12): rsync on the optional essentials list
+
+Measured on wp/6.2c (feat/persist-host-dir at edec0d3 plus WP6.2c): covered=100%, scope_exec_lines=5444, unscoped_prod_exec_lines=2623. These equal the provisional integration values (5444 / 2623) exactly: the WP adds no executable line (the list gains an argument on an existing printf), so ratchet.env is unchanged. This run is the integration measurement for the merged Mac branch: the provisional 5444 / 2623 hold.
+
+## WP6.4b (2026-10-12): migration path hardening
+
+`scope_exec_lines_floor` 5658 -> 5661 (+3, measured, 100% covered).
+`unscoped_prod_exec_lines_ceiling` unchanged at 2628 (measured 2628; no entry
+point changed). Measured with `tests/run-coverage-linux.sh` on the wp/6.4b
+tree (Red `bae545b`, `6ac55ae`, `2b9642a` plus the Green change, based on
+feat/persist-host-dir `1f9eece`): `covered=100% scope_exec_lines=5661
+unscoped_prod_exec_lines=2628`.
+
+The +3 are, by kcov's instrumented lines: in `bin/lib/dx-persist-dir.sh`, +2
+net -- the first guest check of `dx_persist_migrate_run` (9 lines: its
+`local` lines, the state read, the case and its arms) became the shared
+`dx_persist_migrate_guest_stopped` helper plus its call (10 lines), and the new
+re-check between the manifest verify and the ready marker-set is one more
+call; in `bin/lib/dx-runtime-docker-lifecycle.sh`, +1, the case arm in
+`dx_runtime_docker_host_dir_marker_set` that refuses "/" and non-canonical
+roots. The marker step's new bytes check lives inside the constant
+single-line script literals, which kcov counts as the same one line each.
+
+Integration measurement after the WP6.4 merge: the merged tree was recorded
+as provisional 5658 / 2628 (WP6.4's 5591 / 2627 on a 5377 / 2622 base,
+carried onto 5444 / 2623). This run measures 5661 / 2628, and the WP6.4b
+change adds exactly +3 in scope and nothing exempt, so the merged base's
+actual values are 5658 / 2628: the provisional figures are confirmed, with
+no difference to explain.
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP1.4, recorded in full in the "VS Code server support via nix-ld"
+section above) moved here verbatim:
+
+    # 2026-10-11 floor 3935 -> 4516, ceiling 2638 -> 2639 (WP1.4): +1 exempt line, the configure_vscode_server_support call in bootstrap.sh bootstrap_phases; the logic is in bootstrap/system.sh (in scope). The 2026-09-30 WP5.2 line moved to the history doc.
+
+## WP6.5 (2026-10-12)
+
+`scope_exec_lines_floor` 5591 -> 5723 (+132, measured, 100% covered): the
+rollback from the NAS directory into a new volume. In
+`bin/lib/dx-persist-dir.sh` (+120, net of the two Refactor commits),
+`dx_persist_rollback_main` and its helpers: the usage, the refusals that need
+no runtime call, the directory decision (read through WP6.4's
+`dx_persist_migrate_decide`), the one Error line per refusal, the directory's
+inventory reader, the report and the run itself (guest state, probe, the new
+name against the marker's source-volume and the runtime, inventory,
+rsync_check, the volume create, the reverse copy and verify with
+`DX_PERSIST_VOLUME=NAME`, the retired marker); plus the helpers the two
+commands now share (`dx_persist_inventory_check`, `dx_persist_guest_stopped`,
+`dx_persist_appledouble_lines`). In `bin/lib/dx-runtime-docker-lifecycle.sh`
+(+12), `dx_runtime_docker_host_dir_inventory` (the WP6.3 inventory script
+over a read-only bind) and `dx_runtime_docker_host_rsync`'s refusal of
+`DX_BOOTSTRAP_VOLUME`. The one-line `dx_runtime_host_dir_inventory` dispatch
+and Apple "unsupported" definitions are not instrumented by kcov. Exercised by
+the acceptance suite `tests/test_persist_rollback.sh` (real rsync and the real
+manifest tool under kcov) and the in-process cases in
+`tests/test_persist_rollback_unit.sh`.
+`unscoped_prod_exec_lines_ceiling` 2627 -> 2632 (+5): the new entry point
+`bin/dx-persist-rollback` has, like `bin/dx-persist-migrate`, `set -euo
+pipefail`, the `SCRIPT_DIR` line, the `source` of `dx-lib.sh`, the
+`persist_rollback_main` definition and the `_main` call guard; no other entry
+point changed. Measured with `tests/run-coverage-linux.sh` on 57fb61f:
+covered=100% scope_exec_lines=5723 unscoped_prod_exec_lines=2632 (the run
+stopped at the unscoped check, 2632 > 2627, after the 100% line-coverage check
+passed). An earlier run on 4a94bce measured `bin/lib/dx-persist-dir.sh` at
+564/565: kcov never marks the `} ;;` that closes a brace group in a case arm,
+which 57fb61f removed.
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP6.3, recorded in full above) moved here verbatim:
+
+    # 2026-10-11 WP6.3: floor 4973 -> 5063 (measured, 100% covered; inventory/host_dir_free runtime operations and dx_persist_inventory_main); ceiling 2643 -> 2648 (+5 executable lines in the new entry point bin/dx-persist-inventory: set -euo pipefail, SCRIPT_DIR, source dx-lib.sh, the persist_inventory_main definition, the _main call guard). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+Merge WP6.5 into feat/persist-host-dir (2026-10-12; verified): wp/6.5
+measured 5723 / 2632 on a base of 5591 / 2627 (+132 in scope; +5 exempt
+lines, the bin/dx-persist-rollback wrapper). On the tree holding WP6.4b's
+5661 / 2628 the expected values are 5793 / 2633: `scope_exec_lines_floor`
+5661 -> 5793, `unscoped_prod_exec_lines_ceiling` 2628 -> 2633 (provisional
+until the next integration coverage run). One conflict was code: WP6.4b's
+`dx_persist_migrate_guest_stopped GUEST OUTCOME` and WP6.5's
+`dx_persist_guest_stopped COMMAND` became ONE helper,
+`dx_persist_guest_stopped COMMAND OUTCOME` (the guest is
+`DX_CONTAINER_NAME`), which migrate's start and pre-ready re-check and
+rollback's start call, every Error line byte-identical to before. Both sides
+counted the conversion of migrate's first guest check into a helper (WP6.4b
+puts it at +1 net), and the merge keeps one helper, so the measurement may
+come out one line under the simple sum; the next run decides.
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP4.4, recorded in full in the "WP4.4" section above) moved here
+verbatim:
+
+    # 2026-10-12 WP4.4: floor 5055 -> 5150 (measured on a f65e19a base, 100% covered; volume_state and host_dir_establish in both adapters, establish/record/backfill/legacy check in dx-persist-dir.sh); ceiling unchanged at 2644 (measured 2634: bin/dx-create-volumes legacy block became one call). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+## WP6.5b (2026-10-12): rollback hardening
+
+`scope_exec_lines_floor` 5793 -> 5800 (measured, 100% covered).
+`unscoped_prod_exec_lines_ceiling` unchanged at 2633 (measured 2633; no entry
+point changed). Measured with `tests/run-coverage-linux.sh` on a `git
+archive` export of the Green commit `f5a346c` (the WP6.5 merge `c9ba2e6`,
+Red `de15c17`, Green): `covered=100% scope_exec_lines=5800
+unscoped_prod_exec_lines=2633`.
+
+The +8 are all in `bin/lib/dx-persist-dir.sh` (kcov's instrumented lines
+565 -> 573): the steps once the new volume exists moved from
+`dx_persist_rollback_run` into `dx_persist_rollback_fill` (its two `local`
+lines and its `shift`, +3), the guest re-check before the retired marker
+(+1), the one line of `dx_persist_rollback_kept` (+1), and in the run the
+call to the fill, the kept-volume line on a failure and the `return` (+3);
+the run's `local` line for the moved variables became a shorter one (0).
+Exercised in-process by the acceptance suite
+`tests/test_persist_rollback_hardening.sh`.
+
+Difference from the provisional 5793: the merged tree measures 5792 / 2633,
+one line under the simple sum, as the merge entry above anticipated (WP6.4b
+and WP6.5 both counted the conversion of migrate's first guest check into a
+helper, and the merge keeps one). The merge's own coverage run (an export of
+`c9ba2e6`) stopped in `tests/test_persist_rollback.sh` before the line
+check, so its total is read from its partial kcov report:
+`bin/lib/dx-persist-dir.sh` has 565 instrumented lines there and 573 in the
+Green tree, and the two trees differ in no other production file, so
+5800 - 8 = 5792. The ceiling's 2633 equals the provisional value.
+
+That stop was not caused by the merge. Under real rsync (the Linux coverage
+image, rsync 3.2.7) the locked WP6.5 suite's main case fails intermittently
+with exit 3, "changed mtime ./nested/a/b/c" and "./new-dir": it changes those
+two directories just before the rollback's copy, and with the default
+`--modify-window=0` rsync compares directory mtimes to the second when it
+re-touches directories, so a directory created in the destination within
+the same second keeps its own sub-second mtime, which the manifest
+(nanoseconds) reports. Reproduced alone in the same image: the WP6.5 tip
+`b58a5eb` failed 3 of 4 runs, the merge 2 of 3, the Green tree 1 of 3; an
+rsync run with `--modify-window=-1` keeps the nanoseconds. Reported to the
+coordinator (the D-10 argv is pinned by locked suites); the Green tree's
+coverage run above passed it.
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP-T1, recorded in full in the "WP-T1" section above) moved here
+verbatim:
+
+    # 2026-10-12 WP-T1: floor 5377 -> 5378 (measured, 100% covered; +1 line, the ssh_raw_noin helper in dx-runtime-docker-transport.sh); ceiling unchanged at 2622 (no entry-point line).
+
+## WP6.4c (2026-10-12): resumable, mutually exclusive copies
+
+`scope_exec_lines_floor` 5800 -> 5827 (measured, 100% covered).
+`unscoped_prod_exec_lines_ceiling` unchanged at 2633 (measured 2633; no entry
+point changed). Measured with `tests/run-coverage-linux.sh` on the worktree
+of the Green commit `bb10edf` (base `ac8d3d9`, the integrated WP6.5 +
+WP6.4b + WP6.5b line; Red `83e8dc0`): `covered=100% scope_exec_lines=5827
+unscoped_prod_exec_lines=2633`.
+
+The +27, from kcov's per-file instrumented lines:
+
+- `bin/lib/dx-persist-dir.sh` 573 -> 585 (+12): `dx_persist_copy_containers_none`
+  (the check, its three refusals and its return lines) and its call in
+  `dx_persist_migrate_run` and in `dx_persist_rollback_run`;
+- `bin/lib/dx-runtime-docker-lifecycle.sh` +13: the container name helper,
+  `dx_runtime_docker_copy_id_flags` (name plus DQ6 labels), the read-only
+  `dx_runtime_docker_host_copy_containers` (two `ps -a` queries), and the
+  `copy_id_flags` call in `host_rsync` and in `host_manifest_verify`
+  (the `--inplace --modify-window=-1` words add no line);
+- `bin/lib/dx-runtime.sh` +1 (the neutral `dx_runtime_host_copy_containers`)
+  and `bin/lib/dx-runtime-apple.sh` +1 (its "unsupported" arm).
+
+Exercised in-process by the acceptance suite
+`tests/test_persist_copy_resume.sh` (its fidelity section ran in the
+coverage image: the SIGKILLed 64 MiB copy resumed with no `.big.bin.*` temp
+file, and the same-second directory and same-size file changes were copied
+again; 192 passed, 0 skipped) and by the implementer suite
+`tests/test_persist_copy_containers_unit.sh`. In the same run the locked
+`tests/test_persist_migrate.sh` (751) and `tests/test_persist_rollback.sh`
+(876) passed under real rsync 3.2.7, the suites whose intermittent
+"changed mtime" failure the WP6.5b entry above traced to
+`--modify-window=0`.
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP6.4, recorded in full in the "WP6.4" section above) moved here
+verbatim:
+
+    # 2026-10-12 WP6.4: floor 5377 -> 5591 (measured, 100% covered; dx_persist_migrate_main and its helpers, container_state, host_dir_marker_set and host_manifest_verify in both adapters); ceiling 2622 -> 2627 (+5 executable lines in the new entry point bin/dx-persist-migrate: set -euo pipefail, SCRIPT_DIR, source dx-lib.sh, the persist_migrate_main definition, the _main call guard). History: docs/evidence/20260930/coverage-ratchet-history.md.
