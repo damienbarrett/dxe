@@ -271,6 +271,33 @@ essentials_profile_store_path() {
     return 1
 }
 
+# run_root_nix ARG... -- runs one root `nix ARG...` and then removes that
+# process's own temporary-roots file (fix/gc-temproots). Nix names it
+# /nix/var/nix/temproots/<its pid> (root:root 0600 when root runs it), and
+# Nix 2.34's flake-building commands (`nix profile install <flake>#<attr>`
+# among them) do not unlink it on exit, even on success. Left in the
+# dx-owned single-user store, dx's `nix-collect-garbage` cannot open it and
+# aborts the whole collection. So nix runs as a child -- for a simple command
+# run with `&`, $! is nix's own pid, the file's name -- and once `wait` has
+# reaped it, exactly that one file is removed, on success and on failure:
+# what Nix's own collector does for an exited process once it can lock the
+# file, done early. Nothing else in the directory is touched (non-recursive
+# `rm -f`, one path). The prefix is the DX_ESSENTIALS_ROOT that
+# essentials_profile_path honours. nix's argv, stdout, stderr and exit status
+# pass through, and `0<&0` keeps the caller's stdin (bash would otherwise
+# give an asynchronous command /dev/null). Nothing in the bootstrap traps a
+# signal, so `wait` returns only once nix has exited. Residual: a new process
+# assigned the just-reaped pid that creates its own temp-roots file before
+# the removal would lose it -- a window of one unlink right after `wait`.
+run_root_nix() {
+    local pid status=0
+    nix "$@" 0<&0 &
+    pid=$!
+    wait "$pid" || status=$?
+    rm -f -- "${DX_ESSENTIALS_ROOT:-}/nix/var/nix/temproots/$pid" || true
+    return "$status"
+}
+
 install_essential_packages() {
     local bootstrap_root="${DX_BOOTSTRAP_ROOT:-/guest-bootstrap}"
     # Name the target profile explicitly. An unqualified `nix profile install`
@@ -284,7 +311,7 @@ install_essential_packages() {
     # unset for PID 1) and is not a property of this install itself. Pointing
     # at the per-user root profile -- exactly what essentials_profile_store_path
     # already checks first -- makes the target the same on every runtime.
-    nix profile install --profile /nix/var/nix/profiles/per-user/root/profile "$bootstrap_root#bootstrap-essentials" --no-update-lock-file "${DX_NIX_FEAT_OPTS[@]}" "${DX_NIX_NET_OPTS[@]}"
+    run_root_nix profile install --profile /nix/var/nix/profiles/per-user/root/profile "$bootstrap_root#bootstrap-essentials" --no-update-lock-file "${DX_NIX_FEAT_OPTS[@]}" "${DX_NIX_NET_OPTS[@]}"
 }
 
 # True when the root essentials profile install_essential_packages targets
@@ -316,11 +343,11 @@ essentials_first_missing_tool() {
 # are all part of the new output, so they stay present.
 upgrade_essential_packages() {
     local profile=/nix/var/nix/profiles/per-user/root/profile removed=false status=0
-    if nix profile remove --profile "$profile" bootstrap-essentials "${DX_NIX_FEAT_OPTS[@]}"; then removed=true; fi
+    if run_root_nix profile remove --profile "$profile" bootstrap-essentials "${DX_NIX_FEAT_OPTS[@]}"; then removed=true; fi
     install_essential_packages || status=$?
     if [ "$status" -ne 0 ] && [ "$removed" = true ]; then
         echo "Warning: the essentials upgrade failed (exit $status); restoring the previous profile generation." >&2
-        nix profile rollback --profile "$profile" "${DX_NIX_FEAT_OPTS[@]}" || true
+        run_root_nix profile rollback --profile "$profile" "${DX_NIX_FEAT_OPTS[@]}" || true
     fi
     return "$status"
 }

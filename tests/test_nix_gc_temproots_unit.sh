@@ -108,6 +108,7 @@ ut_rc=0
 (
     PATH="$FAKE_DIR:$PATH"
     export PATH
+    # shellcheck disable=SC2154 # assigned by bin/lib/dx-nix-gc.sh (sourced above), which ShellCheck cannot see
     bash -c "$dx_nix_gc_clear_temproots_program" bash "$UT_TEMPROOTS" "$UT_PROC"
 ) > "$UT_CASE/out" 2> "$UT_CASE/err" || ut_rc=$?
 ut_check "program: tries every stale file once with a non-recursive rm -f, never the live pid's file" \

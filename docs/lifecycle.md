@@ -248,8 +248,8 @@ or perform maintenance operations.
 | [`bin/dx-forward`](../bin/dx-forward) | Exposes guest web ports on macOS loopback addresses with SSH local forwarding. |
 | [`bin/dx-reverse`](../bin/dx-reverse) | Exposes macOS loopback services inside the guest with SSH reverse forwarding. |
 | [`bin/dx-enter`](../bin/dx-enter) | Direct `container exec` shell, bypassing SSH. Over `docker-ssh`, the management SSH transport forces its own pty (`-tt`) whenever a TTY was requested, so it works both interactively and driven non-interactively (e.g. `dx-enter <cmd>`). |
-| [`bin/dx-gc`](../bin/dx-gc) | Runs Nix garbage collection and store optimization inside the guest. |
-| [`bin/dx-reclaim`](../bin/dx-reclaim) | Reclaims host disk space by deleting old Nix generations in the guest and trimming persistent filesystems. |
+| [`bin/dx-gc`](../bin/dx-gc) | Runs Nix garbage collection and store optimization inside the guest, as `dx`, after clearing stale Nix temporary-roots files (see [Reclaiming host disk space](#reclaiming-host-disk-space)). |
+| [`bin/dx-reclaim`](../bin/dx-reclaim) | Reclaims host disk space by deleting old Nix generations in the guest (after the same stale temporary-roots clear as `dx-gc`) and trimming persistent filesystems. |
 | [`bin/dx-export`](../bin/dx-export) | Archives the container to a tar file. Atomic: streams to a `.partial` sibling first, verified non-empty, then renamed into place; a mid-stream failure or an interruption removes the partial rather than leaving a truncated file at the final path. |
 | [`bin/dx-nix-disk`](../bin/dx-nix-disk) | Prepares a sparse Nix disk image; lifecycle-adjacent storage prep. Apple-only (`raw_nix_disk` capability); refuses immediately under `DX_RUNTIME=docker-ssh`, before any mutation. |
 | [`bin/dx-usage-service`](../bin/dx-usage-service) | `start`, `stop`, `restart`, `status`, `logs [N]` for the guest's agent-stats service (only in a guest created with `DX_USAGE_SERVICE=on`; docker-ssh only, `usage_service` capability). Drives the guest's s6 tree through `exec`; touches only agent-stats, never sshd or the keyring. |
@@ -279,7 +279,8 @@ host sparse-image size; a `docker-ssh` guest's Docker-visible volume size, or
 the operation. It then:
 
 1. Deletes old Nix generations inside the guest with `nix-collect-garbage -d`
-   (identical for both runtimes).
+   (identical for both runtimes), after clearing stale Nix temporary-roots
+   files (below).
 2. **`apple-image` only:** runs `fstrim -v` on `/nix` and `/persist` so
    already-free blocks can be discarded from the sparse host images.
    **`direct-volume` (`docker-ssh`) skips this step entirely** and prints one
@@ -292,6 +293,25 @@ paths and, under `apple-image`, discards blocks the guest filesystem has
 already marked free. It is reasonable to run occasionally after large
 rebuilds or dependency churn, but it does not need to run constantly or on a
 tight schedule.
+
+**Stale temporary-roots files.** Both `dx-gc` and `dx-reclaim` run Nix GC as
+`dx`, and Nix's collector opens every file in `/nix/var/nix/temproots` to
+lock-test it: a single file `dx` cannot open stops the whole collection
+(`error: opening temporary roots file "/nix/var/nix/temproots/<pid>":
+Permission denied`, nothing collected). Nix 2.34's flake-building commands
+do not remove that file when they exit, so a root `nix profile install` (the
+bootstrap's essentials install) leaves a `root:root 0600` one behind.
+Immediately before the GC command, both commands therefore remove, as `dx`
+(which owns the directory) in one guest call
+(`bin/lib/dx-nix-gc.sh`), every temp-roots file whose name is a pid with no
+running process (`/proc/<pid>` absent); live pids' files, other names,
+directories and symlinks are never touched, and nothing is removed when
+`dx` cannot see `/proc/1` (hidepid). It prints `Cleared N stale Nix temporary
+roots file(s).` when it removed any and nothing otherwise. A failed clear
+prints a warning and the GC still runs, so it is never worse than no clear.
+The bootstrap also removes each of its own root Nix calls' temp-roots file
+as soon as that call exits (`run_root_nix` in `bootstrap/common.sh`), so new
+guests do not accumulate one.
 
 ### Reaching a QNAP guest over SSH
 
