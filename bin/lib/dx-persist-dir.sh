@@ -215,7 +215,8 @@ dx_persist_refusal() {
                 msg="the share root DX_PERSIST_HOST_ROOT=$root resolves to the filesystem root ($canon) on ${DX_REMOTE_HOST:-the NAS} (through a symlink or ..), and the filesystem root is never a share root; set DX_PERSIST_HOST_ROOT in the private profile to the share itself, then retry."
             else
                 msg="the share root DX_PERSIST_HOST_ROOT=$root is not a usable directory on ${DX_REMOTE_HOST:-the NAS}, or it could not be checked; fix DX_PERSIST_HOST_ROOT in the private profile or make the share available, then retry."
-            fi ;;
+            fi
+            ;;
         refuse:symlink)
             msg="$dir, or a level above it under the share root (dxe, dxe/$guest), is a symlink; /persist must be a real directory, so replace the symlink with the directory itself, then retry." ;;
         refuse:marker-invalid)
