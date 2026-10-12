@@ -1890,3 +1890,42 @@ comment (WP-T1, recorded in full in the "WP-T1" section above) moved here
 verbatim:
 
     # 2026-10-12 WP-T1: floor 5377 -> 5378 (measured, 100% covered; +1 line, the ssh_raw_noin helper in dx-runtime-docker-transport.sh); ceiling unchanged at 2622 (no entry-point line).
+
+## WP6.4c (2026-10-12): resumable, mutually exclusive copies
+
+`scope_exec_lines_floor` 5800 -> 5827 (measured, 100% covered).
+`unscoped_prod_exec_lines_ceiling` unchanged at 2633 (measured 2633; no entry
+point changed). Measured with `tests/run-coverage-linux.sh` on the worktree
+of the Green commit `bb10edf` (base `ac8d3d9`, the integrated WP6.5 +
+WP6.4b + WP6.5b line; Red `83e8dc0`): `covered=100% scope_exec_lines=5827
+unscoped_prod_exec_lines=2633`.
+
+The +27, from kcov's per-file instrumented lines:
+
+- `bin/lib/dx-persist-dir.sh` 573 -> 585 (+12): `dx_persist_copy_containers_none`
+  (the check, its three refusals and its return lines) and its call in
+  `dx_persist_migrate_run` and in `dx_persist_rollback_run`;
+- `bin/lib/dx-runtime-docker-lifecycle.sh` +13: the container name helper,
+  `dx_runtime_docker_copy_id_flags` (name plus DQ6 labels), the read-only
+  `dx_runtime_docker_host_copy_containers` (two `ps -a` queries), and the
+  `copy_id_flags` call in `host_rsync` and in `host_manifest_verify`
+  (the `--inplace --modify-window=-1` words add no line);
+- `bin/lib/dx-runtime.sh` +1 (the neutral `dx_runtime_host_copy_containers`)
+  and `bin/lib/dx-runtime-apple.sh` +1 (its "unsupported" arm).
+
+Exercised in-process by the acceptance suite
+`tests/test_persist_copy_resume.sh` (its fidelity section ran in the
+coverage image: the SIGKILLed 64 MiB copy resumed with no `.big.bin.*` temp
+file, and the same-second directory and same-size file changes were copied
+again; 192 passed, 0 skipped) and by the implementer suite
+`tests/test_persist_copy_containers_unit.sh`. In the same run the locked
+`tests/test_persist_migrate.sh` (751) and `tests/test_persist_rollback.sh`
+(876) passed under real rsync 3.2.7, the suites whose intermittent
+"changed mtime" failure the WP6.5b entry above traced to
+`--modify-window=0`.
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP6.4, recorded in full in the "WP6.4" section above) moved here
+verbatim:
+
+    # 2026-10-12 WP6.4: floor 5377 -> 5591 (measured, 100% covered; dx_persist_migrate_main and its helpers, container_state, host_dir_marker_set and host_manifest_verify in both adapters); ceiling 2622 -> 2627 (+5 executable lines in the new entry point bin/dx-persist-migrate: set -euo pipefail, SCRIPT_DIR, source dx-lib.sh, the persist_migrate_main definition, the _main call guard). History: docs/evidence/20260930/coverage-ratchet-history.md.
