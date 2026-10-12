@@ -382,3 +382,10 @@ dx_runtime_host_dir_establish() { dx_runtime_dispatch host_dir_establish "$@"; }
 #       its output and status (0 match, 1 differ, 2 error) pass through
 dx_runtime_host_dir_marker_set() { dx_runtime_dispatch host_dir_marker_set "$@"; }
 dx_runtime_host_manifest_verify() { dx_runtime_dispatch host_manifest_verify "$@"; }
+
+# Rollback operation (WP6.5; plan D-6, D-10; spec R36, R37). Read-only, in a
+# root one-off container on the NAS. Apple has no NAS: "unsupported".
+#   dx_runtime_host_dir_inventory DIR
+#       dx_runtime_volume_inventory's report (the same script) for a host
+#       DIRECTORY, bound read-only; its output and status pass through
+dx_runtime_host_dir_inventory() { dx_runtime_dispatch host_dir_inventory "$@"; }

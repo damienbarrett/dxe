@@ -910,11 +910,16 @@ nothing to roll back (the data is still in the volume).
 The name must be a new volume (not `DX_PERSIST_VOLUME`, `DX_NIX_VOLUME`,
 `DX_BOOTSTRAP_VOLUME`, the original volume, or any existing volume). The
 command creates the new volume with this profile's labels, copies into it,
-verifies, and marks the directory `retired`. Exit codes: exit 0 rolled back;
-exit 1 refused or failed (one `Error:` line, nothing deleted; an existing new
-volume is left as it is, so use another name); exit 2 usage; exit 3 the copy
-did not verify (the directory stays `ready`, the new volume is left for
-inspection; run again with another name).
+verifies, checks again that the guest is still stopped (the directory is the
+guest's `/persist`, so a guest started during the copy is refused and the
+directory stays `ready`), and marks the directory `retired`. Exit codes: exit
+0 rolled back; exit 1 refused or failed (one `Error:` line, nothing deleted;
+an existing new volume is left as it is, so use another name); exit 2 usage;
+exit 3 the copy did not verify (the directory stays `ready`, the new volume is
+left for inspection; run again with another name). After any failure once the
+new volume exists, one more line names it with the `docker volume rm` command
+that removes it; the tool only prints it, and running it on the NAS is your
+choice.
 
 Then switch the profile back, in your private profile:
 
