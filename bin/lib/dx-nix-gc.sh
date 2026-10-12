@@ -103,3 +103,127 @@ dx_nix_gc_clear_stale_temproots() {
     fi
     return 0
 }
+
+# Root-owned store paths (fix/gc-rootpaths). Nix must make a store directory
+# writable before it can empty it, and dx cannot chmod a root-owned one, so a
+# single root-owned garbage directory aborts dx's whole collection
+#   error: fchmodat2 "/nix/store/...-profile": Operation not permitted
+# Every path a root Nix call adds to dx's store is root-owned (Nix
+# canonicalises a new path to the calling user): the bootstrap's essentials
+# install and upgrade, a root shell from dx-enter, any future root Nix call.
+# The same calls leave root-owned log buckets under /nix/var/log/nix, which
+# stop dx's builds ("creating log file ...: Permission denied"). GC as root is
+# not the answer (a root nix re-owns the store's state); chown is not Nix.
+#
+# The guest side of dx_nix_gc_hand_back_root_paths, run AS ROOT as
+#   bash -c PROGRAM bash STORE LOG
+# ($1 = /nix/store, $2 = /nix/var/log/nix). The bootstrap's own
+# hand_back_root_nix_paths (container/dx-nixos-26.05/bootstrap/common.sh)
+# applies exactly the same rule after each root Nix call. Rules:
+#   - Nothing at all when STORE is missing, is a symlink or is owned by uid 0
+#     (the image's own store, or a volume before its one-time ownership
+#     migration: there is no one to hand back to); the count is 0.
+#   - Otherwise OWNER is STORE's own numeric uid:gid. Every DIRECT entry of
+#     STORE owned by uid 0 (dot-entries included) goes to OWNER with
+#     `chown -R -P`: everything inside it too, a symlink re-owned itself and
+#     never followed. Only a root-owned top-level entry stops dx's GC (a root
+#     inode inside a dx path is harmless), so no non-root entry is ever
+#     looked into: no full-store walk.
+#   - When LOG is a real directory (not a symlink), every entry beneath it
+#     owned by uid 0 goes to OWNER with `chown -h` (a symlink itself).
+#   - chown changes no mode and no mtime; nothing else is touched (STORE and
+#     LOG themselves, /nix/var/nix, anything outside the two trees).
+#   - stdout is exactly one line, the count handed back (one per root-owned
+#     direct store entry, one per root-owned log entry); a chown that fails
+#     is not counted and makes it exit 1 after it has tried every other
+#     entry. stat, find or chown missing: exit 127 before changing anything,
+#     never a silent "nothing to hand back".
+#   - `bash -c` is not a login shell, so the GC-rooted root essentials
+#     profile and the image's default profile are APPENDED to the exec's PATH
+#     as fallbacks (find comes from the default profile): the exec's own PATH
+#     stays first and decides which tool runs.
+# Residual: a root Nix process running at this very moment re-owns its own
+# new output to root when it finishes; GC then fails as before until the
+# next hand-back.
+#
+# A heredoc constant, like the temp-roots program above (kcov never traces a
+# heredoc body).
+IFS= read -r -d '' dx_nix_gc_hand_back_root_paths_program <<'DX_NIX_GC_HAND_BACK_ROOT_PATHS' || true
+PATH="$PATH:/nix/var/nix/profiles/per-user/root/profile/bin:/nix/var/nix/profiles/default/bin"
+store=$1
+log=$2
+if [ -L "$store" ] || [ ! -d "$store" ]; then
+    printf '0\n'
+    exit 0
+fi
+for tool in stat find chown; do
+    if ! command -v "$tool" >/dev/null; then
+        echo "$tool not found; not handing root-owned Nix paths back" >&2
+        exit 127
+    fi
+done
+owner=$(stat -c '%u:%g' -- "$store") || exit 1
+if [ "${owner%%:*}" = 0 ]; then
+    printf '0\n'
+    exit 0
+fi
+handed=0
+status=0
+while IFS= read -r -d '' path; do
+    if chown -R -P -- "$owner" "$path"; then
+        handed=$((handed + 1))
+    else
+        status=1
+    fi
+done < <(find "$store" -mindepth 1 -maxdepth 1 -uid 0 -print0)
+if [ -d "$log" ] && [ ! -L "$log" ]; then
+    while IFS= read -r -d '' path; do
+        if chown -h -- "$owner" "$path"; then
+            handed=$((handed + 1))
+        else
+            status=1
+        fi
+    done < <(find "$log" -mindepth 1 -uid 0 -print0)
+fi
+printf '%s\n' "$handed"
+exit "$status"
+DX_NIX_GC_HAND_BACK_ROOT_PATHS
+
+# dx_nix_gc_hand_back_root_paths CONTAINER
+#
+# Hands root-owned store and log paths back to the store's owner before a GC,
+# with exactly one runtime call, as root. Prints
+# "Handed N root-owned Nix path(s) back to the store owner." when N > 0 and
+# nothing at all when N = 0, and returns 0. A failed hand-back -- the call
+# exits non-zero, or does not print a lone count -- prints one warning on
+# stderr and returns 1; callers carry on with the GC regardless (it then
+# fails exactly as it would have without the hand-back).
+dx_nix_gc_hand_back_root_paths() {
+    local container="$1" output status=0
+    output="$(dx_runtime_exec -u root "$container" bash -c "$dx_nix_gc_hand_back_root_paths_program" bash /nix/store /nix/var/log/nix)" || status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "Warning: could not hand root-owned Nix paths back to the store owner (exit $status); garbage collection runs anyway." >&2
+        return 1
+    fi
+    case "$output" in
+        '' | *[!0-9]*)
+            echo "Warning: could not hand root-owned Nix paths back to the store owner (the guest reported no count); garbage collection runs anyway." >&2
+            return 1
+            ;;
+    esac
+    if [ "$output" != 0 ]; then
+        echo "Handed $output root-owned Nix path(s) back to the store owner."
+    fi
+    return 0
+}
+
+# dx_nix_gc_prepare CONTAINER
+#
+# What bin/dx-gc and bin/dx-reclaim run immediately before their GC command:
+# the stale temp-roots clear (as dx), then the root-owned paths hand-back (as
+# root). Each is best effort -- a failure warns and the next step and the GC
+# still run -- so this always returns 0.
+dx_nix_gc_prepare() {
+    dx_nix_gc_clear_stale_temproots "$1" || true
+    dx_nix_gc_hand_back_root_paths "$1" || true
+}
