@@ -1451,3 +1451,50 @@ Measured with `tests/run-coverage-linux.sh` on a scratch worktree of
 
 The 2026-09-30 WP5.2 ceiling line moved here from `ratchet.env` (above) to
 keep that file at ten lines.
+
+## 2026-10-13: the merged GC fixes (fix/nix-gc-bundle)
+
+`fix/nix-gc-bundle` merges the three entries above onto `main` at `4e9ec4c`
+(`fix/gc-rootpaths`, which contains `fix/gc-temproots`, then
+`fix/dx-ai-gcroot`). Each branch set its own floor and ceiling against
+`main`; the bundle's are measured afresh on the merged tree rather than
+added up.
+
+`scope_exec_lines_floor` 3935 -> 4543 (raised to the measured total, allowed
+direction). `main` measures 4450; the +93 are `bin/lib/dx-nix-gc.sh` (24,
+new), `container/dx-nixos-26.05/bootstrap/common.sh` +31 (`run_root_nix` +6,
+`hand_back_root_nix_paths` and its call +25) and
+`container/dx-nixos-26.05/scripts/lib/dx-ai-generation.sh` +38. All three
+files are 100% covered (24/24, 225/225, 149/149).
+
+`unscoped_prod_exec_lines_ceiling` 2638 -> 2643 (+5), the sum of the
+branches' irreducible exempt lines and nothing more:
+
+| File | Base | Head | Growth |
+| --- | --- | --- | --- |
+| `bin/dx-gc` | 16 | 18 | +2 (`source "$SCRIPT_DIR/lib/dx-nix-gc.sh"`, `dx_nix_gc_prepare "$DX_CONTAINER_NAME"`) |
+| `bin/dx-reclaim` | 77 | 79 | +2 (the same two lines) |
+| `container/dx-nixos-26.05/scripts/dx-ai.sh` | 133 | 134 | +1 (`dx_ai_reconcile_roots "$state"` in `dx_ai_main_update`) |
+
+Measured with `tests/run-coverage-linux.sh` in a scratch worktree of the
+bundle's second merge commit with `wp/0.3` merged (main's sections 10 and
+16 abort the runner without it): `covered=100%` (4543/4543),
+`scope_exec_lines=4543`, `unscoped_prod_exec_lines=2643`. That run's
+ratchet check failed only on the ceiling (2643 > 2642, the
+`fix/gc-rootpaths` side the merge kept); this ratchet passes it. In the
+same root runner, `tests/test_nix_gc_rootpaths.sh` 40/40,
+`tests/test_bootstrap_nix_rootpaths.sh` 25/25,
+`tests/test_dx_ai_gcroots.sh` 31 passed with 1 skipped (its real-Nix case
+needs Nix in the runner), and the isolated sourceable coverage probes
+passed.
+
+`ratchet.env` keeps one dated line for the bundle in place of the
+branches' own lines, which it supersedes (`fix/dx-ai-gcroot`'s never
+reached it: the merge kept the other side). Both `fix/gc-temproots` and
+`fix/dx-ai-gcroot` had moved the same 2026-09-30 WP5.2 line here (quoted in
+the `fix/gc-temproots` entry), and `fix/gc-rootpaths` moved the 2026-10-03
+usage-service line (quoted in its entry). The superseded lines, verbatim:
+
+    # 2026-10-12 floor 3935 -> 4468, ceiling 2638 -> 2642 (fix/gc-temproots): the stale Nix temp-roots clear (bin/lib/dx-nix-gc.sh) and run_root_nix (bootstrap/common.sh) are in scope, measured 4468 at 100%; +4 irreducible exempt lines: bin/dx-gc and bin/dx-reclaim each gain one `source` of lib/dx-nix-gc.sh and one dx_nix_gc_clear_stale_temproots call. See docs/evidence/20260930/coverage-ratchet-history.md.
+    # 2026-10-13 floor 4468 -> 4505 (fix/gc-rootpaths): the root-owned Nix paths hand-back (bin/lib/dx-nix-gc.sh +12, bootstrap/common.sh hand_back_root_nix_paths +25) is in scope, measured 4505 at 100%; ceiling unchanged at 2642: bin/dx-gc and bin/dx-reclaim each swap their clear call for one dx_nix_gc_prepare call. See docs/evidence/20260930/coverage-ratchet-history.md.
+    # 2026-10-13 dx-ai-gcroot: floor 3935 -> 4488 (measured, 100% covered; main measures 4450, +38 in scripts/lib/dx-ai-generation.sh: dx_ai_owner_writable, dx_ai_root_generation, dx_ai_discard_stages, dx_ai_reconcile_root(s), dx_ai_main_recover, the publish root step); ceiling 2638 -> 2639 (+1: the dx_ai_reconcile_roots call in scripts/dx-ai.sh's dx_ai_main_update). History: docs/evidence/20260930/coverage-ratchet-history.md.
