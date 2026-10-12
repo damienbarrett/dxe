@@ -3,6 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+# Sourced here, not in dx-lib.sh's facade: only this entrypoint and
+# bin/dx-reclaim use it, and the facade's order is a tested contract.
+# shellcheck source=lib/dx-nix-gc.sh
+source "$SCRIPT_DIR/lib/dx-nix-gc.sh"
 
 gc_main() {
 dx_require_container_cli
@@ -15,6 +19,11 @@ fi
 # Nix must run as dx: the store is single-user dx-owned, and a root-invoked
 # nix re-owns /nix/store to root:nixbld, locking dx out.
 echo "Running Nix garbage collection in guest..."
+# Root Nix calls leave two things behind that each stop the whole collection:
+# stale root-owned temporary-roots files and root-owned store paths. Clear
+# the first and hand the second back to the store owner before collecting.
+# Best effort: a failure warns and GC still runs.
+dx_nix_gc_prepare "$DX_CONTAINER_NAME"
 dx_runtime_exec -u dx "$DX_CONTAINER_NAME" bash -lc 'nix-collect-garbage --delete-older-than 14d'
 
 echo "Running Nix store optimization in guest..."
