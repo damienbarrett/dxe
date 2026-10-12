@@ -23,7 +23,8 @@ operations.
    To force a rebuild at any layer, destroy that layer first.
 6. **Persistent volumes are protected by construction.** `/nix` and `/persist`
    survive everything except `dx-factory-reset` (or an explicit
-   `dx-destroy-volumes`). `bin/dx-reset-nix-volume` is the one other
+   `dx-destroy-volumes`), and in `host-path` mode even those keep the NAS
+   directory (see "/persist storage modes"). `bin/dx-reset-nix-volume` is the one other
    explicit, narrower exception: it removes only the Nix volume (never
    `/persist` or the bootstrap volume), for the one case `dx-destroy-volumes`
    is too broad for — recovering from a store-trust refusal
@@ -165,8 +166,26 @@ fire-and-forget.
 | --- | --- |
 | [`bin/dx`](../bin/dx) | Checks the container service first, starts Apple Container if needed, and waits up to `DX_SYSTEM_WAIT_TIMEOUT` (default 30s) for readiness; connects directly when running; otherwise `create-keys → create-image → create-volumes → create-container → start-container → wait-ssh → ssh`. |
 | [`bin/dx-destroy`](../bin/dx-destroy) | `destroy-container → destroy-image` (preserves volumes and keys) |
-| [`bin/dx-recreate`](../bin/dx-recreate) | `dx-destroy → exec dx` (preserves volumes and keys) |
+| [`bin/dx-recreate`](../bin/dx-recreate) | `dx-destroy → exec dx` (preserves /nix, keys and /persist: the volume, or the host directory in host-path mode) |
 | [`bin/dx-factory-reset`](../bin/dx-factory-reset) | prompts once, then `destroy-container → destroy-image → destroy-volumes --force → destroy-keys` |
+
+### /persist storage modes
+
+`/persist` has two storage modes, chosen per profile with `DX_PERSIST_STORAGE` and recorded on the container when it is created.
+
+`DX_PERSIST_STORAGE=volume` (the default) keeps `/persist` in the named volume `DX_PERSIST_VOLUME`. It is the only mode on Apple Container, where the volume is a sparse host image, and it is the original mode on the QNAP.
+
+`DX_PERSIST_STORAGE=host-path` (QNAP/`docker-ssh` only) binds a real directory on the NAS share, `<qnap-share>/dxe/<container name>/persist`, at `/persist`, so the Mac can browse it through the share. The directory carries a `.dxe-persist-dir` marker naming the guest and its state. Only a directory whose marker is `ready` is used: `dx-create-volumes` makes it for a new guest, `dx-persist-migrate` fills it from the existing volume, and every other state is a refusal (see "/persist host directory refusals" in `troubleshooting.md`).
+
+The mounts are fixed at creation: changing `DX_PERSIST_STORAGE` or `DX_PERSIST_HOST_ROOT` in the profile does not change an existing container, and `dx-status` shows the mismatch. `dx-recreate` is what applies the configured mode; it keeps `/nix`, the SSH keypair and `/persist` in whichever form the profile now names.
+
+In host-path mode `dx-destroy-volumes` and `dx-factory-reset` keep the host directory, the per-profile host-path record under `$XDG_STATE_HOME/dxe/persist-dirs/`, and every persist volume, so a reset cannot remove the NAS directory; the reset guest then reuses the same directory (and so its SSH host key and credentials). Deleting a guest's host-path storage for good is a manual act.
+
+After a migration (or a rollback) the persist volume named as `source-volume` in the directory's marker stays in Docker as a safety copy, and the directory stays after a rollback. Nothing deletes either one for you.
+
+Everything kept is listed rather than hidden: `dx-destroy-volumes` and `dx-factory-reset` end by printing the kept directory, the record file and each kept persist volume with the manual removal steps, and `dx-status` shows `kept volume:` lines. Removal is always by hand, and recursive deletion of the NAS directory is yours to run.
+
+`dx-reclaim` works in both modes. In host-path mode its persist line reports the directory's size in KiB (`du -sk`), or `unknown` when that read fails, and it never queries the persist volume; see "Reclaiming host disk space".
 
 ### The lifecycle lock (Astra F4)
 

@@ -205,6 +205,8 @@ Use Docker named volumes for the first release. A later, separately reviewed
 change may add a QNAP shared-folder bind for `/persist` after path validation,
 ownership, snapshot, backup, and restore behavior are proven on the actual NAS.
 
+**Status (2026-10): the bind is built and live-verified on a disposable guest, as an opt-in beside the named volumes.** `DX_PERSIST_STORAGE=host-path` binds a marked directory on the NAS share (`<qnap-share>/dxe/<container name>/persist`) at `/persist`; `volume`, the default, is unchanged and stays the fallback and rollback target. The first release still used named volumes. Behaviour, refusals and the migration are in `docs/lifecycle.md`, `docs/troubleshooting.md` and `docs/qnap-runbook.md`; the existing `dx-qnap` guest moves only when its operator runs the runbook.
+
 ### DQ5 — Publish guest SSH on the NAS's Tailscale address only (amended 2026-09-26)
 
 Originally decided as "keep guest SSH private to the QNAP host": publish
