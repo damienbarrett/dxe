@@ -511,6 +511,7 @@ mig_case() {
         XDG_STATE_HOME="$R-state"
         dx_lifecycle_lock_hold() { echo lock >>"$OPS"; }
         dx_lifecycle_lock_drop() { echo unlock >>"$OPS"; }
+        dx_runtime_host_copy_containers() { :; } # WP6.4c: no copy or verify container is left
         dx_runtime_container_state() {
             local n s
             n=$(($(cat "$STATE_N") + 1))

@@ -120,16 +120,20 @@ set -uo pipefail
 #        run --rm --network none --user 0:0 --pull never -v NIX:/nix:ro
 #            -v VOLUME:/src:ro
 #            --mount type=bind,source=DIR,target=/dst
+#            --name dxe-persist-copy-PID LABELS(persist-copy)   (WP6.4c)
 #            --entrypoint RSYNC $DX_IMAGE
-#            -aH --numeric-ids [-A] [-X]
+#            -aH --numeric-ids --inplace --modify-window=-1 [-A] [-X]   (WP6.4c)
 #            --exclude=/.dxe-persist-dir --exclude=._* /src/ /dst/
 #     reverse:
 #        run --rm --network none --user 0:0 --pull never -v NIX:/nix:ro
 #            --mount type=bind,source=DIR,target=/src,readonly
 #            -v VOLUME:/dst
+#            --name dxe-persist-copy-PID LABELS(persist-copy)   (WP6.4c)
 #            --entrypoint RSYNC $DX_IMAGE
-#            -aH --numeric-ids [-A] [-X]
+#            -aH --numeric-ids --inplace --modify-window=-1 [-A] [-X]   (WP6.4c)
 #            --exclude=/.dxe-persist-dir --exclude=._* /src/ /dst/
+#    (WP6.4c, tests/test_persist_copy_resume.sh B: PID is the DQ6 profile id;
+#    LABELS(ROLE) is dx_runtime_docker_label_flags ROLE.)
 #    "-A" comes before "-X" when both are given. `--exclude=._*` is ONE argv
 #    word (no shell globbing anywhere). The host directory is always a
 #    `--mount` (a missing source then fails instead of being created), never
@@ -507,13 +511,15 @@ apple_cases
 # --- host_rsync -----------------------------------------------------------------
 IMG=dxe-rsync-image:7
 TAIL='<--exclude=/.dxe-persist-dir><--exclude=._*></src/></dst/>'
+# WP6.4c: the copy container's name and DQ6 labels, before --entrypoint.
+COPY_ID="<--name><dxe-persist-copy-$PROFILE><--label><io.dxe.managed=true><--label><io.dxe.schema=1><--label><io.dxe.profile=$PROFILE><--label><io.dxe.role=persist-copy><--label><io.dxe.system=x86_64-linux>"
 fwd_argv() { # VOLUME DIR [EXTRA<..>...]
-    printf '%s<-v><%s:/src:ro><--mount><type=bind,source=%s,target=/dst><--entrypoint><%s><%s><-aH><--numeric-ids>%s%s' \
-        "$RUN_PREFIX" "$1" "$2" "$RSYNC_EP" "$IMG" "${3:-}" "$TAIL"
+    printf '%s<-v><%s:/src:ro><--mount><type=bind,source=%s,target=/dst>%s<--entrypoint><%s><%s><-aH><--numeric-ids><--inplace><--modify-window=-1>%s%s' \
+        "$RUN_PREFIX" "$1" "$2" "$COPY_ID" "$RSYNC_EP" "$IMG" "${3:-}" "$TAIL"
 }
 rev_argv() { # VOLUME DIR [EXTRA<..>...]
-    printf '%s<--mount><type=bind,source=%s,target=/src,readonly><-v><%s:/dst><--entrypoint><%s><%s><-aH><--numeric-ids>%s%s' \
-        "$RUN_PREFIX" "$2" "$1" "$RSYNC_EP" "$IMG" "${3:-}" "$TAIL"
+    printf '%s<--mount><type=bind,source=%s,target=/src,readonly><-v><%s:/dst>%s<--entrypoint><%s><%s><-aH><--numeric-ids><--inplace><--modify-window=-1>%s%s' \
+        "$RUN_PREFIX" "$2" "$1" "$COPY_ID" "$RSYNC_EP" "$IMG" "${3:-}" "$TAIL"
 }
 run_rsync() { # ARGS...: sets RS_OUT RS_ERR RS_RC; fresh fake, both volumes owned
     new_fake

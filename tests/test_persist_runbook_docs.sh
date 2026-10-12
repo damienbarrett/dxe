@@ -43,6 +43,14 @@
 #     "DX_PERSIST_HOST_MOUNT_SENTINEL" and "sentinel"; the bare image has no
 #     "sed" or "awk" ("bare image"); the Public share: "Public", "SMB" and
 #     "read and modify" (RW users can read and modify /persist; accepted).
+#   - 11.4 (WP6.4c; the subsection from the line starting "### 11.4 " to the
+#     next heading): "--inplace", "no rsync temp file" and "partial" (an
+#     interrupted copy leaves only a possibly partial final file, which the
+#     rerun rewrites); ".dxe-persist-dir.XXXXXX" (the marker-temp remedy
+#     stays); the copy and verify containers "dxe-persist-copy-" and
+#     "dxe-persist-verify-" and what to do: "still running" (wait, or
+#     "docker stop"), otherwise "docker rm" after inspecting it. Each phrase
+#     must sit on one line (the match is per line).
 #   - MANUAL REMOVAL of a retired or canary directory: "yourself" (the user
 #     runs it, not the tooling), "docker run --rm", "--user 0:0", a line with
 #     " ls " before the first line starting with or holding "rm -r".
@@ -139,6 +147,13 @@ assert_text 'stays `copying`' "failed verification keeps the marker copying"
 assert_text "move aside" "abandon by moving the directory aside"
 assert_text ".dxe-persist-dir.XXXXXX" "the temp file a hard kill leaves"
 assert_text "mismatch" "profile changed before the recreate"
+
+# WP6.4c: 11.4 once the copy runs with --inplace in named copy/verify containers.
+SUB114="$(awk '/^### 11\.4 / { on = 1; print; next } on && /^###* / { exit } on { print }' <<<"$SECTION")"
+for n in "--inplace" "no rsync temp file" "partial" ".dxe-persist-dir.XXXXXX" \
+    "dxe-persist-copy-" "dxe-persist-verify-" "still running" "docker stop" "docker rm"; do
+    assert_in "$SUB114" "$n" "11.4 (an interrupted copy) covers: $n"
+done
 
 assert_text "change nothing during the migration" "the change-nothing rule"
 assert_text "stopped" "the guest is stopped"
