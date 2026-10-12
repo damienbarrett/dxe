@@ -16,7 +16,15 @@
 #     glob), the verdict on its output, and the watched bring-up in a
 #     stand-in suite shell -- started before dx and ended with it (pass or
 #     fail), on an abort through the EXIT trap, never in a subshell, never
-#     twice;
+#     twice; when it ends early but dx came up, the bring-up's cost is still
+#     measured;
+#   - the canary's cleanup (WP7.2d), against a recording fake canary: the
+#     plain-ssh probe first (no leaf: no image call and no share call), the
+#     image built only for a leaf to move aside, the emergency mode that never
+#     builds an image or starts a one-off container, the DQ6 volume delete's
+#     refusals, when the emergency cleanup after an INODE FLOOR HIT is due,
+#     and that cleanup itself: evidence first, the lock waited for (bounded)
+#     and never forced -- still held means nothing destructive;
 #   - the read-only runners: persist_migrate_live_dir_read and
 #     persist_migrate_live_volume_read start exactly one pinned read-only
 #     container (the volume one only after its DQ6 check), or none;
@@ -1713,6 +1721,11 @@ case "$mode" in
         # runs inside the watcher's job, so it also records that job's
         # process group.
         dxe_runtime_call() {
+            if [ "$1 $2" = "dx_runtime_docker_ssh_exec df" ]; then
+                echo "NAS df ${*:3}" >>"$d/transcript"
+                (cd "$WS" && WATCH_STATE="$WS" "$IW_BIN/df" "${3}")
+                return
+            fi
             [ "$1 $5" = "dx_runtime_docker_ssh_exec dxe-live-inode-watch" ] || { echo "UNEXPECTED $*" >>"$d/transcript"; return 9; }
             sh -c 'ps -o pgid= -p $$' | tr -d ' ' >"$d/watch-pgid"
             echo "NAS inode-watch ${*:6}" >>"$d/transcript"
@@ -1733,7 +1746,7 @@ case "$mode" in
         # The caller's own EXIT trap: chained while the watcher runs, then restored.
         trap 'echo harness-exit-trap >>"$d/trap-log"' EXIT
         rc=0
-        persist_migrate_live_bringup_watched "$d" "$IW_BIN/docker" /share/fixture/docker "${BU_FLOOR:-150000}" "${BU_DEADLINE:-7200}" -- "$BU_BIN/dx" true || rc=$?
+        persist_migrate_live_bringup_watched "$d" "$IW_BIN/docker" /share/fixture/docker "${BU_FLOOR:-150000}" "${BU_DEADLINE:-7200}" "${BU_FREE0:-900000}" -- "$BU_BIN/dx" true || rc=$?
         printf 'rc=%s\nlv_rc=%s\nlv_err=%s\nwatch_rc=%s\nkilled=%s\nfloor_hit=%s\nwatch_pid=%s\n' "$rc" "$LV_RC" "${LV_ERR##*/}" \
             "$PERSIST_MIGRATE_LIVE_WATCH_RC" "$PERSIST_MIGRATE_LIVE_WATCH_KILLED" "$PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT" \
             "$PERSIST_MIGRATE_LIVE_WATCH_PID" >"$d/result"
@@ -2019,6 +2032,7 @@ case "${BU_MODE:-ok}" in
     stopped) upto '^stopped=' 1; sleep 0.3; echo "Error: the guest stopped" >&2; exit 1 ;;
     stop-failing) upto '^stop-failed=' 2; exit 0 ;;
     outlive) upto '^deadline=' 1; sleep 0.5; exit 0 ;;
+    outlive-fail) upto '^deadline=' 1; sleep 0.5; exit 1 ;;
     hang) echo "$$" >"$d/dx-pid"; sleep 30; exit 0 ;;
 esac
 exit 9
@@ -2128,12 +2142,27 @@ if [ "$(bu_result rc)" = 1 ] && [ "$(bu_result watch_rc)" = 4 ] && ! grep -q '^D
     test_pass "bring-up: a watcher that cannot read df never lets dx start: a FAIL before the bring-up, nothing brought up, the caller's EXIT trap restored"
 else test_fail "bring-up with a blind watcher (result: $(bu_file result | tr '\n' ' '); transcript: $(bu_file transcript | tr '\n' '|'); steps: $(bu_file steps | tr '\n' '|'))"; fi
 
-bu_run 900000 -- BU_MODE=outlive BU_DEADLINE=40
+bu_run 900000 -- BU_MODE=outlive BU_DEADLINE=40 BU_FREE0=900100
 if [ "$(bu_result rc)" = 1 ] && [ "$(bu_result lv_rc)" = 0 ] && [ "$(bu_result watch_rc)" = 2 ] \
-    && grep -Fqx "FAIL the NAS inode watcher watches until the bring-up ends (it stopped early: deadline 40; dx exited 0)" "$BU_DIR/steps" \
-    && [ "$(bu_file results)" = "inode_watch=deadline 40" ]; then
-    test_pass "bring-up: a watcher that ends before dx does (its deadline) is a FAIL, even when dx succeeds"
+    && [ "$(bu_file steps | sed -n '$p')" = "FAIL the NAS inode watcher watches until the bring-up ends (it stopped early: deadline 40; dx exited 0)" ] \
+    && grep -Fqx "PASS at least 150000 inodes are still free on the NAS's Docker data root after the bring-up (900000)" "$BU_DIR/steps" \
+    && [ "$(bu_file results)" = "$(printf 'inode_watch=deadline 40\ndocker_root_inodes_free_after_bringup=900000\ncanary_inodes_used=100')" ] \
+    && [ "$(bu_file transcript | sed -n '$p')" = "NAS df -P -i /share/fixture/docker" ]; then
+    test_pass "bring-up: a watcher that ends before dx does (its deadline) is a FAIL even when dx succeeds -- after the bring-up's cost is measured and recorded (one more df -P -i)"
 else test_fail "bring-up outliving the watcher (result: $(bu_file result | tr '\n' ' '); steps: $(bu_file steps | tr '\n' '|'))"; fi
+
+bu_run 900000 -- BU_MODE=outlive-fail BU_DEADLINE=40
+if [ "$(bu_result rc)" = 1 ] && [ "$(bu_result lv_rc)" = 1 ] && [ "$(bu_file results)" = "inode_watch=deadline 40" ] \
+    && ! grep -q "^NAS df" "$BU_DIR/transcript" && grep -Fqx "FAIL the NAS inode watcher watches until the bring-up ends (it stopped early: deadline 40; dx exited 1)" "$BU_DIR/steps"; then
+    test_pass "bring-up: when dx failed too, nothing more is measured (the watcher's early end is the FAIL)"
+else test_fail "bring-up outliving the watcher, dx failing (result: $(bu_file result | tr '\n' ' '); results: $(bu_file results | tr '\n' ' '))"; fi
+
+bu_run 900000 900000 900000 100000 -- BU_MODE=outlive BU_DEADLINE=40
+if [ "$(bu_result rc)" = 1 ] && [ "$(bu_result floor_hit)" = 100000 ] \
+    && [ "$(bu_file steps | sed -n '$p')" = "FAIL INODE FLOOR HIT after the bring-up: only 100000 inodes are free on the NAS's Docker data root (floor 150000; the production guest shares it); nothing is seeded" ] \
+    && ! grep -q "^FAIL the NAS inode watcher" "$BU_DIR/steps" && grep -Fqx "inode_floor_hit=after-bringup free=100000 floor=150000" "$BU_DIR/results"; then
+    test_pass "bring-up: that late measurement can itself find the floor hit, which is then the FAIL (and marks the run for the emergency cleanup)"
+else test_fail "bring-up: a floor hit found after the watcher ended (result: $(bu_file result | tr '\n' ' '); steps: $(bu_file steps | tr '\n' '|'))"; fi
 
 bu_run 900000 -- BU_MODE=hang BU_ABORT=1
 if [ "$(bu_file harness-rc)" = 143 ] && [ "$(bu_file watch-left)" = no ] && [ "$(bu_file trap-log)" = harness-exit-trap ] \
@@ -2154,6 +2183,262 @@ if [ "$(printf '%s\n' "$out" | sed -n '$p')" = rc=2 ] && grep -q '^Refusing: per
     && [ ! -e "$SCRATCH/sub.out" ] && [ -z "$(trap -p EXIT | grep inode_watch_stop)" ]; then
     test_pass "inode_watch_start refuses in a subshell (whose end would orphan the watcher): nothing started, no trap set"
 else test_fail "inode_watch_start in a subshell ($out)"; fi
+
+# --- the canary's cleanup, normal and emergency (WP7.2d) ----------------------------------------
+# A fake canary in a state directory, every command and runtime call
+# recorded in one transcript: files running, container, image, vol-<name>,
+# lock-held (how many more `dx-lock status` calls answer held; "always"),
+# lock-fails, logs-fails, probe-state (absent | nonempty ...), probe-fails,
+# frees (the free counts df answers, in turn). The stand-in commands act on
+# them: dx-stop-container clears running, dx-create-image makes the image,
+# dx-factory-reset --force removes the container, image, nix and bootstrap
+# volumes (and records the storage mode it saw), dx-lock answers status.
+CL="$SCRATCH/cleanup"
+CL_BIN="$CL/bin"
+mkdir -p "$CL_BIN"
+for cmd in dx-stop-container dx-create-image dx-factory-reset dx-lock; do
+    cat >"$CL_BIN/$cmd" <<'FAKE'
+#!/bin/sh
+st="$CL_STATE"
+name=${0##*/}
+case "$name" in
+    dx-lock) echo "LOCK $*" >>"$st/transcript" ;;
+    dx-factory-reset) echo "FACTORY-RESET $* storage=$DX_PERSIST_STORAGE volume=$DX_PERSIST_VOLUME" >>"$st/transcript" ;;
+    *) echo "$name $*" >>"$st/transcript" ;;
+esac
+case "$name" in
+    dx-stop-container) rm -f "$st/running" ;;
+    dx-create-image) : >"$st/image" ;;
+    dx-factory-reset)
+        [ "$1" = --force ] || exit 2
+        rm -f "$st/running" "$st/container" "$st/image" "$st/vol-dx-live-canary-nix" "$st/vol-dx-live-canary-bootstrap" ;;
+    dx-lock)
+        [ ! -e "$st/lock-fails" ] || { echo "Error: the NAS did not answer" >&2; exit 1; }
+        n=$(cat "$st/lock-held" 2>/dev/null || echo 0)
+        if [ "$n" = always ] || [ "$n" -gt 0 ]; then
+            [ "$n" = always ] || echo $((n - 1)) >"$st/lock-held"
+            echo "held by fixture-host:4242:17:20261012T010203Z since 2026-10-12T01:02:03.456Z"
+        else
+            echo "not held"
+        fi ;;
+esac
+exit 0
+FAKE
+    chmod +x "$CL_BIN/$cmd"
+done
+CL_N=0
+# cl_setup [FILE[=VALUE]...]: a fresh fake canary; by default the container
+# exists (stopped), no image, all four volumes present, the probe answers
+# absent, the lock is free and a D-7 record exists.
+cl_setup() {
+    local item
+    CL_N=$((CL_N + 1))
+    CL_STATE="$CL/state-$CL_N"
+    mkdir -p "$CL_STATE/logs" "$CL_STATE/xdg/dxe/persist-dirs"
+    in_scratch "$CL_STATE" || exit 1
+    : >"$CL_STATE/container"
+    for item in dx-live-canary-nix dx-live-canary-persist dx-live-canary-bootstrap dx-live-canary-persist-rollback; do : >"$CL_STATE/vol-$item"; done
+    echo absent >"$CL_STATE/probe-state"
+    printf '700000\n720000\n' >"$CL_STATE/frees"
+    printf 'schema=1\n' >"$CL_STATE/xdg/dxe/persist-dirs/dxe-fixture-nas.invalid__dx-live-canary"
+    for item in "$@"; do
+        case "$item" in
+            -*) rm -f "$CL_STATE/${item#-}" ;;
+            *=*) printf '%s\n' "${item#*=}" >"$CL_STATE/${item%%=*}" ;;
+            *) : >"$CL_STATE/$item" ;;
+        esac
+    done
+}
+cl_record() { printf '%s\n' "$CL_STATE/xdg/dxe/persist-dirs/dxe-fixture-nas.invalid__dx-live-canary"; }
+# cl_call FUNCTION ARG...: FUNCTION in a subshell over canary_env and the fake
+# canary, with the live suite's step helpers as stand-ins; leaves
+# $CL_STATE/{transcript,steps,results,stdout,result}.
+cl_call() {
+    (
+        canary_env
+        # Volume mode, as the live suite is at the bring-up (and so at a floor hit).
+        DX_PERSIST_STORAGE=volume
+        XDG_STATE_HOME="$CL_STATE/xdg"
+        export CL_STATE XDG_STATE_HOME DX_PERSIST_STORAGE
+        LV_RC=0 LV_OUT="" LV_ERR="" LV_N=0
+        # shellcheck disable=SC2034 # LV_RC, LV_OUT and LV_ERR are read by the functions under test
+        lv_run() {
+            local label="$1"
+            shift
+            [ "$1" != -- ] || shift
+            LV_N=$((LV_N + 1))
+            LV_OUT="$CL_STATE/logs/$LV_N-$label.out"
+            LV_ERR="$CL_STATE/logs/$LV_N-$label.err"
+            LV_RC=0
+            ("$@") >"$LV_OUT" 2>"$LV_ERR" </dev/null || LV_RC=$?
+        }
+        lv_bg_wait() { echo "BG-WAIT" >>"$CL_STATE/transcript"; }
+        lv_ok() { echo "PASS $1" >>"$CL_STATE/steps"; }
+        lv_bad() { echo "FAIL $1" >>"$CL_STATE/steps"; return 1; }
+        lv_check() { local what="$1"; shift; if "$@"; then lv_ok "$what"; return 0; fi; lv_bad "$what"; }
+        lv_rc_zero() { [ "$LV_RC" -eq 0 ]; }
+        lv_result() { printf '%s=%s\n' "$1" "$2" >>"$CL_STATE/results"; }
+        dxe_runtime_call() {
+            local st="$CL_STATE" n free
+            case "$1" in
+                dx_runtime_docker_require_bin) echo "require_bin" >>"$st/transcript"; echo /nas/bin/docker ;;
+                dx_runtime_docker_ssh_exec)
+                    if [ "$2" = df ]; then
+                        echo "df ${*:3}" >>"$st/transcript"
+                        [ -e "$st/frees" ] || return 1
+                        n=$(( $(cat "$st/df-n" 2>/dev/null || echo 0) + 1 ))
+                        echo "$n" >"$st/df-n"
+                        free=$(sed -n "${n}p" "$st/frees")
+                        printf 'Filesystem Inodes IUsed IFree IUse%% Mounted on\n/dev/mapper/cachedev 1638400 1000 %s 1%% %s\n' "${free:-1}" "$5"
+                        return 0
+                    fi
+                    echo "copy-watch $7 ${10}" >>"$st/transcript"
+                    echo "gone=$8 $9" ;;
+                dx_runtime_container_running) echo "running? $2" >>"$st/transcript"; [ -e "$st/running" ] ;;
+                dx_runtime_host_dir_probe)
+                    echo "probe $2 $3" >>"$st/transcript"
+                    [ ! -e "$st/probe-fails" ] || return 1
+                    printf 'root=/fixture/real\nmounted=yes\nstate=%s\nmarker=absent\n' "$(cat "$st/probe-state")" ;;
+                dx_runtime_image_exists) echo "image? $2" >>"$st/transcript"; [ -e "$st/image" ] ;;
+                dx_runtime_run_ephemeral)
+                    case "$*" in
+                        *persist.dxe-live-removed-*) echo "SHARE retire ${*: -1}" >>"$st/transcript"; echo absent >"$st/probe-state" ;;
+                        *) echo "SHARE other" >>"$st/transcript" ;;
+                    esac ;;
+                dx_runtime_volume_state)
+                    echo "volume? $2" >>"$st/transcript"
+                    if [ -e "$st/vol-$2" ]; then echo present; else echo absent; fi ;;
+                dx_runtime_volume_delete) echo "VOLUME-DELETE $2 as DX_PERSIST_VOLUME=$DX_PERSIST_VOLUME" >>"$st/transcript"; rm -f "$st/vol-$2" ;;
+                dx_runtime_container_list) echo "containers" >>"$st/transcript"; [ ! -e "$st/container" ] || echo "dx-live-canary Exited" ;;
+                dx_runtime_image_list) echo "images" >>"$st/transcript"; [ ! -e "$st/image" ] || echo "dx-live-canary-image latest 0123" ;;
+                dx_runtime_logs) echo "logs $2" >>"$st/transcript"; [ ! -e "$st/logs-fails" ] || return 1; echo "canary bootstrap log line" ;;
+                *) echo "UNEXPECTED $*" >>"$st/transcript"; return 9 ;;
+            esac
+        }
+        rc=0
+        "$@" >"$CL_STATE/stdout" 2>&1 || rc=$?
+        printf 'rc=%s\nretired=%s\nleaf_left=%s\ndocker_bin=%s\nstorage=%s\n' "$rc" "${PERSIST_MIGRATE_LIVE_CLEANUP_RETIRED:-}" \
+            "${PERSIST_MIGRATE_LIVE_CLEANUP_LEAF_LEFT:-}" "${PERSIST_MIGRATE_LIVE_CLEANUP_DOCKER_BIN:-}" "${DX_PERSIST_STORAGE:-}" >"$CL_STATE/result"
+    )
+}
+cl_result() { sed -n "s/^$1=//p" "$CL_STATE/result" 2>/dev/null; }
+cl_file() { cat "$CL_STATE/$1" 2>/dev/null; }
+cl_has() { grep -Fqx -- "$1" "$CL_STATE/transcript" 2>/dev/null; }
+cl_none() { ! grep -Eq -- "$1" "$CL_STATE/transcript" 2>/dev/null; }
+CL_TAIL="$(printf '%s\n' "FACTORY-RESET --force storage=host-path volume=dx-live-canary-persist" "volume? dx-live-canary-persist" \
+    "VOLUME-DELETE dx-live-canary-persist as DX_PERSIST_VOLUME=dx-live-canary-persist" "volume? dx-live-canary-persist-rollback" \
+    "VOLUME-DELETE dx-live-canary-persist-rollback as DX_PERSIST_VOLUME=dx-live-canary-persist-rollback" "containers" "images" \
+    "volume? dx-live-canary-nix" "volume? dx-live-canary-persist" "volume? dx-live-canary-bootstrap" "volume? dx-live-canary-persist-rollback")"
+CL_PROBE="probe /fixture/share dx-live-canary"
+cleanup_normal() { persist_migrate_live_cleanup normal "$CL_BIN" dx-live-canary-persist dx-live-canary-persist-rollback 900 20261012T030405Z; }
+cleanup_emergency() { persist_migrate_live_cleanup emergency "$CL_BIN" dx-live-canary-persist dx-live-canary-persist-rollback 0 20261012T030405Z; }
+
+# MF1: no leaf on the share, no image -- no image call and no share call.
+cl_setup
+cl_call cleanup_normal
+if [ "$(cl_result rc)" = 0 ] && [ -z "$(cl_result retired)" ] && [ "$(cl_result storage)" = host-path ] \
+    && [ "$(cl_file transcript)" = "$(printf 'BG-WAIT\nrequire_bin\ncopy-watch gone 900\nrunning? dx-live-canary\n%s\n%s' "$CL_PROBE" "$CL_TAIL")" ] \
+    && cl_none '^(image\?|dx-create-image|SHARE)' && [ ! -e "$(cl_record)" ] && grep -q 'nothing to move aside, so no image is built' "$CL_STATE/stdout" \
+    && ! grep -q '^FAIL' "$CL_STATE/steps"; then
+    test_pass "cleanup with no canary directory (probe: absent) and no image: no image call and no share call -- straight to dx-factory-reset --force in host-path mode, the two persist volumes by exact name (DQ6), the record, the checks"
+else test_fail "cleanup with no leaf (result: $(cl_file result | tr '\n' ' '); transcript: $(cl_file transcript | tr '\n' '|'); steps: $(grep -v '^PASS' "$CL_STATE/steps" | tr '\n' '|'))"; fi
+
+cl_setup probe-state=nonempty running
+cl_call cleanup_normal
+if [ "$(cl_result rc)" = 0 ] && [ "$(cl_result retired)" = 1 ] \
+    && [ "$(cl_file transcript)" = "$(printf 'BG-WAIT\nrequire_bin\ncopy-watch gone 900\nrunning? dx-live-canary\ndx-stop-container \n%s\nimage? dx-live-canary-image\ndx-create-image \nSHARE retire 20261012T030405Z\n%s\n%s' "$CL_PROBE" "$CL_PROBE" "$CL_TAIL")" ]; then
+    test_pass "cleanup with a leaf on the share and no image: the canary is stopped, the image built only then, the leaf moved aside (probed absent after), then the same removals"
+else test_fail "cleanup with a leaf and no image (transcript: $(cl_file transcript | tr '\n' '|'))"; fi
+
+cl_setup probe-state=nonempty image
+cl_call cleanup_normal
+if [ "$(cl_result rc)" = 0 ] && [ "$(cl_result retired)" = 1 ] && cl_has "image? dx-live-canary-image" && cl_none '^dx-create-image' && cl_has "SHARE retire 20261012T030405Z"; then
+    test_pass "cleanup with a leaf and the image there: no build, the leaf moved aside"
+else test_fail "cleanup with a leaf and the image (transcript: $(cl_file transcript | tr '\n' '|'))"; fi
+
+cl_setup probe-state=nonempty
+cl_call cleanup_emergency
+if [ "$(cl_result rc)" = 0 ] && [ "$(cl_result leaf_left)" = nonempty ] && [ -z "$(cl_result retired)" ] && [ -z "$(cl_result docker_bin)" ] \
+    && [ "$(cl_file transcript)" = "$(printf 'running? dx-live-canary\n%s\n%s' "$CL_PROBE" "$CL_TAIL")" ] \
+    && grep -q 'the emergency cleanup builds no image to move it aside' "$CL_STATE/stdout"; then
+    test_pass "emergency-mode cleanup with a leaf on the share: no copy watch, no image call, no share call (it says so); the factory reset, the volumes and the record as usual"
+else test_fail "emergency-mode cleanup with a leaf (result: $(cl_file result | tr '\n' ' '); transcript: $(cl_file transcript | tr '\n' '|'))"; fi
+
+cl_setup probe-fails
+cl_call cleanup_normal
+if [ "$(cl_result rc)" = 1 ] && grep -Fqx "FAIL the share root answers the probe" "$CL_STATE/steps" \
+    && cl_none '^(FACTORY-RESET|VOLUME-DELETE|image\?|dx-create-image|SHARE)' && [ -e "$(cl_record)" ]; then
+    test_pass "cleanup stops when the probe does not answer: nothing removed, no image, no share call"
+else test_fail "cleanup without a probe answer (transcript: $(cl_file transcript | tr '\n' '|'))"; fi
+
+for refusal in dx-qnap-persist dx-live-canary-nix dx-live-canary-bootstrap "dx-live-canary persist" ""; do
+    out="$(record_call persist_migrate_live_volume_delete -- "$refusal")"
+    if [ "$out" = rc=2 ] && [ -z "$(calls)" ] && grep -q '^Refusing: persist_migrate_live_volume_delete' "$SCRATCH/call.err"; then
+        test_pass "volume_delete refuses '$refusal' with nothing deleted"
+    else test_fail "volume_delete refuses '$refusal' (got $out: $(calls | tr '\n' ' '))"; fi
+done
+out="$(record_call persist_migrate_live_volume_delete -- dx-live-canary-persist-rollback)"
+if [ "$out" = rc=0 ] && [ "$(calls)" = "$(call_lines dx_runtime_volume_delete dx-live-canary-persist-rollback)" ]; then
+    test_pass "volume_delete: exactly one DQ6-checked delete of the named canary volume"
+else test_fail "volume_delete pinned call (got $out: $(calls | tr '\n' ' '))"; fi
+
+# When the emergency cleanup is due.
+due() {
+    (
+        unset PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT DXE_PERSIST_LIVE_NO_AUTO_CLEANUP DXE_PERSIST_LIVE_KEEP_RUNNING
+        for change in "$@"; do printf -v "${change%%=*}" '%s' "${change#*=}"; done
+        persist_migrate_live_auto_cleanup_due && echo due || echo no
+    )
+}
+if [ "$(due PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT=100000)" = due ] && [ "$(due)" = no ] \
+    && [ "$(due PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT=100000 DXE_PERSIST_LIVE_NO_AUTO_CLEANUP=1)" = no ] \
+    && [ "$(due PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT=100000 DXE_PERSIST_LIVE_KEEP_RUNNING=1)" = no ] \
+    && [ "$(due PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT=100000 DXE_PERSIST_LIVE_NO_AUTO_CLEANUP=0)" = due ]; then
+    test_pass "auto_cleanup_due: only after an INODE FLOOR HIT, and never with DXE_PERSIST_LIVE_NO_AUTO_CLEANUP=1 or DXE_PERSIST_LIVE_KEEP_RUNNING=1 (other failures: left for inspection)"
+else test_fail "auto_cleanup_due ($(due PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT=1) $(due) $(due PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT=1 DXE_PERSIST_LIVE_NO_AUTO_CLEANUP=1))"; fi
+
+emergency() { persist_migrate_live_emergency_cleanup "$CL_BIN" "$CL_STATE/logs" dx-live-canary-persist dx-live-canary-persist-rollback /share/fixture/docker live-canary 3 0; }
+cl_setup -vol-dx-live-canary-persist-rollback
+cl_call emergency
+if [ "$(cl_result rc)" = 0 ] \
+    && [ "$(cl_file transcript)" = "$(printf '%s\n' "logs dx-live-canary" "df -P -i /share/fixture/docker" "LOCK status" "running? dx-live-canary" "$CL_PROBE" \
+        "FACTORY-RESET --force storage=host-path volume=dx-live-canary-persist" "volume? dx-live-canary-persist" \
+        "VOLUME-DELETE dx-live-canary-persist as DX_PERSIST_VOLUME=dx-live-canary-persist" "volume? dx-live-canary-persist-rollback" \
+        "containers" "images" "volume? dx-live-canary-nix" "volume? dx-live-canary-persist" "volume? dx-live-canary-bootstrap" \
+        "volume? dx-live-canary-persist-rollback" "df -P -i /share/fixture/docker")" ] \
+    && [ "$(cl_file results)" = "$(printf 'inodes_free_at_floor_hit=700000\nemergency_cleanup=done\ninodes_free_after_emergency_cleanup=720000')" ] \
+    && [ "$(cl_file logs/canary-docker.log)" = "canary bootstrap log line" ] && [ ! -e "$(cl_record)" ] \
+    && cl_none '^(image\?|dx-create-image|SHARE|LOCK unlock)' && ! grep -q '^FAIL' "$CL_STATE/steps"; then
+    test_pass "emergency cleanup: the canary's docker logs and the free count first, the lock checked free, then the factory reset, the persist volume by exact name (the absent rollback volume skipped), the record, and the free count again -- no image build, no share call"
+else test_fail "emergency cleanup (result: $(cl_file result | tr '\n' ' '); transcript: $(cl_file transcript | tr '\n' '|'); results: $(cl_file results | tr '\n' ' '); steps: $(grep -v '^PASS' "$CL_STATE/steps" | tr '\n' '|'))"; fi
+
+cl_setup lock-held=2
+cl_call emergency
+if [ "$(cl_result rc)" = 0 ] && [ "$(grep -c '^LOCK status$' "$CL_STATE/transcript")" = 3 ] && cl_has "FACTORY-RESET --force storage=host-path volume=dx-live-canary-persist" \
+    && grep -Fqx "emergency_cleanup=done" "$CL_STATE/results"; then
+    test_pass "emergency cleanup waits (bounded) while dx still holds the lock, and goes on once it says not held"
+else test_fail "emergency cleanup with the lock released late (transcript: $(cl_file transcript | tr '\n' '|'))"; fi
+
+for held in lock-held=always lock-fails; do
+    cl_setup "$held" running
+    cl_call emergency
+    if [ "$(cl_result rc)" = 1 ] && [ "$(grep -c '^LOCK status$' "$CL_STATE/transcript")" = 3 ] \
+        && cl_none '^(FACTORY-RESET|VOLUME-DELETE|dx-stop-container|dx-create-image|SHARE|probe|LOCK unlock)' && [ -e "$(cl_record)" ] \
+        && [ -e "$CL_STATE/vol-dx-live-canary-persist" ] && [ -e "$CL_STATE/container" ] \
+        && grep -Fq "./bin/dx-profile live-canary ./bin/dx-lock status" "$CL_STATE/stdout" \
+        && grep -Fq "./bin/dx-profile live-canary ./bin/dx-lock unlock --force" "$CL_STATE/stdout" \
+        && grep -Fqx "emergency_cleanup=skipped: the lifecycle lock is still held" "$CL_STATE/results" \
+        && grep -q '^FAIL the emergency cleanup finds the canary.s lifecycle lock free' "$CL_STATE/steps"; then
+        test_pass "emergency cleanup with the lock still held ($held) after its bounded checks: nothing destructive at all, never a forced unlock; the dx-lock status and unlock lines are printed"
+    else test_fail "emergency cleanup with the lock held ($held) (transcript: $(cl_file transcript | tr '\n' '|'); results: $(cl_file results | tr '\n' ' '))"; fi
+done
+
+cl_setup logs-fails -frees
+cl_call emergency
+if [ "$(cl_result rc)" = 0 ] && grep -q "the canary's docker logs could not be read" "$CL_STATE/stdout" \
+    && [ "$(cl_file results)" = "$(printf 'inodes_free_at_floor_hit=unknown\nemergency_cleanup=done\ninodes_free_after_emergency_cleanup=unknown')" ]; then
+    test_pass "emergency cleanup: unreadable logs and df are reported (unknown) and do not hold the cleanup back"
+else test_fail "emergency cleanup without logs or df (results: $(cl_file results | tr '\n' ' '); $(cl_file stdout | tr '\n' '|'))"; fi
 
 # --- the production-inventory runner --------------------------------------------------------
 INV_STUB="$SCRATCH/stub/dx-persist-inventory"
@@ -2298,6 +2583,7 @@ run_live() {
         DXE_PERSIST_LIVE_RUN_DIR="${4:-$SCRATCH/run-$1}" \
         DXE_PERSIST_LIVE_BULK_MIB="${LIVE_BULK_MIB:-}" DXE_PERSIST_LIVE_INVENTORY_REAL="${LIVE_REAL:-}" \
         DXE_PERSIST_LIVE_MIN_FREE_INODES="${LIVE_MIN_INODES:-}" DXE_PERSIST_LIVE_INODE_STOP_FLOOR="${LIVE_STOP_FLOOR:-}" \
+        DXE_PERSIST_LIVE_CLEANUP_ONLY="${LIVE_CLEANUP_ONLY:-}" \
         "$BASE_DIR/bin/dx-profile" "$1" bash "$BASE_DIR/tests/test_persist_migrate_live.sh" 2>&1
     echo "rc=$?"
 }
@@ -2367,6 +2653,15 @@ else test_fail "a canary profile with a failing NAS stops at the preflight ($(ta
 if [ -d "$SCRATCH/run-live-canary/logs" ] && [ -d "$SCRATCH/run-live-canary/state" ] && [ ! -e "$SCRATCH/home/.local/state/dxe" ]; then
     test_pass "the live suite keeps its state (XDG_STATE_HOME) in its run directory, never the operator's"
 else test_fail "the live suite keeps its state in its run directory"; fi
+
+LIVE_CLEANUP_ONLY=1
+out="$(run_live live-canary false dx-live-canary "$SCRATCH/run-cleanup-only")"
+LIVE_CLEANUP_ONLY=""
+if ! has "$out" "rc=0" && has "$out" "--- final cleanup ---" && ! has "$out" "--- preflight ---" \
+    && has "$out" "Stopped at the first failure: final cleanup: the NAS's docker CLI path is known" \
+    && has "$out" "The canary is left in place for inspection" && ! has "$out" "emergency cleanup" && only_discovery; then
+    test_pass "cleanup-only with a failing NAS connection stops at its first read (the docker CLI path), no emergency cleanup; its only remote attempts are the read-only discovery"
+else test_fail "cleanup-only with a failing NAS ($(tail -n 6 <<<"$out"); transcript: $(sort -u "$transcript" | cut -c1-80 | tr '\n' ' '))"; fi
 
 LIVE_REAL=dx-qnap
 out="$(run_live live-canary false dx-live-canary "$SCRATCH/run-real-missing")"

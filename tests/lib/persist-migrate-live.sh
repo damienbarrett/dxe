@@ -112,7 +112,7 @@
 #     deadline <seconds>              (a deadline= line: it ended at its deadline)
 #     blind                           (RC 4: df gave no free-inode count)
 #     ended <RC>                      (anything else: it ended on its own)
-# persist_migrate_live_bringup_watched LOGDIR DOCKER_BIN ROOT FLOOR DEADLINE -- COMMAND [ARG...]
+# persist_migrate_live_bringup_watched LOGDIR DOCKER_BIN ROOT FLOOR DEADLINE FREE0 -- COMMAND [ARG...]
 #   The bring-up, watched. Through the caller's lv_run, lv_ok, lv_bad and
 #   lv_result (LV_RC, LV_OUT, LV_ERR): starts the watcher (LOGDIR/inode-watch.
 #   {out,err}); if it does not report, lv_bad and status 1 with COMMAND never
@@ -122,7 +122,10 @@
 #       not-stopped>, PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT=<n>, one lv_bad
 #       starting `INODE FLOOR HIT:` and status 1;
 #     watched: results bringup_inodes_min_free=<n>, one lv_ok, status 0;
-#     anything else: results inode_watch=<verdict>, lv_bad, status 1.
+#     anything else: results inode_watch=<verdict>; when COMMAND itself exited
+#       0, first persist_migrate_live_inodes_after_bringup ROOT FREE0 FLOOR
+#       (FREE0: the preflight's free count), so the results still hold the
+#       bring-up's cost (its own floor hit ends it there); then lv_bad, status 1.
 #   LV_RC, LV_OUT and LV_ERR are COMMAND's on return (after the start).
 # persist_migrate_live_inodes_after_bringup ROOT FREE0 FLOOR
 #   After a bring-up that passed: `lv_run inodes-after-bring-up --
@@ -286,6 +289,51 @@
 #   finished: ..." and status 0 -- the next migration resumes the directory;
 #   for any other outcome one lv_bad and status 1. Uses the caller's lv_run,
 #   lv_ok, lv_bad and lv_finding.
+#
+# The canary's cleanup (WP7.2d; Fable's re-check of WP7.2c: the cleanup after
+# a floor hit during the image build must not build the image first):
+# persist_migrate_live_cleanup normal|emergency BIN_DIR ORIG ROLLBACK DEADLINE STAMP
+#   Through the caller's lv_run, lv_check, lv_rc_zero and lv_bg_wait, in
+#   host-path mode (it exports DX_PERSIST_STORAGE=host-path and
+#   DX_PERSIST_VOLUME=ORIG, so dx-factory-reset keeps every persist volume):
+#     normal only: lv_bg_wait; the docker CLI path (dx_runtime_docker_require_bin;
+#       PERSIST_MIGRATE_LIVE_CLEANUP_DOCKER_BIN); copy_watch gone DEADLINE;
+#     BIN_DIR/dx-stop-container when the canary runs;
+#     the plain-ssh probe (dx_runtime_host_dir_probe): it must answer. State
+#       absent: no image call and no share call at all ("nothing to move
+#       aside"). Any other state: in emergency mode nothing either (it says so;
+#       PERSIST_MIGRATE_LIVE_CLEANUP_LEAF_LEFT=<state>); in normal mode
+#       BIN_DIR/dx-create-image only when dx_runtime_image_exists fails, then
+#       persist_live_root_sh rw PERSIST_LIVE_SCRIPT_RETIRE STAMP
+#       (PERSIST_MIGRATE_LIVE_CLEANUP_RETIRED=1) and the probe again: absent;
+#     BIN_DIR/dx-factory-reset --force; each of ORIG and ROLLBACK that is
+#       present deleted through persist_migrate_live_volume_delete; rm -f of
+#       the D-7 record (persist_live_record_path); then no canary container,
+#       image or volume (nix, ORIG, bootstrap, ROLLBACK) is left.
+#   Any failed check returns 1 at once.
+# persist_migrate_live_volume_delete VOLUME
+#   Refuses (status 2, one `Refusing:` line, no call) a name that is not a
+#   canary volume name, or is DX_NIX_VOLUME or DX_BOOTSTRAP_VOLUME; otherwise
+#   exactly one call, with DX_PERSIST_VOLUME=VOLUME (so DQ6 checks role
+#   persist): dxe_runtime_call dx_runtime_volume_delete VOLUME.
+# persist_migrate_live_volume_state VOLUME, persist_migrate_live_container_absent,
+# persist_migrate_live_image_absent: read-only facts (dx_runtime_volume_state,
+#   dx_runtime_container_list -a, dx_runtime_image_list).
+# persist_migrate_live_auto_cleanup_due
+#   0 only when PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT is set and neither
+#   DXE_PERSIST_LIVE_NO_AUTO_CLEANUP=1 nor DXE_PERSIST_LIVE_KEEP_RUNNING=1.
+# persist_migrate_live_emergency_cleanup BIN_DIR LOGDIR ORIG ROLLBACK ROOT PROFILE [TRIES PAUSE]
+#   After an INODE FLOOR HIT (the caller has stopped the canary): the canary's
+#   docker logs (dx_runtime_logs) into LOGDIR/canary-docker.log; one
+#   persist_migrate_live_inodes ROOT (results inodes_free_at_floor_hit); then
+#   `BIN_DIR/dx-lock status` up to TRIES (default 12) times, PAUSE (default 5)
+#   seconds apart, until it exits 0 with the line `not held`. Still held (or
+#   unreadable) at the bound: results emergency_cleanup=skipped..., the
+#   dx-lock status and unlock lines for PROFILE printed, one lv_bad, status 1,
+#   and nothing destructive ran -- the lock is never forced here. Otherwise
+#   persist_migrate_live_cleanup emergency (results emergency_cleanup=done, or
+#   failed (status N)), then persist_migrate_live_inodes ROOT again (results
+#   inodes_free_after_emergency_cleanup); its status is the cleanup's.
 #
 # persist_migrate_live_real_inventory PROFILE ROOT COMMAND
 #   The opt-in read-only inventory of the production guest. Resolves PROFILE's
@@ -850,10 +898,10 @@ persist_migrate_live_inode_watch_verdict() {
     printf '%s\n' "${verdict:-ended ${2:-}}"
 }
 
-# persist_migrate_live_bringup_watched LOGDIR DOCKER_BIN ROOT FLOOR DEADLINE -- COMMAND [ARG...]
+# persist_migrate_live_bringup_watched LOGDIR DOCKER_BIN ROOT FLOOR DEADLINE FREE0 -- COMMAND [ARG...]
 persist_migrate_live_bringup_watched() {
-    local logdir="$1" docker_bin="$2" root="$3" floor="$4" deadline="$5" rc out err verdict word free at state
-    shift 5
+    local logdir="$1" docker_bin="$2" root="$3" floor="$4" deadline="$5" free0="$6" rc out err verdict word free at state
+    shift 6
     [ "${1:-}" != -- ] || shift
     PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT=""
     if ! persist_migrate_live_inode_watch_start "$docker_bin" "$root" "$floor" "$deadline" "$logdir/inode-watch.out" "$logdir/inode-watch.err"; then
@@ -889,6 +937,13 @@ persist_migrate_live_bringup_watched() {
     esac
     lv_result inode_watch "$verdict"
     sed 's/^/    | /' "$logdir/inode-watch.out" "$logdir/inode-watch.err" 2>/dev/null
+    if [ "$rc" -eq 0 ]; then
+        # dx came up: what it took still goes to the results.
+        persist_migrate_live_inodes_after_bringup "$root" "$free0" "$floor" || return 1
+        LV_RC="$rc"
+        LV_OUT="$out"
+        LV_ERR="$err"
+    fi
     lv_bad "the NAS inode watcher watches until the bring-up ends (it stopped early: $verdict; dx exited $rc)"
     return 1
 }
@@ -1413,6 +1468,162 @@ persist_migrate_live_drop_directory() {
     fi
     lv_bad "the orphaned copy ran to its end on its own: the directory equals the rollback volume ($why)"
     return 1
+}
+
+# --- The canary's cleanup, normal and after an INODE FLOOR HIT (WP7.2d) ----------------
+
+# persist_migrate_live_volume_state VOLUME: present | absent | unknown (one line).
+persist_migrate_live_volume_state() {
+    local state
+    state="$(dxe_runtime_call dx_runtime_volume_state "$1" 2>/dev/null)" || :
+    printf '%s\n' "${state:-unknown}" | sed -n '1p'
+}
+
+persist_migrate_live_container_absent() {
+    local list
+    list="$(dxe_runtime_call dx_runtime_container_list -a 2>/dev/null)" || return 1
+    ! printf '%s\n' "$list" | awk -v n="${DX_CONTAINER_NAME:-}" '$1 == n { found = 1 } END { exit !found }'
+}
+
+persist_migrate_live_image_absent() {
+    local list
+    list="$(dxe_runtime_call dx_runtime_image_list 2>/dev/null)" || return 1
+    ! printf '%s\n' "$list" | awk -v n="${DX_IMAGE:-}" '$1 == n { found = 1 } END { exit !found }'
+}
+
+# persist_migrate_live_volume_delete VOLUME
+persist_migrate_live_volume_delete() {
+    if ! persist_migrate_live_volume_name_ok "$1" || [ "$1" = "${DX_NIX_VOLUME:-}" ] || [ "$1" = "${DX_BOOTSTRAP_VOLUME:-}" ]; then
+        _persist_live_refuse "persist_migrate_live_volume_delete: '$1' is not a canary persist volume; nothing was deleted."
+        return 2
+    fi
+    (
+        DX_PERSIST_VOLUME="$1"
+        export DX_PERSIST_VOLUME
+        dxe_runtime_call dx_runtime_volume_delete "$1"
+    )
+}
+
+# persist_migrate_live_cleanup normal|emergency BIN_DIR ORIG ROLLBACK DEADLINE STAMP
+persist_migrate_live_cleanup() {
+    local mode="$1" bin="$2" orig="$3" rollback="$4" deadline="$5" stamp="$6" docker_bin report state vol record
+    PERSIST_MIGRATE_LIVE_CLEANUP_DOCKER_BIN=""
+    PERSIST_MIGRATE_LIVE_CLEANUP_RETIRED=""
+    PERSIST_MIGRATE_LIVE_CLEANUP_LEAF_LEFT=""
+    case "$mode" in
+        normal | emergency) : ;;
+        *)
+            _persist_live_refuse "persist_migrate_live_cleanup: '$mode' is not normal or emergency; nothing was run."
+            return 2
+            ;;
+    esac
+    record="$(persist_live_record_path)"
+    # In host-path mode dx-factory-reset keeps every persist volume; they are
+    # deleted below, one by one, by exact name.
+    DX_PERSIST_STORAGE=host-path
+    DX_PERSIST_VOLUME="$orig"
+    export DX_PERSIST_STORAGE DX_PERSIST_VOLUME
+    if [ "$mode" = normal ]; then
+        lv_bg_wait
+        docker_bin="$(dxe_runtime_call dx_runtime_docker_require_bin 2>/dev/null)" || docker_bin=""
+        lv_check "the NAS's docker CLI path is known" test -n "$docker_bin" || return 1
+        PERSIST_MIGRATE_LIVE_CLEANUP_DOCKER_BIN="$docker_bin"
+        lv_run copy-gone-before-cleanup -- persist_migrate_live_copy_watch "$docker_bin" gone "$deadline"
+        lv_check "no copy or verify container of the canary is left on the NAS (one still running is waited for, up to $deadline s)" lv_rc_zero || return 1
+    fi
+    if dxe_runtime_call dx_runtime_container_running "${DX_CONTAINER_NAME:-}" >/dev/null 2>&1; then
+        lv_run stop-for-cleanup -- "$bin/dx-stop-container"
+        lv_check "dx-stop-container stops the guest" lv_rc_zero || return 1
+    fi
+    # The plain-ssh probe first: only a leaf that is there needs the image
+    # (for the root one-off container that moves it aside). An image build
+    # is the last thing to start on a filesystem short of inodes.
+    report="$(dxe_runtime_call dx_runtime_host_dir_probe "${DX_PERSIST_HOST_ROOT:-}" "${DX_CONTAINER_NAME:-}" 2>/dev/null)" || report=""
+    lv_check "the share root answers the probe" test -n "$report" || return 1
+    state="$(persist_live_kv state "$report")"
+    if [ "$state" = absent ]; then
+        echo "    no persist directory in $(persist_live_canary_dir) (state absent): nothing to move aside, so no image is built and no one-off container is started"
+    elif [ "$mode" = emergency ]; then
+        PERSIST_MIGRATE_LIVE_CLEANUP_LEAF_LEFT="$state"
+        echo "    $(persist_live_leaf) is there (state $state): the emergency cleanup builds no image to move it aside and leaves it to the cleanup by hand"
+    else
+        if ! dxe_runtime_call dx_runtime_image_exists "${DX_IMAGE:-}" >/dev/null 2>&1; then
+            lv_run create-image -- "$bin/dx-create-image"
+            lv_check "dx-create-image provides $DX_IMAGE for the one-off container that moves the leaf aside" lv_rc_zero || return 1
+        fi
+        lv_run "share-leaf-retire-$stamp" -- persist_live_root_sh rw "$PERSIST_LIVE_SCRIPT_RETIRE" "$stamp"
+        lv_check "share change: leaf-retire-$stamp" lv_rc_zero || return 1
+        PERSIST_MIGRATE_LIVE_CLEANUP_RETIRED=1
+        report="$(dxe_runtime_call dx_runtime_host_dir_probe "${DX_PERSIST_HOST_ROOT:-}" "${DX_CONTAINER_NAME:-}" 2>/dev/null)" || report=""
+        lv_check "no canary directory is left where the tooling looks" test "$(persist_live_kv state "$report")" = absent || return 1
+    fi
+    lv_run factory-reset-cleanup -- "$bin/dx-factory-reset" --force
+    lv_check "dx-factory-reset --force removes the canary's container, image, nix and bootstrap volumes and keys" lv_rc_zero || return 1
+    for vol in "$orig" "$rollback"; do
+        if [ "$(persist_migrate_live_volume_state "$vol")" = present ]; then
+            lv_run "volume-delete-$vol" -- persist_migrate_live_volume_delete "$vol"
+            lv_check "the canary volume $vol is deleted by exact name (DQ6 ownership checked)" lv_rc_zero || return 1
+        fi
+    done
+    rm -f -- "$record"
+    lv_check "the canary's D-7 record is deleted" test ! -e "$record" || return 1
+    lv_check "no canary container is left" persist_migrate_live_container_absent || return 1
+    lv_check "no canary image is left" persist_migrate_live_image_absent || return 1
+    for vol in "${DX_NIX_VOLUME:-}" "$orig" "${DX_BOOTSTRAP_VOLUME:-}" "$rollback"; do
+        lv_check "no volume $vol is left" test "$(persist_migrate_live_volume_state "$vol")" = absent || return 1
+    done
+}
+
+# persist_migrate_live_auto_cleanup_due
+persist_migrate_live_auto_cleanup_due() {
+    [ -n "${PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT:-}" ] || return 1
+    [ "${DXE_PERSIST_LIVE_NO_AUTO_CLEANUP:-}" != 1 ] || return 1
+    [ "${DXE_PERSIST_LIVE_KEEP_RUNNING:-}" != 1 ]
+}
+
+# persist_migrate_live_emergency_cleanup BIN_DIR LOGDIR ORIG ROLLBACK ROOT PROFILE [TRIES PAUSE]
+persist_migrate_live_emergency_cleanup() {
+    local bin="$1" logdir="$2" orig="$3" rollback="$4" root="$5" profile="$6" tries="${7:-12}" pause="${8:-5}" n=0 free rc=0
+    case "$tries" in '' | *[!0-9]* | 0*) tries=12 ;; esac
+    case "$pause" in '' | *[!0-9.]*) pause=5 ;; esac
+    echo "  Emergency cleanup after the INODE FLOOR HIT (DXE_PERSIST_LIVE_NO_AUTO_CLEANUP=1 turns it off):"
+    # Evidence first, cheaply: the guest's own log and the count left.
+    if dxe_runtime_call dx_runtime_logs "${DX_CONTAINER_NAME:-}" >"$logdir/canary-docker.log" 2>&1; then
+        echo "    the canary's docker logs: $logdir/canary-docker.log"
+    else
+        echo "    (the canary's docker logs could not be read; see $logdir/canary-docker.log)"
+    fi
+    lv_run inodes-at-floor-hit -- persist_migrate_live_inodes "$root"
+    free="$(awk 'NR == 1 { print $3 }' "$LV_OUT" 2>/dev/null)"
+    lv_result inodes_free_at_floor_hit "${free:-unknown}"
+    # dx releases the lifecycle lock when it fails; the cleanup's own commands
+    # need it. Never forced here.
+    while :; do
+        lv_run lock-status-before-cleanup -- "$bin/dx-lock" status
+        if [ "$LV_RC" -eq 0 ] && grep -Fqx 'not held' "$LV_OUT" 2>/dev/null; then break; fi
+        n=$((n + 1))
+        if [ "$n" -ge "$tries" ]; then
+            lv_result emergency_cleanup "skipped: the lifecycle lock is still held"
+            echo "    The canary's lifecycle lock is still held (or its status cannot be read) after $tries checks, so nothing was removed:"
+            sed 's/^/      | /' "$LV_OUT" "$LV_ERR" 2>/dev/null
+            echo "    Once nothing of the canary runs any more: ./bin/dx-profile $profile ./bin/dx-lock status"
+            echo "    and only for a lock that is stale: ./bin/dx-profile $profile ./bin/dx-lock unlock --force; then the cleanup by hand."
+            lv_bad "the emergency cleanup finds the canary's lifecycle lock free (it is still held; nothing was removed)"
+            return 1
+        fi
+        sleep "$pause"
+    done
+    persist_migrate_live_cleanup emergency "$bin" "$orig" "$rollback" 0 "$(date -u +%Y%m%dT%H%M%SZ)" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        lv_result emergency_cleanup "done"
+    else
+        lv_result emergency_cleanup "failed (status $rc)"
+    fi
+    lv_run inodes-after-emergency-cleanup -- persist_migrate_live_inodes "$root"
+    free="$(awk 'NR == 1 { print $3 }' "$LV_OUT" 2>/dev/null)"
+    lv_result inodes_free_after_emergency_cleanup "${free:-unknown}"
+    echo "    free inodes on the Docker data root after the emergency cleanup: ${free:-unknown}"
+    return "$rc"
 }
 
 # persist_migrate_live_real_inventory PROFILE ROOT COMMAND
