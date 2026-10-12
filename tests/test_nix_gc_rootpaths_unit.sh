@@ -186,6 +186,7 @@ else
     ru_rc=0
     (
         cd "$CWD_DIR" || exit 99
+        # shellcheck disable=SC2123 # an empty PATH is the very case under test
         PATH=""
         "$BASH" -c "$dx_nix_gc_hand_back_root_paths_program" bash "$RU_STORE" "$RU_LOG"
     ) > "$RU_CASE/out" 2> "$RU_CASE/err" || ru_rc=$?
