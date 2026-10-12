@@ -1317,6 +1317,11 @@ Verbatim rebaseline history from `tests/coverage/ratchet.env` before the ratio m
 # computation.
 ```
 
+## 2026-09-30: WP5.2 bootstrap protocol source line
+
+`unscoped_prod_exec_lines_ceiling` 2634 -> 2635 (+1). WP5.2 added one `source`
+line (`bin/lib/dx-bootstrap-protocol.sh`) to the `bin/dx-lib.sh` facade order.
+
 ## 2026-10-03: usage service (feat/usage-service-host)
 
 `unscoped_prod_exec_lines_ceiling` 2635 -> 2650 (+15). The first measurement of
@@ -1348,3 +1353,28 @@ the logic (including the new restart-count abort) lives in the covered
 `bin/lib/dx-container.sh`. Measured on a clean export at `c1beafa` with
 `tests/run-coverage-linux.sh`: `scope_exec_lines=4402`,
 `unscoped_prod_exec_lines=2641`, scope coverage 100%.
+
+## 2026-10-13: dx-ai GC roots at final generation paths (fix/dx-ai-gcroot)
+
+`scope_exec_lines_floor` 3935 -> 4488 (the measured in-scope total, 100%
+covered). `main` at `4e9ec4c` measures 4450 (docs-and-tests-only `wp/0.3`
+merged for the run); the +38 are all in
+`container/dx-nixos-26.05/scripts/lib/dx-ai-generation.sh` (now 149/149):
+`dx_ai_owner_writable`, `dx_ai_root_generation`, `dx_ai_discard_stages`,
+`dx_ai_reconcile_root`, `dx_ai_reconcile_roots`, `dx_ai_main_recover`, and
+the root step in `dx_ai_publish_generation`, net of the `.staging-*` arm
+`dx_ai_collect_generations` no longer needs.
+
+`unscoped_prod_exec_lines_ceiling` 2638 -> 2639 (+1): the
+`dx_ai_reconcile_roots "$state"` call at the top of
+`scripts/dx-ai.sh`'s `dx_ai_main_update`, which must run under the
+publication lock before staging. The `--recover` counterpart,
+`dx_ai_main_recover`, lives in the covered library, and the `--recover`
+call line in `dx_ai_main` changed in place. No exempt logic was added.
+
+Measured with `tests/run-coverage-linux.sh` on a scratch worktree of
+`fix/dx-ai-gcroot` at `a7a31e8` with `wp/0.3` merged:
+`covered=100% scope_exec_lines=4488 unscoped_prod_exec_lines=2639`.
+
+The 2026-09-30 WP5.2 ceiling line moved here from `ratchet.env` (above) to
+keep that file at ten lines.
