@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # dx-ai's generation lifecycle: stage a fresh generation from the published
-# bootstrap, build its profile, validate it, publish it, collect obsolete
-# ones, recover to a retained predecessor, and verify what is installed.
+# bootstrap, build its profile, validate it, publish it with a Nix GC root
+# at its final path, collect obsolete ones, recover to a retained
+# predecessor, and verify what is installed.
 # Safe to source (import-only). Moved out of dx-ai.sh (Fable B7) so this
 # logic sits under scripts/lib, in kcov's coverage scope (unlike
 # scripts/*.sh -- see tests/coverage/exclusions.txt).
@@ -121,6 +122,94 @@ dx_ai_validate_publish_generation() {
         || { dx_ai_fail "AI generation's tool manifest does not declare the complete current bundle: $generation/.tools-manifest"; return 1; }
 }
 
+# Owner-write bit from the mode itself, not access(2): `[ -w ]` is always
+# true for root, and the question is what dx (the owner) may do.
+dx_ai_owner_writable() {
+    local mode
+    mode="$(stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null)" || return 1
+    [ $((8#$mode & 8#200)) -ne 0 ]
+}
+
+# A Nix GC root for a generation at its FINAL path (fix/dx-ai-gcroot).
+# `nix profile add --profile <stage>/profile` registers an indirect root by
+# the generation link's unresolved path (gcroots/auto/<hash> ->
+# .staging-<id>/profile-1-link); publishing renames the stage, that root
+# dangles, and the next `nix-collect-garbage` deletes the profile `current`
+# points at. This registers the same kind of root where the link now lives,
+# through Nix's documented interface (as docs/qnap-runbook.md does for the
+# usage service): `nix-store --add-root <gen>/profile-1-link --indirect -r
+# <store path>`. Nix replaces that link through a temporary symlink beside
+# it, so a read-only generation is made owner-writable for the call only and
+# read-only again whatever the outcome. Never rebuilds, never touches
+# gcroots/ itself, and prints no Error:/Warning: line of its own (callers
+# decide what a failure means). A profile that is a plain directory has no
+# store path to root; any other shape than Nix's own (profile -> a link
+# beside it -> a store path) is refused.
+dx_ai_root_generation() {
+    local generation="$1" link store_path unlocked=0 result=0
+    [ -L "$generation/profile" ] || return 0
+    link="$(readlink "$generation/profile")"
+    case "$link" in ''|.|..|*/*) return 1 ;; esac
+    store_path="$(readlink "$generation/$link")" || return 1
+    if ! dx_ai_owner_writable "$generation"; then
+        chmod u+w "$generation" || return 1
+        unlocked=1
+    fi
+    nix-store --add-root "$generation/$link" --indirect -r "$store_path" >/dev/null || result=1
+    if [ "$unlocked" -eq 1 ]; then chmod u-w "$generation" || result=1; fi
+    return "$result"
+}
+
+# Removes every .staging-* stage under a generations directory. Only ever
+# called under the publication lock, by a run that has not staged anything
+# yet (dx_ai_reconcile_roots) or has already moved its own stage into place
+# (dx_ai_collect_generations), so every stage found here is an abandoned
+# one. The root Nix registered for it dangles once it is gone and pins
+# nothing; Nix's own GC prunes that link (gcroots/ belongs to Nix).
+dx_ai_discard_stages() {
+    local generations="$1" candidate
+    for candidate in "$generations"/.staging-*; do
+        [ -d "$candidate" ] || continue
+        if [ -L "$candidate" ]; then rm -f "$candidate"; continue; fi
+        chmod -R u+w "$candidate" 2>/dev/null || true
+        rm -rf "$candidate" || echo "Warning: could not remove abandoned AI generation stage ${candidate##*/}." >&2
+    done
+}
+
+# Roots one retained generation, by id, for dx_ai_reconcile_roots: non-zero,
+# quietly, when there is no such plain generation directory; a Warning when
+# it exists but cannot be rooted (its store path is already gone).
+dx_ai_reconcile_root() {
+    local generations="$1" id="$2"
+    case "$id" in ''|[.-]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac
+    [ -d "$generations/$id" ] && [ ! -L "$generations/$id" ] || return 1
+    dx_ai_root_generation "$generations/$id" \
+        || echo "Warning: could not register a GC root for AI generation $id" >&2
+}
+
+# The start of every locked dx-ai run (update and --recover), under the
+# publication lock and before anything is staged or recovered: remove
+# abandoned stages, then root current and the predecessor its .predecessor
+# records at their final paths. That heals a guest whose generations were
+# published before publish rooted them (their only root still names a
+# vanished stage) without rebuilding anything. Never fails the run: an
+# unrootable generation is a Warning, an update then builds a replacement,
+# and --recover's own validation decides whether the predecessor is usable.
+# A symlinked state root or generations directory is never followed
+# (dx_ai_stage_generation refuses it with its own error).
+dx_ai_reconcile_roots() {
+    local state="$1" generations="$1/generations" current predecessor
+    [ ! -L "$state" ] && [ ! -L "$generations" ] && [ -d "$generations" ] || return 0
+    dx_ai_discard_stages "$generations"
+    [ -L "$state/current" ] || return 0
+    current="$(readlink "$state/current")"
+    case "$current" in generations/*) current=${current#generations/} ;; *) return 0 ;; esac
+    dx_ai_reconcile_root "$generations" "$current" || return 0
+    predecessor="$(cat "$generations/$current/.predecessor" 2>/dev/null)" || return 0
+    dx_ai_reconcile_root "$generations" "$predecessor"
+    return 0
+}
+
 dx_ai_publish_pointer() {
     local state="$1" id="$2" tmp
     case "$id" in ''|[.-]*|*[!A-Za-z0-9_.-]*) dx_ai_fail "invalid AI generation id: $id"; return 1 ;; esac
@@ -130,27 +219,24 @@ dx_ai_publish_pointer() {
     if ! mv -Tf "$tmp" "$state/current"; then rm -f "$tmp"; dx_ai_fail "could not publish AI current pointer: $state/current"; return 1; fi
 }
 
-# Also collects orphaned `.staging-<id>` generation stages: a run killed
-# between dx_ai_stage_generation and dx_ai_publish_generation leaves one
-# behind, and bash's bare `*` glob never matches a dot-name, so before this
-# it accumulated forever, each one pinning a full closure under
-# /nix/var/nix/gcroots/auto. Safe to remove unconditionally: staging only
-# ever happens under dx_ai_run_locked's lock, and this function only ever
-# runs from dx_ai_publish_generation, itself under that same lock, so any
+# Also collects orphaned `.staging-<id>` generation stages
+# (dx_ai_discard_stages): a run killed between dx_ai_stage_generation and
+# dx_ai_publish_generation leaves one behind, and bash's bare `*` glob never
+# matches a dot-name. Safe to remove unconditionally: staging only ever
+# happens under dx_ai_run_locked's lock, and this function only ever runs
+# from dx_ai_publish_generation, itself under that same lock, so any
 # `.staging-*` still present here belongs to some earlier, non-current run.
+# (Every locked run's dx_ai_reconcile_roots already swept them before it
+# staged; this keeps the sweep after a publish too.)
 dx_ai_collect_generations() {
     local state="$1" current="$2" predecessor="$3" candidate candidate_id
-    for candidate in "$state/generations"/* "$state/generations"/.staging-*; do
+    dx_ai_discard_stages "$state/generations"
+    for candidate in "$state/generations"/*; do
         [ -d "$candidate" ] || continue
         candidate_id=${candidate##*/}
         if [ -L "$candidate" ]; then rm -f "$candidate"; continue; fi
-        case "$candidate_id" in
-            .staging-*) : ;;
-            *)
-                [ "$candidate_id" = "$current" ] && continue
-                [ -n "$predecessor" ] && [ "$candidate_id" = "$predecessor" ] && continue
-                ;;
-        esac
+        [ "$candidate_id" = "$current" ] && continue
+        [ -n "$predecessor" ] && [ "$candidate_id" = "$predecessor" ] && continue
         chmod -R u+w "$candidate" 2>/dev/null || true
         rm -rf "$candidate" || echo "Warning: could not collect obsolete AI generation $candidate_id." >&2
     done
@@ -163,6 +249,16 @@ dx_ai_publish_generation() {
     [ ! -e "$generation" ] && [ ! -L "$generation" ] || { dx_ai_fail "AI generation already exists: $generation"; return 1; }
     dx_ai_validate_publish_generation "$stage" || { dx_ai_fail "staged AI generation is not ready to publish: $stage"; return 1; }
     mv "$stage" "$generation" || { dx_ai_fail "could not move staged AI generation into place: $stage -> $generation"; return 1; }
+    # The root `nix profile add` registered names the stage path, which the
+    # rename just emptied: root the final path before current can point at
+    # it. A GC that lands in between makes this fail (the store path is
+    # gone), and current then stays on its rooted predecessor.
+    if ! dx_ai_root_generation "$generation"; then
+        chmod -R u+w "$generation" 2>/dev/null || true
+        rm -rf "$generation"
+        dx_ai_fail "could not register a GC root for AI generation $id"
+        return 1
+    fi
     if ! chmod -R a-w "$generation"; then
         chmod -R u+w "$generation" 2>/dev/null || true
         rm -rf "$generation"
@@ -190,6 +286,14 @@ dx_ai_recover_generation() {
     dx_ai_validate_generation "$state/generations/$predecessor" || { echo "Error: retained AI predecessor is incomplete." >&2; return 1; }
     dx_ai_publish_pointer "$state" "$predecessor" || return 1
     echo "Recovered AI generation $predecessor (from $current)."
+}
+
+# The --recover counterpart of dx-ai.sh's dx_ai_main_update: the critical
+# section dx_ai_run_locked runs under the publication lock. Here, not in
+# dx-ai.sh, so it sits in kcov's coverage scope.
+dx_ai_main_recover() {
+    dx_ai_reconcile_roots "$1"
+    dx_ai_recover_generation "$1"
 }
 
 dx_ai_verify() {

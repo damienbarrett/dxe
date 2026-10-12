@@ -281,6 +281,12 @@ the operation. It then:
 1. Deletes old Nix generations inside the guest with `nix-collect-garbage -d`
    (identical for both runtimes), after clearing stale Nix temporary-roots
    files and handing root-owned store paths back to the store owner (below).
+   The optional AI tools' `current` generation and its retained predecessor
+   are GC roots at their final paths (see
+   [Optional AI Tools](guest.md#optional-ai-tools)), so this never removes
+   the AI tools in use. On a guest whose AI generations were published
+   before `dx-ai` registered those roots, run `dx-ai` once first: it
+   re-registers them before doing anything else.
 2. **`apple-image` only:** runs `fstrim -v` on `/nix` and `/persist` so
    already-free blocks can be discarded from the sparse host images.
    **`direct-volume` (`docker-ssh`) skips this step entirely** and prints one
