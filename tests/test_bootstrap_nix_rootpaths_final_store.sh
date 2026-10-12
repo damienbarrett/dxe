@@ -266,7 +266,6 @@ fs_any_unhanded() {
 # the mode's tools first on PATH; captures stdout, stderr and status.
 fs_run() {
     FS_MODE="$1"
-    fs_rc=0
     (
         if [ "$FS_MODE" = root ]; then
             PATH="$STUB_DIR:$PATH"
@@ -285,7 +284,12 @@ fs_run() {
         fs_shadow_phases
         set -euo pipefail
         bootstrap_phases
-    ) > "$FS_CASE/out" 2> "$FS_CASE/err" || fs_rc=$?
+    ) > "$FS_CASE/out" 2> "$FS_CASE/err"
+    # Not `( ... ) || fs_rc=$?`: a subshell on the left of || runs with
+    # errexit suppressed, so a hand-back failure that would stop the real boot
+    # under set -e would pass unnoticed. This file has no `-e`, so a failing
+    # boot only sets the status.
+    fs_rc=$?
 }
 
 fs_check() {
