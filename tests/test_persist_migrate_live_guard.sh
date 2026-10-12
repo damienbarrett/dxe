@@ -6,8 +6,17 @@
 # (tests/test_persist_migrate_live.sh) that can be proven without a NAS:
 #   - persist_migrate_live_guard (tests/lib/persist-migrate-live.sh) keeps
 #     every WP7.1 refusal and adds its own (rollback volume, root comma, bulk
-#     size, the inode floor, the production-inventory opt-in), one `Refusing:`
-#     line each, with no command call at all;
+#     size, the preflight's inode minimum, the bring-up's stop floor and the
+#     room a bring-up needs between them, the production-inventory opt-in),
+#     one `Refusing:` line each, with no command call at all;
+#   - the bring-up's inode watcher (WP7.2c): its pinned NAS call and
+#     refusals, its NAS script (under sh and dash, against a fake df and a
+#     recording fake docker: the heartbeat, `docker stop -t 10 <canary>`
+#     below the floor and nothing else, the deadline, a session gone, no
+#     glob), the verdict on its output, and the watched bring-up in a
+#     stand-in suite shell -- started before dx and ended with it (pass or
+#     fail), on an abort through the EXIT trap, never in a subshell, never
+#     twice;
 #   - the read-only runners: persist_migrate_live_dir_read and
 #     persist_migrate_live_volume_read start exactly one pinned read-only
 #     container (the volume one only after its DQ6 check), or none;
@@ -21,10 +30,14 @@
 #   - the controller-drop case (WP7.2b): the read-only copy-container watcher
 #     (wrapper and NAS script under sh and dash: running and gone, bounded,
 #     ps and inspect only), the process-group start and SIGKILL on real
-#     processes of this suite's own (every refusal with kill stubbed), the
+#     processes of this suite's own (every refusal with kill stubbed,
+#     including a group leader that is not the suite shell's child), the
 #     classifier against the product's own refusal lines, and the whole
-#     orchestration against stand-ins: which command runs in which order,
-#     with which deadline, and what stops it;
+#     orchestration against stand-ins in a separate stand-in suite shell:
+#     which command runs in which order, with which deadline (20 s slices),
+#     what stops it (a controller that ended early, within one slice), and
+#     the directory the orphaned copy left (complete; or, when the rerun
+#     missed the copy, incomplete as a FINDING);
 #   - the container scripts (LIST, RETIRED_ASIDE), run with only
 #     the bare image's tools on PATH against temporary directories, the
 #     partial-copy helpers on a real LIST, and the guest scripts (SEED,
@@ -94,7 +107,7 @@ canary_env() {
     DX_USAGE_SERVICE=off
     DX_PERSIST_HOST_MOUNT_SENTINEL=dxe-fixture-sentinel
     unset DXE_PERSIST_LIVE_ROLLBACK_VOLUME DXE_PERSIST_LIVE_BULK_MIB DXE_PERSIST_LIVE_INVENTORY_REAL DXE_PERSIST_LIVE_CLEANUP_ONLY
-    unset DXE_PERSIST_LIVE_MIN_FREE_INODES
+    unset DXE_PERSIST_LIVE_MIN_FREE_INODES DXE_PERSIST_LIVE_INODE_STOP_FLOOR
 }
 
 # guard_run [NAME=VALUE | -NAME]... -- the guard's stderr, then rc=<status>.
@@ -150,16 +163,46 @@ for mib in 64 2048 16384; do
     if [ "$result" = rc=0 ]; then test_pass "guard accepts DXE_PERSIST_LIVE_BULK_MIB=$mib"
     else test_fail "guard accepts DXE_PERSIST_LIVE_BULK_MIB=$mib (got: $result)"; fi
 done
-# The inode floor: never below what a fresh guest store takes (WP7.2b).
-for inodes in 0 599999 0700000 100000000 999999999999 abc 7e5 -1 "700 000" 700000x; do
+# The preflight's inode minimum: never below what a canary bring-up takes
+# above the watcher's stop floor (WP7.2b; raised in WP7.2c).
+for inodes in 0 599999 600000 699999 0800000 100000000 999999999999 abc 7e5 -1 "800 000" 800000x; do
     expect_one_refusal "DXE_PERSIST_LIVE_MIN_FREE_INODES='$inodes'" \
-        "DXE_PERSIST_LIVE_MIN_FREE_INODES=$inodes is not a whole number from 600000 to 99999999" "DXE_PERSIST_LIVE_MIN_FREE_INODES=$inodes"
+        "DXE_PERSIST_LIVE_MIN_FREE_INODES=$inodes is not a whole number from 700000 to 99999999" "DXE_PERSIST_LIVE_MIN_FREE_INODES=$inodes"
 done
-for inodes in 600000 700000 99999999; do
+for inodes in 750000 800000 99999999; do
     result="$(guard_run "DXE_PERSIST_LIVE_MIN_FREE_INODES=$inodes")"
     if [ "$result" = rc=0 ]; then test_pass "guard accepts DXE_PERSIST_LIVE_MIN_FREE_INODES=$inodes"
     else test_fail "guard accepts DXE_PERSIST_LIVE_MIN_FREE_INODES=$inodes (got: $result)"; fi
 done
+# The bring-up watcher's stop floor (WP7.2c): between a production rebuild's
+# cost and well under the preflight minimum.
+for stop in 0 99999 500001 0150000 1000000 abc 15e4 -1 "150 000" 150000x; do
+    expect_one_refusal "DXE_PERSIST_LIVE_INODE_STOP_FLOOR='$stop'" \
+        "DXE_PERSIST_LIVE_INODE_STOP_FLOOR=$stop is not a whole number from 100000 to 500000" "DXE_PERSIST_LIVE_INODE_STOP_FLOOR=$stop"
+done
+for pair in "100000|" "150000|" "200000|800000" "500000|1100000" "100000|700000"; do
+    if [ -n "${pair#*|}" ]; then
+        result="$(guard_run "DXE_PERSIST_LIVE_INODE_STOP_FLOOR=${pair%%|*}" "DXE_PERSIST_LIVE_MIN_FREE_INODES=${pair#*|}")"
+    else
+        result="$(guard_run "DXE_PERSIST_LIVE_INODE_STOP_FLOOR=${pair%%|*}")"
+    fi
+    if [ "$result" = rc=0 ]; then test_pass "guard accepts the stop floor ${pair%%|*} with the minimum ${pair#*|}"
+    else test_fail "guard accepts the stop floor ${pair%%|*} with the minimum ${pair#*|} (got: $result)"; fi
+done
+# Together: the minimum leaves a whole bring-up (600000) above the floor.
+expect_one_refusal "a minimum that leaves less than a bring-up above the default stop floor" \
+    "DXE_PERSIST_LIVE_MIN_FREE_INODES=700000 leaves only 550000 inodes above the bring-up's stop floor 150000; a canary bring-up takes about 600000, so set the minimum to at least 750000" \
+    DXE_PERSIST_LIVE_MIN_FREE_INODES=700000
+expect_one_refusal "a stop floor that leaves less than a bring-up below the default minimum" \
+    "DXE_PERSIST_LIVE_MIN_FREE_INODES=800000 leaves only 450000 inodes above the bring-up's stop floor 350000; a canary bring-up takes about 600000, so set the minimum to at least 950000" \
+    DXE_PERSIST_LIVE_INODE_STOP_FLOOR=350000
+expect_one_refusal "a minimum one inode short of a bring-up above a chosen floor" \
+    "DXE_PERSIST_LIVE_MIN_FREE_INODES=799999 leaves only 599999 inodes above the bring-up's stop floor 200000" \
+    DXE_PERSIST_LIVE_MIN_FREE_INODES=799999 DXE_PERSIST_LIVE_INODE_STOP_FLOOR=200000
+result="$(guard_run DXE_PERSIST_LIVE_MIN_FREE_INODES=1 DXE_PERSIST_LIVE_INODE_STOP_FLOOR=x)"
+if has "$result" "rc=1" && [ "$(count_refusals "$result")" = 2 ] && ! has "$result" "leaves only"; then
+    test_pass "two bad inode settings are refused once each, without the combined rule"
+else test_fail "two bad inode settings are refused once each (got: $result)"; fi
 for real in dx-host dx-test dx-qnap-persist-canary "dx-qnap " qnap; do
     expect_one_refusal "DXE_PERSIST_LIVE_INVENTORY_REAL='$real'" "DXE_PERSIST_LIVE_INVENTORY_REAL=$real is not dx-qnap" "DXE_PERSIST_LIVE_INVENTORY_REAL=$real"
 done
@@ -190,11 +233,21 @@ else test_fail "a production-shaped profile is refused on every rule it breaks (
     [ "$(persist_migrate_live_bulk_mib)" = 2048 ] || exit 1
     DXE_PERSIST_LIVE_BULK_MIB=128
     [ "$(persist_migrate_live_bulk_mib)" = 128 ] || exit 1
-    [ "$(persist_migrate_live_min_free_inodes)" = 700000 ] || exit 1
-    DXE_PERSIST_LIVE_MIN_FREE_INODES=650000
-    [ "$(persist_migrate_live_min_free_inodes)" = 650000 ]
-) && test_pass "the rollback volume defaults to <DX_PERSIST_VOLUME>-rollback, the bulk size to 2048 MiB and the inode floor to 700000; each can be set" \
-  || test_fail "the rollback volume, bulk size and inode floor defaults and overrides"
+    [ "$(persist_migrate_live_min_free_inodes)" = 800000 ] || exit 1
+    DXE_PERSIST_LIVE_MIN_FREE_INODES=950000
+    [ "$(persist_migrate_live_min_free_inodes)" = 950000 ] || exit 1
+    [ "$(persist_migrate_live_inode_stop_floor)" = 150000 ] || exit 1
+    DXE_PERSIST_LIVE_INODE_STOP_FLOOR=250000
+    [ "$(persist_migrate_live_inode_stop_floor)" = 250000 ]
+) && test_pass "the rollback volume defaults to <DX_PERSIST_VOLUME>-rollback, the bulk size to 2048 MiB, the inode minimum to 800000 and the stop floor to 150000; each can be set" \
+  || test_fail "the rollback volume, bulk size, inode minimum and stop floor defaults and overrides"
+(
+    canary_env
+    # shellcheck disable=SC2123 # no command search path: the guard runs nothing
+    PATH="$SCRATCH/no-commands"
+    persist_migrate_live_guard 2>/dev/null
+) && test_pass "the defaults pass the guard together (800000 - 150000 leaves a whole bring-up)" \
+  || test_fail "the inode defaults pass the guard together"
 
 # --- recording runners ------------------------------------------------------------
 # record_call FUNCTION [NAME=VALUE]... -- ARG...: runs FUNCTION over canary_env
@@ -373,6 +426,42 @@ else test_fail "df_inodes refusals"; fi
 
 RECORD_PATH=""
 
+# --- the bring-up's inode watcher: the NAS call (WP7.2c) ------------------------------------
+expected="$(call_lines dx_runtime_docker_ssh_exec sh -c "$PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INODE_WATCH" dxe-live-inode-watch \
+    /nas/bin/docker dx-live-canary /share/fixture/docker 150000 7200)"
+out="$(record_call persist_migrate_live_inode_watch -- /nas/bin/docker /share/fixture/docker 150000 7200)"
+if [ "$out" = rc=0 ] && [ "$(calls)" = "$expected" ]; then
+    test_pass "inode_watch: one NAS-shell call running the watcher (tag dxe-live-inode-watch) with the docker CLI, the canary's name, the Docker data root, the floor and the deadline"
+else test_fail "inode_watch: pinned call (got $out: $(calls | sed -n '1,3p;5,10p' | tr '\n' ' '))"; fi
+for args in "/nas/bin/docker /share/fixture/docker 100000 20" "/nas/bin/docker /share/fixture/docker 500000 86400"; do
+    # shellcheck disable=SC2086 # the four words of each case
+    out="$(record_call persist_migrate_live_inode_watch -- $args)"
+    if [ "$out" = rc=0 ] && [ "$(calls | grep -c -- '^--call--$')" = 1 ]; then
+        test_pass "inode_watch accepts ($args)"
+    else test_fail "inode_watch accepts ($args) (got $out)"; fi
+done
+for refusal in "docker|/share/fixture/docker|150000|7200" "/nas/my docker|/share/fixture/docker|150000|7200" \
+    "/nas/bin/docker||150000|7200" "/nas/bin/docker|relative|150000|7200" "/nas/bin/docker|/|150000|7200" \
+    "/nas/bin/docker|/share//docker|150000|7200" "/nas/bin/docker|/share/../docker|150000|7200" \
+    "/nas/bin/docker|/share/fixture/docker|99999|7200" "/nas/bin/docker|/share/fixture/docker|500001|7200" \
+    "/nas/bin/docker|/share/fixture/docker|0150000|7200" "/nas/bin/docker|/share/fixture/docker|15e4|7200" \
+    "/nas/bin/docker|/share/fixture/docker||7200" "/nas/bin/docker|/share/fixture/docker|150000|19" \
+    "/nas/bin/docker|/share/fixture/docker|150000|86401" "/nas/bin/docker|/share/fixture/docker|150000|07200" \
+    "/nas/bin/docker|/share/fixture/docker|150000|x" "/nas/bin/docker|/share/fixture/docker|150000|"; do
+    IFS='|' read -r w_bin w_root w_floor w_deadline <<<"$refusal"
+    out="$(record_call persist_migrate_live_inode_watch -- "$w_bin" "$w_root" "$w_floor" "$w_deadline")"
+    if [ "$out" = rc=2 ] && [ -z "$(calls)" ] && grep -q '^Refusing: persist_migrate_live_inode_watch' "$SCRATCH/call.err" \
+        && [ "$(grep -c '^Refusing: ' "$SCRATCH/call.err")" = 1 ]; then
+        test_pass "inode_watch refuses ($refusal) with one line and nothing run on the NAS"
+    else test_fail "inode_watch refuses ($refusal) with nothing run (got $out: $(cat "$SCRATCH/call.err"))"; fi
+done
+for change in DX_CONTAINER_NAME=dx-qnap DX_CONTAINER_NAME=dx-Live-canary DX_CONTAINER_NAME=; do
+    out="$(record_call persist_migrate_live_inode_watch "$change" -- /nas/bin/docker /share/fixture/docker 150000 7200)"
+    if [ "$out" = rc=2 ] && [ -z "$(calls)" ] && grep -q '^Refusing: persist_migrate_live_inode_watch: DX_CONTAINER_NAME=' "$SCRATCH/call.err"; then
+        test_pass "inode_watch refuses $change: it never stops a container that is not a canary"
+    else test_fail "inode_watch refuses $change (got $out: $(cat "$SCRATCH/call.err"))"; fi
+done
+
 # --- the controller-drop wrappers (WP7.2b) -----------------------------------------------
 out="$(record_call persist_migrate_live_copy_name -- copy)"
 out2="$(record_call persist_migrate_live_copy_name -- verify)"
@@ -418,7 +507,7 @@ for change in DX_CONTAINER_NAME=dx-qnap "DX_REMOTE_HOST=dxe-fixture-nas.invalid 
 done
 
 # --- script shape -----------------------------------------------------------------
-for name in SCRIPT_LIST SCRIPT_RETIRED_ASIDE NAS_SCRIPT_INTERRUPT NAS_SCRIPT_COPY_WATCH; do
+for name in SCRIPT_LIST SCRIPT_RETIRED_ASIDE NAS_SCRIPT_INTERRUPT NAS_SCRIPT_COPY_WATCH NAS_SCRIPT_INODE_WATCH; do
     var="PERSIST_MIGRATE_LIVE_$name"
     case "${!var}" in
         *"
@@ -1138,6 +1227,240 @@ for sh_name in $SHELLS; do
     else test_fail "[$sh_name] copy-watch argument checks ($rc_list)"; fi
 done
 
+# --- the bring-up's inode watcher on the NAS (sh/dash, fake df and docker; WP7.2c) -------------
+# A fake NAS in a state directory, every call recorded:
+#   frees        the IFree value of each successful df call, one per line (the
+#                last one repeats); `line` replaces the whole data line
+#   df-fails     every df fails; no-posix: `df -P` fails, plain `df -i` answers
+#   stop-fails   how many `docker stop` calls fail first (no container yet)
+#   clock        the fake clock (date +%s); the fake sleep advances it by its
+#                argument and sleeps IW_REAL_SLEEP for real when that is set
+IW="$SCRATCH/inode-watch"
+IW_BIN="$IW/bin"
+mkdir -p "$IW_BIN"
+cat >"$IW_BIN/docker" <<'FAKE'
+#!/bin/sh
+st="$WATCH_STATE"
+printf '%s\n' "$*" >>"$st/docker-calls"
+case "$1" in
+    stop)
+        n=$(cat "$st/stop-fails" 2>/dev/null || echo 0)
+        if [ "$n" -gt 0 ]; then echo $((n - 1)) >"$st/stop-fails"; echo "Error response from daemon: No such container: $4" >&2; exit 1; fi
+        exit 0 ;;
+    *) exit 9 ;;
+esac
+FAKE
+cat >"$IW_BIN/df" <<'FAKE'
+#!/bin/sh
+st="$WATCH_STATE"
+printf '%s\n' "$*" >>"$st/df-calls"
+[ ! -e "$st/df-fails" ] || exit 1
+if [ "$1" = -P ] && [ -e "$st/no-posix" ]; then echo "df: unknown option -- P" >&2; exit 1; fi
+for a in "$@"; do r=$a; done
+n=$(( $(cat "$st/df-n" 2>/dev/null || echo 0) + 1 ))
+echo "$n" >"$st/df-n"
+free=$(head -n "$n" "$st/frees" | tail -n 1)
+echo "Filesystem Inodes IUsed IFree IUse% Mounted on"
+if [ -e "$st/line" ]; then cat "$st/line"; else echo "/dev/mapper/cachedev 1638400 1000 $free 1% $r"; fi
+FAKE
+cat >"$IW_BIN/sleep" <<'FAKE'
+#!/bin/sh
+st="$WATCH_STATE"
+printf '%s\n' "$1" >>"$st/sleep-log"
+c=$(cat "$st/clock" 2>/dev/null || echo 1000000)
+echo $((c + ${1%%.*})) >"$st/clock"
+[ -z "${IW_REAL_SLEEP:-}" ] || /bin/sleep "$IW_REAL_SLEEP"
+exit 0
+FAKE
+cat >"$IW_BIN/date" <<'FAKE'
+#!/bin/sh
+cat "$WATCH_STATE/clock" 2>/dev/null || echo 1000000
+FAKE
+chmod +x "$IW_BIN/docker" "$IW_BIN/df" "$IW_BIN/sleep" "$IW_BIN/date"
+ln -s "$(command -v tail)" "$IW_BIN/tail"
+IW_ROOT=/share/fixture/docker
+IW_N=0
+# iw_setup FREE...: a fresh fake NAS whose df answers these free counts.
+iw_setup() {
+    IW_N=$((IW_N + 1))
+    WS="$IW/state-$IW_N"
+    mkdir -p "$WS"
+    in_scratch "$WS" || exit 1
+    printf '%s\n' "$@" >"$WS/frees"
+    echo 1000000 >"$WS/clock"
+}
+# iw_run SHELL FLOOR DEADLINE [NAME]: the NAS script, as the NAS shell runs it.
+iw_run() {
+    (cd "$WS" && WATCH_STATE="$WS" PATH="$IW_BIN:$BARE_TOOLS" "$(command -v "$1")" -c "$PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INODE_WATCH" \
+        dxe-live-inode-watch "$IW_BIN/docker" "${4:-dx-live-canary}" "$IW_ROOT" "$2" "$3")
+}
+iw_file() { cat "$WS/$1" 2>/dev/null; }
+iw_stops() { if [ -e "$WS/docker-calls" ]; then grep -c . "$WS/docker-calls"; else echo 0; fi; }
+
+for sh_name in $SHELLS; do
+    iw_setup 900000 400000 140000
+    out="$(iw_run "$sh_name" 150000 7200 2>"$WS/err")"
+    rc=$?
+    expected="$(printf 'free=900000\nfree=400000\nfree=140000\nfloor-hit free=140000 floor=150000\nstopped=dx-live-canary')"
+    if [ "$rc" = 3 ] && [ "$out" = "$expected" ] && [ "$(iw_file docker-calls)" = "stop -t 10 dx-live-canary" ] \
+        && [ "$(iw_file df-calls)" = "$(printf -- '-P -i %s\n-P -i %s\n-P -i %s' "$IW_ROOT" "$IW_ROOT" "$IW_ROOT")" ] \
+        && [ "$(iw_file sleep-log)" = "$(printf '20\n20')" ]; then
+        test_pass "[$sh_name] inode watcher: a heartbeat per poll (df -P -i of the root, sleep 20 between), and below the floor exactly docker stop -t 10 <canary>, then status 3"
+    else test_fail "[$sh_name] inode watcher floor hit (rc $rc: $(printf '%s' "$out" | tr '\n' '|'); docker: $(iw_file docker-calls | tr '\n' '|'); df: $(iw_file df-calls | tr '\n' '|'); sleeps: $(iw_file sleep-log | tr '\n' ' '); $(tr '\n' ' ' <"$WS/err"))"; fi
+
+    iw_setup 150000
+    out="$(iw_run "$sh_name" 150000 40 2>/dev/null)"
+    rc=$?
+    if [ "$rc" = 2 ] && [ "$out" = "$(printf 'free=150000\nfree=150000\nfree=150000\ndeadline=40')" ] && [ "$(iw_stops)" = 0 ]; then
+        test_pass "[$sh_name] inode watcher: exactly at the floor stops nothing; it ends at its deadline (status 2, deadline=<s>)"
+    else test_fail "[$sh_name] inode watcher at the floor / deadline (rc $rc: $(printf '%s' "$out" | tr '\n' '|'); stops $(iw_stops))"; fi
+
+    iw_setup 140000
+    echo 1 >"$WS/stop-fails"
+    out="$(iw_run "$sh_name" 150000 7200 2>"$WS/err")"
+    rc=$?
+    expected="$(printf 'free=140000\nfloor-hit free=140000 floor=150000\nstop-failed=dx-live-canary\nfree=140000\nfloor-hit free=140000 floor=150000\nstopped=dx-live-canary')"
+    if [ "$rc" = 3 ] && [ "$out" = "$expected" ] && [ "$(iw_file docker-calls)" = "$(printf 'stop -t 10 dx-live-canary\nstop -t 10 dx-live-canary')" ] \
+        && grep -q 'No such container' "$WS/err"; then
+        test_pass "[$sh_name] inode watcher: a docker stop that fails (no container yet) ends nothing; the next poll still below the floor tries again"
+    else test_fail "[$sh_name] inode watcher retries a failed stop (rc $rc: $(printf '%s' "$out" | tr '\n' '|'); docker: $(iw_file docker-calls | tr '\n' '|'))"; fi
+
+    iw_setup 140000
+    iw_run "$sh_name" 150000 7200 >&- 2>"$WS/err"
+    rc=$?
+    if [ "$rc" = 0 ] && [ "$(iw_stops)" = 0 ] && [ "$(iw_file df-calls | grep -c .)" = 1 ] && [ ! -e "$WS/sleep-log" ]; then
+        test_pass "[$sh_name] inode watcher: once its output is gone (the ssh session ended) it exits at the next heartbeat, before any docker stop, even below the floor"
+    else test_fail "[$sh_name] inode watcher with its session gone (rc $rc, stops $(iw_stops), df calls $(iw_file df-calls | grep -c .))"; fi
+
+    iw_setup 900000
+    : >"$WS/no-posix"
+    out="$(iw_run "$sh_name" 150000 20 2>/dev/null)"
+    rc=$?
+    if [ "$rc" = 2 ] && [ "$out" = "$(printf 'free=900000\nfree=900000\ndeadline=20')" ] \
+        && [ "$(iw_file df-calls)" = "$(printf -- '-P -i %s\n-i %s\n-P -i %s\n-i %s' "$IW_ROOT" "$IW_ROOT" "$IW_ROOT" "$IW_ROOT")" ]; then
+        test_pass "[$sh_name] inode watcher: a df without -P is asked plainly (df -i), as the preflight does"
+    else test_fail "[$sh_name] inode watcher's df -i fallback (rc $rc: $(printf '%s' "$out" | tr '\n' '|'); df: $(iw_file df-calls | tr '\n' '|'))"; fi
+
+    iw_setup 900000
+    : >"$WS/df-fails"
+    out="$(iw_run "$sh_name" 150000 7200 2>"$WS/err")"
+    rc=$?
+    err1="$(cat "$WS/err")"
+    iw_setup -
+    out2="$(iw_run "$sh_name" 150000 7200 2>/dev/null)"
+    rc2=$?
+    stops2="$(iw_stops)"
+    iw_setup 100
+    printf '      1638400   1638300       100  99%% /share/fixture/docker\n' >"$WS/line"
+    out3="$(iw_run "$sh_name" 150000 7200 2>/dev/null)"
+    rc3=$?
+    if [ "$rc" = 4 ] && [ -z "$out" ] && grep -q "gave no free-inode count" <<<"$err1" && [ "$rc2" = 4 ] && [ -z "$out2" ] && [ "$stops2" = 0 ] \
+        && [ "$rc3" = 4 ] && [ -z "$out3" ] && [ "$(iw_stops)" = 0 ]; then
+        test_pass "[$sh_name] inode watcher: a failing df, a free count that is not a number or a short (wrapped) line is status 4, with no heartbeat and nothing stopped"
+    else test_fail "[$sh_name] inode watcher without a free count ($rc/$rc2/$rc3: $out$out2$out3)"; fi
+
+    iw_setup 100
+    : >"$WS/fa"
+    : >"$WS/fb"
+    printf 'f* 1638400 1638300 100 99%% /share/fixture/docker\n' >"$WS/line"
+    out="$(iw_run "$sh_name" 150000 20 2>/dev/null)"
+    rc=$?
+    if [ "$rc" = 3 ] && [ "$(sed -n '1p' <<<"$out")" = free=100 ] && [ "$(iw_stops)" = 1 ]; then
+        test_pass "[$sh_name] inode watcher never globs (set -f): a df field like f* stays one word, so IFree is still field 4"
+    else test_fail "[$sh_name] inode watcher globbed the df line (rc $rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+
+    iw_setup 100
+    rc_list=""
+    for bad in "relative-docker" "name" "upper" "root" "slash" "floor0" "floor" "deadline"; do
+        case "$bad" in
+            relative-docker) (cd "$WS" && WATCH_STATE="$WS" PATH="$IW_BIN:$BARE_TOOLS" "$(command -v "$sh_name")" -c "$PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INODE_WATCH" x docker dx-live-canary "$IW_ROOT" 150000 60) >/dev/null 2>&1 ;;
+            name) iw_run "$sh_name" 150000 60 dx-qnap >/dev/null 2>&1 ;;
+            upper) iw_run "$sh_name" 150000 60 dx-Live-canary >/dev/null 2>&1 ;;
+            root) (cd "$WS" && WATCH_STATE="$WS" PATH="$IW_BIN:$BARE_TOOLS" "$(command -v "$sh_name")" -c "$PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INODE_WATCH" x "$IW_BIN/docker" dx-live-canary relative 150000 60) >/dev/null 2>&1 ;;
+            slash) (cd "$WS" && WATCH_STATE="$WS" PATH="$IW_BIN:$BARE_TOOLS" "$(command -v "$sh_name")" -c "$PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INODE_WATCH" x "$IW_BIN/docker" dx-live-canary / 150000 60) >/dev/null 2>&1 ;;
+            floor0) iw_run "$sh_name" 0 60 >/dev/null 2>&1 ;;
+            floor) iw_run "$sh_name" 15e4 60 >/dev/null 2>&1 ;;
+            deadline) iw_run "$sh_name" 150000 6x >/dev/null 2>&1 ;;
+        esac
+        rc_list="$rc_list$?"
+    done
+    if [ "$rc_list" = 11111111 ] && [ ! -e "$WS/df-calls" ] && [ ! -e "$WS/docker-calls" ]; then
+        test_pass "[$sh_name] inode watcher refuses a relative docker path, a name that is not a canary's, a relative or / root, a bad floor and a bad deadline before any df or docker call"
+    else test_fail "[$sh_name] inode watcher argument checks ($rc_list)"; fi
+done
+
+# The verdict on a watcher's output.
+VD="$SCRATCH/verdict"
+mkdir -p "$VD"
+printf 'free=900000\nfree=400000\nfree=650000\n' >"$VD/watched"
+printf 'free=900000\nfree=140000\nfloor-hit free=140000 floor=150000\nstopped=dx-live-canary\n' >"$VD/stopped"
+printf 'free=140000\nfloor-hit free=140000 floor=150000\nstop-failed=dx-live-canary\n' >"$VD/not-stopped"
+printf 'free=140000\nfloor-hit free=140000 floor=150000\nstop-failed=dx-live-canary\nfree=130000\nfloor-hit free=130000 floor=150000\nstopped=dx-live-canary\n' >"$VD/retried"
+printf 'free=900000\nfree=900000\ndeadline=40\n' >"$VD/deadline"
+: >"$VD/empty"
+verdict() { persist_migrate_live_inode_watch_verdict "$VD/$1" "$2" "$3"; }
+if [ "$(verdict watched 137 1)" = "watched 3 400000" ] && [ "$(verdict stopped 3 '')" = "floor-hit 140000 150000 stopped" ] \
+    && [ "$(verdict not-stopped 137 1)" = "floor-hit 140000 150000 not-stopped" ] && [ "$(verdict retried 3 '')" = "floor-hit 130000 150000 stopped" ] \
+    && [ "$(verdict deadline 2 '')" = "deadline 40" ] && [ "$(verdict empty 4 '')" = blind ] \
+    && [ "$(verdict empty 137 1)" = "ended 137" ] && [ "$(verdict watched 255 '')" = "ended 255" ] \
+    && [ "$(verdict watched 0 '')" = "ended 0" ] && [ "$(verdict missing 1 '')" = "ended 1" ]; then
+    test_pass "inode_watch_verdict: watched (stopped by us, with polls and the lowest count), floor-hit stopped / not-stopped (the last hit), deadline, blind, else ended <status>"
+else test_fail "inode_watch_verdict ($(verdict watched 137 1) / $(verdict stopped 3 '') / $(verdict not-stopped 137 1) / $(verdict retried 3 '') / $(verdict deadline 2 '') / $(verdict empty 4 ''))"; fi
+if [ "$(verdict deadline 137 1)" = "deadline 40" ]; then
+    test_pass "inode_watch_verdict: a watcher that printed deadline= ended on its own, even when the stop raced its exit"
+else test_fail "inode_watch_verdict with a deadline line and a kill ($(verdict deadline 137 1))"; fi
+
+# After the bring-up: the inodes left, through the caller's step helpers.
+# after_run FREE0 FLOOR [DF_ANSWER|fail]: steps, results, status and the floor-hit mark.
+after_run() {
+    rm -f "$SCRATCH/after."*
+    (
+        canary_env
+        LV_RC=0 LV_OUT="" LV_ERR=""
+        PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT=""
+        # shellcheck disable=SC2034 # LV_RC is read by the function under test
+        lv_run() {
+            shift
+            [ "$1" != -- ] || shift
+            LV_OUT="$SCRATCH/after.out"
+            LV_ERR="$SCRATCH/after.err"
+            LV_RC=0
+            ("$@") >"$LV_OUT" 2>"$LV_ERR" </dev/null || LV_RC=$?
+        }
+        lv_ok() { echo "PASS $1" >>"$SCRATCH/after.steps"; }
+        lv_bad() { echo "FAIL $1" >>"$SCRATCH/after.steps"; return 1; }
+        lv_result() { printf '%s=%s\n' "$1" "$2" >>"$SCRATCH/after.results"; }
+        dxe_runtime_call() {
+            printf '%s\n' "$*" >>"$SCRATCH/after.calls"
+            [ "$AFTER_DF" != fail ] || return 1
+            printf 'Filesystem Inodes IUsed IFree IUse%% Mounted on\n/dev/mapper/cachedev 1638400 1000 %s 1%% %s\n' "$AFTER_DF" "$4"
+        }
+        rc=0
+        AFTER_DF="${3:-}" persist_migrate_live_inodes_after_bringup /share/fixture/docker "$1" "$2" >/dev/null || rc=$?
+        printf 'rc=%s\nhit=%s\n' "$rc" "$PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT" >"$SCRATCH/after.result"
+    )
+}
+after_file() { cat "$SCRATCH/after.$1" 2>/dev/null; }
+after_run 900000 150000 300000
+if [ "$(after_file result)" = "$(printf 'rc=0\nhit=')" ] && [ "$(after_file calls)" = "dx_runtime_docker_ssh_exec df -P -i /share/fixture/docker" ] \
+    && [ "$(after_file results)" = "$(printf 'docker_root_inodes_free_after_bringup=300000\ncanary_inodes_used=600000')" ] \
+    && [ "$(after_file steps)" = "PASS at least 150000 inodes are still free on the NAS's Docker data root after the bring-up (300000)" ]; then
+    test_pass "after the bring-up: one read-only df -P -i; free count and the canary's cost recorded; above the floor is a PASS"
+else test_fail "after the bring-up above the floor ($(after_file result | tr '\n' ' '); $(after_file results | tr '\n' ' '); $(after_file steps))"; fi
+after_run 900000 150000 149999
+if [ "$(after_file result)" = "$(printf 'rc=1\nhit=149999')" ] \
+    && [ "$(after_file results)" = "$(printf 'docker_root_inodes_free_after_bringup=149999\ncanary_inodes_used=750001\ninode_floor_hit=after-bringup free=149999 floor=150000')" ] \
+    && [ "$(after_file steps)" = "FAIL INODE FLOOR HIT after the bring-up: only 149999 inodes are free on the NAS's Docker data root (floor 150000; the production guest shares it); nothing is seeded" ]; then
+    test_pass "after the bring-up: one inode below the floor stops the run before seeding (INODE FLOOR HIT, recorded, marked for the urgent cleanup message)"
+else test_fail "after the bring-up below the floor ($(after_file result | tr '\n' ' '); $(after_file results | tr '\n' ' '); $(after_file steps))"; fi
+after_run 900000 150000 fail
+out="$(after_file result)|$(after_file results)|$(after_file steps)"
+after_run "" 150000 300000
+if [ "$out" = "$(printf 'rc=0\nhit=')|canary_inodes_used=unknown|" ] \
+    && [ "$(after_file result)|$(after_file results)|$(after_file steps)" = "$(printf 'rc=0\nhit=')|canary_inodes_used=unknown|" ]; then
+    test_pass "after the bring-up: no answer (or no preflight count) records the cost as unknown and goes on (the watcher saw the whole bring-up)"
+else test_fail "after the bring-up without numbers ($out)"; fi
+
 # --- the controller-drop helpers (pure; WP7.2b) -----------------------------------------------
 P_ID=dxe-fixture-nas.invalid__dx-live-canary
 if persist_migrate_live_labels_ok "$CW_LABELS" "$P_ID" persist-copy \
@@ -1225,9 +1548,10 @@ n=0
 while [ ! -s "$PG/leader" ] && [ "$n" -lt 200 ]; do sleep 0.05; n=$((n + 1)); done
 pg_child="$(cat "$PG/child" 2>/dev/null)"
 if [ "$(cat "$PG/leader" 2>/dev/null)" = "$pg_pid" ] && [ "$(ps -o pgid= -p "$pg_pid" | tr -d ' ')" = "$pg_pid" ] \
-    && [ -n "$pg_child" ] && [ "$(ps -o pgid= -p "$pg_child" | tr -d ' ')" = "$pg_pid" ] && [ "$pg_pid" != "$own_pgid" ]; then
-    test_pass "own_group: the command runs as the background job itself (same pid), leading a new process group that its children join"
-else test_fail "own_group (pid $pg_pid, leader $(cat "$PG/leader" 2>/dev/null), child $pg_child)"; fi
+    && [ -n "$pg_child" ] && [ "$(ps -o pgid= -p "$pg_child" | tr -d ' ')" = "$pg_pid" ] && [ "$pg_pid" != "$own_pgid" ] \
+    && [ "$(ps -o ppid= -p "$pg_pid" | tr -d ' ')" = "$$" ]; then
+    test_pass "own_group: the command runs as the background job itself (same pid, still this shell's child through the subshell -> perl -> command exec chain), leading a new process group that its children join"
+else test_fail "own_group (pid $pg_pid, leader $(cat "$PG/leader" 2>/dev/null), child $pg_child, parent $(ps -o ppid= -p "$pg_pid" | tr -d ' '), this shell $$)"; fi
 # Refusals, with kill stubbed so a broken refusal sends nothing.
 refusals_ok=true
 for bad in "" 0 1 01 abc "-$pg_pid" "$$" "$pg_child" "$own_pgid"; do
@@ -1240,6 +1564,24 @@ done
 if $refusals_ok && [ ! -e "$PG/stub-kills" ]; then
     test_pass "kill_group refuses an empty, zero, init, padded, negative or non-numeric id, this shell, a process that leads no group and this shell's own group -- nothing sent"
 else test_fail "kill_group refusals (stub kills: $(cat "$PG/stub-kills" 2>/dev/null | tr '\n' ' '))"; fi
+# A process that leads a group of its own but is not this shell's child (what
+# a reused pid would be): refused, with kill stubbed so a broken check sends
+# nothing. It is this suite's own grandchild, ended afterwards.
+PG2="$SCRATCH/pg2"
+mkdir -p "$PG2"
+( (persist_migrate_live_own_group "$PG/controller" "$PG2") >/dev/null 2>&1 </dev/null & echo "$!" >"$PG2/pid"; wait ) &
+pg2_mid=$!
+n=0
+while [ ! -s "$PG2/leader" ] && [ "$n" -lt 200 ]; do sleep 0.05; n=$((n + 1)); done
+pg2_pid="$(cat "$PG2/pid" 2>/dev/null)"
+out="$(kill() { echo "kill $*" >>"$PG2/stub-kills"; }; persist_migrate_live_kill_group "$pg2_pid" 2>&1; echo "rc=$?")"
+if [ -n "$pg2_pid" ] && [ "$(ps -o pgid= -p "$pg2_pid" | tr -d ' ')" = "$pg2_pid" ] && [ "$(ps -o ppid= -p "$pg2_pid" | tr -d ' ')" = "$pg2_mid" ] \
+    && [ "$(printf '%s\n' "$out" | sed -n '$p')" = rc=2 ] && grep -q "^Refusing: persist_migrate_live_kill_group: $pg2_pid is not a child of this shell" <<<"$out" \
+    && [ ! -e "$PG2/stub-kills" ]; then
+    test_pass "kill_group refuses a group leader that is not this shell's child (a reused pid) -- nothing sent"
+else test_fail "kill_group refuses a non-child group leader (pid $pg2_pid, parent $(ps -o ppid= -p "$pg2_pid" 2>/dev/null | tr -d ' '); $out; stub kills: $(cat "$PG2/stub-kills" 2>/dev/null | tr '\n' ' '))"; fi
+[ -z "$pg2_pid" ] || kill -KILL -- "-$pg2_pid" 2>/dev/null
+wait "$pg2_mid" 2>/dev/null
 out="$(persist_migrate_live_kill_group "$pg_pid" 2>&1; echo "rc=$?")"
 wait "$pg_pid" 2>/dev/null
 pg_rc=$?
@@ -1269,14 +1611,152 @@ if [ "$(printf '%s\n' "$out" | sed -n '$p')" = rc=2 ] && grep -q '^Refusing: per
     test_pass "own_group refuses at a script's top level (it would replace the caller) and runs nothing"
 else test_fail "own_group at the top level ($out)"; fi
 
-# --- the controller-drop orchestration, against stand-ins (WP7.2b) ----------------------------
+# --- the stand-in suite shell -------------------------------------------------------------------
+# The orchestrations fork their background jobs from the suite's own shell,
+# and kill_group signals nothing that is not that shell's child (ppid ==
+# $$). So they run here in a separate bash process, whose $$ is the shell
+# that forks them, as the live suite's main shell is. It carries the live
+# suite's step helpers as stand-ins: lv_ok, lv_bad and lv_finding append
+# PASS/FAIL/FINDING lines to $H_DIR/steps, lv_result appends k=v lines to
+# $H_DIR/results. Modes: drop (the controller-drop orchestration), bringup
+# (the watched bring-up) and twice (two watcher starts).
+HARNESS="$SCRATCH/harness.sh"
+cat >"$HARNESS" <<'HARNESS'
+#!/bin/bash
+set -uo pipefail
+# shellcheck source=/dev/null
+source "$1/persist-live.sh"
+# shellcheck source=/dev/null
+source "$1/persist-migrate-live.sh"
+mode="$2"
+d="$H_DIR"
+LV_SEQ=0 LV_RC=0 LV_OUT="" LV_ERR="" LV_BG_PID=""
+lv_run() {
+    local label="$1"
+    shift
+    [ "$1" != -- ] || shift
+    LV_SEQ=$((LV_SEQ + 1))
+    LV_OUT="$d/log/$LV_SEQ-$label.out"
+    LV_ERR="$d/log/$LV_SEQ-$label.err"
+    LV_RC=0
+    ("$@") >"$LV_OUT" 2>"$LV_ERR" </dev/null || LV_RC=$?
+}
+lv_run_bg() {
+    local label="$1"
+    shift
+    [ "$1" != -- ] || shift
+    LV_SEQ=$((LV_SEQ + 1))
+    ("$@") >"$d/log/$LV_SEQ-$label.out" 2>"$d/log/$LV_SEQ-$label.err" </dev/null &
+    LV_BG_PID=$!
+}
+lv_bg_wait() { [ -n "$LV_BG_PID" ] || return 0; LV_RC=0; wait "$LV_BG_PID" || LV_RC=$?; LV_BG_PID=""; }
+lv_ok() { echo "PASS $1" >>"$d/steps"; }
+lv_bad() { echo "FAIL $1" >>"$d/steps"; return 1; }
+lv_check() { local what="$1"; shift; if "$@"; then lv_ok "$what"; return 0; fi; lv_bad "$what"; }
+lv_finding() { echo "FINDING $1" >>"$d/steps"; }
+lv_result() { printf '%s=%s\n' "$1" "$2" >>"$d/results"; }
+lv_show_logs() { :; }
+lv_rc_zero() { [ "$LV_RC" -eq 0 ]; }
+lv_rc_is() { [ "$LV_RC" -eq "$1" ]; }
+lv_out_line() { grep -Fqx -- "$1" "$LV_OUT"; }
+case "$mode" in
+    drop)
+        # The copy watcher's calls: before the rerun DROP_RUNNING1 (ok | none
+        # | labels | dst | ended: none, once the controller has exited |
+        # failing), after it DROP_RUNNING2 (same | gone); the gone watch
+        # DROP_GONE (ok | stuck).
+        dxe_runtime_call() {
+            local mode="$7" deadline="${10}" i=0 answer
+            [ "$1 $5" = "dx_runtime_docker_ssh_exec dxe-live-copy-watch" ] || { echo "UNEXPECTED $*" >>"$d/transcript"; return 9; }
+            if [ "$mode" = running ]; then
+                while [ ! -s "$d/leader" ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i + 1)); done
+                if [ "$(cat "$d/migrate-count" 2>/dev/null || echo 0)" -le 1 ]; then
+                    answer="${DROP_RUNNING1:-ok}"
+                else
+                    answer="${DROP_RUNNING2:-same}"
+                fi
+            else
+                answer="${DROP_GONE:-ok}"
+            fi
+            echo "NAS $mode $deadline $8 $9" >>"$d/transcript"
+            case "$answer" in
+                ok | same) printf 'copy=%s\nlabels=%s\nmounts=%s\n' "$COPY_ID" "$CW_LABELS" "$CW_MOUNTS" ;;
+                labels) printf 'copy=%s\nlabels=%s\nmounts=%s\n' "$COPY_ID" "${CW_LABELS/persist-copy/persist-verify}" "$CW_MOUNTS" ;;
+                dst) printf 'copy=%s\nlabels=%s\nmounts=%s\n' "$COPY_ID" "$CW_LABELS" "${CW_MOUNTS/\/dst=/\/dest=}" ;;
+                ended)
+                    i=0
+                    while kill -0 "$(cat "$d/leader")" 2>/dev/null && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i + 1)); done
+                    return 2
+                    ;;
+                failing) return 4 ;;
+                none | gone | stuck) return 2 ;;
+            esac
+            [ "$mode" != gone ] || echo "gone=$8 $9"
+            return 0
+        }
+        rc=0
+        persist_migrate_live_controller_drop /nas/bin/docker "$DROP_BIN/dx-persist-migrate" "$DROP_BIN/dx-lock" "$LEAF" 77 || rc=$?
+        printf 'rc=%s\noutcome=%s\nid=%s\norphan=%s\nbg=%s\nwindow=%s\nlock_left=%s\npid=%s\ngone_after=%s\nlast_rc=%s\n' "$rc" \
+            "$PERSIST_MIGRATE_LIVE_DROP_OUTCOME" "$PERSIST_MIGRATE_LIVE_DROP_ID" "$PERSIST_MIGRATE_LIVE_DROP_ORPHAN" "${LV_BG_PID:+left}" \
+            "$PERSIST_MIGRATE_LIVE_DROP_WINDOW" "$PERSIST_MIGRATE_LIVE_DROP_LOCK_LEFT" "$PERSIST_MIGRATE_LIVE_DROP_PID" \
+            "$PERSIST_MIGRATE_LIVE_DROP_GONE_AFTER" "$LV_RC" >"$d/result"
+        if [ -n "$LV_BG_PID" ]; then
+            # The orchestration stopped before the drop (the live suite's lv_stop
+            # waits for the controller): end this suite's own stand-in here.
+            kill -KILL -- "-$LV_BG_PID" 2>/dev/null
+            wait "$LV_BG_PID" 2>/dev/null
+        fi
+        ;;
+    bringup | twice)
+        # The NAS: the real watcher script, run here against the fake df and
+        # docker (a fake clock; 0.05 s of real time per 20 s poll). The call
+        # runs inside the watcher's job, so it also records that job's
+        # process group.
+        dxe_runtime_call() {
+            [ "$1 $5" = "dx_runtime_docker_ssh_exec dxe-live-inode-watch" ] || { echo "UNEXPECTED $*" >>"$d/transcript"; return 9; }
+            sh -c 'ps -o pgid= -p $$' | tr -d ' ' >"$d/watch-pgid"
+            echo "NAS inode-watch ${*:6}" >>"$d/transcript"
+            (cd "$WS" && WATCH_STATE="$WS" IW_REAL_SLEEP=0.05 PATH="$IW_BIN:$BARE_TOOLS" "$IW_SH" -c "$4" "${@:5}")
+        }
+        if [ "$mode" = twice ]; then
+            rc=0
+            persist_migrate_live_inode_watch_start "$IW_BIN/docker" /share/fixture/docker 150000 7200 "$d/inode-watch.out" "$d/inode-watch.err" || rc=$?
+            first="$PERSIST_MIGRATE_LIVE_WATCH_PID"
+            rc2=0
+            persist_migrate_live_inode_watch_start "$IW_BIN/docker" /share/fixture/docker 150000 7200 "$d/second.out" "$d/second.err" 2>"$d/second.refusal" || rc2=$?
+            same="$PERSIST_MIGRATE_LIVE_WATCH_PID"
+            persist_migrate_live_inode_watch_stop
+            printf 'rc=%s\nrc2=%s\nfirst=%s\nsame=%s\nafter=%s\nkilled=%s\ntrap=%s\n' "$rc" "$rc2" "$first" "$same" \
+                "$PERSIST_MIGRATE_LIVE_WATCH_PID" "$PERSIST_MIGRATE_LIVE_WATCH_KILLED" "$(trap -p EXIT)" >"$d/result"
+            exit 0
+        fi
+        # The caller's own EXIT trap: chained while the watcher runs, then restored.
+        trap 'echo harness-exit-trap >>"$d/trap-log"' EXIT
+        rc=0
+        persist_migrate_live_bringup_watched "$d" "$IW_BIN/docker" /share/fixture/docker "${BU_FLOOR:-150000}" "${BU_DEADLINE:-7200}" -- "$BU_BIN/dx" true || rc=$?
+        printf 'rc=%s\nlv_rc=%s\nlv_err=%s\nwatch_rc=%s\nkilled=%s\nfloor_hit=%s\nwatch_pid=%s\n' "$rc" "$LV_RC" "${LV_ERR##*/}" \
+            "$PERSIST_MIGRATE_LIVE_WATCH_RC" "$PERSIST_MIGRATE_LIVE_WATCH_KILLED" "$PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT" \
+            "$PERSIST_MIGRATE_LIVE_WATCH_PID" >"$d/result"
+        trap -p EXIT >"$d/trap-after"
+        ;;
+esac
+HARNESS
+# shellcheck disable=SC2034 # read by the harness, through the environment
+canary_export() {
+    canary_env
+    export DXE_PERSIST_LIVE_CANARY DX_CONTAINER_NAME DX_RUNTIME DX_REMOTE_HOST DX_PERSIST_STORAGE DX_PERSIST_HOST_ROOT \
+        DX_NIX_VOLUME DX_PERSIST_VOLUME DX_BOOTSTRAP_VOLUME DX_IMAGE DX_SSH_KEY DX_SSH_KEY_PUB DX_SSH_PORT \
+        DX_CONTAINER_RESTART_POLICY DX_USAGE_SERVICE DX_PERSIST_HOST_MOUNT_SENTINEL
+}
+
+# --- the controller-drop orchestration, against stand-ins (WP7.2b/c) ----------------------------
 # The stand-in dx-persist-migrate: run 1 (the background controller) records
-# itself, starts a child and waits to be killed; later runs record whether run
-# 1's process is still alive and answer from rerun-<n>.{out,err,rc}. The
-# stand-in dx-lock records the same and prints an audit naming LOCK_PID (run
-# 1's pid by default) and `Lock released.`. The NAS (dxe_runtime_call) answers the copy watcher's
-# three calls from DROP_RUNNING1 (ok | none | labels | dst), DROP_RUNNING2
-# (same | gone) and DROP_GONE (ok | stuck). Everything lands in one transcript.
+# itself, starts a child and waits to be killed (or, with DROP_FIRST=exit,
+# refuses at once: exit 1); later runs record whether run 1's process is
+# still alive and answer from rerun-<n>.{out,err,rc}. The stand-in dx-lock
+# records the same and prints an audit naming LOCK_PID (run 1's pid by
+# default) and `Lock released.`. The NAS answers as the harness says above.
+# Everything lands in one transcript.
 DROP_BIN="$SCRATCH/drop-bin"
 mkdir -p "$DROP_BIN"
 cat >"$DROP_BIN/dx-persist-migrate" <<'FAKE'
@@ -1286,6 +1766,11 @@ n=$(( $(cat "$d/migrate-count" 2>/dev/null || echo 0) + 1 ))
 echo "$n" >"$d/migrate-count"
 if [ "$n" = 1 ]; then
     echo "MIGRATE 1" >>"$d/transcript"
+    if [ "${DROP_FIRST:-}" = exit ]; then
+        echo "$$" >"$d/leader"
+        echo "Error: refused at once (stand-in)" >&2
+        exit 1
+    fi
     sh -c "sleep 30" &
     echo "$!" >"$d/child"
     echo "$$" >"$d/leader"
@@ -1309,9 +1794,9 @@ echo "held by fixture-host:${LOCK_PID:-$first}:4242:20261012T000000Z since 2026-
 FAKE
 chmod +x "$DROP_BIN/dx-persist-migrate" "$DROP_BIN/dx-lock"
 DROP_N=0
-# drop_run RERUN_ERR_FILE RERUN_RC [NAME=VALUE...]: one orchestration in a
-# subshell, the stand-in rerun answering with that stderr and status; leaves
-# $DROP_DIR/{transcript,steps,result,stderr}.
+# drop_run RERUN_ERR_FILE RERUN_RC [NAME=VALUE...]: one orchestration in the
+# stand-in suite shell, the stand-in rerun answering with that stderr and
+# status; leaves $DROP_DIR/{transcript,steps,result,stderr}.
 drop_run() {
     DROP_N=$((DROP_N + 1))
     DROP_DIR="$SCRATCH/drop-$DROP_N"
@@ -1321,72 +1806,11 @@ drop_run() {
     printf "%s\n" "$2" >"$DROP_DIR/rerun-2.rc"
     shift 2
     (
-        canary_env
-        export DROP_DIR
-        for assignment in "$@"; do
-            case "$assignment" in LOCK_PID=*) export "${assignment?}" ;; *) printf -v "${assignment%%=*}" '%s' "${assignment#*=}" ;; esac
-        done
-        LV_SEQ=0 LV_RC=0 LV_OUT="" LV_ERR="" LV_BG_PID=""
-        lv_run() {
-            local label="$1"
-            shift
-            [ "$1" != -- ] || shift
-            LV_SEQ=$((LV_SEQ + 1))
-            LV_OUT="$DROP_DIR/log/$LV_SEQ-$label.out"
-            LV_ERR="$DROP_DIR/log/$LV_SEQ-$label.err"
-            LV_RC=0
-            ("$@") >"$LV_OUT" 2>"$LV_ERR" </dev/null || LV_RC=$?
-        }
-        lv_run_bg() {
-            local label="$1"
-            shift
-            [ "$1" != -- ] || shift
-            LV_SEQ=$((LV_SEQ + 1))
-            ("$@") >"$DROP_DIR/log/$LV_SEQ-$label.out" 2>"$DROP_DIR/log/$LV_SEQ-$label.err" </dev/null &
-            LV_BG_PID=$!
-        }
-        lv_bg_wait() { [ -n "$LV_BG_PID" ] || return 0; LV_RC=0; wait "$LV_BG_PID" || LV_RC=$?; LV_BG_PID=""; }
-        lv_ok() { echo "PASS $1" >>"$DROP_DIR/steps"; }
-        lv_bad() { echo "FAIL $1" >>"$DROP_DIR/steps"; return 1; }
-        lv_check() { local d="$1"; shift; if "$@"; then lv_ok "$d"; return 0; fi; lv_bad "$d"; }
-        lv_finding() { echo "FINDING $1" >>"$DROP_DIR/steps"; }
-        lv_show_logs() { :; }
-        lv_rc_zero() { [ "$LV_RC" -eq 0 ]; }
-        lv_rc_is() { [ "$LV_RC" -eq "$1" ]; }
-        lv_out_line() { grep -Fqx -- "$1" "$LV_OUT"; }
-        dxe_runtime_call() {
-            local mode="$7" deadline="${10}" i=0 answer
-            [ "$1 $5" = "dx_runtime_docker_ssh_exec dxe-live-copy-watch" ] || { echo "UNEXPECTED $*" >>"$DROP_DIR/transcript"; return 9; }
-            if [ "$mode" = running ] && [ ! -e "$DROP_DIR/seen-running" ]; then
-                while [ ! -s "$DROP_DIR/leader" ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i + 1)); done
-                : >"$DROP_DIR/seen-running"
-                answer="${DROP_RUNNING1:-ok}"
-            elif [ "$mode" = running ]; then
-                answer="${DROP_RUNNING2:-same}"
-            else
-                answer="${DROP_GONE:-ok}"
-            fi
-            echo "NAS $mode $deadline $8 $9" >>"$DROP_DIR/transcript"
-            case "$answer" in
-                ok | same) printf 'copy=%s\nlabels=%s\nmounts=%s\n' "$COPY_ID" "$CW_LABELS" "$CW_MOUNTS" ;;
-                labels) printf 'copy=%s\nlabels=%s\nmounts=%s\n' "$COPY_ID" "${CW_LABELS/persist-copy/persist-verify}" "$CW_MOUNTS" ;;
-                dst) printf 'copy=%s\nlabels=%s\nmounts=%s\n' "$COPY_ID" "$CW_LABELS" "${CW_MOUNTS/\/dst=/\/dest=}" ;;
-                none | gone | stuck) return 2 ;;
-            esac
-            [ "$mode" != gone ] || echo "gone=$8 $9"
-            return 0
-        }
-        rc=0
-        persist_migrate_live_controller_drop /nas/bin/docker "$DROP_BIN/dx-persist-migrate" "$DROP_BIN/dx-lock" "$LEAF" 77 || rc=$?
-        printf 'rc=%s\noutcome=%s\nid=%s\norphan=%s\nbg=%s\nwindow=%s\nlock_left=%s\npid=%s\n' "$rc" "$PERSIST_MIGRATE_LIVE_DROP_OUTCOME" \
-            "$PERSIST_MIGRATE_LIVE_DROP_ID" "$PERSIST_MIGRATE_LIVE_DROP_ORPHAN" "${LV_BG_PID:+left}" "$PERSIST_MIGRATE_LIVE_DROP_WINDOW" \
-            "$PERSIST_MIGRATE_LIVE_DROP_LOCK_LEFT" "$PERSIST_MIGRATE_LIVE_DROP_PID" >"$DROP_DIR/result"
-        if [ -n "$LV_BG_PID" ]; then
-            # The orchestration stopped before the drop (the live suite's lv_stop
-            # waits for the controller): end this suite's own stand-in here.
-            kill -KILL -- "-$LV_BG_PID" 2>/dev/null
-            wait "$LV_BG_PID" 2>/dev/null
-        fi
+        canary_export
+        H_DIR="$DROP_DIR"
+        export DROP_DIR H_DIR DROP_BIN LEAF COPY_ID CW_LABELS CW_MOUNTS
+        for assignment in "$@"; do export "${assignment?}"; done
+        "$BASH" "$HARNESS" "$SCRIPT_DIR/lib" drop
     ) 2>"$DROP_DIR/stderr"
     kill -0 "$(cat "$DROP_DIR/child" 2>/dev/null || echo 0)" 2>/dev/null && kill -KILL "$(cat "$DROP_DIR/child")" 2>/dev/null
     return 0
@@ -1394,8 +1818,9 @@ drop_run() {
 drop_result() { sed -n "s/^$1=//p" "$DROP_DIR/result"; }
 drop_transcript() { cat "$DROP_DIR/transcript" 2>/dev/null; }
 drop_steps() { cat "$DROP_DIR/steps" 2>/dev/null; }
-DROP_ORDER="$(printf 'MIGRATE 1\nNAS running 77 %s %s\nLOCK status first=dead\nLOCK unlock --force first=dead\nMIGRATE 2 first=dead\nNAS running 0 %s %s\nNAS gone 77 %s %s' \
-    "$CW_COPY" "$CW_VERIFY" "$CW_COPY" "$CW_VERIFY" "$CW_COPY" "$CW_VERIFY")"
+DROP_FIRST_LOOK="$(printf 'NAS running 20 %s %s' "$CW_COPY" "$CW_VERIFY")"
+DROP_ORDER="$(printf 'MIGRATE 1\n%s\nLOCK status first=dead\nLOCK unlock --force first=dead\nMIGRATE 2 first=dead\nNAS running 0 %s %s\nNAS gone 77 %s %s' \
+    "$DROP_FIRST_LOOK" "$CW_COPY" "$CW_VERIFY" "$CW_COPY" "$CW_VERIFY")"
 
 drop_run "$SCRATCH/err.copy-running" 1
 if [ "$(drop_transcript)" = "$DROP_ORDER" ] && [ "$(drop_result rc)" = 0 ] && [ "$(drop_result outcome)" = refused ] \
@@ -1406,8 +1831,8 @@ if [ "$(drop_transcript)" = "$DROP_ORDER" ] && [ "$(drop_result rc)" = 0 ] && [ 
     && grep -q '^PASS and releases it' "$DROP_DIR/steps" && [ -z "$(drop_result lock_left)" ] && [ -n "$(drop_result pid)" ] \
     && grep -q "^PASS the rerun refuses .* naming $CW_COPY and running" "$DROP_DIR/steps" \
     && grep -q '^PASS the refusal left the copy container alone' "$DROP_DIR/steps" && grep -q '^PASS the orphaned copy ends and removes itself' "$DROP_DIR/steps" \
-    && ! kill -0 "$(cat "$DROP_DIR/child")" 2>/dev/null; then
-    test_pass "drop: watch for the running copy (deadline), SIGKILL the controller's group, dx-lock status then unlock --force (after it died), rerun (after it died), one look (deadline 0), wait until gone (deadline) -- in that order; refused, untouched"
+    && grep -Eq '^[0-9]+$' <<<"$(drop_result gone_after)" && ! kill -0 "$(cat "$DROP_DIR/child")" 2>/dev/null; then
+    test_pass "drop: watch for the running copy (a 20 s slice), SIGKILL the controller's group, dx-lock status then unlock --force (after it died), rerun (after it died), one look (deadline 0), wait until gone (deadline), timing the orphan -- in that order; refused, untouched"
 else test_fail "drop: the happy path (transcript: $(drop_transcript | tr '\n' '|'); result: $(tr '\n' ' ' <"$DROP_DIR/result"); steps: $(grep -v '^PASS' "$DROP_DIR/steps" | tr '\n' '|'))"; fi
 
 drop_run "$SCRATCH/err.copy-running" 1 DROP_RUNNING2=gone
@@ -1421,18 +1846,38 @@ if [ "$(drop_result rc)" = 0 ] && [ "$(drop_result outcome)" = refused ] && grep
     test_pass "drop: a refusal naming the running verify container counts as the refusal met running"
 else test_fail "drop: the verify container's refusal ($(tr '\n' ' ' <"$DROP_DIR/result"))"; fi
 
-for scenario in "none|a running container named" "labels|it carries this profile" "dst|it binds"; do
+for scenario in "labels|it carries this profile" "dst|it binds" "failing|a running container named"; do
     drop_run "$SCRATCH/err.copy-running" 1 "DROP_RUNNING1=${scenario%%|*}"
     if [ "$(drop_result rc)" = 1 ] && [ "$(drop_result bg)" = left ] && [ -z "$(drop_result orphan)" ] \
-        && [ "$(drop_transcript)" = "$(printf 'MIGRATE 1\nNAS running 77 %s %s' "$CW_COPY" "$CW_VERIFY")" ] \
+        && [ "$(drop_transcript)" = "$(printf 'MIGRATE 1\n%s' "$DROP_FIRST_LOOK")" ] \
         && grep -q "^FAIL ${scenario#*|}" "$DROP_DIR/steps"; then
         test_pass "drop: ${scenario%%|*} at the first look stops before any kill, unlock or rerun, and leaves the controller to the caller"
     else test_fail "drop: ${scenario%%|*} at the first look (transcript: $(drop_transcript | tr '\n' '|'); $(tr '\n' ' ' <"$DROP_DIR/result"))"; fi
 done
 
+# No copy container while the controller still runs: 20 s slices that add up
+# to the deadline (77 = 20 + 20 + 20 + 17), then a FAIL.
+drop_run "$SCRATCH/err.copy-running" 1 DROP_RUNNING1=none
+if [ "$(drop_result rc)" = 1 ] && [ "$(drop_result bg)" = left ] && [ -z "$(drop_result orphan)" ] \
+    && [ "$(drop_transcript)" = "$(printf 'MIGRATE 1\nNAS running 20 %s %s\nNAS running 20 %s %s\nNAS running 20 %s %s\nNAS running 17 %s %s' \
+        "$CW_COPY" "$CW_VERIFY" "$CW_COPY" "$CW_VERIFY" "$CW_COPY" "$CW_VERIFY" "$CW_COPY" "$CW_VERIFY")" ] \
+    && grep -q '^FAIL a running container named .* within 77 s' "$DROP_DIR/steps"; then
+    test_pass "drop: no copy container while the controller runs: 20 s slices adding up to the deadline, then a FAIL before any kill, leaving the controller to the caller"
+else test_fail "drop: none at all (transcript: $(drop_transcript | tr '\n' '|'); $(tr '\n' ' ' <"$DROP_DIR/result"))"; fi
+
+# The controller ends before its copy appears (it refused at once): a FAIL
+# after one slice, not after the whole deadline, with its status collected.
+drop_run "$SCRATCH/err.copy-running" 1 DROP_FIRST=exit DROP_RUNNING1=ended
+if [ "$(drop_result rc)" = 1 ] && [ -z "$(drop_result bg)" ] && [ -z "$(drop_result orphan)" ] && [ "$(drop_result last_rc)" = 1 ] \
+    && [ "$(drop_transcript)" = "$(printf 'MIGRATE 1\n%s' "$DROP_FIRST_LOOK")" ] \
+    && grep -q "^FAIL the dropped run's dx-persist-migrate still runs while its copy container is awaited (it exited 1 before" "$DROP_DIR/steps" \
+    && ! grep -q '^FAIL a running container named' "$DROP_DIR/steps"; then
+    test_pass "drop: a controller that ends before its copy container appears is a FAIL after one slice (its status collected), not after the whole deadline"
+else test_fail "drop: the controller ends first (transcript: $(drop_transcript | tr '\n' '|'); $(tr '\n' ' ' <"$DROP_DIR/result"); $(drop_steps | grep -v '^PASS' | tr '\n' '|'))"; fi
+
 drop_run "$SCRATCH/err.copy-running" 1 LOCK_PID=1
 if [ "$(drop_result rc)" = 1 ] && [ "$(drop_result orphan)" = 1 ] && [ "$(drop_result lock_left)" = 1 ] \
-    && [ "$(drop_transcript)" = "$(printf 'MIGRATE 1\nNAS running 77 %s %s\nLOCK status first=dead' "$CW_COPY" "$CW_VERIFY")" ] \
+    && [ "$(drop_transcript)" = "$(printf 'MIGRATE 1\n%s\nLOCK status first=dead' "$DROP_FIRST_LOOK")" ] \
     && grep -q '^FAIL it shows the lock still held by the dropped controller' "$DROP_DIR/steps"; then
     test_pass "drop: a lock whose audit names another pid is never forced: it stops before the unlock and the rerun (orphan copy and lock flagged)"
 else test_fail "drop: an audit naming another pid (transcript: $(drop_transcript | tr '\n' '|'))"; fi
@@ -1442,7 +1887,7 @@ for scenario in "err.none|0|completed" "err.copy-exited|1|missed" "err.conflict|
     rest="${scenario#*|}"
     drop_run "$SCRATCH/$file" "${rest%%|*}"
     if [ "$(drop_result rc)" = 0 ] && [ "$(drop_result outcome)" = "${rest#*|}" ] && [ -z "$(drop_result orphan)" ] \
-        && [ "$(drop_transcript)" = "$(printf 'MIGRATE 1\nNAS running 77 %s %s\nLOCK status first=dead\nLOCK unlock --force first=dead\nMIGRATE 2 first=dead\nNAS gone 77 %s %s' "$CW_COPY" "$CW_VERIFY" "$CW_COPY" "$CW_VERIFY")" ] \
+        && [ "$(drop_transcript)" = "$(printf 'MIGRATE 1\n%s\nLOCK status first=dead\nLOCK unlock --force first=dead\nMIGRATE 2 first=dead\nNAS gone 77 %s %s' "$DROP_FIRST_LOOK" "$CW_COPY" "$CW_VERIFY")" ] \
         && grep -q '^FINDING NOT VALIDATED' "$DROP_DIR/steps" && ! grep -q '^FAIL' "$DROP_DIR/steps"; then
         test_pass "drop: a rerun that did not meet the copy running ($file, exit ${rest%%|*}) is a FINDING ($(drop_result outcome)); the orphan is still waited for"
     else test_fail "drop: rerun $file (transcript: $(drop_transcript | tr '\n' '|'); $(tr '\n' ' ' <"$DROP_DIR/result"); $(drop_steps | grep -v '^PASS' | tr '\n' '|'))"; fi
@@ -1451,7 +1896,7 @@ done
 for file in err.lock err.killed err.two err.other-running; do
     drop_run "$SCRATCH/$file" 1
     if [ "$(drop_result rc)" = 1 ] && [ "$(drop_result orphan)" = 1 ] \
-        && [ "$(drop_transcript)" = "$(printf 'MIGRATE 1\nNAS running 77 %s %s\nLOCK status first=dead\nLOCK unlock --force first=dead\nMIGRATE 2 first=dead' "$CW_COPY" "$CW_VERIFY")" ] \
+        && [ "$(drop_transcript)" = "$(printf 'MIGRATE 1\n%s\nLOCK status first=dead\nLOCK unlock --force first=dead\nMIGRATE 2 first=dead' "$DROP_FIRST_LOOK")" ] \
         && grep -q '^FAIL the rerun while .* runs refuses' "$DROP_DIR/steps"; then
         test_pass "drop: an unexpected rerun outcome ($file) is a FAIL, with the orphan copy flagged and no further NAS call"
     else test_fail "drop: unexpected rerun $file (transcript: $(drop_transcript | tr '\n' '|'); $(tr '\n' ' ' <"$DROP_DIR/result"))"; fi
@@ -1462,6 +1907,253 @@ if [ "$(drop_result rc)" = 1 ] && [ "$(drop_result orphan)" = 1 ] && [ "$(drop_t
     && grep -q '^FAIL the orphaned copy ends and removes itself' "$DROP_DIR/steps"; then
     test_pass "drop: an orphan copy still there at the deadline is a FAIL (flagged for the cleanup)"
 else test_fail "drop: a stuck orphan ($(tr '\n' ' ' <"$DROP_DIR/result"))"; fi
+
+# --- the directory the orphaned copy left (WP7.2c) ------------------------------------------------
+# persist_migrate_live_drop_directory against a NAS whose read-only listing
+# container answers from got-<subtree> (status rc-<subtree>), compared with
+# reference listings.
+DD="$SCRATCH/drop-dir"
+mkdir -p "$DD"
+printf 'd\t755\t30033:30001\t-\t1\t-\t-\t-\t-\t.\nf\t644\t30033:30001\t6\t1\t1\t111\t-\t-\t./app-state.txt\nend\t2\n' >"$DD/ref-seed"
+printf 'd\t755\t30033:30001\t-\t1\t-\t-\t-\t-\t.\nf\t644\t30033:30001\t4096\t1\t1\t222\t-\t-\t./dxe-live-blob.bin\nend\t2\n' >"$DD/ref-bulk"
+DD_N=0
+# dd_run OUTCOME SEED BULK: SEED/BULK name what the listing answers (same |
+# short | differs | fails); leaves $DD_CASE/{steps,result,calls}.
+dd_run() {
+    DD_N=$((DD_N + 1))
+    DD_CASE="$DD/case-$DD_N"
+    mkdir -p "$DD_CASE/listings" "$DD_CASE/log"
+    in_scratch "$DD_CASE" || exit 1
+    local sub kind
+    for sub in seed bulk; do
+        if [ "$sub" = seed ]; then kind="$2"; else kind="$3"; fi
+        case "$kind" in
+            same) cp "$DD/ref-$sub" "$DD_CASE/got-$sub" ;;
+            short) sed '$d' "$DD/ref-$sub" | sed '$d' >"$DD_CASE/got-$sub"; printf 'end\t1\n' >>"$DD_CASE/got-$sub" ;;
+            differs) awk -F"\t" -v OFS="\t" '$4 == "4096" { $4 = 2048 } $4 == "6" { $4 = 7 } { print }' "$DD/ref-$sub" >"$DD_CASE/got-$sub" ;;
+            fails) printf 'dxe-live-list: no such subtree\n' >"$DD_CASE/got-$sub"; echo 1 >"$DD_CASE/rc-$sub" ;;
+        esac
+    done
+    (
+        canary_env
+        # shellcheck disable=SC2034 # read by the function under test
+        PERSIST_MIGRATE_LIVE_DROP_OUTCOME="$1"
+        # shellcheck disable=SC2034 # read by the function under test
+        PERSIST_MIGRATE_LIVE_DROP_GONE_AFTER=42
+        LV_RC=0 LV_OUT="" LV_ERR=""
+        # shellcheck disable=SC2034 # LV_RC is read by the function under test
+        lv_run() {
+            local label="$1"
+            shift
+            [ "$1" != -- ] || shift
+            LV_OUT="$DD_CASE/log/$label.out"
+            LV_ERR="$DD_CASE/log/$label.err"
+            LV_RC=0
+            ("$@") >"$LV_OUT" 2>"$LV_ERR" </dev/null || LV_RC=$?
+        }
+        lv_ok() { echo "PASS $1" >>"$DD_CASE/steps"; }
+        lv_bad() { echo "FAIL $1" >>"$DD_CASE/steps"; return 1; }
+        lv_finding() { echo "FINDING $1" >>"$DD_CASE/steps"; }
+        dxe_runtime_call() {
+            local sub
+            printf '%s\n' "$*" | sed 's/ -c .* bash \/canary / -c <LIST> bash \/canary /' >>"$DD_CASE/calls"
+            for sub; do :; done
+            sub="${sub#persist/dxe-live-}"
+            cat "$DD_CASE/got-$sub"
+            return "$(cat "$DD_CASE/rc-$sub" 2>/dev/null || echo 0)"
+        }
+        rc=0
+        persist_migrate_live_drop_directory "$DD_CASE/listings" "$DD/ref-seed" "$DD/ref-bulk" >"$DD_CASE/stdout" 2>&1 || rc=$?
+        printf 'rc=%s\ndirectory=%s\n' "$rc" "$PERSIST_MIGRATE_LIVE_DROP_DIRECTORY" >"$DD_CASE/result"
+    )
+}
+dd_result() { sed -n "s/^$1=//p" "$DD_CASE/result"; }
+DD_CALLS="$(printf '%s\n%s' \
+    "dx_runtime_run_ephemeral --rm --network none --user 0:0 --pull never --label dxe.role=persist-live --mount type=bind,source=/fixture/share/dxe/dx-live-canary,target=/canary,readonly --entrypoint bash dx-live-canary-image -c <LIST> bash /canary persist/dxe-live-seed" \
+    "dx_runtime_run_ephemeral --rm --network none --user 0:0 --pull never --label dxe.role=persist-live --mount type=bind,source=/fixture/share/dxe/dx-live-canary,target=/canary,readonly --entrypoint bash dx-live-canary-image -c <LIST> bash /canary persist/dxe-live-bulk")"
+for outcome in refused missed; do
+    dd_run "$outcome" same same
+    if [ "$(dd_result rc)" = 0 ] && [ "$(dd_result directory)" = complete ] && [ "$(cat "$DD_CASE/calls")" = "$DD_CALLS" ] \
+        && [ "$(cat "$DD_CASE/steps")" = "$(printf "PASS the orphaned copy ran to its end on its own: the directory's tree equals the rollback volume's\nPASS and its bulk file is whole")" ] \
+        && cmp -s "$DD_CASE/listings/dir2-orphan-seed" "$DD/ref-seed" && cmp -s "$DD_CASE/listings/dir2-orphan-bulk" "$DD/ref-bulk"; then
+        test_pass "drop_directory ($outcome): two read-only listings of the canary directory equal to the references are two PASSes (complete), kept as dir2-orphan-seed/-bulk"
+    else test_fail "drop_directory ($outcome) complete ($(tr '\n' ' ' <"$DD_CASE/result"); $(tr '\n' '|' <"$DD_CASE/steps" 2>/dev/null); calls: $(tr '\n' '|' <"$DD_CASE/calls" 2>/dev/null))"; fi
+done
+for kinds in "fails same" "same short" "same differs" "differs fails"; do
+    # shellcheck disable=SC2086 # the two kinds, on purpose
+    dd_run missed $kinds
+    if [ "$(dd_result rc)" = 0 ] && [ "$(dd_result directory)" = incomplete ] && ! grep -q '^FAIL\|^PASS' "$DD_CASE/steps" \
+        && [ "$(grep -c '^FINDING the orphaned copy ended within 42 s of the drop, before it finished (' "$DD_CASE/steps")" = 1 ] \
+        && grep -q 'the next migration resumes the directory$' "$DD_CASE/steps"; then
+        test_pass "drop_directory (missed; listings $kinds): an incomplete directory is one FINDING (the orphan ended within N s, before it finished), status 0, so the next migration resumes it"
+    else test_fail "drop_directory (missed; $kinds) ($(tr '\n' ' ' <"$DD_CASE/result"); $(tr '\n' '|' <"$DD_CASE/steps" 2>/dev/null))"; fi
+    # shellcheck disable=SC2086 # the two kinds, on purpose
+    dd_run refused $kinds
+    if [ "$(dd_result rc)" = 1 ] && [ "$(dd_result directory)" = incomplete ] && ! grep -q '^FINDING\|^PASS' "$DD_CASE/steps" \
+        && grep -q '^FAIL the orphaned copy ran to its end on its own' "$DD_CASE/steps"; then
+        test_pass "drop_directory (refused; listings $kinds): the copy was met running, so an incomplete directory is a FAIL (status 1)"
+    else test_fail "drop_directory (refused; $kinds) ($(tr '\n' ' ' <"$DD_CASE/result"); $(tr '\n' '|' <"$DD_CASE/steps" 2>/dev/null))"; fi
+done
+dd_run missed fails same
+if grep -q 'its dxe-live-seed could not be listed whole (exit 1)' "$DD_CASE/steps" && ! grep -q 'dxe-live-bulk' "$DD_CASE/steps"; then
+    test_pass "drop_directory names what is incomplete (here: the seed tree could not be listed)"
+else test_fail "drop_directory names what is incomplete ($(cat "$DD_CASE/steps"))"; fi
+
+# --- the watched bring-up, in the stand-in suite shell (WP7.2c) -----------------------------------
+# The stand-in dx waits (bounded) for what its mode needs from the watcher's
+# output, then exits: ok/fail (three polls; 0/1), stopped (the watcher stopped
+# the canary; 1, as dx fails when its guest stops), stop-failing (two failed
+# stops; 0), outlive (the watcher ended at its deadline; 0), hang (records
+# itself and sleeps, until the suite is aborted).
+BU_BIN="$SCRATCH/bu-bin"
+mkdir -p "$BU_BIN"
+cat >"$BU_BIN/dx" <<'FAKE'
+#!/bin/sh
+d="$H_DIR"
+seen() { n=$(grep -c "$1" "$d/inode-watch.out" 2>/dev/null); echo "${n:-0}"; }
+upto() { i=0; while [ "$(seen "$1")" -lt "$2" ] && [ "$i" -lt 1200 ]; do sleep 0.05; i=$((i + 1)); done; }
+echo "DX $* heartbeats=$(seen '^free=')" >>"$d/transcript"
+case "${BU_MODE:-ok}" in
+    ok) upto '^free=' 3; exit 0 ;;
+    fail) upto '^free=' 3; exit 1 ;;
+    stopped) upto '^stopped=' 1; sleep 0.3; echo "Error: the guest stopped" >&2; exit 1 ;;
+    stop-failing) upto '^stop-failed=' 2; exit 0 ;;
+    outlive) upto '^deadline=' 1; sleep 0.5; exit 0 ;;
+    hang) echo "$$" >"$d/dx-pid"; sleep 30; exit 0 ;;
+esac
+exit 9
+FAKE
+chmod +x "$BU_BIN/dx"
+BU_N=0
+# bu_run FREE... [-- NAME=VALUE | nas:FILE=VALUE...]: one watched bring-up in the stand-in suite
+# shell, started as the leader of a process group of its own (BU_ABORT=1:
+# that whole group is sent SIGTERM once the stand-in dx runs, as an abort of
+# tests/run.sh would), against a fake NAS whose df answers FREE...; leaves
+# $BU_DIR/{transcript,steps,results,result,watch-left,nas/...}. Whatever is
+# left of this suite's own two process groups is then killed.
+bu_run() {
+    local hpid wpgid i left
+    BU_N=$((BU_N + 1))
+    BU_DIR="$SCRATCH/bu-$BU_N"
+    mkdir -p "$BU_DIR/log" "$BU_DIR/nas"
+    in_scratch "$BU_DIR" || exit 1
+    while [ "$#" -gt 0 ] && [ "$1" != -- ]; do printf '%s\n' "$1" >>"$BU_DIR/nas/frees"; shift; done
+    [ "${1:-}" != -- ] || shift
+    echo 1000000 >"$BU_DIR/nas/clock"
+    (
+        canary_export
+        H_DIR="$BU_DIR"
+        WS="$BU_DIR/nas"
+        IW_SH="$(command -v sh)"
+        export H_DIR WS IW_BIN BARE_TOOLS BU_BIN IW_SH
+        for assignment in "$@"; do
+            case "$assignment" in
+                nas:*) assignment="${assignment#nas:}"; printf "%s\n" "${assignment#*=}" >"$WS/${assignment%%=*}" ;;
+                *) export "${assignment?}" ;;
+            esac
+        done
+        (persist_migrate_live_own_group "$BASH" "$HARNESS" "$SCRIPT_DIR/lib" "${BU_HARNESS:-bringup}") >"$BU_DIR/harness.out" 2>"$BU_DIR/harness.err" </dev/null &
+        hpid=$!
+        echo "$hpid" >"$BU_DIR/harness-pid"
+        if [ "${BU_ABORT:-}" = 1 ]; then
+            i=0
+            while [ ! -s "$BU_DIR/dx-pid" ] && [ "$i" -lt 1200 ]; do sleep 0.05; i=$((i + 1)); done
+            kill -TERM -- "-$hpid" 2>/dev/null
+        fi
+        wait "$hpid" 2>/dev/null
+        echo "$?" >"$BU_DIR/harness-rc"
+    )
+    hpid="$(cat "$BU_DIR/harness-pid" 2>/dev/null)"
+    wpgid="$(cat "$BU_DIR/watch-pgid" 2>/dev/null)"
+    left=no
+    case "$wpgid" in
+        '' | *[!0-9]*) left=unknown ;;
+        *)
+            # Up to 10 s for the group to go (an abort's EXIT trap ends it).
+            i=0
+            while kill -0 -- "-$wpgid" 2>/dev/null && [ "$i" -lt 100 ]; do i=$((i + 1)); sleep 0.1; done
+            if kill -0 -- "-$wpgid" 2>/dev/null; then left=yes; fi
+            ;;
+    esac
+    echo "$left" >"$BU_DIR/watch-left"
+    for i in "$hpid" "$wpgid"; do
+        case "$i" in '' | *[!0-9]* | 0 | 1) continue ;; esac
+        kill -KILL -- "-$i" 2>/dev/null
+    done
+    return 0
+}
+bu_result() { sed -n "s/^$1=//p" "$BU_DIR/result" 2>/dev/null; }
+bu_file() { cat "$BU_DIR/$1" 2>/dev/null; }
+BU_NAS_CALL="NAS inode-watch $IW_BIN/docker dx-live-canary /share/fixture/docker 150000 7200"
+BU_TRAP="trap -- 'echo harness-exit-trap >>\"\$d/trap-log\"' EXIT"
+
+bu_run 900000 400000 650000 -- BU_MODE=ok
+if [ "$(bu_result rc)" = 0 ] && [ "$(bu_result lv_rc)" = 0 ] && [ "$(bu_result killed)" = 1 ] && [ -z "$(bu_result watch_pid)" ] \
+    && [ "$(bu_result lv_err)" = 1-dx-bring-up.err ] \
+    && [ "$(bu_file transcript | sed 's/ heartbeats=[0-9]*$//')" = "$(printf '%s\nDX true' "$BU_NAS_CALL")" ] \
+    && [ "$(bu_file transcript | sed -n '2s/.* heartbeats=//p')" -ge 1 ] \
+    && [ "$(bu_file steps)" = "$(printf 'PASS the NAS inode watcher runs: below 150000 free inodes on /share/fixture/docker it runs docker stop -t 10 dx-live-canary\nPASS the NAS inode watcher watched the whole bring-up: %s polls, lowest free count 400000 (floor 150000)' "$(grep -c '^free=' "$BU_DIR/inode-watch.out")")" ] \
+    && [ "$(bu_file results)" = bringup_inodes_min_free=400000 ] && [ ! -e "$BU_DIR/nas/docker-calls" ] \
+    && [ "$(bu_file watch-left)" = no ] && [ "$(bu_file trap-after)" = "$BU_TRAP" ] && [ "$(bu_file trap-log)" = harness-exit-trap ]; then
+    test_pass "bring-up: the watcher reports before dx starts, runs exactly as long as dx (its process group gone when the bring-up returns), stops nothing above the floor; lowest count recorded; the caller's EXIT trap restored"
+else test_fail "bring-up watched (result: $(bu_file result | tr '\n' ' '); transcript: $(bu_file transcript | tr '\n' '|'); steps: $(bu_file steps | tr '\n' '|'); results: $(bu_file results | tr '\n' ' '); left: $(bu_file watch-left); trap: $(bu_file trap-after))"; fi
+
+bu_run 900000 -- BU_MODE=fail
+if [ "$(bu_result rc)" = 0 ] && [ "$(bu_result lv_rc)" = 1 ] && [ "$(bu_result killed)" = 1 ] && [ "$(bu_file watch-left)" = no ] \
+    && grep -q '^PASS the NAS inode watcher watched the whole bring-up' "$BU_DIR/steps" && ! grep -q '^FAIL' "$BU_DIR/steps"; then
+    test_pass "bring-up: a dx that fails ends the watcher too and leaves its status (1) to the caller's check"
+else test_fail "bring-up with a failing dx (result: $(bu_file result | tr '\n' ' '); left: $(bu_file watch-left))"; fi
+
+bu_run 900000 400000 100000 -- BU_MODE=stopped
+if [ "$(bu_result rc)" = 1 ] && [ "$(bu_result lv_rc)" = 1 ] \
+    && [ "$(bu_result floor_hit)" = 100000 ] && [ "$(bu_file nas/docker-calls)" = "stop -t 10 dx-live-canary" ] \
+    && [ "$(bu_file results)" = "inode_floor_hit=free=100000 floor=150000 canary=stopped" ] \
+    && [ "$(grep -c '^FAIL' "$BU_DIR/steps")" = 1 ] \
+    && grep -Fqx "FAIL INODE FLOOR HIT: only 100000 inodes were free on the NAS's Docker data root (floor 150000; the production guest shares it); the watcher ran docker stop -t 10 dx-live-canary (stopped) and the bring-up is abandoned (dx exited 1)" "$BU_DIR/steps" \
+    && [ "$(bu_file watch-left)" = no ]; then
+    test_pass "bring-up: below the floor the watcher stops the canary (docker stop -t 10, once) and dx fails; the bring-up FAILs as INODE FLOOR HIT, recorded in the results, with dx's own status kept"
+else test_fail "bring-up floor hit (result: $(bu_file result | tr '\n' ' '); docker: $(bu_file nas/docker-calls | tr '\n' '|'); steps: $(bu_file steps | tr '\n' '|'); results: $(bu_file results))"; fi
+
+bu_run 100000 -- BU_MODE=stop-failing nas:stop-fails=1000
+if [ "$(bu_result rc)" = 1 ] && [ "$(bu_result killed)" = 1 ] && [ "$(bu_file watch-left)" = no ] \
+    && grep -q '^FAIL INODE FLOOR HIT: only 100000 inodes .*(not-stopped)' "$BU_DIR/steps" \
+    && [ "$(bu_file results)" = "inode_floor_hit=free=100000 floor=150000 canary=not-stopped" ]; then
+    test_pass "bring-up: a floor hit whose docker stop keeps failing is still INODE FLOOR HIT (not-stopped), and the watcher is ended with the bring-up"
+else test_fail "bring-up floor hit, stop failing (result: $(bu_file result | tr '\n' ' '); steps: $(bu_file steps | tr '\n' '|'))"; fi
+
+bu_run 900000 -- BU_MODE=ok nas:df-fails=1
+if [ "$(bu_result rc)" = 1 ] && [ "$(bu_result watch_rc)" = 4 ] && ! grep -q '^DX ' "$BU_DIR/transcript" \
+    && [ "$(bu_file steps)" = "FAIL the NAS inode watcher reports the Docker data root's free inodes before the bring-up starts (it did not: blind); nothing was brought up" ] \
+    && [ "$(bu_file results)" = "inode_watch=not started (blind)" ] && [ "$(bu_file trap-after)" = "$BU_TRAP" ]; then
+    test_pass "bring-up: a watcher that cannot read df never lets dx start: a FAIL before the bring-up, nothing brought up, the caller's EXIT trap restored"
+else test_fail "bring-up with a blind watcher (result: $(bu_file result | tr '\n' ' '); transcript: $(bu_file transcript | tr '\n' '|'); steps: $(bu_file steps | tr '\n' '|'))"; fi
+
+bu_run 900000 -- BU_MODE=outlive BU_DEADLINE=40
+if [ "$(bu_result rc)" = 1 ] && [ "$(bu_result lv_rc)" = 0 ] && [ "$(bu_result watch_rc)" = 2 ] \
+    && grep -Fqx "FAIL the NAS inode watcher watches until the bring-up ends (it stopped early: deadline 40; dx exited 0)" "$BU_DIR/steps" \
+    && [ "$(bu_file results)" = "inode_watch=deadline 40" ]; then
+    test_pass "bring-up: a watcher that ends before dx does (its deadline) is a FAIL, even when dx succeeds"
+else test_fail "bring-up outliving the watcher (result: $(bu_file result | tr '\n' ' '); steps: $(bu_file steps | tr '\n' '|'))"; fi
+
+bu_run 900000 -- BU_MODE=hang BU_ABORT=1
+if [ "$(bu_file harness-rc)" = 143 ] && [ "$(bu_file watch-left)" = no ] && [ "$(bu_file trap-log)" = harness-exit-trap ] \
+    && [ -s "$BU_DIR/dx-pid" ] && [ ! -e "$BU_DIR/result" ] && [ ! -e "$BU_DIR/nas/docker-calls" ]; then
+    test_pass "bring-up aborted (SIGTERM to the suite's process group, the watcher's group apart): the EXIT trap ends the watcher's process group, then runs the caller's own EXIT trap"
+else test_fail "bring-up aborted (harness rc $(bu_file harness-rc); watcher left: $(bu_file watch-left); trap log: $(bu_file trap-log))"; fi
+
+BU_HARNESS=twice bu_run 900000
+if [ "$(bu_result rc)" = 0 ] && [ "$(bu_result rc2)" = 2 ] && [ -n "$(bu_result first)" ] && [ "$(bu_result same)" = "$(bu_result first)" ] \
+    && [ -z "$(bu_result after)" ] && [ "$(bu_result killed)" = 1 ] && [ -z "$(bu_result trap)" ] \
+    && grep -q "^Refusing: persist_migrate_live_inode_watch_start: a watcher (pid $(bu_result first)) still runs" "$BU_DIR/second.refusal" \
+    && [ ! -e "$BU_DIR/second.out" ] && [ "$(grep -c '^NAS ' "$BU_DIR/transcript")" = 1 ] && [ "$(bu_file watch-left)" = no ]; then
+    test_pass "inode_watch_start refuses a second watcher while its own runs (one NAS call in all); the stop ends it and removes the EXIT trap it set"
+else test_fail "inode_watch_start twice (result: $(bu_file result | tr '\n' ' '); refusal: $(bu_file second.refusal))"; fi
+
+out="$( (persist_migrate_live_inode_watch_start /nas/bin/docker /share/fixture/docker 150000 7200 "$SCRATCH/sub.out" "$SCRATCH/sub.err"; echo "rc=$?") 2>&1)"
+if [ "$(printf '%s\n' "$out" | sed -n '$p')" = rc=2 ] && grep -q '^Refusing: persist_migrate_live_inode_watch_start: called in a subshell' <<<"$out" \
+    && [ ! -e "$SCRATCH/sub.out" ] && [ -z "$(trap -p EXIT | grep inode_watch_stop)" ]; then
+    test_pass "inode_watch_start refuses in a subshell (whose end would orphan the watcher): nothing started, no trap set"
+else test_fail "inode_watch_start in a subshell ($out)"; fi
 
 # --- the production-inventory runner --------------------------------------------------------
 INV_STUB="$SCRATCH/stub/dx-persist-inventory"
@@ -1605,7 +2297,7 @@ run_live() {
         DX_PROFILES_DIR="$SCRATCH/profiles" SKIP_INTEGRATION="$2" DXE_PERSIST_LIVE_CANARY="$3" \
         DXE_PERSIST_LIVE_RUN_DIR="${4:-$SCRATCH/run-$1}" \
         DXE_PERSIST_LIVE_BULK_MIB="${LIVE_BULK_MIB:-}" DXE_PERSIST_LIVE_INVENTORY_REAL="${LIVE_REAL:-}" \
-        DXE_PERSIST_LIVE_MIN_FREE_INODES="${LIVE_MIN_INODES:-}" \
+        DXE_PERSIST_LIVE_MIN_FREE_INODES="${LIVE_MIN_INODES:-}" DXE_PERSIST_LIVE_INODE_STOP_FLOOR="${LIVE_STOP_FLOOR:-}" \
         "$BASE_DIR/bin/dx-profile" "$1" bash "$BASE_DIR/tests/test_persist_migrate_live.sh" 2>&1
     echo "rc=$?"
 }
@@ -1643,9 +2335,16 @@ else test_fail "a bulk size out of range is refused before any remote call ($(ta
 LIVE_MIN_INODES=1000
 out="$(run_live live-canary false dx-live-canary)"
 LIVE_MIN_INODES=""
-if ! has "$out" "rc=0" && has "$out" "Refusing: DXE_PERSIST_LIVE_MIN_FREE_INODES=1000 is not a whole number from 600000 to 99999999" && no_remote_call; then
+if ! has "$out" "rc=0" && has "$out" "Refusing: DXE_PERSIST_LIVE_MIN_FREE_INODES=1000 is not a whole number from 700000 to 99999999" && no_remote_call; then
     test_pass "an inode floor below the guard's is refused before any remote call"
 else test_fail "an inode floor below the guard's is refused before any remote call ($(tail -n 4 <<<"$out"))"; fi
+
+LIVE_STOP_FLOOR=50000
+out="$(run_live live-canary false dx-live-canary)"
+LIVE_STOP_FLOOR=""
+if ! has "$out" "rc=0" && has "$out" "Refusing: DXE_PERSIST_LIVE_INODE_STOP_FLOOR=50000 is not a whole number from 100000 to 500000" && no_remote_call; then
+    test_pass "a bring-up stop floor out of range is refused before any remote call"
+else test_fail "a bring-up stop floor out of range is refused before any remote call ($(tail -n 4 <<<"$out"))"; fi
 
 LIVE_REAL=dx-host
 out="$(run_live live-canary false dx-live-canary)"

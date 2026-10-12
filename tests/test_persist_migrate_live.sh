@@ -39,8 +39,12 @@
 # the controller-drop case reports NOT VALIDATED with a suggested size);
 # DXE_PERSIST_LIVE_INTERRUPT_DEADLINE (seconds, 10..3600, default 900: the
 # NAS watchers' bounded waits); DXE_PERSIST_LIVE_MIN_FREE_INODES
-# (600000..99999999, default 700000: the preflight refuses to start with fewer
-# free inodes on the NAS's Docker data root); DXE_PERSIST_LIVE_KEEP=1 (skip
+# (700000..99999999, default 800000: the preflight refuses to start with fewer
+# free inodes on the NAS's Docker data root); DXE_PERSIST_LIVE_INODE_STOP_FLOOR
+# (100000..500000, default 150000: during the bring-up a NAS-side watcher runs
+# `docker stop -t 10 <canary>` once fewer inodes than this are free there, and
+# the run stops before seeding when fewer are free after it; the minimum must
+# exceed the floor by at least 600000, a bring-up's cost); DXE_PERSIST_LIVE_KEEP=1 (skip
 # the final cleanup); DXE_PERSIST_LIVE_KEEP_RUNNING=1 (after a failure, do not
 # stop the canary); DXE_PERSIST_LIVE_CLEANUP_ONLY=1 (run only the final
 # cleanup; pass the same DXE_PERSIST_LIVE_RUN_DIR).
@@ -68,8 +72,8 @@
 #
 # How the controller drop works (the controller side, WP7.2b). Before the
 # second migration, dx-persist-migrate runs in the background in a process
-# group of its own. ONE read-only ssh call waits on the NAS (docker ps once a
-# second, bounded) for the running container named dxe-persist-copy-<profile
+# group of its own. Read-only ssh calls (20 s slices, docker ps once a second,
+# bounded in all by the deadline) wait on the NAS for the running container named dxe-persist-copy-<profile
 # id> and reports its labels and mounts; the suite then SIGKILLs the whole
 # controller process group (the controller and its ssh clients: a dropped
 # session or a killed terminal, with no EXIT trap run), so the remote copy
@@ -82,7 +86,11 @@
 # end on its own, and the next migration resumes and verifies. When a full
 # copy of the seed took under 30 s earlier in the run, the case is NOT
 # VALIDATED (a FINDING naming a bulk size that would do), as it is when the
-# rerun does not meet the copy still running.
+# rerun does not meet the copy still running; a directory that copy then
+# left incomplete is one more FINDING (it ended before it finished), and the
+# next migration resumes it. The copy container is looked for in 20 s
+# slices: a controller that ended before its copy appeared (it refused or
+# failed early) is a FAIL within one slice, not after the whole deadline.
 #
 # Behaviour (as WP7.1):
 #   - Fail-fast: the first failing check stops the run; the background
@@ -92,7 +100,9 @@
 #   - FINDINGS are recorded as failures ("FINDING: ...", listed at the end) but
 #     the run goes on, so the later cases and the cleanup still run:
 #       * the inventory exiting 3 with a named blocker;
-#       * the controller-drop case NOT VALIDATED (see above);
+#       * the controller-drop case NOT VALIDATED (see above), and, when the
+#         rerun missed the copy, a directory the orphaned copy left
+#         incomplete (the next migration resumes it);
 #       * the /persist bind source reported resolved (as WP7.1).
 #     A first rerun after the interrupted copy that does not verify (or an
 #     rsync temp file in the destination) is a REGRESSION of WP6.4c: a FAIL
@@ -106,8 +116,9 @@
 #     `-v <volume>:/v:ro` after their DQ6 check; volumes are deleted only by
 #     exact canary name through the DQ6-checked delete. The only containers
 #     the suite itself kills are the canary's own copy container (the NAS
-#     watcher, by its name) and its own background controller (by process
-#     group, on the Mac).
+#     watcher, by its name) and its own background controller and inode
+#     watcher (by process group, on the Mac); the only container it stops
+#     outside the dx commands is the canary itself, at the inode floor.
 #
 # Cases, in order (each name is its PASS/FAIL prefix):
 #   preflight            no canary container, volume (nix, persist, bootstrap,
@@ -115,10 +126,19 @@
 #                        DXE_PERSIST_LIVE_MIN_FREE_INODES free inodes on the
 #                        NAS's Docker data root (docker info, df -P -i); the
 #                        share root is mounted (sentinel).
-#   volume bring-up      `dx true` in volume mode: /persist is the persist
+#   volume bring-up      `dx true` in volume mode, watched on the NAS: one
+#                        ssh call (df and docker stop only) polls df -P -i
+#                        of the Docker data root every 20 s for exactly as
+#                        long as `dx true` runs (it reports before dx
+#                        starts; the suite ends it
+#                        when dx returns, and its EXIT trap on an abort), and
+#                        below DXE_PERSIST_LIVE_INODE_STOP_FLOOR runs docker
+#                        stop -t 10 <canary>: INODE FLOOR HIT, the run stops
+#                        (results: inode_floor_hit). /persist is the persist
 #                        volume, dx-status configured == actual, nothing on
 #                        the share; the SSH host key is recorded; the inodes
-#                        the bring-up took go to results.txt.
+#                        the bring-up took go to results.txt, and fewer than
+#                        the floor left after it stop the run before seeding.
 #   seed                 through the guest: nested directories, hard links (a
 #                        group of three across directories), two ._* files, a
 #                        FIFO, a socket (tmux; reported if it cannot), relative,
@@ -162,7 +182,9 @@
 #                        cleared, the refusal while the copy runs, nothing
 #                        changed (marker copying, record, volumes), the copy
 #                        container untouched, then ended by itself with the
-#                        directory complete (listing == the rollback volume's).
+#                        directory complete (listing == the rollback volume's;
+#                        when the rerun missed the copy, an incomplete one is
+#                        a FINDING and "migrate again" resumes it).
 #   migrate again        the rerun resumes the dropped run's directory: exit
 #                        0, marker ready (the dropped run's created-at), no ._*
 #                        file; listing == the rollback volume's.
@@ -619,6 +641,11 @@ lv_same_guest_identity() {
 lv_stop() {
     echo ""
     echo "Stopped at the first failure: $LV_FAILURE"
+    if [ -n "${PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT:-}" ]; then
+        echo "  URGENT: the NAS's Docker data root was down to $PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT free inodes, and the production"
+        echo "  guest's volumes share it. Run the cleanup at once (it deletes the canary's volumes and image and gives their"
+        echo "  inodes back): $LV_CLEANUP_COMMAND"
+    fi
     if [ -n "$LV_BG_PID" ]; then
         echo "  Waiting for the background dx-persist-migrate to finish (it ends with its copy)..."
         lv_bg_wait
@@ -674,7 +701,7 @@ lv_preflight_inodes() {
     lv_result docker_root_inodes_free_before "$free"
     echo "    Docker data root: $free of $total inodes free (the run needs at least $min)"
     if ! lv_check "at least $min inodes are free on the NAS's Docker data root ($free free)" test "$free" -ge "$min"; then
-        echo "    A fresh canary nix store takes about 300,000 to 550,000 inodes of that filesystem, which the"
+        echo "    A canary bring-up takes about 550,000 to 600,000 inodes of that filesystem, which the"
         echo "    production guest's volumes share. Free inodes there first (or, after measuring, set"
         echo "    DXE_PERSIST_LIVE_MIN_FREE_INODES); nothing was created."
         return 1
@@ -702,8 +729,17 @@ c_preflight() {
 }
 
 c_volume_bring_up() {
+    local docker_bin floor
     lv_case "volume bring-up"
-    lv_run_ok "dx brings the canary up in volume mode (DX_PERSIST_STORAGE=volume over the profile)" dx-bring-up -- "$BIN_DIR/dx" true || return 1
+    # The NAS-side inode watcher runs for exactly as long as `dx true`: below
+    # the stop floor it stops the canary container (never the local dx, which
+    # holds the lifecycle lock), and dx then fails.
+    floor="$(persist_migrate_live_inode_stop_floor)"
+    docker_bin="$(dxe_runtime_call dx_runtime_docker_require_bin 2>/dev/null)" || docker_bin=""
+    lv_check "the NAS's docker CLI path is known (the inode watcher's docker stop)" test -n "$docker_bin" || return 1
+    persist_migrate_live_bringup_watched "$LV_RUN_DIR/logs" "$docker_bin" "$LV_DOCKER_ROOT" "$floor" \
+        "$PERSIST_MIGRATE_LIVE_INODE_WATCH_SECONDS" -- "$BIN_DIR/dx" true || return 1
+    lv_check "dx brings the canary up in volume mode (DX_PERSIST_STORAGE=volume over the profile)" lv_rc_zero || return 1
     lv_check "dx-create-volumes ensured the persist volume" lv_out_has "Ensuring persist volume $LV_ORIG" || return 1
     lv_check "and used no host directory" lv_out_lacks "/persist directory" || return 1
     lv_check "the container is running" lv_container_running || return 1
@@ -714,15 +750,7 @@ c_volume_bring_up() {
     lv_check "dx-status reports no mismatch" lv_out_lacks "mismatch:" || return 1
     lv_check "volume mode created nothing on the share" lv_equal "$(persist_live_kv state "$(lv_probe)")" absent || return 1
     lv_check "and wrote no D-7 record" test ! -e "$LV_RECORD" || return 1
-    lv_inodes inodes-after-bring-up
-    if [ "$LV_RC" -eq 0 ] && lv_number "$(lv_inodes_field 3)" && lv_number "$LV_INODES_FREE0"; then
-        lv_result docker_root_inodes_free_after_bringup "$(lv_inodes_field 3)"
-        lv_result canary_inodes_used "$((LV_INODES_FREE0 - $(lv_inodes_field 3)))"
-        echo "    the bring-up took $((LV_INODES_FREE0 - $(lv_inodes_field 3))) inodes of the Docker data root ($(lv_inodes_field 3) free now)"
-    else
-        lv_result canary_inodes_used unknown
-        echo "    (df -P -i of the Docker data root did not answer after the bring-up; the canary's inode cost is not measured)"
-    fi
+    persist_migrate_live_inodes_after_bringup "$LV_DOCKER_ROOT" "$LV_INODES_FREE0" "$floor" || return 1
     LV_FPR0="$(lv_host_fingerprint)"
     lv_check "the guest's SSH host key fingerprint is readable" test -n "$LV_FPR0" || return 1
     echo "    host key: $LV_FPR0"
@@ -1126,10 +1154,12 @@ c_controller_drop() {
     lv_check "the guest is still stopped" lv_container_stopped || return 1
     lv_check "the original volume is still there" lv_volume_is present "$LV_ORIG" || return 1
     lv_check "and the rollback volume" lv_volume_is present "$LV_ROLLBACK" || return 1
-    lv_list_dir dir2-orphan-seed "$PERSIST_MIGRATE_LIVE_SEED" || return 1
-    lv_list_dir dir2-orphan-bulk "$PERSIST_MIGRATE_LIVE_BULK" || return 1
-    lv_compare "the orphaned copy ran to its end on its own: the directory's tree equals the rollback volume's" rb-seed dir2-orphan-seed || return 1
-    lv_compare "and its bulk file is whole" L0-bulk dir2-orphan-bulk
+    lv_result drop_orphan_gone_after_seconds "$PERSIST_MIGRATE_LIVE_DROP_GONE_AFTER"
+    # Refused (the copy was met running): it must have run to its end on its
+    # own. Missed: it may have ended before it finished -- then a FINDING, and
+    # "migrate again" resumes the directory.
+    persist_migrate_live_drop_directory "$LV_RUN_DIR/listings" "$LV_RUN_DIR/listings/rb-seed" "$LV_RUN_DIR/listings/L0-bulk" || return 1
+    lv_result drop_orphan_directory "$PERSIST_MIGRATE_LIVE_DROP_DIRECTORY"
 }
 
 c_migrate_again() {

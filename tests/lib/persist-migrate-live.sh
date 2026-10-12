@@ -26,9 +26,15 @@
 #       of DX_NIX_VOLUME, DX_PERSIST_VOLUME, DX_BOOTSTRAP_VOLUME;
 #     - DXE_PERSIST_LIVE_BULK_MIB is empty or a whole number 64..16384;
 #     - DXE_PERSIST_LIVE_MIN_FREE_INODES is empty or a whole number
-#       600000..99999999 (no leading zero): the floor stays above what a
-#       fresh guest nix store takes (about 550,000 inodes measured), because
-#       the production guest's volumes share that filesystem;
+#       700000..99999999 (no leading zero), and
+#       DXE_PERSIST_LIVE_INODE_STOP_FLOOR is empty or a whole number
+#       100000..500000: the production guest's volumes share the NAS's Docker
+#       data root, whose inode count is fixed;
+#     - when both are valid, the preflight minimum leaves at least 600000
+#       inodes (PERSIST_MIGRATE_LIVE_BRINGUP_INODES, what a canary bring-up
+#       takes: about 550,000-600,000 measured) above the stop floor, so a
+#       run that starts is not expected to be stopped by its own watcher
+#       (with the defaults: 800000 - 150000 = 650000);
 #     - DXE_PERSIST_LIVE_INVENTORY_REAL is empty or exactly dx-qnap, and is
 #       never combined with DXE_PERSIST_LIVE_CLEANUP_ONLY=1.
 #
@@ -37,7 +43,9 @@
 # persist_migrate_live_bulk_mib
 #   DXE_PERSIST_LIVE_BULK_MIB, or 2048 (the guard validates it).
 # persist_migrate_live_min_free_inodes
-#   DXE_PERSIST_LIVE_MIN_FREE_INODES, or 700000 (the guard validates it).
+#   DXE_PERSIST_LIVE_MIN_FREE_INODES, or 800000 (the guard validates it).
+# persist_migrate_live_inode_stop_floor
+#   DXE_PERSIST_LIVE_INODE_STOP_FLOOR, or 150000 (the guard validates it).
 #
 # Inode preflight (WP7.2b; run 1 on 2026-10-12 stopped when the NAS's Docker
 # data root, an ext4 filesystem with a fixed inode count that the production
@@ -61,6 +69,72 @@
 #   `<total> <used> <free>` from the one data line (GNU and busybox: fields 2,
 #   3 and 4, all whole numbers, total above 0); status 1 for no data line,
 #   more than one, or a field that is not a number.
+#
+# The bring-up's inode watcher (WP7.2c; Fable's review of WP7.2b: a canary
+# bring-up takes about 550,000-600,000 inodes of the filesystem the production
+# guest shares, and run 1 ran it down to 43 free):
+# persist_migrate_live_inode_watch DOCKER_BIN ROOT FLOOR DEADLINE
+#   Refuses (status 2, one `Refusing:` line, no call) unless DOCKER_BIN is an
+#   absolute path without blanks, DX_CONTAINER_NAME is a canary name
+#   (persist_live_name_is_canary), ROOT passes persist_live_root_ok, FLOOR is
+#   a whole number 100000..500000 and DEADLINE a whole number of seconds
+#   20..86400 (no leading zeros). Otherwise exactly one call, the NAS shell
+#   running PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INODE_WATCH:
+#     dxe_runtime_call dx_runtime_docker_ssh_exec sh -c SCRIPT dxe-live-inode-watch
+#       DOCKER_BIN DX_CONTAINER_NAME ROOT FLOOR DEADLINE
+# persist_migrate_live_inode_watch_start DOCKER_BIN ROOT FLOOR DEADLINE OUT ERR [TRIES]
+#   Only in the shell that runs the bring-up (refuses, status 2, in a
+#   subshell, whose exit would orphan the watcher, and while a watcher of its
+#   own still runs). Starts persist_migrate_live_inode_watch in the
+#   background as the leader of a process group of its own (set -m for the
+#   one launch, so stopping it ends its local ssh client too), stdout to OUT,
+#   stderr to ERR, stdin /dev/null; its pid in PERSIST_MIGRATE_LIVE_WATCH_PID.
+#   Chains persist_migrate_live_inode_watch_stop in front of the caller's
+#   EXIT trap (kept and restored by the stop), so the watcher also ends when
+#   the suite is aborted (INT, TERM, HUP; a SIGKILLed suite leaves it to its
+#   DEADLINE). Then waits, up to TRIES (default 300) checks 0.2 s apart, for
+#   the watcher's first `free=` line: 0 once it is there; 1 when the watcher
+#   ends first or never reports (it is stopped then, and nothing else ran).
+# persist_migrate_live_inode_watch_stop
+#   Ends the watcher started above, if any: when it still runs, SIGKILLs its
+#   process group through persist_migrate_live_kill_group (every check of
+#   that function applies) and sets PERSIST_MIGRATE_LIVE_WATCH_KILLED=1;
+#   then collects its status into PERSIST_MIGRATE_LIVE_WATCH_RC (never waits
+#   on a process the kill refused), clears PERSIST_MIGRATE_LIVE_WATCH_PID and
+#   restores the caller's EXIT trap. The NAS side then ends at its next
+#   heartbeat (its write to the closed session fails), within 20 s.
+# persist_migrate_live_inode_watch_verdict OUT RC KILLED
+#   One line from the watcher's output file OUT, its status RC and whether
+#   the stop killed it (KILLED 1):
+#     floor-hit <free> <floor> stopped|not-stopped  (any floor-hit line; the
+#       last one's numbers; stopped when a stopped= line follows)
+#     watched <polls> <lowest free>   (KILLED 1, at least one free= line)
+#     deadline <seconds>              (a deadline= line: it ended at its deadline)
+#     blind                           (RC 4: df gave no free-inode count)
+#     ended <RC>                      (anything else: it ended on its own)
+# persist_migrate_live_bringup_watched LOGDIR DOCKER_BIN ROOT FLOOR DEADLINE -- COMMAND [ARG...]
+#   The bring-up, watched. Through the caller's lv_run, lv_ok, lv_bad and
+#   lv_result (LV_RC, LV_OUT, LV_ERR): starts the watcher (LOGDIR/inode-watch.
+#   {out,err}); if it does not report, lv_bad and status 1 with COMMAND never
+#   run. Otherwise lv_ok, then `lv_run dx-bring-up -- COMMAND...`, then the
+#   stop (whatever COMMAND's status), then the verdict:
+#     floor-hit: results inode_floor_hit=free=<n> floor=<f> canary=<stopped|
+#       not-stopped>, PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT=<n>, one lv_bad
+#       starting `INODE FLOOR HIT:` and status 1;
+#     watched: results bringup_inodes_min_free=<n>, one lv_ok, status 0;
+#     anything else: results inode_watch=<verdict>, lv_bad, status 1.
+#   LV_RC, LV_OUT and LV_ERR are COMMAND's on return (after the start).
+# persist_migrate_live_inodes_after_bringup ROOT FREE0 FLOOR
+#   After a bring-up that passed: `lv_run inodes-after-bring-up --
+#   persist_migrate_live_inodes ROOT`. When it answers and FREE0 (the
+#   preflight's free count) is a number: results
+#   docker_root_inodes_free_after_bringup=<free> and canary_inodes_used=
+#   <FREE0 - free>; fewer than FLOOR free is
+#   PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT=<free>, results inode_floor_hit=
+#   after-bringup free=<free> floor=<FLOOR>, one lv_bad starting `INODE FLOOR
+#   HIT after the bring-up:` and status 1 (the run stops before seeding);
+#   else one lv_ok, status 0. No answer: results canary_inodes_used=unknown,
+#   status 0 (the watcher saw the whole bring-up above the floor).
 #
 # persist_migrate_live_dir_read SCRIPT [ARG...]
 #   Read-only twin of persist_live_root_sh for bash scripts: refuses (status 2,
@@ -143,8 +217,11 @@
 # persist_migrate_live_kill_group PID
 #   Sends SIGKILL to the process group PID (`kill -KILL -- -PID`) only when PID
 #   is a whole number above 1, is not this shell ($$), leads its own process
-#   group (ps -o pgid=) and that group is not this shell's; otherwise one
-#   `Refusing:` line, status 2, nothing sent.
+#   group (ps -o pgid=) and that group is not this shell's, and PID is a
+#   direct child of this shell (ps -o ppid= is $$: the job lv_run_bg or the
+#   watcher start forked, which own_group's exec chain keeps -- never a
+#   reused pid that happens to lead a group); otherwise one `Refusing:` line,
+#   status 2, nothing sent.
 # persist_migrate_live_group_gone PID [TRIES]
 #   0 once no process of group PID is left (kill -0 -- -PID fails), checking
 #   up to TRIES times (default 25) 0.2 s apart; 1 otherwise.
@@ -165,9 +242,14 @@
 #   lv_ok, lv_bad, lv_finding, lv_show_logs, lv_rc_zero, lv_rc_is,
 #   lv_out_line, with LV_RC, LV_OUT, LV_ERR and LV_BG_PID. In order:
 #     1. lv_run_bg: MIGRATE in its own process group (persist_migrate_live_own_group);
-#     2. copy_watch running DEADLINE: one running container with the copy
-#        container's name; checks: it was seen, its labels (role persist-copy,
-#        this profile id, managed) and its /dst bind on CANON_LEAF;
+#     2. copy_watch running, in slices of PERSIST_MIGRATE_LIVE_DROP_WATCH_SLICE
+#        (20) seconds that add up to DEADLINE (the last one shorter): one
+#        running container with the copy container's name. Between slices,
+#        a controller that has already ended (kill -0 of the background pid
+#        fails: it refused or failed early) is collected (lv_bg_wait) and is
+#        a FAIL at once, instead of waiting out the whole DEADLINE. Checks: it
+#        was seen within DEADLINE, its labels (role persist-copy, this
+#        profile id, managed) and its /dst bind on CANON_LEAF;
 #     3. kill_group on the background PID; lv_bg_wait: status 137; the group
 #        is gone (group_gone): the controller and its ssh clients are dead,
 #        no EXIT trap ran, so its lock is left behind;
@@ -186,9 +268,24 @@
 #   LV_BG_PID if step 3 was not reached). Sets PERSIST_MIGRATE_LIVE_DROP_OUTCOME
 #   (refused | missed | completed), _ID (the copy container's id), _OUT and _ERR
 #   (the rerun's output files), _WINDOW (whole seconds from the kill to the
-#   rerun's end), _PID (the dropped controller's), _ORPHAN (1 from the kill
-#   until the copy container is seen gone) and _LOCK_LEFT (1 from the kill
-#   until the unlock is confirmed).
+#   rerun's end), _GONE_AFTER (whole seconds from the kill until step 6 saw
+#   the copy gone: the orphan's longest possible life), _PID (the dropped
+#   controller's), _ORPHAN (1 from the kill until the copy container is seen
+#   gone) and _LOCK_LEFT (1 from the kill until the unlock is confirmed).
+# persist_migrate_live_drop_directory LISTINGS SEED_REF BULK_REF
+#   After the drop: is the directory the orphaned copy filled complete? Lists
+#   persist/<seed> and persist/<bulk> of the canary directory read-only
+#   (lv_run list-dir2-orphan-seed|bulk -- persist_migrate_live_dir_read LIST)
+#   into LISTINGS/dir2-orphan-seed and -bulk, and compares their records with
+#   the listings SEED_REF and BULK_REF. Complete (both listed whole and
+#   equal): two lv_ok, PERSIST_MIGRATE_LIVE_DROP_DIRECTORY=complete, status 0.
+#   Otherwise PERSIST_MIGRATE_LIVE_DROP_DIRECTORY=incomplete and, when
+#   PERSIST_MIGRATE_LIVE_DROP_OUTCOME is missed (the copy was not met
+#   running: it may have ended before it finished), one lv_finding "the
+#   orphaned copy ended within <_GONE_AFTER> s of the drop, before it
+#   finished: ..." and status 0 -- the next migration resumes the directory;
+#   for any other outcome one lv_bad and status 1. Uses the caller's lv_run,
+#   lv_ok, lv_bad and lv_finding.
 #
 # persist_migrate_live_real_inventory PROFILE ROOT COMMAND
 #   The opt-in read-only inventory of the production guest. Resolves PROFILE's
@@ -263,6 +360,23 @@
 #       $4 once a second until neither answers, then prints `gone=$3 $4`;
 #       status 2 one is still there at the deadline, 4 a docker call failed.
 #     Status 1 for bad arguments, before any docker call. `set -f` throughout.
+#   PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INODE_WATCH (sh in the NAS shell; see
+#     persist_migrate_live_inode_watch). $1 docker CLI (absolute), $2 the
+#     canary container's name (dx-...canary..., only [a-z0-9-]), $3 the
+#     Docker data root (absolute, not /), $4 the floor (a whole number above
+#     0), $5 the deadline in seconds. Polls at once and then every 20 s
+#     (sleep 20): `set -- $(df -P -i ROOT | tail -n 1)` (a plain `df -i` when
+#     -P fails), takes IFree (field 4) and prints the heartbeat free=<n>
+#     FIRST -- when that write fails (the ssh session is gone) it exits 0,
+#     touching nothing. When n < FLOOR it prints floor-hit free=<n>
+#     floor=<FLOOR> and runs exactly `docker stop -t 10 <name>`: stopped=<name>
+#     and status 3; when that stop fails (the container may not exist yet,
+#     e.g. while the image builds) stop-failed=<name> and it keeps polling,
+#     trying again at each poll still below the floor. Status 2 (and
+#     deadline=<s>) once the deadline has passed; 4 when df gives no
+#     free-inode count (nothing stopped); 1 for bad arguments, before any df
+#     or docker call. `set -f` throughout; docker stop is its only docker
+#     call.
 # persist_migrate_live_listing_ok FILE
 #   0 only when FILE (a LIST output) ends with `end<TAB>N` and holds exactly N
 #   records before it, N > 0: a listing cut short is never compared.
@@ -290,8 +404,21 @@ PERSIST_MIGRATE_LIVE_BULK=dxe-live-bulk
 PERSIST_MIGRATE_LIVE_BLOB=dxe-live-blob.bin
 PERSIST_MIGRATE_LIVE_RETIRED_PREFIX=persist.retired-
 PERSIST_MIGRATE_LIVE_BULK_MIB_DEFAULT=2048
-PERSIST_MIGRATE_LIVE_MIN_FREE_INODES_DEFAULT=700000
-PERSIST_MIGRATE_LIVE_MIN_FREE_INODES_FLOOR=600000
+# Inodes on the NAS's Docker data root (WP7.2b/c). A canary bring-up takes
+# about 550,000-600,000 of them (run 1 took 296,444 and was still in its
+# first Home Manager build); a production nix rebuild 50,000-150,000.
+PERSIST_MIGRATE_LIVE_MIN_FREE_INODES_DEFAULT=800000
+PERSIST_MIGRATE_LIVE_MIN_FREE_INODES_FLOOR=700000
+PERSIST_MIGRATE_LIVE_BRINGUP_INODES=600000
+PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_DEFAULT=150000
+PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_MIN=100000
+PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_MAX=500000
+# The bring-up watcher's NAS-side lifetime: its bound when the suite is
+# SIGKILLed (any other abort ends it through the EXIT trap).
+PERSIST_MIGRATE_LIVE_INODE_WATCH_SECONDS=7200
+# The controller-drop case looks for the copy container in slices this long,
+# so a controller that ended early is noticed within one slice.
+PERSIST_MIGRATE_LIVE_DROP_WATCH_SLICE=20
 # A full copy of the seed must last at least this long for the controller-drop
 # case to meet the copy container still running after the drop, the unlock
 # and the rerun's first checks (about a dozen ssh round trips).
@@ -391,6 +518,27 @@ PERSIST_MIGRATE_LIVE_NAS_SCRIPT_COPY_WATCH='set -f; d=$1; m=$2; cn=$3; vn=$4; '\
 'if [ -z "$a$b" ]; then echo "gone=$cn $vn"; exit 0; fi; '\
 'if [ "$(now)" -ge "$end" ]; then echo "dxe-live-copy-watch: $cn or $vn is still on the NAS after $5 s" >&2; exit 2; fi; '\
 'sleep 1; done'
+
+# The heartbeat comes before the floor check: once the ssh session is gone
+# (the bring-up ended, or the suite was aborted) the next write fails and the
+# watcher ends before it could stop anything.
+PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INODE_WATCH='set -f; d=$1; cn=$2; r=$3; fl=$4; dl=$5; '\
+'case "$1" in /*) : ;; *) echo "dxe-live-inode-watch: the docker CLI path must be absolute" >&2; exit 1 ;; esac; '\
+'case "$2" in dx-*canary*) : ;; *) echo "dxe-live-inode-watch: $2 is not a canary container name" >&2; exit 1 ;; esac; '\
+'case "$2" in *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) echo "dxe-live-inode-watch: $2 is not a canary container name" >&2; exit 1 ;; esac; '\
+'case "$3" in /?*) : ;; *) echo "dxe-live-inode-watch: bad Docker data root $3" >&2; exit 1 ;; esac; '\
+'case "$4" in "" | *[!0-9]* | 0*) echo "dxe-live-inode-watch: bad floor $4" >&2; exit 1 ;; esac; '\
+'case "$5" in "" | *[!0-9]*) echo "dxe-live-inode-watch: bad deadline $5" >&2; exit 1 ;; esac; '\
+'now() { date +%s; }; end=$(( $(now) + $5 )); '\
+'while :; do '\
+'o=$(df -P -i "$r" 2>/dev/null) || o=$(df -i "$r" 2>/dev/null) || o=""; '\
+'set -- $(printf "%s\n" "$o" | tail -n 1); '\
+'case "${4:-}" in "" | *[!0-9]*) echo "dxe-live-inode-watch: df -P -i $r gave no free-inode count" >&2; exit 4 ;; esac; '\
+'f=$4; echo "free=$f" || exit 0; '\
+'if [ "$f" -lt "$fl" ]; then echo "floor-hit free=$f floor=$fl" || exit 0; '\
+'if "$d" stop -t 10 "$cn" >/dev/null; then echo "stopped=$cn"; exit 3; fi; echo "stop-failed=$cn" || exit 0; fi; '\
+'if [ "$(now)" -ge "$end" ]; then echo "deadline=$dl"; exit 2; fi; '\
+'sleep 20; done'
 
 PERSIST_MIGRATE_LIVE_GUEST_SEED='set -eu
 r=$1; s="$r/dxe-live-seed"; b="$r/dxe-live-bulk"
@@ -548,6 +696,11 @@ persist_migrate_live_min_free_inodes() {
     printf '%s\n' "${DXE_PERSIST_LIVE_MIN_FREE_INODES:-$PERSIST_MIGRATE_LIVE_MIN_FREE_INODES_DEFAULT}"
 }
 
+# persist_migrate_live_inode_stop_floor
+persist_migrate_live_inode_stop_floor() {
+    printf '%s\n' "${DXE_PERSIST_LIVE_INODE_STOP_FLOOR:-$PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_DEFAULT}"
+}
+
 # persist_migrate_live_docker_root
 persist_migrate_live_docker_root() {
     local out rc=0 root
@@ -584,6 +737,187 @@ persist_migrate_live_df_inodes() {
         END { if (n != 1 || t + 0 == 0) exit 1; print t, u, f }'
 }
 
+# --- The bring-up's inode watcher (WP7.2c) -----------------------------------------
+
+# persist_migrate_live_inode_watch DOCKER_BIN ROOT FLOOR DEADLINE
+persist_migrate_live_inode_watch() {
+    local docker_bin="${1:-}" root="${2:-}" floor="${3:-}" deadline="${4:-}" why=""
+    case "$docker_bin" in
+        /*[[:space:]]*) why="the docker CLI path '$docker_bin' holds blanks" ;;
+        /*) : ;;
+        *) why="the docker CLI path '$docker_bin' is not absolute" ;;
+    esac
+    persist_live_name_is_canary "${DX_CONTAINER_NAME:-}" || why="${why:-DX_CONTAINER_NAME=${DX_CONTAINER_NAME:-} is not a canary name}"
+    persist_live_root_ok "$root" || why="${why:-the Docker data root '$root' is not a normalised absolute path}"
+    case "$floor" in
+        '' | *[!0-9]* | 0*) why="${why:-the floor '$floor' is not a whole number from $PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_MIN to $PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_MAX}" ;;
+        *) if [ "${#floor}" -gt 6 ] || [ "$floor" -lt "$PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_MIN" ] || [ "$floor" -gt "$PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_MAX" ]; then
+               why="${why:-the floor '$floor' is not a whole number from $PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_MIN to $PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_MAX}"
+           fi ;;
+    esac
+    case "$deadline" in
+        '' | *[!0-9]* | 0*) why="${why:-the deadline '$deadline' is not a whole number of seconds from 20 to 86400}" ;;
+        *) if [ "${#deadline}" -gt 5 ] || [ "$deadline" -lt 20 ] || [ "$deadline" -gt 86400 ]; then
+               why="${why:-the deadline '$deadline' is not a whole number of seconds from 20 to 86400}"
+           fi ;;
+    esac
+    if [ -n "$why" ]; then
+        _persist_live_refuse "persist_migrate_live_inode_watch: $why; nothing was run on the NAS."
+        return 2
+    fi
+    dxe_runtime_call dx_runtime_docker_ssh_exec sh -c "$PERSIST_MIGRATE_LIVE_NAS_SCRIPT_INODE_WATCH" dxe-live-inode-watch \
+        "$docker_bin" "$DX_CONTAINER_NAME" "$root" "$floor" "$deadline"
+}
+
+# persist_migrate_live_inode_watch_start DOCKER_BIN ROOT FLOOR DEADLINE OUT ERR [TRIES]
+persist_migrate_live_inode_watch_start() {
+    local docker_bin="$1" root="$2" floor="$3" deadline="$4" out="$5" err="$6" tries="${7:-300}" n=0 had_m=0 old cmd
+    if [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+        _persist_live_refuse "persist_migrate_live_inode_watch_start: called in a subshell, whose end would orphan the watcher; nothing was started."
+        return 2
+    fi
+    if [ -n "${PERSIST_MIGRATE_LIVE_WATCH_PID:-}" ]; then
+        _persist_live_refuse "persist_migrate_live_inode_watch_start: a watcher (pid $PERSIST_MIGRATE_LIVE_WATCH_PID) still runs; nothing was started."
+        return 2
+    fi
+    case "$tries" in '' | *[!0-9]* | 0*) tries=300 ;; esac
+    PERSIST_MIGRATE_LIVE_WATCH_RC=""
+    PERSIST_MIGRATE_LIVE_WATCH_KILLED=""
+    old="$(trap -p EXIT)"
+    PERSIST_MIGRATE_LIVE_WATCH_TRAP="$old"
+    cmd="$(eval "set -- $old"; printf '%s' "${3:-}")"
+    case "$-" in *m*) had_m=1 ;; esac
+    # Job control for this one launch only: the job leads a process group of
+    # its own, so the stop ends its local ssh client with it.
+    set -m
+    (persist_migrate_live_inode_watch "$docker_bin" "$root" "$floor" "$deadline") >"$out" 2>"$err" </dev/null &
+    PERSIST_MIGRATE_LIVE_WATCH_PID=$!
+    [ "$had_m" = 1 ] || set +m
+    # shellcheck disable=SC2064 # the caller's own trap, expanded now on purpose
+    trap "persist_migrate_live_inode_watch_stop >/dev/null 2>&1${cmd:+; $cmd}" EXIT
+    while ! grep -q '^free=' "$out" 2>/dev/null; do
+        n=$((n + 1))
+        if ! kill -0 "$PERSIST_MIGRATE_LIVE_WATCH_PID" 2>/dev/null || [ "$n" -gt "$tries" ]; then
+            persist_migrate_live_inode_watch_stop
+            return 1
+        fi
+        sleep 0.2
+    done
+    return 0
+}
+
+# persist_migrate_live_inode_watch_stop
+persist_migrate_live_inode_watch_stop() {
+    local pid="${PERSIST_MIGRATE_LIVE_WATCH_PID:-}" rc=0
+    [ -n "$pid" ] || return 0
+    if kill -0 "$pid" 2>/dev/null; then
+        if persist_migrate_live_kill_group "$pid"; then
+            PERSIST_MIGRATE_LIVE_WATCH_KILLED=1
+        else
+            PERSIST_MIGRATE_LIVE_WATCH_KILLED=refused
+        fi
+    fi
+    if [ "${PERSIST_MIGRATE_LIVE_WATCH_KILLED:-}" = refused ]; then
+        rc=unknown
+    else
+        wait "$pid" 2>/dev/null || rc=$?
+    fi
+    PERSIST_MIGRATE_LIVE_WATCH_RC="$rc"
+    PERSIST_MIGRATE_LIVE_WATCH_PID=""
+    if [ -n "${PERSIST_MIGRATE_LIVE_WATCH_TRAP:-}" ]; then
+        eval "$PERSIST_MIGRATE_LIVE_WATCH_TRAP"
+    else
+        trap - EXIT
+    fi
+    PERSIST_MIGRATE_LIVE_WATCH_TRAP=""
+    return 0
+}
+
+# persist_migrate_live_inode_watch_verdict OUT RC KILLED
+persist_migrate_live_inode_watch_verdict() {
+    local verdict
+    verdict="$(LV_RC_="${2:-}" LV_KILLED="${3:-}" awk '
+        /^free=[0-9]+$/ { v = substr($0, 6) + 0; if (n == 0 || v < low) low = v; n++ }
+        /^floor-hit free=[0-9]+ floor=[0-9]+$/ { split($0, a, /[ =]/); hf = a[3]; hl = a[5]; st = 0 }
+        /^stopped=/ { if (hf != "") st = 1 }
+        /^deadline=[0-9]+$/ { dl = substr($0, 10) }
+        END {
+            if (hf != "") print "floor-hit", hf, hl, (st ? "stopped" : "not-stopped")
+            else if (dl != "") print "deadline", dl
+            else if (ENVIRON["LV_KILLED"] == "1" && n > 0) print "watched", n, low
+            else if (ENVIRON["LV_RC_"] == "4") print "blind"
+        }' "$1" 2>/dev/null)"
+    printf '%s\n' "${verdict:-ended ${2:-}}"
+}
+
+# persist_migrate_live_bringup_watched LOGDIR DOCKER_BIN ROOT FLOOR DEADLINE -- COMMAND [ARG...]
+persist_migrate_live_bringup_watched() {
+    local logdir="$1" docker_bin="$2" root="$3" floor="$4" deadline="$5" rc out err verdict word free at state
+    shift 5
+    [ "${1:-}" != -- ] || shift
+    PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT=""
+    if ! persist_migrate_live_inode_watch_start "$docker_bin" "$root" "$floor" "$deadline" "$logdir/inode-watch.out" "$logdir/inode-watch.err"; then
+        verdict="$(persist_migrate_live_inode_watch_verdict "$logdir/inode-watch.out" "${PERSIST_MIGRATE_LIVE_WATCH_RC:-}" "${PERSIST_MIGRATE_LIVE_WATCH_KILLED:-}")"
+        lv_result inode_watch "not started ($verdict)"
+        sed 's/^/    | /' "$logdir/inode-watch.out" "$logdir/inode-watch.err" 2>/dev/null
+        lv_bad "the NAS inode watcher reports the Docker data root's free inodes before the bring-up starts (it did not: $verdict); nothing was brought up"
+        return 1
+    fi
+    lv_ok "the NAS inode watcher runs: below $floor free inodes on $root it runs docker stop -t 10 $DX_CONTAINER_NAME"
+    lv_run dx-bring-up -- "$@"
+    rc="$LV_RC"
+    out="$LV_OUT"
+    err="$LV_ERR"
+    persist_migrate_live_inode_watch_stop
+    verdict="$(persist_migrate_live_inode_watch_verdict "$logdir/inode-watch.out" "$PERSIST_MIGRATE_LIVE_WATCH_RC" "$PERSIST_MIGRATE_LIVE_WATCH_KILLED")"
+    LV_RC="$rc"
+    LV_OUT="$out"
+    LV_ERR="$err"
+    read -r word free at state <<<"$verdict"
+    case "$word" in
+        floor-hit)
+            PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT="$free"
+            lv_result inode_floor_hit "free=$free floor=$at canary=$state"
+            lv_bad "INODE FLOOR HIT: only $free inodes were free on the NAS's Docker data root (floor $at; the production guest shares it); the watcher ran docker stop -t 10 $DX_CONTAINER_NAME ($state) and the bring-up is abandoned (dx exited $rc)"
+            return 1
+            ;;
+        watched)
+            lv_result bringup_inodes_min_free "$at"
+            lv_ok "the NAS inode watcher watched the whole bring-up: $free polls, lowest free count $at (floor $floor)"
+            return 0
+            ;;
+    esac
+    lv_result inode_watch "$verdict"
+    sed 's/^/    | /' "$logdir/inode-watch.out" "$logdir/inode-watch.err" 2>/dev/null
+    lv_bad "the NAS inode watcher watches until the bring-up ends (it stopped early: $verdict; dx exited $rc)"
+    return 1
+}
+
+# persist_migrate_live_inodes_after_bringup ROOT FREE0 FLOOR
+persist_migrate_live_inodes_after_bringup() {
+    local root="$1" free0="$2" floor="$3" free measured=1
+    lv_run inodes-after-bring-up -- persist_migrate_live_inodes "$root"
+    free="$(awk 'NR == 1 { print $3 }' "$LV_OUT" 2>/dev/null)"
+    [ "$LV_RC" -eq 0 ] || measured=0
+    case "$free" in '' | *[!0-9]*) measured=0 ;; esac
+    case "$free0" in '' | *[!0-9]*) measured=0 ;; esac
+    if [ "$measured" = 0 ]; then
+        lv_result canary_inodes_used unknown
+        echo "    (df -P -i of the Docker data root did not answer after the bring-up; the canary's inode cost is not measured)"
+        return 0
+    fi
+    lv_result docker_root_inodes_free_after_bringup "$free"
+    lv_result canary_inodes_used "$((free0 - free))"
+    echo "    the bring-up took $((free0 - free)) inodes of the Docker data root ($free free now)"
+    if [ "$free" -lt "$floor" ]; then
+        PERSIST_MIGRATE_LIVE_INODE_FLOOR_HIT="$free"
+        lv_result inode_floor_hit "after-bringup free=$free floor=$floor"
+        lv_bad "INODE FLOOR HIT after the bring-up: only $free inodes are free on the NAS's Docker data root (floor $floor; the production guest shares it); nothing is seeded"
+        return 1
+    fi
+    lv_ok "at least $floor inodes are still free on the NAS's Docker data root after the bring-up ($free)"
+}
+
 # persist_migrate_live_volume_name_ok NAME: a canary volume name the suite may
 # create, read or delete (dx-..., only lower-case letters, digits and "-").
 persist_migrate_live_volume_name_ok() {
@@ -598,7 +932,7 @@ persist_migrate_live_volume_name_ok() {
 }
 
 persist_migrate_live_guard() {
-    local refused=0 rollback field mib inodes bad_inodes=0
+    local refused=0 rollback field mib inodes bad_inodes=0 stop bad_stop=0
     persist_live_guard || refused=1
     case "${DX_PERSIST_HOST_ROOT:-}" in
         *,*)
@@ -638,8 +972,27 @@ persist_migrate_live_guard() {
         *) if [ "${#inodes}" -gt 8 ] || [ "$inodes" -lt "$PERSIST_MIGRATE_LIVE_MIN_FREE_INODES_FLOOR" ]; then bad_inodes=1; fi ;;
     esac
     if [ "$bad_inodes" = 1 ]; then
-        _persist_live_refuse "DXE_PERSIST_LIVE_MIN_FREE_INODES=$inodes is not a whole number from $PERSIST_MIGRATE_LIVE_MIN_FREE_INODES_FLOOR to 99999999 (a fresh guest nix store takes about 550,000 inodes of the filesystem the production guest shares)."
+        _persist_live_refuse "DXE_PERSIST_LIVE_MIN_FREE_INODES=$inodes is not a whole number from $PERSIST_MIGRATE_LIVE_MIN_FREE_INODES_FLOOR to 99999999 (a canary bring-up takes about 550,000-600,000 inodes of the filesystem the production guest shares)."
         refused=1
+    fi
+    stop="${DXE_PERSIST_LIVE_INODE_STOP_FLOOR:-}"
+    case "$stop" in
+        '') : ;;
+        *[!0-9]* | 0*) bad_stop=1 ;;
+        *) if [ "${#stop}" -gt 6 ] || [ "$stop" -lt "$PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_MIN" ] \
+               || [ "$stop" -gt "$PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_MAX" ]; then bad_stop=1; fi ;;
+    esac
+    if [ "$bad_stop" = 1 ]; then
+        _persist_live_refuse "DXE_PERSIST_LIVE_INODE_STOP_FLOOR=$stop is not a whole number from $PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_MIN to $PERSIST_MIGRATE_LIVE_INODE_STOP_FLOOR_MAX (the free-inode count on the NAS's Docker data root below which the bring-up's watcher stops the canary; a production nix rebuild takes 50,000-150,000)."
+        refused=1
+    fi
+    if [ "$bad_inodes" = 0 ] && [ "$bad_stop" = 0 ]; then
+        inodes="$(persist_migrate_live_min_free_inodes)"
+        stop="$(persist_migrate_live_inode_stop_floor)"
+        if [ $((inodes - stop)) -lt "$PERSIST_MIGRATE_LIVE_BRINGUP_INODES" ]; then
+            _persist_live_refuse "DXE_PERSIST_LIVE_MIN_FREE_INODES=$inodes leaves only $((inodes - stop)) inodes above the bring-up's stop floor $stop; a canary bring-up takes about $PERSIST_MIGRATE_LIVE_BRINGUP_INODES, so set the minimum to at least $((stop + PERSIST_MIGRATE_LIVE_BRINGUP_INODES)) (or lower DXE_PERSIST_LIVE_INODE_STOP_FLOOR)."
+            refused=1
+        fi
     fi
     case "${DXE_PERSIST_LIVE_INVENTORY_REAL:-}" in
         '' | "$PERSIST_MIGRATE_LIVE_REAL_GUEST") : ;;
@@ -841,7 +1194,7 @@ persist_migrate_live_own_group() {
 
 # persist_migrate_live_kill_group PID
 persist_migrate_live_kill_group() {
-    local pid="$1" pgid own
+    local pid="$1" pgid own parent
     case "$pid" in
         '' | *[!0-9]* | 0*)
             _persist_live_refuse "persist_migrate_live_kill_group: '$pid' is not a process id; nothing was sent."
@@ -856,6 +1209,14 @@ persist_migrate_live_kill_group() {
     own="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')"
     if [ "$pgid" != "$pid" ] || [ -z "$own" ] || [ "$pgid" = "$own" ]; then
         _persist_live_refuse "persist_migrate_live_kill_group: $pid does not lead a process group of its own apart from this shell's (pgid '$pgid', this shell's '$own'); nothing was sent."
+        return 2
+    fi
+    # The background job this shell forked keeps its pid and its parent
+    # through own_group's exec chain (subshell -> perl -> the command); a
+    # reused pid that happens to lead a group has another parent.
+    parent="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+    if [ "$parent" != "$$" ]; then
+        _persist_live_refuse "persist_migrate_live_kill_group: $pid is not a child of this shell ($$; its parent is '$parent'), so it is not the job this suite started; nothing was sent."
         return 2
     fi
     kill -KILL -- "-$pid"
@@ -918,12 +1279,13 @@ persist_migrate_live_drop_bulk_hint() {
 # persist_migrate_live_controller_drop DOCKER_BIN MIGRATE LOCK CANON_LEAF DEADLINE
 persist_migrate_live_controller_drop() {
     local docker_bin="$1" migrate="$2" lock="$3" leaf="$4" deadline="$5"
-    local copy verify profile pid t_kill outcome seen
+    local copy verify profile pid t_kill outcome seen budget slice
     PERSIST_MIGRATE_LIVE_DROP_OUTCOME=""
     PERSIST_MIGRATE_LIVE_DROP_ID=""
     PERSIST_MIGRATE_LIVE_DROP_OUT=""
     PERSIST_MIGRATE_LIVE_DROP_ERR=""
     PERSIST_MIGRATE_LIVE_DROP_WINDOW=""
+    PERSIST_MIGRATE_LIVE_DROP_GONE_AFTER=""
     PERSIST_MIGRATE_LIVE_DROP_ORPHAN=""
     PERSIST_MIGRATE_LIVE_DROP_LOCK_LEFT=""
     PERSIST_MIGRATE_LIVE_DROP_PID=""
@@ -935,8 +1297,25 @@ persist_migrate_live_controller_drop() {
     lv_run_bg migrate-dropped -- persist_migrate_live_own_group "$migrate"
     pid="$LV_BG_PID"
     PERSIST_MIGRATE_LIVE_DROP_PID="$pid"
-    # 2. Its copy container, running, found by its name (read-only).
-    lv_run copy-running -- persist_migrate_live_copy_watch "$docker_bin" running "$deadline"
+    # 2. Its copy container, running, found by its name (read-only), looked
+    # for in slices: a controller that has already ended (it refused or
+    # failed before copying) is noticed within one slice, not after the
+    # whole deadline.
+    budget="$deadline"
+    while :; do
+        slice="$PERSIST_MIGRATE_LIVE_DROP_WATCH_SLICE"
+        [ "$budget" -ge "$slice" ] || slice="$budget"
+        lv_run copy-running -- persist_migrate_live_copy_watch "$docker_bin" running "$slice"
+        [ "$LV_RC" -eq 2 ] || break
+        budget=$((budget - slice))
+        if ! kill -0 "$pid" 2>/dev/null; then
+            lv_bg_wait
+            lv_show_logs
+            lv_bad "the dropped run's dx-persist-migrate still runs while its copy container is awaited (it exited $LV_RC before a running container named $copy was seen, so there is nothing to drop; see its log)"
+            return 1
+        fi
+        [ "$budget" -gt 0 ] || break
+    done
     lv_check "a running container named $copy appears on the NAS within $deadline s (the dropped run's copy)" lv_rc_zero || return 1
     PERSIST_MIGRATE_LIVE_DROP_ID="$(sed -n 's/^copy=//p' "$LV_OUT" | sed -n '1p')"
     lv_check "it carries this profile's DQ6 labels: io.dxe.managed=true, io.dxe.profile=$profile, io.dxe.role=persist-copy (docker run --name/--label on the NAS)" \
@@ -992,9 +1371,48 @@ persist_migrate_live_controller_drop() {
     esac
     # 6. The orphaned copy (and any verify) ends and removes itself.
     lv_run copy-gone -- persist_migrate_live_copy_watch "$docker_bin" gone "$deadline"
+    PERSIST_MIGRATE_LIVE_DROP_GONE_AFTER=$(( $(date +%s) - t_kill ))
     lv_check "the orphaned copy ends and removes itself (--rm) within $deadline s, and no verify container is left" lv_rc_zero || return 1
     PERSIST_MIGRATE_LIVE_DROP_ORPHAN=""
     return 0
+}
+
+# persist_migrate_live_drop_directory LISTINGS SEED_REF BULK_REF
+persist_migrate_live_drop_directory() {
+    local listings="$1" why="" name ref sub file
+    PERSIST_MIGRATE_LIVE_DROP_DIRECTORY=""
+    for name in seed bulk; do
+        if [ "$name" = seed ]; then
+            ref="$2"
+            sub="$PERSIST_MIGRATE_LIVE_SEED"
+        else
+            ref="$3"
+            sub="$PERSIST_MIGRATE_LIVE_BULK"
+        fi
+        file="$listings/dir2-orphan-$name"
+        lv_run "list-dir2-orphan-$name" -- persist_migrate_live_dir_read "$PERSIST_MIGRATE_LIVE_SCRIPT_LIST" "persist/$sub"
+        cp "$LV_OUT" "$file" 2>/dev/null || : >"$file"
+        if [ "$LV_RC" -ne 0 ] || ! persist_migrate_live_listing_ok "$file"; then
+            why="${why:+$why; }its $sub could not be listed whole (exit $LV_RC)"
+        elif ! persist_migrate_live_listing_ok "$ref" \
+            || [ "$(persist_migrate_live_records "$ref")" != "$(persist_migrate_live_records "$file")" ]; then
+            why="${why:+$why; }its $sub differs from the source's"
+            diff <(persist_migrate_live_records "$ref" 2>/dev/null) <(persist_migrate_live_records "$file") | sed -n '1,30p' | sed 's/^/    /'
+        fi
+    done
+    if [ -z "$why" ]; then
+        PERSIST_MIGRATE_LIVE_DROP_DIRECTORY=complete
+        lv_ok "the orphaned copy ran to its end on its own: the directory's tree equals the rollback volume's"
+        lv_ok "and its bulk file is whole"
+        return 0
+    fi
+    PERSIST_MIGRATE_LIVE_DROP_DIRECTORY=incomplete
+    if [ "${PERSIST_MIGRATE_LIVE_DROP_OUTCOME:-}" = missed ]; then
+        lv_finding "the orphaned copy ended within ${PERSIST_MIGRATE_LIVE_DROP_GONE_AFTER:-?} s of the drop, before it finished ($why); the next migration resumes the directory"
+        return 0
+    fi
+    lv_bad "the orphaned copy ran to its end on its own: the directory equals the rollback volume ($why)"
+    return 1
 }
 
 # persist_migrate_live_real_inventory PROFILE ROOT COMMAND
