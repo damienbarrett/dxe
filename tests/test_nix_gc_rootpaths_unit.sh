@@ -163,5 +163,28 @@ else
         eval '[ "$ru_rc" -eq 127 ] && [ ! -s "$RU_CASE/out" ] && [ "$(ru_chown_count)" -eq 0 ] && grep -F find "$RU_CASE/err" >/dev/null'
 fi
 
+# --- An empty exec PATH never makes the current directory a tool source -------
+# `PATH="$PATH:..."` with an empty PATH starts with an empty element, which
+# means the current directory: a root process would then run whatever stat,
+# find or chown sits there. Run the program with an empty PATH from a
+# directory holding the stand-in tools (and bash, for their shebang).
+ru_new_case
+CWD_DIR="$RU_CASE/cwd-tools"
+mkdir -p "$CWD_DIR"
+ln -s "$BASH" "$CWD_DIR/bash"
+cp "$FAKE_DIR/stat" "$FAKE_DIR/find" "$FAKE_DIR/chown" "$CWD_DIR/"
+if (PATH="$RU_FALLBACKS"; command -v stat >/dev/null 2>&1); then
+    test_skip "program: empty exec PATH (this host's fallback profiles provide stat, so the tools cannot be missing here)"
+else
+    ru_rc=0
+    (
+        cd "$CWD_DIR" || exit 99
+        PATH=""
+        "$BASH" -c "$dx_nix_gc_hand_back_root_paths_program" bash "$RU_STORE" "$RU_LOG"
+    ) > "$RU_CASE/out" 2> "$RU_CASE/err" || ru_rc=$?
+    ru_check "program: an empty exec PATH leaves only the profile fallbacks -- the current directory's tools are never run (exit 127, no chown)" \
+        eval '[ "$ru_rc" -eq 127 ] && [ ! -s "$RU_CASE/out" ] && [ "$(ru_chown_count)" -eq 0 ]'
+fi
+
 print_summary
 exit_with_code

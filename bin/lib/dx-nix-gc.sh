@@ -156,7 +156,8 @@ dx_nix_gc_clear_stale_temproots() {
 #   - `bash -c` is not a login shell, so the GC-rooted root essentials
 #     profile and the image's default profile are APPENDED to the exec's PATH
 #     as fallbacks (find comes from the default profile): the exec's own PATH
-#     stays first and decides which tool runs.
+#     stays first and decides which tool runs. An empty exec PATH gets no
+#     empty element (one would mean the current directory).
 # Residual: a root Nix process running at this very moment re-owns its own
 # new output to root when it finishes; GC then fails as before until the
 # next hand-back.
@@ -164,7 +165,7 @@ dx_nix_gc_clear_stale_temproots() {
 # A heredoc constant, like the temp-roots program above (kcov never traces a
 # heredoc body).
 IFS= read -r -d '' dx_nix_gc_hand_back_root_paths_program <<'DX_NIX_GC_HAND_BACK_ROOT_PATHS' || true
-PATH="$PATH:/nix/var/nix/profiles/per-user/root/profile/bin:/nix/var/nix/profiles/default/bin"
+PATH="${PATH:+$PATH:}/nix/var/nix/profiles/per-user/root/profile/bin:/nix/var/nix/profiles/default/bin"
 store=$1
 log=$2
 if [ -L "$store" ] || [ ! -d "$store" ]; then
