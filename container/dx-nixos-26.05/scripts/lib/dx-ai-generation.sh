@@ -219,27 +219,24 @@ dx_ai_publish_pointer() {
     if ! mv -Tf "$tmp" "$state/current"; then rm -f "$tmp"; dx_ai_fail "could not publish AI current pointer: $state/current"; return 1; fi
 }
 
-# Also collects orphaned `.staging-<id>` generation stages: a run killed
-# between dx_ai_stage_generation and dx_ai_publish_generation leaves one
-# behind, and bash's bare `*` glob never matches a dot-name, so before this
-# it accumulated forever, each one pinning a full closure under
-# /nix/var/nix/gcroots/auto. Safe to remove unconditionally: staging only
-# ever happens under dx_ai_run_locked's lock, and this function only ever
-# runs from dx_ai_publish_generation, itself under that same lock, so any
+# Also collects orphaned `.staging-<id>` generation stages
+# (dx_ai_discard_stages): a run killed between dx_ai_stage_generation and
+# dx_ai_publish_generation leaves one behind, and bash's bare `*` glob never
+# matches a dot-name. Safe to remove unconditionally: staging only ever
+# happens under dx_ai_run_locked's lock, and this function only ever runs
+# from dx_ai_publish_generation, itself under that same lock, so any
 # `.staging-*` still present here belongs to some earlier, non-current run.
+# (Every locked run's dx_ai_reconcile_roots already swept them before it
+# staged; this keeps the sweep after a publish too.)
 dx_ai_collect_generations() {
     local state="$1" current="$2" predecessor="$3" candidate candidate_id
-    for candidate in "$state/generations"/* "$state/generations"/.staging-*; do
+    dx_ai_discard_stages "$state/generations"
+    for candidate in "$state/generations"/*; do
         [ -d "$candidate" ] || continue
         candidate_id=${candidate##*/}
         if [ -L "$candidate" ]; then rm -f "$candidate"; continue; fi
-        case "$candidate_id" in
-            .staging-*) : ;;
-            *)
-                [ "$candidate_id" = "$current" ] && continue
-                [ -n "$predecessor" ] && [ "$candidate_id" = "$predecessor" ] && continue
-                ;;
-        esac
+        [ "$candidate_id" = "$current" ] && continue
+        [ -n "$predecessor" ] && [ "$candidate_id" = "$predecessor" ] && continue
         chmod -R u+w "$candidate" 2>/dev/null || true
         rm -rf "$candidate" || echo "Warning: could not collect obsolete AI generation $candidate_id." >&2
     done
