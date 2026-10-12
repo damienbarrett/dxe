@@ -239,7 +239,10 @@ dx_ssh_probe_login_shell() {
     while IFS= read -r opt; do opts+=("$opt"); done <<<"$opts_stream"
     opts+=("-o" "BatchMode=yes")
 
-    ssh "${opts[@]}" "$endpoint" "bash -lc 'true'" >/dev/null 2>"$stderr_file"
+    # The probe's ssh reads /dev/null, never the caller's stdin (WP6.7, as
+    # WP-T1 made the docker adapter's own probes do): a caller whose stdin
+    # carries data (a pipe, a heredoc) still has all of it after the probe.
+    ssh "${opts[@]}" "$endpoint" "bash -lc 'true'" </dev/null >/dev/null 2>"$stderr_file"
 }
 
 # Restore the guest's persisted colour scheme before the session's real

@@ -51,6 +51,20 @@
 #     "dxe-persist-verify-" and what to do: "still running" (wait, or
 #     "docker stop"), otherwise "docker rm" after inspecting it. Each phrase
 #     must sit on one line (the match is per line).
+#   - WP6.7: 11.4's first bullet (from the first line of 11.4 holding "The copy
+#     was interrupted" up to the next line starting "- ") holds "A copy or
+#     verify container is left on the NAS": it points to that bullet for the
+#     case where the controller lost its connection while the copy container
+#     kept running.
+#   - WP6.7: 11.2, the prerequisites checked before a migration (the
+#     subsection from the line starting "### 11.2 " to the next heading),
+#     holds an inode check of the NAS Docker data root: "df -i" and
+#     "{{.DockerRootDir}}" (as in df -i of docker info --format
+#     '{{.DockerRootDir}}'), with the reason, "ext4", "fixed inode count" and
+#     "every container, image and Docker volume" (that filesystem is shared by
+#     all of them, and a full guest nix store alone needs hundreds of
+#     thousands of inodes); and the rsync floor as "3.1.3 or newer", with no
+#     "3.1 or newer" left anywhere in the file. Each phrase on one line.
 #   - MANUAL REMOVAL of a retired or canary directory: "yourself" (the user
 #     runs it, not the tooling), "docker run --rm", "--user 0:0", a line with
 #     " ls " before the first line starting with or holding "rm -r".
@@ -154,6 +168,26 @@ for n in "--inplace" "no rsync temp file" "partial" ".dxe-persist-dir.XXXXXX" \
     "dxe-persist-copy-" "dxe-persist-verify-" "still running" "docker stop" "docker rm"; do
     assert_in "$SUB114" "$n" "11.4 (an interrupted copy) covers: $n"
 done
+
+# WP6.7: the first bullet of 11.4 (an interrupted copy) points to the
+# left-container bullet, for a controller that lost its connection while the
+# copy container kept running on the NAS.
+BULLET114="$(awk '!on && index(tolower($0), "the copy was interrupted") { on = 1; print; next } on && /^- / { exit } on { print }' <<<"$SUB114")"
+assert_in "$BULLET114" "A copy or verify container is left on the NAS" \
+    "11.4's first bullet (the copy was interrupted) points to the left-container bullet"
+
+# WP6.7: 11.2 (the prerequisites checked before a migration) gains the inode
+# check of the NAS Docker data root and the rsync 3.1.3 floor.
+SUB112="$(awk '/^### 11\.2 / { on = 1; print; next } on && /^###* / { exit } on { print }' <<<"$SECTION")"
+for n in "df -i" "{{.DockerRootDir}}" "ext4" "fixed inode count" "every container, image and Docker volume" \
+    "3.1.3 or newer"; do
+    assert_in "$SUB112" "$n" "11.2 (prerequisites) covers: $n"
+done
+if grep -Fiq -- "3.1 or newer" "$DOC"; then
+    test_fail "docs/qnap-runbook.md no longer says rsync 3.1 or newer (the floor is 3.1.3)"
+else
+    test_pass "docs/qnap-runbook.md no longer says rsync 3.1 or newer (the floor is 3.1.3)"
+fi
 
 assert_text "change nothing during the migration" "the change-nothing rule"
 assert_text "stopped" "the guest is stopped"
