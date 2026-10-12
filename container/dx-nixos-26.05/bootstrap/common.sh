@@ -271,6 +271,79 @@ essentials_profile_store_path() {
     return 1
 }
 
+# hand_back_root_nix_paths -- (fix/gc-rootpaths) hands every root-owned store
+# path and log entry back to the store's owner. Every path a root Nix call
+# adds to a store owned by another user is root-owned (Nix canonicalises a
+# new path to the calling user): the built output, its .drv, the flake
+# source, substituted paths and each new profile environment, plus a
+# root-owned log bucket under /nix/var/log/nix for a local build. In dx's
+# single-user store, dx's `nix-collect-garbage` must make a directory
+# writable before emptying it and cannot chmod a root-owned one, so one such
+# garbage path aborts the whole collection (fchmodat2: Operation not
+# permitted); the log bucket stops dx's builds whose logs fall in it.
+#
+# The rule (bin/lib/dx-nix-gc.sh's GC-side program applies the same one, as
+# root, before every dx-gc and dx-reclaim collection, which heals guests that
+# already hold such paths), on "${DX_ESSENTIALS_ROOT:-}/nix/store" and
+# ".../nix/var/log/nix":
+#   - Nothing at all when the store is missing, is a symlink or is owned by
+#     uid 0 (the image's own store before the /nix volume replaces it, or a
+#     volume before its one-time ownership migration: no one to hand back
+#     to).
+#   - Otherwise the owner is the store directory's own NUMERIC uid:gid (the
+#     dx account may not exist yet). Every root-owned DIRECT entry of the
+#     store (dot-entries included) goes to it with `chown -R -P`: everything
+#     inside it too, a symlink re-owned itself and never followed. Entries
+#     owned by anyone else are never looked into (a root inode inside a dx
+#     path is harmless to GC; no full-store walk).
+#   - When the log directory is a real directory (not a symlink), every
+#     root-owned entry beneath it goes to the owner with `chown -h`.
+#   - chown changes no mode and no mtime; nothing else is touched (the two
+#     directories themselves, /nix/var/nix, anything elsewhere).
+# Prints "Handed N root-owned Nix path(s) back to the store owner UID:GID."
+# when it handed N > 0 back (one per root-owned direct store entry, one per
+# root-owned log entry) and nothing otherwise. A chown that fails is not
+# counted, does not stop the rest, and makes it warn and return 1; so does a
+# missing find or chown, or a store owner it cannot read.
+hand_back_root_nix_paths() {
+    local store="${DX_ESSENTIALS_ROOT:-}/nix/store" log="${DX_ESSENTIALS_ROOT:-}/nix/var/log/nix"
+    local owner path handed=0 status=0
+    if [ -L "$store" ] || [ ! -d "$store" ]; then
+        return 0
+    fi
+    if ! command -v find >/dev/null || ! command -v chown >/dev/null || ! owner="$(stat -c '%u:%g' -- "$store")"; then
+        echo "Warning: could not hand root-owned Nix paths back to the store owner: find, chown or the owner of $store is unavailable." >&2
+        return 1
+    fi
+    if [ "${owner%%:*}" = 0 ]; then
+        return 0
+    fi
+    while IFS= read -r -d '' path; do
+        if chown -R -P -- "$owner" "$path"; then
+            handed=$((handed + 1))
+        else
+            status=1
+        fi
+    done < <(find "$store" -mindepth 1 -maxdepth 1 -uid 0 -print0) # KCOV_LOOP_TERMINATOR
+    if [ -d "$log" ] && [ ! -L "$log" ]; then
+        while IFS= read -r -d '' path; do
+            if chown -h -- "$owner" "$path"; then
+                handed=$((handed + 1))
+            else
+                status=1
+            fi
+        done < <(find "$log" -mindepth 1 -uid 0 -print0) # KCOV_LOOP_TERMINATOR
+    fi
+    if [ "$handed" -gt 0 ]; then
+        echo "Handed $handed root-owned Nix path(s) back to the store owner $owner."
+    fi
+    if [ "$status" -ne 0 ]; then
+        echo "Warning: could not hand root-owned Nix paths back to the store owner $owner; dx's Nix garbage collection may fail until the next dx-gc or dx-reclaim." >&2
+        return 1
+    fi
+    return 0
+}
+
 # run_root_nix ARG... -- runs one root `nix ARG...` and then removes that
 # process's own temporary-roots file (fix/gc-temproots). Nix names it
 # /nix/var/nix/temproots/<its pid> (root:root 0600 when root runs it), and
@@ -289,12 +362,18 @@ essentials_profile_store_path() {
 # signal, so `wait` returns only once nix has exited. Residual: a new process
 # assigned the just-reaped pid that creates its own temp-roots file before
 # the removal would lose it -- a window of one unlink right after `wait`.
+# Then (fix/gc-rootpaths) it hands the root-owned paths that call left in the
+# store and the log directory back to the store's owner
+# (hand_back_root_nix_paths), on success and on failure, so the essentials
+# closure is the store owner's from the moment it exists; a failed hand-back
+# warns and never changes nix's status.
 run_root_nix() {
     local pid status=0
     nix "$@" 0<&0 &
     pid=$!
     wait "$pid" || status=$?
     rm -f -- "${DX_ESSENTIALS_ROOT:-}/nix/var/nix/temproots/$pid" || true
+    hand_back_root_nix_paths || true
     return "$status"
 }
 
