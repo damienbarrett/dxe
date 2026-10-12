@@ -1516,7 +1516,12 @@ PR_NAME="$CW_COPY" PR_STATE=running product_refusal "$SCRATCH/err.copy-running"
 PR_NAME="$CW_VERIFY" PR_STATE=running product_refusal "$SCRATCH/err.verify-running"
 PR_NAME="$CW_COPY" PR_STATE=exited product_refusal "$SCRATCH/err.copy-exited"
 PR_NAME="$CW_VERIFY" PR_STATE=removing product_refusal "$SCRATCH/err.verify-removing"
+PR_NAME="$CW_COPY" PR_STATE=paused product_refusal "$SCRATCH/err.copy-paused"
+PR_NAME="$CW_VERIFY" PR_STATE=paused product_refusal "$SCRATCH/err.verify-paused"
+PR_NAME="$CW_COPY" PR_STATE=removing product_refusal "$SCRATCH/err.copy-removing"
 PR_NAME=dxe-persist-copy-dxe-fixture-nas.invalid__dx-other-canary PR_STATE=running product_refusal "$SCRATCH/err.other-running"
+PR_NAME=dxe-persist-copy-dxe-fixture-nas.invalid__dx-other-canary PR_STATE=paused product_refusal "$SCRATCH/err.other-paused"
+PR_NAME=dxe-persist-verify-dxe-fixture-nas.invalid__dx-other-canary PR_STATE=removing product_refusal "$SCRATCH/err.other-removing"
 printf 'Error: the copy into /fixture/real/dxe/dx-live-canary/persist stopped before it finished (rsync exit 125); its marker stays copying, so the guest cannot start on it. Run dx-persist-migrate again to resume the copy.\n' >"$SCRATCH/err.conflict"
 sed 's/exit 125/exit 137/' "$SCRATCH/err.conflict" >"$SCRATCH/err.killed"
 { cat "$SCRATCH/err.copy-running"; cat "$SCRATCH/err.copy-running"; } >"$SCRATCH/err.two"
@@ -1529,6 +1534,15 @@ if [ "$(grep -c '^Error:' "$SCRATCH/err.copy-running")" = 1 ] && grep -Fq "$CW_C
     && [ "$(classify 1 "$SCRATCH/err.verify-removing")" = "refused-left removing" ]; then
     test_pass "drop_classify reads the product's own refusal lines: running (copy or verify container) and left in another state"
 else test_fail "drop_classify on the product's refusals ($(classify 1 "$SCRATCH/err.copy-running") / $(classify 1 "$SCRATCH/err.copy-exited"); line: $(cat "$SCRATCH/err.copy-running"))"; fi
+# WP6.7's own lines for a paused container and one Docker is removing.
+if [ "$(grep -c '^Error:' "$SCRATCH/err.copy-paused")" = 1 ] && grep -Fq "is paused on" "$SCRATCH/err.copy-paused" \
+    && [ "$(grep -c '^Error:' "$SCRATCH/err.verify-removing")" = 1 ] && grep -Fq "Error: Docker is removing the container $CW_VERIFY" "$SCRATCH/err.verify-removing" \
+    && [ "$(classify 1 "$SCRATCH/err.copy-paused")" = "refused-left paused" ] && [ "$(classify 1 "$SCRATCH/err.verify-paused")" = "refused-left paused" ] \
+    && [ "$(classify 1 "$SCRATCH/err.copy-removing")" = "refused-left removing" ] && [ "$(classify 1 "$SCRATCH/err.verify-removing")" = "refused-left removing" ] \
+    && [ "$(classify 1 "$SCRATCH/err.other-paused")" = unexpected ] && [ "$(classify 1 "$SCRATCH/err.other-removing")" = unexpected ] \
+    && [ "$(classify 3 "$SCRATCH/err.copy-paused")" = unexpected ]; then
+    test_pass "drop_classify reads WP6.7's paused and removing refusals for the copy or verify container as refused-left paused / removing (another container's name or another status: unexpected)"
+else test_fail "drop_classify on the paused and removing refusals ($(classify 1 "$SCRATCH/err.copy-paused") / $(classify 1 "$SCRATCH/err.verify-removing"); lines: $(cat "$SCRATCH/err.copy-paused" "$SCRATCH/err.verify-removing"))"; fi
 if [ "$(classify 0 "$SCRATCH/err.none")" = completed ] && [ "$(classify 1 "$SCRATCH/err.conflict")" = copy-conflict ] \
     && [ "$(classify 1 "$SCRATCH/err.killed")" = unexpected ] && [ "$(classify 1 "$SCRATCH/err.other-running")" = unexpected ] \
     && [ "$(classify 1 "$SCRATCH/err.two")" = unexpected ] && [ "$(classify 1 "$SCRATCH/err.lock")" = unexpected ] \
@@ -1895,7 +1909,7 @@ if [ "$(drop_result rc)" = 1 ] && [ "$(drop_result orphan)" = 1 ] && [ "$(drop_r
     test_pass "drop: a lock whose audit names another pid is never forced: it stops before the unlock and the rerun (orphan copy and lock flagged)"
 else test_fail "drop: an audit naming another pid (transcript: $(drop_transcript | tr '\n' '|'))"; fi
 
-for scenario in "err.none|0|completed" "err.copy-exited|1|missed" "err.conflict|1|missed"; do
+for scenario in "err.none|0|completed" "err.copy-exited|1|missed" "err.conflict|1|missed" "err.verify-removing|1|missed" "err.copy-paused|1|missed"; do
     file="${scenario%%|*}"
     rest="${scenario#*|}"
     drop_run "$SCRATCH/$file" "${rest%%|*}"

@@ -232,9 +232,14 @@
 #   The rerun's outcome, on stdout: `completed` (RC 0); `refused-running
 #   <name>` (RC 1, exactly one Error line, WP6.4c's running refusal for the
 #   copy or verify container, word for word up to the end); `refused-left
-#   <state>` (RC 1, one Error line, WP6.4c's refusal for a container left in
-#   another state); `copy-conflict` (RC 1, one Error line: the copy stopped
-#   with rsync exit 125, Docker's name conflict); else `unexpected`.
+#   paused` and `refused-left removing` (RC 1, one Error line, WP6.7's own
+#   refusals for a paused container and one Docker is removing, word for word
+#   up to the end, for either name); `refused-left <state>` (RC 1, one Error
+#   line, WP6.4c's refusal for a container left in any other state);
+#   `copy-conflict` (RC 1, one Error line: the copy stopped with rsync exit
+#   125, Docker's name conflict); else `unexpected`. A refused-left outcome
+#   is the drop case's `missed` (a FINDING: the rerun did not meet the copy
+#   running).
 # persist_migrate_live_drop_bulk_hint BULK_MIB COPY_SECONDS
 #   The DXE_PERSIST_LIVE_BULK_MIB that makes a full copy last about 60 s at
 #   the measured rate, rounded up to a multiple of 1024, at most 16384.
@@ -1306,6 +1311,14 @@ persist_migrate_live_drop_classify() {
         case "$line" in
             "Error: the container $name of an earlier migration or rollback is still running on "*"; wait for it to finish, or stop it there with docker stop $name, then run dx-persist-migrate again. Nothing was changed.")
                 echo "refused-running $name"
+                return 0
+                ;;
+            "Error: the container $name of an earlier migration or rollback is paused on "*"; resume it there with docker unpause $name (it then finishes and removes itself), or end it with docker stop $name, then run dx-persist-migrate again. Nothing was changed.")
+                echo "refused-left paused"
+                return 0
+                ;;
+            "Error: Docker is removing the container $name of an earlier migration or rollback on "*"; wait until docker ps -a no longer lists it, then run dx-persist-migrate again. Nothing was changed.")
+                echo "refused-left removing"
                 return 0
                 ;;
             "Error: the container $name of an earlier migration or rollback is left on "*" in state "*"; inspect it there"*)
