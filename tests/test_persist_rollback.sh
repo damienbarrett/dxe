@@ -123,6 +123,9 @@ set -uo pipefail
 #    CANON is the probe's root= (the canonical root) and DEST is always
 #    "CANON/dxe/GUEST/persist"; every container operation gets them, never
 #    the configured root.
+#    (WP6.4c, tests/test_persist_copy_resume.sh: steps 8 and 9 use the named,
+#    labelled copy and verify containers and the --inplace --modify-window=-1
+#    words; after step 1 the command makes two `ps -a` queries for them.)
 #
 # F. The directory decision, from the probe report (root=, mounted=, state=,
 #    marker= and the marker bytes), first match:
@@ -555,6 +558,9 @@ case "${1:-} ${2:-}" in
         ev unlock
         /bin/rm -f "${P_LOCKDIR:?}/held"
         exit 0 ;;
+    "ps -a")
+        ev ps "$4"
+        exit 0 ;;
     "run "*) shift ;;
     *) ev other "$*"; echo "fake docker: unexpected call: $*" >&2; exit 99 ;;
 esac
@@ -564,7 +570,7 @@ entry=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --rm | -i) shift ;;
-        --network | --user | --pull) shift 2 ;;
+        --network | --user | --pull | --name | --label) shift 2 ;;
         -v)
             name="${2%%:*}"
             rest="${2#*:}"
@@ -668,7 +674,7 @@ case "$entry" in
             i=0
             while [ "$i" -lt "$((k - 2))" ]; do
                 case "${mapped[$i]}" in
-                    -aH | --numeric-ids | -A | -X) : ;;
+                    -aH | --numeric-ids | --inplace | --modify-window=-1 | -A | -X) : ;;
                     --exclude=/.dxe-persist-dir) ex1=yes ;;
                     "--exclude=._*") ex2=yes ;;
                     *) echo "rsync: unknown option ${mapped[$i]} (sim)" >&2; exit 1 ;;
@@ -1057,16 +1063,21 @@ argv_marker_set() { # ROOT GUEST EXPECTED SOURCE
         "type=bind,source=$1,target=/dxe-share" --entrypoint sh "$IMAGE" -c '<SCRIPT>' sh \
         /dxe-share "$2" "$3" "$4"
 }
+# WP6.4c: the copy and verify containers' names and DQ6 labels, before --entrypoint.
+COPY_ID=(--name "dxe-persist-copy-${NAS}__$GUEST" --label io.dxe.managed=true --label io.dxe.schema=1
+    --label "io.dxe.profile=${NAS}__$GUEST" --label io.dxe.role=persist-copy --label io.dxe.system=x86_64-linux)
+VERIFY_ID=(--name "dxe-persist-verify-${NAS}__$GUEST" --label io.dxe.managed=true --label io.dxe.schema=1
+    --label "io.dxe.profile=${NAS}__$GUEST" --label io.dxe.role=persist-verify --label io.dxe.system=x86_64-linux)
 argv_rsync_reverse() { # DIR [-A] [-X]: into NEW
     local dir="$1"
     shift
     printf '%s\n' run --rm --network none --user 0:0 --pull never -v dx-fix-nix:/nix:ro \
-        --mount "type=bind,source=$dir,target=/src,readonly" -v "$NEW:/dst" --entrypoint "$RSYNC_EP" "$IMAGE" \
-        -aH --numeric-ids "$@" --exclude=/.dxe-persist-dir '--exclude=._*' /src/ /dst/
+        --mount "type=bind,source=$dir,target=/src,readonly" -v "$NEW:/dst" "${COPY_ID[@]}" --entrypoint "$RSYNC_EP" "$IMAGE" \
+        -aH --numeric-ids --inplace --modify-window=-1 "$@" --exclude=/.dxe-persist-dir '--exclude=._*' /src/ /dst/
 }
 argv_manifest_reverse() { # VOLUME DIR
     printf '%s\n' run --rm --network none --user 0:0 --pull never \
-        --mount "type=bind,source=$2,target=/src,readonly" -v "$1:/dst:ro" --entrypoint bash "$IMAGE" -c '<SCRIPT>' \
+        --mount "type=bind,source=$2,target=/src,readonly" -v "$1:/dst:ro" "${VERIFY_ID[@]}" --entrypoint bash "$IMAGE" -c '<SCRIPT>' \
         dx-persist-manifest verify /src /dst
 }
 argv_inventory_dir() { # DIR

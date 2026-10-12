@@ -214,12 +214,19 @@ set -uo pipefail
 #            run --rm --network none --user 0:0 --pull never
 #            -v <VOLUME>:/src:ro
 #            --mount type=bind,source=<DIR>,target=/dst,readonly
+#            --name dxe-persist-verify-PID LABELS(persist-verify)   (WP6.4c)
 #            --entrypoint bash <DX_IMAGE> -c <MANIFEST> dx-persist-manifest verify /src /dst
 #          reverse (the rollback, WP6.5):
 #            run --rm --network none --user 0:0 --pull never
 #            --mount type=bind,source=<DIR>,target=/src,readonly
 #            -v <VOLUME>:/dst:ro
+#            --name dxe-persist-verify-PID LABELS(persist-verify)   (WP6.4c)
 #            --entrypoint bash <DX_IMAGE> -c <MANIFEST> dx-persist-manifest verify /src /dst
+#        (WP6.4c, tests/test_persist_copy_resume.sh B: PID is the DQ6
+#        profile id; LABELS(ROLE) is dx_runtime_docker_label_flags ROLE. The
+#        rsync copy run gains --name dxe-persist-copy-PID LABELS(persist-copy)
+#        and --inplace --modify-window=-1 the same way, and after the guest
+#        check the command makes two `ps -a` queries for those containers.)
 #        MANIFEST is the text of
 #        container/dx-nixos-26.05/scripts/lib/dx-persist-manifest.sh (D-8:
 #        the inline script of a one-off container; trailing newlines may be
@@ -553,6 +560,9 @@ case "${1:-} ${2:-}" in
         ev unlock
         /bin/rm -f "${P_LOCKDIR:?}/held"
         exit 0 ;;
+    "ps -a")
+        ev ps "$4"
+        exit 0 ;;
     "run "*) shift ;;
     *) ev other "$*"; echo "fake docker: unexpected call: $*" >&2; exit 99 ;;
 esac
@@ -562,7 +572,7 @@ entry=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --rm | -i) shift ;;
-        --network | --user | --pull) shift 2 ;;
+        --network | --user | --pull | --name | --label) shift 2 ;;
         -v)
             name="${2%%:*}"
             rest="${2#*:}"
@@ -666,7 +676,7 @@ case "$entry" in
             i=0
             while [ "$i" -lt "$((k - 2))" ]; do
                 case "${mapped[$i]}" in
-                    -aH | --numeric-ids | -A | -X) : ;;
+                    -aH | --numeric-ids | --inplace | --modify-window=-1 | -A | -X) : ;;
                     --exclude=/.dxe-persist-dir) ex1=yes ;;
                     "--exclude=._*") ex2=yes ;;
                     *) echo "rsync: unknown option ${mapped[$i]} (sim)" >&2; exit 1 ;;
@@ -1036,21 +1046,26 @@ argv_marker_set() { # ROOT GUEST EXPECTED SOURCE
         "type=bind,source=$1,target=/dxe-share" --entrypoint sh "$IMAGE" -c '<SCRIPT>' sh \
         /dxe-share "$2" "$3" "$4"
 }
+# WP6.4c: the copy and verify containers' names and DQ6 labels, before --entrypoint.
+COPY_ID=(--name "dxe-persist-copy-${NAS}__$GUEST" --label io.dxe.managed=true --label io.dxe.schema=1
+    --label "io.dxe.profile=${NAS}__$GUEST" --label io.dxe.role=persist-copy --label io.dxe.system=x86_64-linux)
+VERIFY_ID=(--name "dxe-persist-verify-${NAS}__$GUEST" --label io.dxe.managed=true --label io.dxe.schema=1
+    --label "io.dxe.profile=${NAS}__$GUEST" --label io.dxe.role=persist-verify --label io.dxe.system=x86_64-linux)
 argv_rsync() { # DIR [-A] [-X]
     local dir="$1"
     shift
     printf '%s\n' run --rm --network none --user 0:0 --pull never -v dx-fix-nix:/nix:ro \
-        -v dx-fix-persist:/src:ro --mount "type=bind,source=$dir,target=/dst" --entrypoint "$RSYNC_EP" "$IMAGE" \
-        -aH --numeric-ids "$@" --exclude=/.dxe-persist-dir '--exclude=._*' /src/ /dst/
+        -v dx-fix-persist:/src:ro --mount "type=bind,source=$dir,target=/dst" "${COPY_ID[@]}" --entrypoint "$RSYNC_EP" "$IMAGE" \
+        -aH --numeric-ids --inplace --modify-window=-1 "$@" --exclude=/.dxe-persist-dir '--exclude=._*' /src/ /dst/
 }
 argv_manifest() { # forward|reverse VOLUME DIR
     if [ "$1" = forward ]; then
         printf '%s\n' run --rm --network none --user 0:0 --pull never -v "$2:/src:ro" \
-            --mount "type=bind,source=$3,target=/dst,readonly" --entrypoint bash "$IMAGE" -c '<SCRIPT>' \
+            --mount "type=bind,source=$3,target=/dst,readonly" "${VERIFY_ID[@]}" --entrypoint bash "$IMAGE" -c '<SCRIPT>' \
             dx-persist-manifest verify /src /dst
     else
         printf '%s\n' run --rm --network none --user 0:0 --pull never \
-            --mount "type=bind,source=$3,target=/src,readonly" -v "$2:/dst:ro" --entrypoint bash "$IMAGE" -c '<SCRIPT>' \
+            --mount "type=bind,source=$3,target=/src,readonly" -v "$2:/dst:ro" "${VERIFY_ID[@]}" --entrypoint bash "$IMAGE" -c '<SCRIPT>' \
             dx-persist-manifest verify /src /dst
     fi
 }

@@ -601,8 +601,9 @@ dx_persist_inventory_main() {
 # directory <canonical root>/dxe/<guest>/persist. Every write into the share is
 # a root one-off container (establish, the rsync copy, the marker change); the
 # volume is only ever mounted read-only. Order: refusals that need no runtime
-# call; the lifecycle lock (held to the end); the guest must be stopped; the
-# read-only pre-flight (DQ6 checks, the probe, the inventory, rsync_check); the
+# call; the lifecycle lock (held to the end); the guest must be stopped; no copy
+# or verify container of an earlier run may be left (WP6.4c); the read-only
+# pre-flight (DQ6 checks, the probe, the inventory, rsync_check); the
 # destination with a `copying` marker; rsync; the manifest verify; the `ready`
 # marker; the D-7 record; the report. An interrupted run is resumed by running
 # the command again: a `copying` marker for this guest and volume is the only
@@ -792,11 +793,36 @@ dx_persist_guest_stopped() {
     return 1
 }
 
+# dx_persist_copy_containers_none COMMAND (WP6.4c; spec R35): no copy or
+# verify container of an earlier run may be left on the NAS, so a copy never
+# runs alongside one that is still writing, and a leftover is looked at before
+# it is replaced. The first container dx_runtime_host_copy_containers names
+# decides (the copy container before the verify container). Status 0 when
+# there is none; otherwise one Error line naming the fix (COMMAND is the
+# command to run again), status 1. Only the user stops or removes a
+# container: a running one is never to be removed while it may still write.
+dx_persist_copy_containers_none() {
+    local found name state where="${DX_REMOTE_HOST:-the NAS}"
+    if ! found="$(dx_runtime_host_copy_containers)"; then
+        echo "Error: cannot tell whether a copy or verify container of an earlier migration or rollback is still on $where (docker ps did not answer; see above); make sure the NAS and its Docker are reachable, then run $1 again. Nothing was changed." >&2
+        return 1
+    fi
+    [ -n "$found" ] || return 0
+    IFS=' ' read -r name state <<<"$found"
+    if [ "$state" = running ]; then
+        echo "Error: the container $name of an earlier migration or rollback is still running on $where; wait for it to finish, or stop it there with docker stop $name, then run $1 again. Nothing was changed." >&2
+    else
+        echo "Error: the container $name of an earlier migration or rollback is left on $where in state $state; inspect it there (docker inspect $name, docker logs $name), then remove it with docker rm $name and run $1 again. Nothing was changed." >&2
+    fi
+    return 1
+}
+
 # dx_persist_migrate_run: everything after the lock (the caller holds it).
 dx_persist_migrate_run() {
     local guest="$DX_CONTAINER_NAME" volume="$DX_PERSIST_VOLUME" report canon dest inv
     local flags=() created="" copying now ready t0 t1 t2 t3 rc=0
     dx_persist_guest_stopped dx-persist-migrate "Nothing was changed." || return 1
+    dx_persist_copy_containers_none dx-persist-migrate || return 1
     dx_runtime_volume_owned "$volume" "migrate from" || return 1
     dx_runtime_volume_owned "${DX_NIX_VOLUME:-}" "run rsync from" || return 1
     report="$(dx_runtime_host_dir_probe "$DX_PERSIST_HOST_ROOT" "$guest")" || report=""
@@ -885,7 +911,8 @@ dx_persist_migrate_main() {
 # and the profile's DX_PERSIST_VOLUME) is never named by any call, so the
 # rollback also works after it was deleted. Order: refusals that need no
 # runtime call; the lifecycle lock (held to the end); the guest must be
-# stopped; the read-only pre-flight (the probe and a `ready` marker for this
+# stopped; no copy or verify container of an earlier run may be left (WP6.4c);
+# the read-only pre-flight (the probe and a `ready` marker for this
 # guest, the new name against the marker and the runtime, the directory's
 # inventory, rsync_check); the new volume, created with this profile's DQ6
 # persist labels; rsync from the directory into it; the manifest verify; the
@@ -1061,6 +1088,7 @@ dx_persist_rollback_run() {
     local name="$1" guest="$DX_CONTAINER_NAME" state report canon dest src created migrated inv
     local flags=() rc=0
     dx_persist_guest_stopped dx-persist-rollback "Nothing was changed." || return 1
+    dx_persist_copy_containers_none dx-persist-rollback || return 1
     report="$(dx_runtime_host_dir_probe "$DX_PERSIST_HOST_ROOT" "$guest")" || report=""
     if ! dx_persist_rollback_decide "$guest" <<<"$report"; then
         dx_persist_rollback_refusal "${DX_MIGRATE_ROOT:-$DX_PERSIST_HOST_ROOT}/dxe/$guest/persist"

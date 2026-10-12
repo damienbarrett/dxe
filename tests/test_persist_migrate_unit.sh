@@ -275,6 +275,7 @@ state=absent
 marker=absent'
 stub_ops() {
     dx_runtime_container_state() { echo stopped; }
+    dx_runtime_host_copy_containers() { :; } # WP6.4c: no copy or verify container is left
     dx_runtime_volume_owned() { echo "owned $*" >>"$OPS"; }
     dx_runtime_host_dir_probe() { printf '%s\n' "$PROBE_ABSENT"; }
     dx_runtime_volume_inventory() { printf '%s\n' "$INV_OK"; }

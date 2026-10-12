@@ -142,6 +142,7 @@ xattr=0
 status=ok'
 stub_ops() {
     dx_runtime_container_state() { echo absent; }
+    dx_runtime_host_copy_containers() { :; } # WP6.4c: no copy or verify container is left
     dx_runtime_host_dir_probe() { printf '%s\nstate=nonempty\nmarker=present\n%s\n' "$R_OK" "$READY"; }
     dx_runtime_volume_state() { echo "state $1 DX_PERSIST_VOLUME=$DX_PERSIST_VOLUME" >>"$OPS"; echo absent; }
     dx_runtime_host_dir_inventory() { printf '%s\n' "$INV_OK"; }

@@ -708,10 +708,12 @@ not edit the profile until that report is printed. Two reasons:
 
 - The copy is verified against the volume as it was. A change made meanwhile
   either fails the verification or, worse, goes unnoticed. `rsync` decides what
-  to copy again, after an interruption, by size and modification time to the
-  second, so a file rewritten within the same second as its copy, at the same
-  size, looks unchanged to it (the same-second caveat). The verification
-  compares content checksums and would catch this, but do not rely on that.
+  to copy again, after an interruption, by size and modification time, and it
+  compares the time to the nanosecond: a file rewritten within the same second
+  as its copy is copied again (there is no same-second gap), but a change that
+  keeps both the size and the exact time looks unchanged to it. The
+  verification compares content checksums and would catch this, but do not
+  rely on that.
 - The downtime is the copy plus the verification plus the recreate; you choose
   the window.
 
@@ -861,11 +863,27 @@ delete it later, `dx-status` lists it as `kept volume:` and
 - **The copy was interrupted** (the SSH session dropped, Ctrl-C, the NAS
   rebooted). The command printed `the copy ... stopped before it finished` and
   exit 1. Run it again: it resumes into the same directory and verifies again.
+  The copy runs `rsync --inplace`, so an interrupted copy leaves no rsync temp file:
+  at most the file it was writing is left partial, under its own name, and the
+  rerun rewrites it. Nothing needs cleaning up by hand before the rerun.
 - **A hard kill** (for example `kill -9` of the controller process at the wrong
   moment) can leave one temporary file next to the marker, named
   `.dxe-persist-dir.XXXXXX` (six random characters). Look, then remove that one
   file yourself with the root-container commands in 11.8, and run the command
   again.
+- **A copy or verify container is left on the NAS.** The copy runs in a container
+  named `dxe-persist-copy-<profile id>` and the verification in one named
+  `dxe-persist-verify-<profile id>`, where the profile id is
+  `<DX_REMOTE_HOST>__<container name>`. They normally remove themselves when
+  they end. If the controller lost its connection or the NAS restarted, one can
+  be left behind, and dx-persist-migrate and dx-persist-rollback then refuse
+  (one `Error:` line naming the container) before they change anything. On the
+  NAS, `docker ps -a --filter name=dxe-persist-` shows it and its state. The
+  tooling never stops or removes these containers itself:
+  - If it is still running, an earlier copy or verification is still at work: wait for it to finish
+    (it then removes itself), or stop it with `docker stop <name>`; then run the command again.
+  - Otherwise (created, exited or dead), look at it first (`docker inspect <name>`,
+    `docker logs <name>`), then remove it with `docker rm <name>` and run the command again.
 - **Between the profile change and the recreate.** `dx-status` shows
   `configured:` and `actual:` differing and a `mismatch:` line; a start warns.
   Nothing is broken: `dx-recreate` finishes the switch.

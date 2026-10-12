@@ -389,3 +389,15 @@ dx_runtime_host_manifest_verify() { dx_runtime_dispatch host_manifest_verify "$@
 #       dx_runtime_volume_inventory's report (the same script) for a host
 #       DIRECTORY, bound read-only; its output and status pass through
 dx_runtime_host_dir_inventory() { dx_runtime_dispatch host_dir_inventory "$@"; }
+
+# Copy-container check (WP6.4c; spec R35). Read-only. The rsync copy and the
+# manifest verify of host_rsync and host_manifest_verify run in containers
+# named per profile (dxe-persist-copy-<profile id>, dxe-persist-verify-<profile
+# id>); this tells whether an earlier run left either one on the NAS. Apple has
+# no NAS: "unsupported".
+#   dx_runtime_host_copy_containers
+#       one "<container name> <state>" line per existing container (Docker's
+#       state word: running, created, exited, ...), the copy container
+#       first; nothing when neither exists. Non-zero, with nothing on stdout,
+#       when the runtime could not tell.
+dx_runtime_host_copy_containers() { dx_runtime_dispatch host_copy_containers "$@"; }
