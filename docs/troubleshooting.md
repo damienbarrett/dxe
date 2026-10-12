@@ -295,11 +295,11 @@ With `DX_PERSIST_STORAGE=host-path`, `dx-create-volumes`, `dx-start-container` a
 
 `<dir> is marked copying`. A migration into it from the persist volume has not finished. Resume it with `dx-persist-migrate`, or roll it back, before starting the guest. The guest never starts on a `copying` directory.
 
-`<dir> is marked retired`. A rollback returned the guest to the persist volume. Set `DX_PERSIST_STORAGE=volume` in the profile, or migrate again with `dx-persist-migrate` (into a new, empty directory).
+`<dir> is marked retired`. A rollback returned the guest to the persist volume. Set `DX_PERSIST_STORAGE=volume` in the profile, or move the retired directory aside first and then migrate again with `dx-persist-migrate` (into a new, empty directory).
 
-`<dir> is not empty and has no .dxe-persist-dir marker`. Existing data is never adopted automatically. Import it with `dx-persist-migrate`, or move it aside (`dx-persist-migrate` itself copies only into an empty directory, so it says to move the contents aside), then retry.
+`<dir> is not empty and has no .dxe-persist-dir marker`. Existing data is never adopted automatically. Move it aside (the directory, or its contents), then retry. If the data matters, keep it aside and import the persist volume with `dx-persist-migrate` into the now-empty directory (`dx-persist-migrate` itself refuses a non-empty unmarked directory; it copies only into an empty one).
 
-`<dir> is empty and unmarked, but <guest> has used other /persist storage before`. An empty directory is not proof of a new guest while the old volume or the record exists. To start fresh on purpose (new SSH host keys, no credentials; the old volume is kept), run `DX_PERSIST_FRESH_START=<container name> ./bin/dx-create-volumes` once; the value must equal `DX_CONTAINER_NAME`. Otherwise restore the data and do not use that variable. A fresh start is the one case where `dx-create-volumes` marks an existing empty directory.
+`<dir> is empty and unmarked, but <guest> has used other /persist storage before`. An empty directory is not proof of a new guest while the old volume or the record exists. To start fresh on purpose (new SSH host keys, no credentials; the old volume is kept), run `DX_PERSIST_FRESH_START=<container name> ./bin/dx-create-volumes` once; the value must equal `DX_CONTAINER_NAME`. Otherwise restore the data and do not use that variable. Two cases make `dx-create-volumes` mark an existing empty directory: finishing an interrupted create (when no old volume or record exists), and a fresh start (`DX_PERSIST_FRESH_START=<container name>`, only when the old volume or record exists).
 
 `the share root <root> does not look mounted: its sentinel file DX_PERSIST_HOST_MOUNT_SENTINEL=<name> is missing`. An unmounted or locked share can leave an empty mount point. Mount or unlock the share, then retry.
 
