@@ -708,10 +708,10 @@ not edit the profile until that report is printed. Two reasons:
 
 - The copy is verified against the volume as it was. A change made meanwhile
   either fails the verification or, worse, goes unnoticed. `rsync` decides what
-  to copy again, after an interruption, by size and modification time. It
-  compares the time to the nanosecond, so a file rewritten within the same
-  second as its copy is copied again (the same-second caveat, now handled), but
-  a change that keeps both the size and the time looks unchanged to it. The
+  to copy again, after an interruption, by size and modification time, and it
+  compares the time to the nanosecond: a file rewritten within the same second
+  as its copy is copied again (there is no same-second gap), but a change that
+  keeps both the size and the exact time looks unchanged to it. The
   verification compares content checksums and would catch this, but do not
   rely on that.
 - The downtime is the copy plus the verification plus the recreate; you choose
@@ -878,12 +878,12 @@ delete it later, `dx-status` lists it as `kept volume:` and
   they end. If the controller lost its connection or the NAS restarted, one can
   be left behind, and dx-persist-migrate and dx-persist-rollback then refuse
   (one `Error:` line naming the container) before they change anything. On the
-  NAS, `docker ps -a --filter name=dxe-persist-` shows it and its state:
-  - If it is still running, an earlier copy is still at work: wait for it to finish (it then removes itself),
-    or stop it with `docker stop <name>`; then run the command again.
+  NAS, `docker ps -a --filter name=dxe-persist-` shows it and its state. The
+  tooling never stops or removes these containers itself:
+  - If it is still running, an earlier copy or verification is still at work: wait for it to finish
+    (it then removes itself), or stop it with `docker stop <name>`; then run the command again.
   - Otherwise (created, exited or dead), look at it first (`docker inspect <name>`,
     `docker logs <name>`), then remove it with `docker rm <name>` and run the command again.
-  The tooling never stops or removes these containers itself.
 - **Between the profile change and the recreate.** `dx-status` shows
   `configured:` and `actual:` differing and a `mismatch:` line; a start warns.
   Nothing is broken: `dx-recreate` finishes the switch.
