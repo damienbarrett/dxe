@@ -47,7 +47,7 @@ set -uo pipefail
 #    TYPE    f regular file, d directory, l symlink, p FIFO, s socket,
 #            c character device, b block device
 #    MODE    permission bits incl. setuid/setgid/sticky, four octal digits:
-#            0644, 0700, 1777
+#            0644, 0700, 1777; "-" for a symlink (l), always (WP6.1b, below)
 #    OWNER   numeric uid:gid of the entry itself (lstat): 0:0, 30033:30033
 #    SIZE    byte size for f; "-" for every other type (directory sizes are
 #            filesystem-dependent; a symlink's is its target's length)
@@ -106,6 +106,35 @@ set -uo pipefail
 #                  counts difference lines before truncation. No other line.
 #  Examples: "changed sha256 ./plain.txt", "changed type,size,sha256
 #  ./special/fifo", "changed mode ./names/line\nbreak.txt".
+#
+#  Symlink permission bits (WP6.1b; the WP7.2 live trial, 2026-10-13). A
+#  symlink's mode is not part of the tree: Linux never consults it, cannot
+#  set it (lchmod is unsupported, so rsync cannot carry it), and filesystems
+#  disagree about it -- the same links read 0777 on the ext4 Docker volume
+#  and 0755 on the NAS's ZFS share, so every volume<->share migration or
+#  rollback of a tree holding symlinks failed verification on "changed
+#  mode". Therefore:
+#    - generate writes MODE "-" for every TYPE l record, whatever lstat says.
+#      A symlink's record is exactly
+#          l - UID:GID - MTIME - LINK TARGET PATH
+#      (LINK as for any non-directory; "-" unless the link itself is
+#      hard-linked). The format stays nine fields, so two trees that differ
+#      only in symlink modes give byte-identical manifests.
+#    - compare never compares MODE between two TYPE l records, whatever
+#      either holds ("-", 0777, 0755 -- a manifest from an older tool, or
+#      edited): such a pair whose other seven fields are equal is no
+#      difference at all, and "mode" never appears in FIELDS for it.
+#    - everything else about a symlink is still compared: TYPE, TARGET (exact
+#      bytes), OWNER (numeric, lstat) and MTIME (lstat, nanoseconds; rsync -a
+#      sets it with lutimes) -- and LINK.
+#    - MODE stays compared for every other pair, including a type change
+#      where only one side is a symlink ("-" against 0644 is a difference:
+#      "changed type,mode,size,sha256,target PATH"), and for f, d, p and s
+#      records exactly as before.
+#  Linux cannot give a symlink any mode but 0777, so this suite cannot build
+#  two real trees whose symlink modes differ (the NAS could). It pins the
+#  generate side through the exact records, and the compare side by editing
+#  the MODE field of generated records in the manifest text.
 #
 #  Platform: needs GNU find/stat/coreutils and a Bash >= 5 `bash` on PATH.
 #  Where they are missing (a stock macOS host: BSD tools, Bash 3.2) the
@@ -331,6 +360,10 @@ printf 'back\n' > "$SRC/$NAME_BS"
 printf 'not meta\n' > "$SRC/names/not._meta"
 ln "$SRC/$NAME_NL" "$SRC/names/z-link"
 ln -s "odd${TAB}target${NL}x" "$SRC/links/odd-target"
+# WP6.1b: the live seed's other symlink shapes -- one to a directory, and an
+# absolute one (dangling here, as it would be outside the guest).
+ln -s ../nested "$SRC/links/to-dir"
+ln -s /dxe-fixture-absolute/no-such-target "$SRC/links/absolute"
 mkdir "$SRC/sticky"
 mkdir "$SRC/nested/._meta-dir"
 printf 'meta child\n' > "$SRC/nested/._meta-dir/child"
@@ -366,6 +399,8 @@ pin_mtime "$NAME_BS" 1700000017.017000017
 pin_mtime names/not._meta 1700000018.018000018
 pin_mtime sticky 1700000019.019000019
 pin_mtime .dxe-persist-dir.bak 1700000022.022000022
+pin_mtime links/to-dir 1700000023.023000023
+pin_mtime links/absolute 1700000024.024000024
 IS_ROOT=no
 if [ "$(id -u)" -eq 0 ]; then
     IS_ROOT=yes
@@ -443,12 +478,16 @@ generate_cases() {
         "$(rec f 0644 "$O" 8 1700000006.600000006 "$b_sha" ./links/b-one - ./links/b-one)"
     assert_record "hard-link group B: nested/b-two" "$MA" \
         "$(rec f 0644 "$O" 8 1700000006.600000006 "$b_sha" ./links/b-one - ./nested/b-two)"
-    assert_record "symlink: its own mode, owner and mtime, size -, target as written" "$MA" \
-        "$(rec l 0777 "$O" - 1700000007.700000007 - - ../plain.txt ./links/to-plain)"
-    assert_record "dangling symlink" "$MA" \
-        "$(rec l 0777 "$O" - 1700000008.800000008 - - no-such-target ./links/dangling)"
-    assert_record "a symlink target with a TAB and a newline is escaped" "$MA" \
-        "$(rec l 0777 "$O" - 1700000009.900000009 - - 'odd\ttarget\nx' ./links/odd-target)"
+    assert_record "symlink: MODE - (WP6.1b), its own owner and mtime, size -, target as written" "$MA" \
+        "$(rec l - "$O" - 1700000007.700000007 - - ../plain.txt ./links/to-plain)"
+    assert_record "dangling symlink: MODE -" "$MA" \
+        "$(rec l - "$O" - 1700000008.800000008 - - no-such-target ./links/dangling)"
+    assert_record "a symlink target with a TAB and a newline is escaped; MODE -" "$MA" \
+        "$(rec l - "$O" - 1700000009.900000009 - - 'odd\ttarget\nx' ./links/odd-target)"
+    assert_record "a symlink to a directory is a symlink record (never followed); MODE -" "$MA" \
+        "$(rec l - "$O" - 1700000023.023000023 - - ../nested ./links/to-dir)"
+    assert_record "an absolute (dangling) symlink keeps its target byte for byte; MODE -" "$MA" \
+        "$(rec l - "$O" - 1700000024.024000024 - - /dxe-fixture-absolute/no-such-target ./links/absolute)"
     assert_record "FIFO" "$MA" \
         "$(rec p 0640 "$O" - 1700000010.010000010 - - - ./special/fifo)"
     assert_record "socket" "$MA" \
@@ -615,6 +654,152 @@ owner_cases() {
     expect_compare "group (gid) change" "$b" 1 "$(differ_out 1 "$N" 'changed owner ./plain.txt')"
 }
 owner_cases
+
+# ---------------------------------------------------------------------------
+test_section "persist manifest: symlink permission bits are not compared (WP6.1b)"
+
+# The WP7.2 live trial (2026-10-13) verified a resumed volume -> share copy
+# and got "changed mode" on exactly the seed's four symlinks: 0777 on the
+# ext4 volume, 0755 on the ZFS share, everything else about them equal.
+# Linux cannot make that difference here, so the compare side is pinned on
+# manifest text: generated records with their MODE field edited.
+
+# MANIFEST_EDITOR IN OUT SELECTOR N=VALUE...: writes manifest IN to OUT with
+# field N (1-8) of every selected record set to VALUE. SELECTOR is "type:T"
+# (every record of TYPE T) or "path:P" (the record whose raw PATH is P).
+# Prints how many records it edited; status 3, OUT not written, for none.
+MANIFEST_EDITOR='
+    my ($in, $out, $sel, @sets) = @ARGV;
+    open(my $fh, "<", $in) or exit 2;
+    local $/; my $d = <$fh>; close $fh;
+    exit 2 unless defined $d && length($d) && substr($d, -1) eq "\0";
+    chop $d;
+    my @r = split(/\0/, $d, -1);
+    my ($kind, $want) = split(/:/, $sel, 2);
+    my $n = 0;
+    for my $rec (@r) {
+        my @f = split(/\t/, $rec, 9);
+        next unless @f == 9;
+        next unless ($kind eq "type" && $f[0] eq $want) || ($kind eq "path" && $f[8] eq $want);
+        for my $s (@sets) { my ($i, $v) = split(/=/, $s, 2); $f[$i - 1] = $v; }
+        $rec = join("\t", @f);
+        $n++;
+    }
+    exit 3 unless $n;
+    open(my $oh, ">", $out) or exit 2;
+    print $oh map { "$_\0" } @r;
+    close $oh or exit 2;
+    print $n;'
+manifest_edit() { perl -e "$MANIFEST_EDITOR" "$@"; }
+
+# expect_text DESC MANIFEST_A MANIFEST_B STATUS STDOUT: compare two manifest
+# files as they are (no generate); checks the exact status and stdout.
+expect_text() {
+    local out rc
+    out="$(bash "$TOOL" compare "$2" "$3" 2>"$MAN/text.err")"
+    rc=$?
+    assert_eq "$1: compare exits $4" "$4" "$rc"
+    assert_eq "$1: compare output" "$5" "$out"
+}
+
+symlink_mode_text_cases() {
+    local n m755="$MAN/l-0755.manifest" m777="$MAN/l-0777.manifest" e="$MAN/l-edit"
+    if ! manifest_read ok "$MA"; then
+        test_fail "WP6.1b text cases: the source manifest was generated"
+        return 0
+    fi
+    n="$(manifest_edit "$MA" "$m755" type:l 2=0755)" || n="none"
+    assert_eq "the source manifest holds five symlink records (relative, dangling, odd target, to a directory, absolute)" "5" "$n"
+    manifest_edit "$MA" "$m777" type:l 2=0777 >/dev/null || : > "$m777"
+
+    expect_text "every symlink's MODE 0755 in B (as on the ZFS share), A as generated" "$MA" "$m755" 0 \
+        "Manifests match: entries=$N"
+    expect_text "the same with the sides swapped (a rollback reads the share as A)" "$m755" "$MA" 0 \
+        "Manifests match: entries=$N"
+    expect_text "0777 (ext4) against 0755 (ZFS) on every symlink, as the trial's two trees held them" "$m777" "$m755" 0 \
+        "Manifests match: entries=$N"
+
+    # Each other field of a symlink still counts, and "mode" is never named
+    # beside it, though B's symlink modes all differ from A's.
+    manifest_edit "$m755" "$e.target" path:./links/absolute 8=/dxe-fixture-absolute/other-target >/dev/null || : > "$e.target"
+    expect_text "a symlink's TARGET still counts (mode never named)" "$MA" "$e.target" 1 \
+        "$(differ_out 1 "$N" 'changed target ./links/absolute')"
+    manifest_edit "$m755" "$e.owner" path:./links/dangling 3=30033:30033 >/dev/null || : > "$e.owner"
+    expect_text "a symlink's OWNER still counts (mode never named)" "$MA" "$e.owner" 1 \
+        "$(differ_out 1 "$N" 'changed owner ./links/dangling')"
+    manifest_edit "$m755" "$e.mtime" path:./links/to-dir 5=1700000023.023000024 >/dev/null || : > "$e.mtime"
+    expect_text "a symlink's MTIME still counts, to the nanosecond (mode never named)" "$MA" "$e.mtime" 1 \
+        "$(differ_out 1 "$N" 'changed mtime ./links/to-dir')"
+    manifest_edit "$m755" "$e.all" path:./links/to-plain 3=30033:30033 5=1700000007.700000008 8=../empty-file >/dev/null || : > "$e.all"
+    expect_text "owner, mtime and target of one symlink: exactly those three fields, in record order" "$MA" "$e.all" 1 \
+        "$(differ_out 1 "$N" 'changed owner,mtime,target ./links/to-plain')"
+
+    # MODE still counts for every other type, ROOT included, alongside
+    # symlink-mode noise that must not be counted (D stays 5).
+    manifest_edit "$m755" "$e.1" path:. 2=0700 >/dev/null || : > "$e.1"
+    manifest_edit "$e.1" "$e.2" path:./plain.txt 2=0755 >/dev/null || : > "$e.2"
+    manifest_edit "$e.2" "$e.3" path:./private-0700 2=0755 >/dev/null || : > "$e.3"
+    manifest_edit "$e.3" "$e.4" path:./special/fifo 2=0755 >/dev/null || : > "$e.4"
+    manifest_edit "$e.4" "$e.5" path:./special/sock 2=0755 >/dev/null || : > "$e.5"
+    expect_text "MODE still counts for ROOT, a file, a directory, a FIFO and a socket; the symlink modes add nothing" "$MA" "$e.5" 1 \
+        "$(differ_out 5 "$N" 'changed mode .' 'changed mode ./plain.txt' 'changed mode ./private-0700' \
+            'changed mode ./special/fifo' 'changed mode ./special/sock')"
+}
+symlink_mode_text_cases
+
+# On real trees: the symlink fields that are still compared, through
+# generate and compare (and the type change that makes MODE count again).
+symlink_tree_cases() {
+    local b
+    b="$(fx_copy l-absolute)" || { test_fail "l-absolute: fixture copy"; return 0; }
+    ln -sfn /dxe-fixture-absolute/other-target "$b/links/absolute"
+    restore_mtime "$b" links/absolute links
+    expect_compare "an absolute symlink pointed elsewhere" "$b" 1 \
+        "$(differ_out 1 "$N" 'changed target ./links/absolute')"
+
+    b="$(fx_copy l-dangling)" || { test_fail "l-dangling: fixture copy"; return 0; }
+    ln -sfn no-such-target-2 "$b/links/dangling"
+    restore_mtime "$b" links/dangling links
+    expect_compare "a dangling symlink pointed at another missing name" "$b" 1 \
+        "$(differ_out 1 "$N" 'changed target ./links/dangling')"
+
+    b="$(fx_copy l-to-dir)" || { test_fail "l-to-dir: fixture copy"; return 0; }
+    ln -sfn ../nested/a "$b/links/to-dir"
+    restore_mtime "$b" links/to-dir links
+    expect_compare "a symlink to a directory pointed at another directory" "$b" 1 \
+        "$(differ_out 1 "$N" 'changed target ./links/to-dir')"
+
+    b="$(fx_copy l-mtime)" || { test_fail "l-mtime: fixture copy"; return 0; }
+    touch -h -m -d @1700000023.023000024 -- "$b/links/to-dir"
+    expect_compare "a symlink's own mtime off by one nanosecond" "$b" 1 \
+        "$(differ_out 1 "$N" 'changed mtime ./links/to-dir')"
+
+    b="$(fx_copy l-type)" || { test_fail "l-type: fixture copy"; return 0; }
+    rm -f -- "$b/links/to-dir"
+    printf 'now a file\n' > "$b/links/to-dir"
+    chmod 0644 "$b/links/to-dir"
+    restore_mtime "$b" links/to-dir links
+    expect_compare "a symlink replaced by a regular file: MODE counts when only one side is a symlink" "$b" 1 \
+        "$(differ_out 1 "$N" 'changed type,mode,size,sha256,target ./links/to-dir')"
+}
+symlink_tree_cases
+
+symlink_owner_cases() {
+    local b
+    if [ "$IS_ROOT" != yes ]; then
+        test_skip "symlink owner changes need root to chown -h (the Linux coverage container runs as root)"
+        return 0
+    fi
+    b="$(fx_copy l-owner-uid)" || { test_fail "l-owner-uid: fixture copy"; return 0; }
+    chown -h 30033 "$b/links/absolute"
+    expect_compare "a symlink's own owner (uid, lstat) still counts" "$b" 1 \
+        "$(differ_out 1 "$N" 'changed owner ./links/absolute')"
+    b="$(fx_copy l-owner-gid)" || { test_fail "l-owner-gid: fixture copy"; return 0; }
+    chown -h :30033 "$b/links/dangling"
+    expect_compare "a symlink's own group (gid, lstat) still counts" "$b" 1 \
+        "$(differ_out 1 "$N" 'changed owner ./links/dangling')"
+}
+symlink_owner_cases
 
 # ---------------------------------------------------------------------------
 test_section "persist manifest: awkward names"

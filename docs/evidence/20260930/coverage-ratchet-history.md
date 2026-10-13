@@ -1968,3 +1968,9 @@ comment (WP6.4b, recorded in full in the "WP6.4b" section above) moved here
 verbatim:
 
     # 2026-10-12 WP6.4b: floor 5658 -> 5661 (measured, 100% covered; +3: the migration's guest re-check and its shared helper in dx-persist-dir.sh, +2; marker_set's canonical-root refusal, +1; this run also confirms the provisional 5658/2628 after the WP6.4 merge); ceiling unchanged at 2628 (measured 2628, no entry-point line). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+To keep `tests/coverage/ratchet.env` within 10 lines, its oldest dated
+comment (WP6.5, recorded in full in the "WP6.5" section above) moved here
+verbatim:
+
+    # 2026-10-12 WP6.5: floor 5591 -> 5723 (measured, 100% covered; dx_persist_rollback_main and its helpers, the shared inventory check, guest-stopped and ._* report helpers, host_dir_inventory and host_rsync's bootstrap refusal); ceiling 2627 -> 2632 (+5 executable lines in the new entry point bin/dx-persist-rollback: set -euo pipefail, SCRIPT_DIR, source dx-lib.sh, the persist_rollback_main definition, the _main call guard). History: docs/evidence/20260930/coverage-ratchet-history.md.
