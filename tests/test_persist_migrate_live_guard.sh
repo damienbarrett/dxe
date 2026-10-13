@@ -618,8 +618,10 @@ check_fields() {
 }
 S="$GUEST/dxe-live-seed"
 check_fields ./fifo 1,4,6,7,8,9 "p|-|1|-|-|-"
-check_fields ./dangling 1,4,7,8,9 "l|14|-|-|does-not-exist"
-check_fields ./link-to-dir 1,9 "l|nested"
+check_fields ./dangling 1,2,4,7,8,9 "l|-|14|-|-|does-not-exist"
+check_fields ./link-to-dir 1,2,9 "l|-|nested"
+check_fields ./link-to-a 1,2,9 "l|-|hardlink-a"
+check_fields ./absolute-link 1,2,9 "l|-|$S/app-state.txt"
 check_fields ./hardlink-a 1,4,6,7,8 "f|6|3|$(crc_of "$S/hardlink-a")|./hardlink-a"
 check_fields ./hardlink-b 6,8 "3|./hardlink-a"
 check_fields ./nested/hardlink-c 6,8 "3|./hardlink-a"
@@ -641,6 +643,24 @@ if [ "$(record_of "$LIST1" ./run.sh | awk -F'\t' '{ print $2 }')" = 755 ] && [ -
     && [ "$(record_of "$LIST1" ./run.sh | awk -F'\t' '{ print $3 }')" = "$(stat -c %u:%g "$S/run.sh" 2>/dev/null || stat -f %u:%g "$S/run.sh")" ]; then
     test_pass "LIST records the numeric owner and the mtime in seconds"
 else test_fail "LIST records the numeric owner and the mtime ($(record_of "$LIST1" ./run.sh))"; fi
+# WP6.1b: a symlink's own mode is no part of the listing. Linux cannot set it
+# (the same links read 777 on the ext4 volume and 755 on the NAS's ZFS
+# share, which failed the 2026-10-13 trial); macOS can (chmod -h), so there
+# the listing must not change when it does.
+lmode() { stat -c %a -- "$1" 2>/dev/null || stat -f %Lp -- "$1"; }
+LMODE_BEFORE="$(lmode "$S/dangling")"
+if chmod -h 0700 "$S/dangling" "$S/absolute-link" 2>/dev/null && [ "$(lmode "$S/dangling")" = 700 ] && [ "$LMODE_BEFORE" != 700 ]; then
+    LIST3="$(list_run "$SCRATCH/guest" persist/dxe-live-seed)"
+    chmod -h "$LMODE_BEFORE" "$S/dangling" "$S/absolute-link"
+    if [ "$LIST3" = "$LIST1" ]; then
+        test_pass "LIST is unchanged when two symlinks' own modes change ($LMODE_BEFORE -> 700): a symlink's MODE is -"
+    else
+        test_fail "LIST is unchanged when two symlinks' own modes change ($LMODE_BEFORE -> 700)"
+        diff <(printf '%s\n' "$LIST1") <(printf '%s\n' "$LIST3") | sed -n '1,10p' | sed 's/^/    /'
+    fi
+else
+    echo "  (LIST symlink-mode case: this system cannot give a symlink a mode of its own (Linux), so it is not asserted here; MODE - is pinned above)"
+fi
 
 # The listing helpers the suite compares with.
 L="$SCRATCH/listing"

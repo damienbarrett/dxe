@@ -361,7 +361,11 @@
 #     without ".."): a manifest-like listing, one TAB-separated record per
 #     entry in bytewise path order, then `end<TAB><count>`:
 #       TYPE MODE OWNER SIZE MTIME NLINK CKSUM GROUP TARGET PATH
-#     TYPE f d l p s b c; MODE and OWNER as stat prints them (numeric);
+#     TYPE f d l p s b c; MODE as stat prints it, but "-" for a symlink
+#     (WP6.1b: Linux cannot set a symlink's mode and filesystems disagree on
+#     it -- 777 on the ext4 volume, 755 on the NAS's ZFS share -- so neither
+#     the manifest nor this listing compares it); OWNER numeric, as stat
+#     prints it;
 #     SIZE for f and l, else -; MTIME whole seconds; NLINK for non-directories,
 #     else -; CKSUM the POSIX cksum CRC for f, else -; GROUP for a
 #     non-directory sharing its inode with an earlier entry of the listing, the
@@ -491,14 +495,15 @@ PERSIST_MIGRATE_LIVE_SCRIPT_LIST='export LC_ALL=C; set -o pipefail; '\
 'find . -print0 | sort -z | { seen=$nl; n=0; while IFS= read -r -d "" p; do '\
 'if [ -L "$p" ]; then t=l; elif [ -d "$p" ]; then t=d; elif [ -f "$p" ]; then t=f; elif [ -p "$p" ]; then t=p; elif [ -S "$p" ]; then t=s; elif [ -b "$p" ]; then t=b; elif [ -c "$p" ]; then t=c; else echo "dxe-live-list: unknown type: $p" >&2; exit 1; fi; '\
 's=$(st "$p") || exit 1; set -- $s; [ "$#" -eq 6 ] || exit 1; '\
-'sz=-; lk=-; ck=-; gr=-; tg=-; '\
+'md=$1; sz=-; lk=-; ck=-; gr=-; tg=-; '\
 'case "$t" in f | l) sz=$3 ;; esac; '\
+'[ "$t" != l ] || md=-; '\
 '[ "$t" = d ] || lk=$5; '\
 'if [ "$t" = f ]; then ck=$(cksum < "$p") || exit 1; ck=${ck%% *}; fi; '\
 'if [ "$t" = l ]; then tg=$(readlink -- "$p") || exit 1; esc "$tg"; tg=$E; fi; '\
 'esc "$p"; '\
 'if [ "$t" != d ] && [ "$5" -gt 1 ]; then case "$seen" in *"$nl$6$tb"*) r=${seen#*"$nl$6$tb"}; gr=${r%%"$nl"*} ;; *) seen="$seen$6$tb$E$nl"; gr=$E ;; esac; fi; '\
-'printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$t" "$1" "$2" "$sz" "$4" "$lk" "$ck" "$gr" "$tg" "$E"; n=$((n + 1)); '\
+'printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$t" "$md" "$2" "$sz" "$4" "$lk" "$ck" "$gr" "$tg" "$E"; n=$((n + 1)); '\
 'done; printf "end\t%s\n" "$n"; } || exit 1'
 
 PERSIST_MIGRATE_LIVE_SCRIPT_RETIRED_ASIDE="$PERSIST_LIVE_SCRIPT_PRELUDE"\
