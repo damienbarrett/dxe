@@ -381,7 +381,9 @@ hand-back there warns and never fails the boot. Running GC as root instead is no
 re-owns the store's state); `chown` is not Nix. This heals an existing guest
 at its next `dx-gc` or `dx-reclaim`, with no restart and no bootstrap sync.
 The bootstrap applies the same rule after each of its own root Nix calls
-(`run_root_nix` calls `hand_back_root_nix_paths`), so the essentials closure
+(`run_root_nix` calls `hand_back_root_nix_paths`; that includes the
+best-effort upgrade that brings optional tools such as nix-ld and rsync into
+an existing guest's essentials), so the essentials closure
 belongs to the store owner from the moment it exists. Residual: a root Nix
 process running during the hand-back gives its own new output to root when
 it finishes; GC then fails as before until the next hand-back.

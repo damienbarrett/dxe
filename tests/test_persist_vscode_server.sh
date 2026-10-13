@@ -1048,6 +1048,7 @@ oe_run() {
     : > "$dir/present"
     for tool in $present; do printf '%s\n' "$tool" >> "$dir/present"; done
     : > "$dir/nix.log"
+    : > "$dir/handback.log"
     rm -f "$dir/upgraded" "$dir/continued"
     (
         set -euo pipefail
@@ -1065,6 +1066,12 @@ oe_run() {
         essentials_profile_path() {
             if [ -e "$dir/upgraded" ]; then printf '%s\n' /es/new/bin; else printf '%s\n' /es/old/bin; fi
         }
+        # int-4 (main's fix/gc-rootpaths): run_root_nix hands root-owned store
+        # paths back after every root nix call, with the guest's GNU stat,
+        # find and chown (which this case's `command -v` stub hides);
+        # tests/test_bootstrap_nix_rootpaths*.sh hold that behaviour. Record
+        # each hand-back here instead of running it on this fixture.
+        hand_back_root_nix_paths() { printf 'hand-back\n' >> "$dir/handback.log"; }
         nix() {
             printf 'nix %s\n' "$*" >> "$dir/nix.log"
             case "$*" in
@@ -1109,6 +1116,7 @@ eq "optional upgrade: exactly two nix calls (remove, then install)" 2 "$(line_co
 has "optional upgrade: the old bootstrap-essentials element is removed first" "$(sed -n 1p "$C/nix.log")" "$PROFILE_REMOVE"
 has "optional upgrade: then the current bootstrap-essentials output is installed" "$(sed -n 2p "$C/nix.log")" "$PROFILE_INSTALL"
 has "optional upgrade: the install names bootstrap-essentials" "$(sed -n 2p "$C/nix.log")" "#bootstrap-essentials"
+eq "optional upgrade: both root nix calls run through run_root_nix (one hand-back each)" 2 "$(line_count "$C/handback.log")"
 eq "optional upgrade: exactly one 'Upgrading the essentials profile' line" 1 "$(upgrading_lines "$OE_OUT" | grep -c .)"
 has "optional upgrade: the line says the tool is optional" "$(upgrading_lines "$OE_OUT")" "optional"
 has "optional upgrade: the line names 'nix-ld'" "$(upgrading_lines "$OE_OUT")" "'nix-ld'"
@@ -1123,6 +1131,7 @@ oe_run "$C" useradd bare 1
 eq "failed optional upgrade: status 0 (VS Code support is optional)" 0 "$OE_RC"
 eq "failed optional upgrade: the boot continues under errexit" yes "$OE_CONTINUED"
 has "failed optional upgrade: upgrade_essential_packages rolled the profile back" "$OE_NIX" "$PROFILE_ROLLBACK"
+eq "failed optional upgrade: all three root nix calls run through run_root_nix (one hand-back each)" 3 "$(line_count "$C/handback.log")"
 eq "failed optional upgrade: exactly one Warning line names nix-ld" 1 \
     "$(grep -F 'Warning:' <<<"$OE_ERR" | grep -Fc 'nix-ld')"
 lacks "failed optional upgrade: no Error line" "$(grep '^Error:' <<<"$OE_OUT
@@ -1148,6 +1157,7 @@ C="$(mktemp -d "$WORK/oe-present.XXXXXX")"
 oe_run "$C" useradd nixld
 eq "nothing missing: status 0" 0 "$OE_RC"
 eq "nothing missing: no nix call at all" "" "$OE_NIX"
+eq "nothing missing: no hand-back" 0 "$(line_count "$C/handback.log")"
 eq "nothing missing: no upgrade line" "" "$(upgrading_lines "$OE_OUT")"
 eq "nothing missing: nothing on stderr" "" "$OE_ERR"
 case "$OE_PATH" in

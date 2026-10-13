@@ -9,6 +9,8 @@ Guest filesystem usage:
 ------------------------------------------------------------
 Running Nix garbage collection in guest...
 ------------------------------------------------------------
+Warning: could not clear stale Nix temporary roots files (the guest reported no count); garbage collection runs anyway.
+Warning: could not hand root-owned Nix paths back to the store owner (the guest reported no count); garbage collection runs anyway.
 ------------------------------------------------------------
 Skipping filesystem trim: not supported against a Docker volume under this runtime (qnap-dxe-plan.md DQ4).
 ------------------------------------------------------------

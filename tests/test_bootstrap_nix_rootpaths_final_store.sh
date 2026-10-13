@@ -148,8 +148,10 @@ rp_write_chown_stub "$STUB_DIR"
 RP_REAL_CHOWN="$(command -v chown)"
 export RP_REAL_CHOWN
 
-# The documented phases bootstrap_phases runs, in order (bootstrap.sh).
-FS_PHASES="configure_single_user_nix install_essentials link_system_bash capture_nix_image_default_profile prepare_nix_volume materialize_auth_files create_user populate_prepared_nix_volume verify_remount_prerequisites nix_restore_image_default_profile ensure_essentials_valid publish_nix_image_store_identity configure_release_identity setup_persist configure_ssh configure_guest verify_guest_tools configure_timezone"
+# The documented phases bootstrap_phases runs, in order (bootstrap.sh),
+# including WP1.4's configure_vscode_server_support right after
+# configure_ssh (merged from feat/persist-host-dir, int-4).
+FS_PHASES="configure_single_user_nix install_essentials link_system_bash capture_nix_image_default_profile prepare_nix_volume materialize_auth_files create_user populate_prepared_nix_volume verify_remount_prerequisites nix_restore_image_default_profile ensure_essentials_valid publish_nix_image_store_identity configure_release_identity setup_persist configure_ssh configure_vscode_server_support configure_guest verify_guest_tools configure_timezone"
 
 # The event log a boot must leave: every phase, and the hand-back exactly once
 # between ensure_essentials_valid and publish_nix_image_store_identity.
@@ -169,6 +171,7 @@ phase publish_nix_image_store_identity
 phase configure_release_identity
 phase setup_persist
 phase configure_ssh
+phase configure_vscode_server_support
 phase configure_guest
 phase verify_guest_tools
 phase configure_timezone"
