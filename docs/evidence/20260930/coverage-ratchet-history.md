@@ -2133,8 +2133,7 @@ branch fast-forwards onto `main`. The two ratchets moved independently from
 the shared base `4e9ec4c` (measured 4450 / 2638): `feat` to 5854 / 2633,
 `main` to 4543 / 2644 (+93 in scope, +6 exempt lines). The merge commit
 keeps the larger floor (5854, `feat`'s) and the larger ceiling (2644,
-`main`'s) as provisional values; the measured values follow in this
-section once the merged head has been measured.
+`main`'s) as provisional values; the measured values follow below.
 
 `ratchet.env` keeps one dated line for the integration. To stay within 10
 lines it drops `main`'s dated lines (each already recorded in full above:
@@ -2150,3 +2149,23 @@ lines that left `ratchet.env`, verbatim:
     # 2026-10-13 floor 3935 -> 4543, ceiling 2638 -> 2643 (fix/nix-gc-bundle: fix/gc-temproots + fix/gc-rootpaths + fix/dx-ai-gcroot): measured 4543 at 100% (+93 over main: bin/lib/dx-nix-gc.sh 24, bootstrap/common.sh run_root_nix and hand_back_root_nix_paths +31, scripts/lib/dx-ai-generation.sh +38); +5 irreducible exempt lines: bin/dx-gc and bin/dx-reclaim each one `source` of lib/dx-nix-gc.sh and one dx_nix_gc_prepare call, scripts/dx-ai.sh one dx_ai_reconcile_roots call. See docs/evidence/20260930/coverage-ratchet-history.md.
     # 2026-10-13 gc-rootpaths-remount: ceiling 2643 -> 2644 (+1 irreducible exempt line: bootstrap.sh's one hand_back_root_nix_paths call in bootstrap_phases); floor unchanged at 4543 (no in-scope line added; the hand-back itself is already counted). See docs/evidence/20260930/coverage-ratchet-history.md.
     # 2026-10-12 WP6.5b: floor 5793 -> 5800 (measured, 100% covered; +8 in dx-persist-dir.sh: the rollback's guest re-check, its kept-volume line and the fill helper; the merged base measures 5792, one under the provisional 5793); ceiling unchanged at 2633 (measured 2633, no entry-point line). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+Measured on the merged head `35a2289` (the merge plus the test-only
+`Green(int-4)` adaptations, which add no production line) with
+`tests/run-coverage-linux.sh` (Apple `container` as the provider):
+`covered=100% scope_exec_lines=5947 unscoped_prod_exec_lines=2639`.
+
+- `scope_exec_lines_floor` 5854 -> 5947: `feat`'s 5854 plus `main`'s +93,
+  exactly the GC fixes' in-scope lines (`bin/lib/dx-nix-gc.sh` 24,
+  `bootstrap/common.sh` `run_root_nix` and `hand_back_root_nix_paths` 31,
+  `scripts/lib/dx-ai-generation.sh` 38). No line was lost on either side.
+- `unscoped_prod_exec_lines_ceiling` 2639 (provisional 2644; `feat` 2633 +
+  `main`'s 6 irreducible exempt lines: `bin/dx-gc` and `bin/dx-reclaim` each
+  one `source` of `lib/dx-nix-gc.sh` and one `dx_nix_gc_prepare` call, the
+  `dx_ai_reconcile_roots` call in `scripts/dx-ai.sh`, and `bootstrap.sh`'s
+  `hand_back_root_nix_paths` call). No exempt line comes from the merge
+  itself.
+
+The provisional int-4 line the merge commit wrote, superseded, verbatim:
+
+    # 2026-10-13 int-4 (merge of main 557d645; provisional until measured): floor 5854 (feat's; main's own 4543 is below it), ceiling 2644 (main's; feat measured 2633 before main's +6 exempt GC lines). main's dated lines and feat's WP6.5b line are quoted verbatim in docs/evidence/20260930/coverage-ratchet-history.md (int-4).
