@@ -128,6 +128,28 @@ five-tool inventory: Codex, Gemini, Claude, `agy`, and `herdr`). A newly
 published generation must still contain the complete current optional
 bundle, including OpenCode.
 
+Each retained AI generation is protected from Nix garbage collection
+(`dx-reclaim`'s `nix-collect-garbage -d`) by a GC root at its final path,
+`generations/<id>/profile-1-link`. `dx-ai` builds the profile in a
+`generations/.staging-<id>` stage, and the root Nix registers during that
+build names the stage path, which no longer exists once the stage is
+renamed into place. So `dx-ai` registers the root again at the final path
+(`nix-store --add-root generations/<id>/profile-1-link --indirect -r <store
+path>`) after the rename and before `current` moves. If that fails, the
+publish fails with `Error: could not register a GC root for AI generation
+<id>`, the new generation is removed, and `current` is left unchanged.
+
+Every `dx-ai` run, `--recover` included, starts under its lock by removing
+any `.staging-*` stage a killed run left behind and re-registering the roots
+of `current` and the predecessor it records. A guest whose generations were
+published without those roots is healed by its next `dx-ai` or
+`dx-ai --recover`, with no rebuild. If a generation's profile has already
+been collected, the run prints `Warning: could not register a GC root for AI
+generation <id>` and carries on: an ordinary `dx-ai` then builds and
+publishes a replacement. `dx-ai` never runs a garbage collection and never
+edits `/nix/var/nix/gcroots`. The stale link a renamed stage leaves there
+is removed by Nix's next collection.
+
 Connect to Herdr from the host using:
 
 ```bash

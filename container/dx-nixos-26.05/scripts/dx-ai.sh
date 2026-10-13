@@ -154,13 +154,16 @@ dx_ai_run_locked() {
 }
 
 # The critical section of a normal (non-recover) dx-ai run, run under
-# dx_ai_run_locked's lock: stage a fresh generation from the published
+# dx_ai_run_locked's lock: reconcile GC roots (scripts/lib/
+# dx-ai-generation.sh; before staging, so the sweep of abandoned stages can
+# never meet this run's own), stage a fresh generation from the published
 # bootstrap, refresh its lock file, refuse a binary-cache miss, build the AI
 # tools profile, and publish it. $stage is intentionally not `local` here --
 # see dx_ai_run_locked above -- and is always cleared before returning,
 # whether this succeeds or fails.
 dx_ai_main_update() {
     local published="$1" state="$2" id="$3" system="$4" result=0
+    dx_ai_reconcile_roots "$state"
     stage="$(dx_ai_stage_generation "$published" "$state" "$id")" || return 1
     dx_ai_update_flake "$stage" "$system" || result=$?
     [ "$result" -ne 0 ] || dx_ai_ensure_cached "$stage" "$state" "$system" || result=$?
@@ -195,7 +198,7 @@ dx_ai_main() {
     export NIX_SSL_CERT_FILE="${NIX_SSL_CERT_FILE:-$SSL_CERT_FILE}"
 
     if [ "$action" = recover ]; then
-        dx_ai_run_locked "$lock" dx_ai_recover_generation "$state"
+        dx_ai_run_locked "$lock" dx_ai_main_recover "$state"
         result=$?
         [ "$result" -eq 0 ] || return "$result"
         export PATH="$state/current/profile/bin:$PATH"

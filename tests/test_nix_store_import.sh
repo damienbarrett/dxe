@@ -56,6 +56,8 @@ fi
 if (
     install_capture="$fixture/locked-essentials-command"
     nix() { printf '%q ' "$@" > "$install_capture"; }
+    # fix/gc-temproots: keep the root nix wrapper's temp-roots cleanup in this fixture.
+    export DX_ESSENTIALS_ROOT="$fixture/locked-essentials-root"
     DX_BOOTSTRAP_ROOT="$CONTAINER_DIR" install_essential_packages
     grep -F -- "$CONTAINER_DIR#bootstrap-essentials" "$install_capture" >/dev/null \
         && grep -F -- '--no-update-lock-file' "$install_capture" >/dev/null \

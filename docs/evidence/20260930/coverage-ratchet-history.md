@@ -1974,3 +1974,179 @@ comment (WP6.5, recorded in full in the "WP6.5" section above) moved here
 verbatim:
 
     # 2026-10-12 WP6.5: floor 5591 -> 5723 (measured, 100% covered; dx_persist_rollback_main and its helpers, the shared inventory check, guest-stopped and ._* report helpers, host_dir_inventory and host_rsync's bootstrap refusal); ceiling 2627 -> 2632 (+5 executable lines in the new entry point bin/dx-persist-rollback: set -euo pipefail, SCRIPT_DIR, source dx-lib.sh, the persist_rollback_main definition, the _main call guard). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+## 2026-10-12: stale Nix temp-roots clear before guest GC (fix/gc-temproots)
+
+`scope_exec_lines_floor` 3935 -> 4468 (raised to the measured total, allowed
+direction): `bin/lib/dx-nix-gc.sh` is new (12 executable lines; its guest
+program is a heredoc constant, which kcov does not count) and
+`container/dx-nixos-26.05/bootstrap/common.sh` gained `run_root_nix` (+6). Both
+are 100% covered by `tests/test_nix_gc_temproots.sh`,
+`tests/test_nix_gc_temproots_unit.sh`, `tests/test_bootstrap_nix_temproots.sh`
+and `tests/test_bootstrap_nix_temproots_unit.sh`.
+
+`unscoped_prod_exec_lines_ceiling` 2638 -> 2642 (+4). All logic is in the
+covered module; each entry point gains only the lines needed to load it and
+call it once:
+
+| File | Base | Head | Growth |
+| --- | --- | --- | --- |
+| `bin/dx-gc` | 16 | 18 | +2 (`source "$SCRIPT_DIR/lib/dx-nix-gc.sh"`, `dx_nix_gc_clear_stale_temproots "$DX_CONTAINER_NAME" \|\| true`) |
+| `bin/dx-reclaim` | 77 | 79 | +2 (the same two lines) |
+
+The module is sourced by the two entry points directly, not through the
+`bin/dx-lib.sh` facade, following `bin/dx-create-container`'s
+`dx-usage-service.sh` pattern (only these two callers use it, and the facade's
+order is a tested contract); the facade route would have been +3 instead of +4
+but would load the module into every entry point.
+
+Measured with `tests/run-coverage-linux.sh` in a scratch worktree of the
+branch head with `wp/0.3` merged (main's sections 10 and 16 abort the runner
+without it): `covered=100%` (4468/4468), `scope_exec_lines=4468`,
+`unscoped_prod_exec_lines=2642`.
+
+The oldest dated ratchet.env line was moved here to keep that file at 10 lines:
+
+    # 2026-09-30 ceiling 2634 -> 2635: WP5.2 added one `source` line (dx-bootstrap-protocol.sh) to bin/dx-lib.sh's facade order.
+
+## 2026-10-13: root-owned Nix paths handed back before guest GC (fix/gc-rootpaths)
+
+`scope_exec_lines_floor` 4468 -> 4505 (raised to the measured total, allowed
+direction): `bin/lib/dx-nix-gc.sh` 12 -> 24 executable lines
+(`dx_nix_gc_hand_back_root_paths`, the shared `dx_nix_gc_guest_count` that
+the temp-roots clear now uses too, and `dx_nix_gc_prepare`; the root guest
+program is a heredoc constant, which kcov does not count) and
+`container/dx-nixos-26.05/bootstrap/common.sh` +25
+(`hand_back_root_nix_paths` and its call in `run_root_nix`). Both are 100%
+covered by `tests/test_nix_gc_rootpaths.sh`,
+`tests/test_nix_gc_rootpaths_unit.sh`,
+`tests/test_bootstrap_nix_rootpaths.sh` (its real-ownership cases run only
+as root, i.e. in this runner) and `tests/test_bootstrap_nix_rootpaths_unit.sh`.
+
+`unscoped_prod_exec_lines_ceiling` unchanged at 2642. The entry points gain
+no line: `bin/dx-gc` and `bin/dx-reclaim` each replace their one
+`dx_nix_gc_clear_stale_temproots "$DX_CONTAINER_NAME" || true` line with one
+`dx_nix_gc_prepare "$DX_CONTAINER_NAME"` line (the clear, then the hand-back,
+each best effort), instead of adding a second call line each (+2).
+
+| File | Base | Head | Growth |
+| --- | --- | --- | --- |
+| `bin/dx-gc` | 18 | 18 | 0 (the clear call replaced by `dx_nix_gc_prepare`) |
+| `bin/dx-reclaim` | 79 | 79 | 0 (the same) |
+
+Measured with `tests/run-coverage-linux.sh` in a scratch worktree of the
+branch head with `wp/0.3` merged (main's sections 10 and 16 abort the runner
+without it). The first run, on `bfc6077`, reported 4504/4505 (99.98%): one
+line, the log loop's failure branch in `hand_back_root_nix_paths`, had no
+case; `3c84b5c` adds one (mutation-checked). The final run, on `3c84b5c` with
+this ratchet: `covered=100%` (4505/4505), `scope_exec_lines=4505`,
+`unscoped_prod_exec_lines=2642`, ratchet check passed; in that root runner
+`tests/test_nix_gc_rootpaths.sh` 40/40, `tests/test_bootstrap_nix_rootpaths.sh`
+25/25, the two unit suites 6/6 and 7/7, none skipped.
+
+The oldest dated ratchet.env line was moved here to keep that file at 10 lines:
+
+    # 2026-10-03 ceiling 2635 -> 2650: the usage service adds 15 irreducible exempt-set lines after moving every movable line into bin/lib/dx-usage-service.sh and bootstrap/usage-service.sh: bin/dx-usage-service 6 (set -e, SCRIPT_DIR, two sources, the usage_service_main wrapper the entrypoint contract requires, the main guard), scripts/dx-usage-service.sh 3, bin/dx-create-container 3 (one source, one check call, one args call), bootstrap.sh 2 (one dispatch call, one source), scripts/dx-ai.sh 1 (the hook call). See docs/evidence/20260930/coverage-ratchet-history.md.
+
+## 2026-10-13: dx-ai GC roots at final generation paths (fix/dx-ai-gcroot)
+
+`scope_exec_lines_floor` 3935 -> 4488 (the measured in-scope total, 100%
+covered). `main` at `4e9ec4c` measures 4450 (docs-and-tests-only `wp/0.3`
+merged for the run); the +38 are all in
+`container/dx-nixos-26.05/scripts/lib/dx-ai-generation.sh` (now 149/149):
+`dx_ai_owner_writable`, `dx_ai_root_generation`, `dx_ai_discard_stages`,
+`dx_ai_reconcile_root`, `dx_ai_reconcile_roots`, `dx_ai_main_recover`, and
+the root step in `dx_ai_publish_generation`, net of the `.staging-*` arm
+`dx_ai_collect_generations` no longer needs.
+
+`unscoped_prod_exec_lines_ceiling` 2638 -> 2639 (+1): the
+`dx_ai_reconcile_roots "$state"` call at the top of
+`scripts/dx-ai.sh`'s `dx_ai_main_update`, which must run under the
+publication lock before staging. The `--recover` counterpart,
+`dx_ai_main_recover`, lives in the covered library, and the `--recover`
+call line in `dx_ai_main` changed in place. No exempt logic was added.
+
+Measured with `tests/run-coverage-linux.sh` on a scratch worktree of
+`fix/dx-ai-gcroot` at `a7a31e8` with `wp/0.3` merged:
+`covered=100% scope_exec_lines=4488 unscoped_prod_exec_lines=2639`.
+
+The 2026-09-30 WP5.2 ceiling line moved here from `ratchet.env` (above) to
+keep that file at ten lines.
+
+## 2026-10-13: the merged GC fixes (fix/nix-gc-bundle)
+
+`fix/nix-gc-bundle` merges the three entries above onto `main` at `4e9ec4c`
+(`fix/gc-rootpaths`, which contains `fix/gc-temproots`, then
+`fix/dx-ai-gcroot`). Each branch set its own floor and ceiling against
+`main`; the bundle's are measured afresh on the merged tree rather than
+added up.
+
+`scope_exec_lines_floor` 3935 -> 4543 (raised to the measured total, allowed
+direction). `main` measures 4450; the +93 are `bin/lib/dx-nix-gc.sh` (24,
+new), `container/dx-nixos-26.05/bootstrap/common.sh` +31 (`run_root_nix` +6,
+`hand_back_root_nix_paths` and its call +25) and
+`container/dx-nixos-26.05/scripts/lib/dx-ai-generation.sh` +38. All three
+files are 100% covered (24/24, 225/225, 149/149).
+
+`unscoped_prod_exec_lines_ceiling` 2638 -> 2643 (+5), the sum of the
+branches' irreducible exempt lines and nothing more:
+
+| File | Base | Head | Growth |
+| --- | --- | --- | --- |
+| `bin/dx-gc` | 16 | 18 | +2 (`source "$SCRIPT_DIR/lib/dx-nix-gc.sh"`, `dx_nix_gc_prepare "$DX_CONTAINER_NAME"`) |
+| `bin/dx-reclaim` | 77 | 79 | +2 (the same two lines) |
+| `container/dx-nixos-26.05/scripts/dx-ai.sh` | 133 | 134 | +1 (`dx_ai_reconcile_roots "$state"` in `dx_ai_main_update`) |
+
+Measured with `tests/run-coverage-linux.sh` in a scratch worktree of the
+bundle's second merge commit with `wp/0.3` merged (main's sections 10 and
+16 abort the runner without it): `covered=100%` (4543/4543),
+`scope_exec_lines=4543`, `unscoped_prod_exec_lines=2643`. That run's
+ratchet check failed only on the ceiling (2643 > 2642, the
+`fix/gc-rootpaths` side the merge kept); this ratchet passes it. In the
+same root runner, `tests/test_nix_gc_rootpaths.sh` 40/40,
+`tests/test_bootstrap_nix_rootpaths.sh` 25/25,
+`tests/test_dx_ai_gcroots.sh` 31 passed with 1 skipped (its real-Nix case
+needs Nix in the runner), and the isolated sourceable coverage probes
+passed.
+
+`ratchet.env` keeps one dated line for the bundle in place of the
+branches' own lines, which it supersedes (`fix/dx-ai-gcroot`'s never
+reached it: the merge kept the other side). Both `fix/gc-temproots` and
+`fix/dx-ai-gcroot` had moved the same 2026-09-30 WP5.2 line here (quoted in
+the `fix/gc-temproots` entry), and `fix/gc-rootpaths` moved the 2026-10-03
+usage-service line (quoted in its entry). The superseded lines, verbatim:
+
+    # 2026-10-12 floor 3935 -> 4468, ceiling 2638 -> 2642 (fix/gc-temproots): the stale Nix temp-roots clear (bin/lib/dx-nix-gc.sh) and run_root_nix (bootstrap/common.sh) are in scope, measured 4468 at 100%; +4 irreducible exempt lines: bin/dx-gc and bin/dx-reclaim each gain one `source` of lib/dx-nix-gc.sh and one dx_nix_gc_clear_stale_temproots call. See docs/evidence/20260930/coverage-ratchet-history.md.
+    # 2026-10-13 floor 4468 -> 4505 (fix/gc-rootpaths): the root-owned Nix paths hand-back (bin/lib/dx-nix-gc.sh +12, bootstrap/common.sh hand_back_root_nix_paths +25) is in scope, measured 4505 at 100%; ceiling unchanged at 2642: bin/dx-gc and bin/dx-reclaim each swap their clear call for one dx_nix_gc_prepare call. See docs/evidence/20260930/coverage-ratchet-history.md.
+    # 2026-10-13 dx-ai-gcroot: floor 3935 -> 4488 (measured, 100% covered; main measures 4450, +38 in scripts/lib/dx-ai-generation.sh: dx_ai_owner_writable, dx_ai_root_generation, dx_ai_discard_stages, dx_ai_reconcile_root(s), dx_ai_main_recover, the publish root step); ceiling 2638 -> 2639 (+1: the dx_ai_reconcile_roots call in scripts/dx-ai.sh's dx_ai_main_update). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+## 2026-10-13: the boot hands root-owned store paths back once (fix/gc-rootpaths-remount)
+
+Ceiling 2643 -> 2644: `container/dx-nixos-26.05/bootstrap.sh` (an exempt entry point) gained one executable line, the `hand_back_root_nix_paths || true` call in `bootstrap_phases`, between `ensure_essentials_valid` and `publish_nix_image_store_identity`. The floor is unchanged at 4543: the function it calls was already in scope and covered. Measured in a scratch worktree with `wp/0.3` merged.
+
+## 2026-10-13: main merged into feat/persist-host-dir (int-4)
+
+`main` at `557d645` (the merged `fix/nix-gc-bundle` -- `fix/gc-temproots`,
+`fix/gc-rootpaths`, `fix/dx-ai-gcroot` -- and `fix/gc-rootpaths-remount`)
+merged into `feat/persist-host-dir` at `15fa5de`, so that the feature
+branch fast-forwards onto `main`. The two ratchets moved independently from
+the shared base `4e9ec4c` (measured 4450 / 2638): `feat` to 5854 / 2633,
+`main` to 4543 / 2644 (+93 in scope, +6 exempt lines). The merge commit
+keeps the larger floor (5854, `feat`'s) and the larger ceiling (2644,
+`main`'s) as provisional values; the measured values follow in this
+section once the merged head has been measured.
+
+`ratchet.env` keeps one dated line for the integration. To stay within 10
+lines it drops `main`'s dated lines (each already recorded in full above:
+the two 2026-10-04 lines in the "crash-loop abort moved into bin/lib" and
+"dx-create-keys body moved into bin/lib" sections, the 2026-10-13 lines in
+the "merged GC fixes (fix/nix-gc-bundle)" and "boot hands root-owned store
+paths back once (fix/gc-rootpaths-remount)" sections) and `feat`'s oldest
+dated line (WP6.5b, recorded in full in the "WP6.5b" section above). The
+lines that left `ratchet.env`, verbatim:
+
+    # 2026-10-04 ceiling 2650 -> 2641: bin/dx-wait-ssh's six-line abort block and its log helper moved into bin/lib/dx-container.sh (dx_container_wait_should_abort, dx_container_print_logs), leaving one call line each; measured 2641 on a clean export with tests/run-coverage-linux.sh. No exempt logic was added; see docs/evidence/20260930/coverage-ratchet-history.md.
+    # 2026-10-04 ceiling 2641 -> 2638: bin/dx-create-keys's whole body moved into bin/lib/dx-ssh-common.sh (dx_ssh_key_generate), leaving one call line (-5), and bin/dx-mount gained two lines for the primary key pair's new default location and its legacy one (+2); measured 2638 (scope 4450, 100% covered) on a clean export with tests/run-coverage-linux.sh (fix/residuals-20261004). No exempt logic was added. See docs/evidence/20260930/coverage-ratchet-history.md.
+    # 2026-10-13 floor 3935 -> 4543, ceiling 2638 -> 2643 (fix/nix-gc-bundle: fix/gc-temproots + fix/gc-rootpaths + fix/dx-ai-gcroot): measured 4543 at 100% (+93 over main: bin/lib/dx-nix-gc.sh 24, bootstrap/common.sh run_root_nix and hand_back_root_nix_paths +31, scripts/lib/dx-ai-generation.sh +38); +5 irreducible exempt lines: bin/dx-gc and bin/dx-reclaim each one `source` of lib/dx-nix-gc.sh and one dx_nix_gc_prepare call, scripts/dx-ai.sh one dx_ai_reconcile_roots call. See docs/evidence/20260930/coverage-ratchet-history.md.
+    # 2026-10-13 gc-rootpaths-remount: ceiling 2643 -> 2644 (+1 irreducible exempt line: bootstrap.sh's one hand_back_root_nix_paths call in bootstrap_phases); floor unchanged at 4543 (no in-scope line added; the hand-back itself is already counted). See docs/evidence/20260930/coverage-ratchet-history.md.
+    # 2026-10-12 WP6.5b: floor 5793 -> 5800 (measured, 100% covered; +8 in dx-persist-dir.sh: the rollback's guest re-check, its kept-volume line and the fill helper; the merged base measures 5792, one under the provisional 5793); ceiling unchanged at 2633 (measured 2633, no entry-point line). History: docs/evidence/20260930/coverage-ratchet-history.md.

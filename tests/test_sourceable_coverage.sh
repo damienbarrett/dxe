@@ -645,9 +645,15 @@ dx_tunnel_stop forward 6500 >/dev/null
 (
     essentials_profile_path() { printf '%s\n' "$fixture/essentials/bin"; }
     # The fake install makes useradd resolvable, as the real one does (the phase
-    # now fails when a required tool is still missing afterwards).
-    nix() { installed=yes; }
-    command() { [ "${1:-}" = -v ] && [ "${2:-}" = useradd ] && [ "${installed:-}" != yes ] && return 1; builtin command "$@"; }
+    # now fails when a required tool is still missing afterwards). It says so
+    # through a file, not a shell variable: the bootstrap runs root nix as a
+    # child (run_root_nix, fix/gc-temproots), so, exactly as with the real nix,
+    # nothing it sets can reach this shell. DX_ESSENTIALS_ROOT keeps
+    # run_root_nix's temp-roots cleanup inside the fixture (no profile exists
+    # under it, so the install branch is taken, as before).
+    export DX_ESSENTIALS_ROOT="$fixture/essentials-root"
+    nix() { : > "$fixture/essentials-installed"; }
+    command() { [ "${1:-}" = -v ] && [ "${2:-}" = useradd ] && [ ! -e "$fixture/essentials-installed" ] && return 1; builtin command "$@"; }
     install_essentials
 )
 install_essentials

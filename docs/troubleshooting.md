@@ -133,6 +133,28 @@ this way and only has an older `dx-ai`:** `dx-recreate` publishes a fresh
 `/home/dx` and re-runs the (now-fixed) bootstrap and `dx-ai`, which is a
 heavier fix than necessary but always resolves it.
 
+### AI tools vanish after `dx-reclaim` (`current/profile/bin/<tool>: No such file or directory`)
+
+`codex`, `claude` and the other optional AI tools stop working right after
+`./bin/dx-reclaim`. Its output includes `removing stale link from
+".../gcroots/auto/..." to ".../dx-ai/generations/.staging-<id>/profile-1-link"`
+followed by `deleting '/nix/store/...-profile'`. Cause (fixed by
+`fix/dx-ai-gcroot`): `dx-ai` builds each generation in a `.staging-<id>`
+stage and renames it into place, but Nix's only GC root for the profile
+named the stage path. After the rename the root pointed at nothing, so the
+garbage collection deleted the profile that `current` still pointed at.
+
+**Fix:** `dx-ai` now registers a root at the generation's final path when it
+publishes, and every `dx-ai` or `dx-ai --recover` run re-registers the roots
+of `current` and its retained predecessor (see
+[Optional AI Tools](guest.md#optional-ai-tools)). **Recovery:** publish a
+bootstrap containing the fix (`./bin/dx-sync-bootstrap`, then
+`./bin/dx-start-container`), then run `dx-ai` in the guest. It prints
+`Warning: could not register a GC root for AI generation <id>` for each
+generation whose profile was already deleted, then builds and publishes a
+replacement. On a guest that has the fix but has not run `dx-ai` since,
+run `dx-ai` before the next `dx-reclaim`.
+
 ### A start fails with "published bootstrap generation X, but ... is running Y"
 
 `./bin/dx-start-container` published a bootstrap edit, but the running guest
