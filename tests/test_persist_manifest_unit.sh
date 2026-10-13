@@ -173,6 +173,7 @@ generate_cases() {
         "./a|./a|./a" "$(field_of "$m" ./a 7)|$(field_of "$m" ./m/b 7)|$(field_of "$m" ./z/c 7)"
     assert_eq "a file whose only other link is inside an excluded ._* directory has no group" "-" "$(field_of "$m" ./deep/x 7)"
     assert_eq "a symlink target is escaped" 'a\tb\\c\nd' "$(field_of "$m" ./odd-link 8)"
+    assert_eq "a symlink records MODE - whatever lstat says" "-" "$(field_of "$m" ./odd-link 2)"
     assert_eq "a FIFO is never opened: no size, no checksum" "p|-|-" "$(field_of "$m" ./pipe 1)|$(field_of "$m" ./pipe 4)|$(field_of "$m" ./pipe 6)"
     assert_eq "a regular file gets its SHA-256" "$("$REAL_SHA256SUM" < "$TREE/zz" | cut -c1-64)" "$(field_of "$m" ./zz 6)"
     if grep -Eq '^[0-9]+\.[0-9]{9}$' <<<"$(field_of "$m" ./zz 5)"; then
@@ -369,6 +370,20 @@ compare_cases() {
     manifest "$b" "$R0" "$RA" "${RG/0644/0600}" "${RTT/0644/0600}" "$RZ"
     : > "$WORK/gzzx"
     assert_eq "glob characters, doubled and trailing TABs in PATH survive the split" "1|Manifests differ: differences=2 entries-a=5 entries-b=5${NL}changed mode ./g*?[x]${NL}changed mode ./t\\t\\tt\\t" "$(cd "$WORK" && compare_out "$a" "$b")"
+    # Symlink MODE (WP6.1b): never compared between two symlinks.
+    local sl
+    sl="$(rec l - 0:0 - 1.000000000 - - x ./a)"
+    manifest "$a" "$R0" "$sl" "$RZ"
+    manifest "$b" "$R0" "${sl/l${T}-/l${T}0777}" "$RZ"
+    assert_eq "symlinks differing only in MODE are no difference" "0|Manifests match: entries=3" "$(compare_out "$a" "$b")"
+    manifest "$b" "$R0" "${sl/l${T}-/l${T}0755}" "${RZ/0755/0700}"
+    assert_eq "a symlink MODE difference is not counted beside a real one" "1|Manifests differ: differences=1 entries-a=3 entries-b=3${NL}changed mode ./z" "$(compare_out "$a" "$b")"
+    manifest "$b" "$R0" "${sl/l${T}-/l${T}0777}" "$RZ"
+    manifest "$a" "$R0" "$(rec l - 0:0 - 1.000000000 - - y ./a)" "$RZ"
+    assert_eq "a symlink target still differs under a MODE difference" "1|Manifests differ: differences=1 entries-a=3 entries-b=3${NL}changed target ./a" "$(compare_out "$a" "$b")"
+    manifest "$a" "$R0" "$sl" "$RZ"
+    manifest "$b" "$R0" "$RA" "$RZ"
+    assert_eq "a type change to a file still compares MODE" "1|Manifests differ: differences=1 entries-a=3 entries-b=3${NL}changed type,mode,size,sha256,target ./a" "$(compare_out "$a" "$b")"
 }
 compare_cases
 
