@@ -24,6 +24,10 @@
 #   TYPE MODE OWNER SIZE MTIME SHA256 LINK TARGET PATH
 #   TYPE    f d l p s c b, as find's %y prints them
 #   MODE    four octal digits, setuid/setgid/sticky included (0644, 1777)
+#           "-" for a symlink (TYPE l): Linux never consults it and cannot set
+#           it, and filesystems disagree (0777 on ext4, the umask on ZFS);
+#           compare never compares MODE of two symlinks, but still compares
+#           it when only one side is a symlink
 #   OWNER   numeric uid:gid of the entry itself
 #   SIZE    bytes for f; "-" otherwise
 #   MTIME   the entry's own mtime as SECONDS.NANOSECONDS (nine digits); "-"
@@ -193,6 +197,7 @@ _dx_manifest_records() {
                     fi
                     ;;
                 l)
+                    mode=-
                     dx_manifest_escape "${chunks[i + 8]}"
                     target=$DX_MANIFEST_ESCAPED
                     ;;
@@ -268,7 +273,7 @@ dx_manifest_compare() (
         if [ "$_dxm_more_a" = 1 ] && [ "$_dxm_more_b" = 1 ] && [ "$_dxm_path_a" = "$_dxm_path_b" ]; then
             if [ "$_dxm_head_a" != "$_dxm_head_b" ]; then
                 _dx_manifest_changed "$_dxm_head_a" "$_dxm_head_b"
-                _dx_manifest_note "changed $DX_MANIFEST_CHANGED" "$_dxm_path_a"
+                [ -z "$DX_MANIFEST_CHANGED" ] || _dx_manifest_note "changed $DX_MANIFEST_CHANGED" "$_dxm_path_a"
             fi
             _dx_manifest_advance a && _dx_manifest_advance b || return 2
         elif [ "$_dxm_more_b" != 1 ] || { [ "$_dxm_more_a" = 1 ] && [[ $_dxm_path_a < $_dxm_path_b ]]; }; then
@@ -365,7 +370,8 @@ _dx_manifest_split() {
 }
 
 # _dx_manifest_changed HEAD_A HEAD_B: sets DX_MANIFEST_CHANGED to the names
-# of the fields that differ, in record order, comma-separated. Both heads are
+# of the fields that differ, in record order, comma-separated. Empty when only
+# the MODE of two symlinks differs (not a difference). Both heads are
 # eight non-empty fields (_dx_manifest_split checked them).
 _dx_manifest_changed() {
     local - IFS=$'\t' fields_a fields_b k changed=
@@ -375,6 +381,8 @@ _dx_manifest_changed() {
     # shellcheck disable=SC2206  # deliberate TAB splitting, globbing off
     fields_b=($2)
     for ((k = 0; k < 8; k++)); do
+        # Two symlinks never differ in MODE (it is "-" in what generate writes).
+        [ "$k" -ne 1 ] || [ "${fields_a[0]}${fields_b[0]}" != ll ] || continue
         [ "${fields_a[k]}" = "${fields_b[k]}" ] || changed="$changed,${DX_MANIFEST_FIELD_NAMES[k]}"
     done
     DX_MANIFEST_CHANGED=${changed#,}
