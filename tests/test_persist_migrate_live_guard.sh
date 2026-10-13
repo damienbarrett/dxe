@@ -18,6 +18,13 @@
 #     fail), on an abort through the EXIT trap, never in a subshell, never
 #     twice; when it ends early but dx came up, the bring-up's cost is still
 #     measured;
+#   - the left copy container (WP7.2g): the plant, stop and rm calls pinned,
+#     with their name, image and label guards (nothing that is not the
+#     suite's own is ever stopped or removed), the classifier's word-for-word
+#     left-in-state line, and the whole check against a fake NAS: its order,
+#     the two refusals classified, nothing changed and no lock left after
+#     each, the planted container removed on every failure path, and
+#     lv_stop's docker rm -f hint when even that fails;
 #   - the canary's cleanup (WP7.2d), against a recording fake canary: the
 #     plain-ssh probe first (no leaf: no image call and no share call), the
 #     image built only for a leaf to move aside, the emergency mode that never
@@ -2217,6 +2224,227 @@ if [ "$(printf '%s\n' "$out" | sed -n '$p')" = rc=2 ] && grep -q '^Refusing: per
     && [ ! -e "$SCRATCH/sub.out" ] && [ -z "$(trap -p EXIT | grep inode_watch_stop)" ]; then
     test_pass "inode_watch_start refuses in a subshell (whose end would orphan the watcher): nothing started, no trap set"
 else test_fail "inode_watch_start in a subshell ($out)"; fi
+
+# --- the left copy container, planted (WP7.2g) ---------------------------------------------------
+# The "left in state" refusal is matched word for word up to the end.
+sed 's/then remove it with docker rm /then remove it with docker rm -f /' "$SCRATCH/err.copy-exited" >"$SCRATCH/err.copy-exited-other-tail"
+sed 's/ Nothing was changed\.$//' "$SCRATCH/err.copy-exited" >"$SCRATCH/err.copy-exited-cut"
+if [ "$(classify 1 "$SCRATCH/err.copy-exited")" = "refused-left exited" ] && [ "$(classify 1 "$SCRATCH/err.copy-exited-other-tail")" = unexpected ] \
+    && [ "$(classify 1 "$SCRATCH/err.copy-exited-cut")" = unexpected ]; then
+    test_pass "drop_classify matches the left-in-state refusal word for word, its docker rm hint and 'Nothing was changed.' included"
+else test_fail "drop_classify left-in-state word for word ($(classify 1 "$SCRATCH/err.copy-exited-other-tail") / $(classify 1 "$SCRATCH/err.copy-exited-cut"))"; fi
+
+# The plant, stop and rm wrappers: the exact calls, and every refusal makes none.
+PLANT_NAME=dxe-persist-copy-dxe-fixture-nas.invalid__dx-live-canary
+PLANT_INSPECT="$(call_lines dx_runtime_docker_cli inspect --format '{{index .Config.Labels "dxe.live"}}' "$PLANT_NAME")"
+out="$(record_call persist_migrate_live_plant_copy --)"
+if [ "$out" = rc=0 ] && [ "$(calls)" = "$(call_lines dx_runtime_run_ephemeral -d --name "$PLANT_NAME" --network none --pull never \
+    --label dxe.role=persist-live --label dxe.live=planted-copy --entrypoint sleep dx-live-canary-image 600)" ]; then
+    test_pass "plant_copy: one detached container with the product's copy-container name, the canary image, --network none, the suite's labels, sleep 600, no --rm and no mount"
+else test_fail "plant_copy pinned call (got $out: $(calls | tr '\n' ' '))"; fi
+for change in DX_CONTAINER_NAME=dx-qnap "DX_REMOTE_HOST=dxe-fixture-nas.invalid;id" DX_REMOTE_HOST= DX_IMAGE=dx-qnap-nixos; do
+    for fn in persist_migrate_live_plant_copy persist_migrate_live_planted_stop persist_migrate_live_planted_rm; do
+        [ "$fn" != persist_migrate_live_planted_stop ] || [ "$change" != DX_IMAGE=dx-qnap-nixos ] || continue
+        [ "$fn" != persist_migrate_live_planted_rm ] || [ "$change" != DX_IMAGE=dx-qnap-nixos ] || continue
+        out="$(CALL_ANSWER=planted-copy record_call "$fn" "$change" --)"
+        if [ "$out" = rc=2 ] && [ -z "$(calls)" ] && [ "$(grep -c "^Refusing: $fn" "$SCRATCH/call.err")" = 1 ]; then
+            test_pass "${fn#persist_migrate_live_} refuses $change with one line and no call"
+        else test_fail "${fn#persist_migrate_live_} refuses $change (got $out: $(calls | tr '\n' ' '); $(cat "$SCRATCH/call.err"))"; fi
+    done
+done
+RECORD_PATH="$TEXT_TOOLS"
+out="$(CALL_ANSWER=planted-copy record_call persist_migrate_live_planted_owned --)"
+out2="$(CALL_ANSWER=someone-else record_call persist_migrate_live_planted_owned --)"
+out3="$(FAIL_CALLS=dx_runtime_docker_cli record_call persist_migrate_live_planted_owned --)"
+if [ "$out" = rc=0 ] && [ "$out2" = rc=1 ] && [ "$out3" = rc=1 ] && [ "$(calls)" = "$PLANT_INSPECT" ]; then
+    test_pass "planted_owned: one docker inspect of the dxe.live label; only planted-copy is the suite's own (another label or no container: not)"
+else test_fail "planted_owned ($out / $out2 / $out3: $(calls | tr '\n' ' '))"; fi
+for op in "persist_migrate_live_planted_stop||stop -t 1" "persist_migrate_live_planted_rm||rm" "persist_migrate_live_planted_rm|-f|rm -f"; do
+    IFS="|" read -r fn arg words <<<"$op"
+    plant_op() { if [ -n "$arg" ]; then record_call "$fn" -- "$arg"; else record_call "$fn" --; fi; }
+    out="$(CALL_ANSWER=planted-copy plant_op)"
+    # shellcheck disable=SC2086 # the docker words, on purpose
+    if [ "$(sed -n '$p' <<<"$out")" = rc=0 ] && [ "$(calls)" = "$(printf '%s\n' "$PLANT_INSPECT"; call_lines dx_runtime_docker_cli $words "$PLANT_NAME")" ]; then
+        test_pass "${fn#persist_migrate_live_} $arg: the label checked, then exactly docker $words $PLANT_NAME"
+    else test_fail "${fn#persist_migrate_live_} pinned calls (got $out: $(calls | tr '\n' ' '))"; fi
+    out="$(CALL_ANSWER=someone-else plant_op)"
+    if [ "$out" = rc=2 ] && [ "$(calls)" = "$PLANT_INSPECT" ] && grep -q "is not the container this suite planted" "$SCRATCH/call.err"; then
+        test_pass "${fn#persist_migrate_live_} refuses a container with that name that is not the suite's own: nothing stopped or removed"
+    else test_fail "${fn#persist_migrate_live_} refuses a container that is not the suite's (got $out: $(calls | tr '\n' ' '))"; fi
+done
+RECORD_PATH=""
+
+# lv_stop's hint.
+# shellcheck disable=SC2034 # read by the hint under test
+hint_run() { (canary_env; PERSIST_MIGRATE_LIVE_PLANTED_DOCKER=/nas/bin/docker; for change in "$@"; do printf -v "${change%%=*}" '%s' "${change#*=}"; done; persist_migrate_live_planted_hint); }
+if [ "$(hint_run PERSIST_MIGRATE_LIVE_PLANTED=1 | sed -n '$p')" = "    ssh dxe-fixture-nas.invalid \"/nas/bin/docker rm -f $PLANT_NAME\"" ] \
+    && [ "$(hint_run PERSIST_MIGRATE_LIVE_PLANTED=1 | grep -c .)" = 3 ] && grep -q "label dxe.live=planted-copy\|dxe.live=planted-copy" <<<"$(hint_run PERSIST_MIGRATE_LIVE_PLANTED=1)" \
+    && [ -z "$(hint_run PERSIST_MIGRATE_LIVE_PLANTED=)" ] && [ -z "$(hint_run PERSIST_MIGRATE_LIVE_PLANTED=1 DX_CONTAINER_NAME=dx-qnap)" ]; then
+    test_pass "planted_hint (lv_stop): while a planted container may be left, the exact ssh ... docker rm -f <the canary's copy name>; nothing otherwise, and never for a name that is not a canary's"
+else test_fail "planted_hint ($(hint_run PERSIST_MIGRATE_LIVE_PLANTED=1 | tr '\n' '|'))"; fi
+
+# The check itself, against a fake NAS: the planted name's state (absent,
+# running, exited) and label in a state directory; the stand-in
+# dx-persist-migrate answers with the product's own refusal lines (MIG_MODE
+# product), or misbehaves (ignores: exit 0; changes: refuses but changes the
+# state; no-left: exit 0 once the container is stopped); dx-lock answers not
+# held unless lock-left exists.
+LC="$SCRATCH/left"
+LC_BIN="$LC/bin"
+mkdir -p "$LC_BIN"
+cat >"$LC_BIN/dx-persist-migrate" <<'FAKE'
+#!/bin/sh
+st="$LC_STATE"
+echo "MIGRATE" >>"$st/transcript"
+state=$(cat "$st/planted" 2>/dev/null || echo absent)
+case "${MIG_MODE:-product}:$state" in
+    ignores:* | no-left:exited | *:absent) echo "migrated: (stand-in)"; exit 0 ;;
+    changes:*) : >"$st/changed" ;;
+esac
+case "$state" in
+    running) cat "$LC_ERR_RUNNING" >&2 ;;
+    *) cat "$LC_ERR_EXITED" >&2 ;;
+esac
+exit 1
+FAKE
+cat >"$LC_BIN/dx-lock" <<'FAKE'
+#!/bin/sh
+echo "LOCK $*" >>"$LC_STATE/transcript"
+if [ -e "$LC_STATE/lock-left" ]; then echo "held by fixture-host:4242:17:20261013T000000Z since 2026-10-13T00:00:00.000Z"; else echo "not held"; fi
+FAKE
+chmod +x "$LC_BIN/dx-persist-migrate" "$LC_BIN/dx-lock"
+LC_N=0
+# lc_run [FILE[=VALUE]...]: one left-container check on a fresh fake NAS.
+lc_run() {
+    local item
+    LC_N=$((LC_N + 1))
+    LC_STATE="$LC/state-$LC_N"
+    mkdir -p "$LC_STATE/log"
+    in_scratch "$LC_STATE" || exit 1
+    echo absent >"$LC_STATE/planted"
+    for item in "$@"; do
+        case "$item" in
+            *=*) printf '%s\n' "${item#*=}" >"$LC_STATE/${item%%=*}" ;;
+            *) : >"$LC_STATE/$item" ;;
+        esac
+    done
+    (
+        canary_env
+        LC_ERR_RUNNING="$SCRATCH/err.copy-running"
+        LC_ERR_EXITED="$SCRATCH/err.copy-exited"
+        MIG_MODE="$(cat "$LC_STATE/mig-mode" 2>/dev/null || echo product)"
+        export LC_STATE LC_ERR_RUNNING LC_ERR_EXITED MIG_MODE
+        LV_RC=0 LV_OUT="" LV_ERR="" LV_N=0
+        # shellcheck disable=SC2034 # LV_RC, LV_OUT and LV_ERR are read by the functions under test
+        lv_run() {
+            local label="$1"
+            shift
+            [ "$1" != -- ] || shift
+            LV_N=$((LV_N + 1))
+            LV_OUT="$LC_STATE/log/$LV_N-$label.out"
+            LV_ERR="$LC_STATE/log/$LV_N-$label.err"
+            LV_RC=0
+            ("$@") >"$LV_OUT" 2>"$LV_ERR" </dev/null || LV_RC=$?
+        }
+        lv_ok() { echo "PASS $1" >>"$LC_STATE/steps"; }
+        lv_bad() { echo "FAIL $1" >>"$LC_STATE/steps"; return 1; }
+        lv_check() { local what="$1"; shift; if "$@"; then lv_ok "$what"; return 0; fi; lv_bad "$what"; }
+        lv_rc_zero() { [ "$LV_RC" -eq 0 ]; }
+        lv_out_line() { grep -Fqx -- "$1" "$LV_OUT"; }
+        lv_show_logs() { :; }
+        lv_result() { printf '%s=%s\n' "$1" "$2" >>"$LC_STATE/results"; }
+        lv_state() { printf 'marker=absent record=kept volumes=two changed=%s\n' "$([ -e "$LC_STATE/changed" ] && echo yes || echo no)"; }
+        lv_state_unchanged() { [ "$(lv_state)" = "$1" ]; }
+        dxe_runtime_call() {
+            local st="$LC_STATE" state label
+            state=$(cat "$st/planted")
+            label=$(cat "$st/label" 2>/dev/null || echo planted-copy)
+            case "$1 $2" in
+                "dx_runtime_docker_ssh_exec sh")
+                    echo "watch $7 ${10}" >>"$st/transcript"
+                    case "$7:$state" in
+                        running:running) printf 'copy=%s\nlabels=x\nmounts=\n' "c0ffee" ;;
+                        running:*) return 2 ;;
+                        gone:absent) echo "gone=$8 $9" ;;
+                        gone:*) return 2 ;;
+                    esac ;;
+                "dx_runtime_run_ephemeral -d")
+                    shift
+                    echo "PLANT $*" >>"$st/transcript"
+                    [ ! -e "$st/plant-fails" ] || return 125
+                    echo running >"$st/planted"
+                    echo planted-copy >"$st/label" ;;
+                "dx_runtime_docker_cli inspect")
+                    echo "INSPECT ${*: -1}" >>"$st/transcript"
+                    [ "$state" != absent ] || return 1
+                    echo "$label" ;;
+                "dx_runtime_docker_cli stop")
+                    shift 2
+                    echo "STOP $*" >>"$st/transcript"
+                    echo exited >"$st/planted" ;;
+                "dx_runtime_docker_cli rm")
+                    shift 2
+                    echo "RM $*" >>"$st/transcript"
+                    [ ! -e "$st/rm-fails" ] || return 1
+                    if [ "$state" = running ] && [ "$1" != -f ]; then return 1; fi
+                    echo absent >"$st/planted" ;;
+                *) echo "UNEXPECTED $*" >>"$st/transcript"; return 9 ;;
+            esac
+        }
+        rc=0
+        persist_migrate_live_left_container /nas/bin/docker "$LC_BIN/dx-persist-migrate" "$LC_BIN/dx-lock" >"$LC_STATE/stdout" 2>&1 || rc=$?
+        persist_migrate_live_planted_hint >"$LC_STATE/hint"
+        printf 'rc=%s\nplanted=%s\n' "$rc" "${PERSIST_MIGRATE_LIVE_PLANTED:-}" >"$LC_STATE/result"
+    )
+}
+lc_result() { sed -n "s/^$1=//p" "$LC_STATE/result" 2>/dev/null; }
+lc_file() { cat "$LC_STATE/$1" 2>/dev/null; }
+LC_PLANT="PLANT -d --name $PLANT_NAME --network none --pull never --label dxe.role=persist-live --label dxe.live=planted-copy --entrypoint sleep dx-live-canary-image 600"
+LC_HEAD="$(printf 'watch gone 0\n%s\nwatch running 0' "$LC_PLANT")"
+
+lc_run
+if [ "$(lc_result rc)" = 0 ] && [ -z "$(lc_result planted)" ] && [ "$(lc_file planted)" = absent ] \
+    && [ "$(lc_file transcript)" = "$(printf '%s\nMIGRATE\nLOCK status\nwatch running 0\nINSPECT %s\nSTOP -t 1 %s\nMIGRATE\nLOCK status\nINSPECT %s\nRM %s\nwatch gone 0' \
+        "$LC_HEAD" "$PLANT_NAME" "$PLANT_NAME" "$PLANT_NAME" "$PLANT_NAME")" ] \
+    && [ "$(lc_file results)" = "$(printf 'left_container_running=refused\nleft_container_exited=refused')" ] \
+    && ! grep -q '^FAIL' "$LC_STATE/steps" && [ -z "$(lc_file hint)" ] \
+    && grep -q "^PASS dx-persist-migrate refuses while $PLANT_NAME is running: exit 1 and exactly one Error line, WP6.4c's refusal word for word (refused-running $PLANT_NAME)" "$LC_STATE/steps" \
+    && grep -q "^PASS dx-persist-migrate refuses while $PLANT_NAME is exited: exit 1 and exactly one Error line, WP6.4c's refusal word for word (refused-left exited)" "$LC_STATE/steps"; then
+    test_pass "left container: none there, plant it, it runs; the rerun refuses (still running), changes nothing, leaves no lock, the plant still runs; stop it (label checked); the rerun refuses (left, exited), nothing changed, no lock; rm by exact name (label checked); gone -- in that order"
+else test_fail "left container: the whole check (result: $(lc_file result | tr '\n' ' '); transcript: $(lc_file transcript | tr '\n' '|'); steps: $(grep -v '^PASS' "$LC_STATE/steps" | tr '\n' '|'))"; fi
+
+lc_run planted=running label=someone-else
+if [ "$(lc_result rc)" = 1 ] && [ "$(lc_file transcript)" = "watch gone 0" ] && [ "$(lc_file planted)" = running ] && [ -z "$(lc_result planted)" ] \
+    && grep -q '^FAIL no copy or verify container of the canary is on the NAS yet' "$LC_STATE/steps"; then
+    test_pass "left container: a container with that name already there (not the suite's) is a FAIL before anything is planted, stopped or removed"
+else test_fail "left container with one already there (transcript: $(lc_file transcript | tr '\n' '|'))"; fi
+
+lc_run plant-fails
+if [ "$(lc_result rc)" = 1 ] && [ -z "$(lc_result planted)" ] \
+    && [ "$(lc_file transcript)" = "$(printf 'watch gone 0\n%s\nINSPECT %s\nwatch gone 0' "$LC_PLANT" "$PLANT_NAME")" ] \
+    && grep -q '^FAIL a container named .* is planted' "$LC_STATE/steps"; then
+    test_pass "left container: a plant that fails is a FAIL; the cleanup finds no container of the suite's (label check), removes nothing and sees the name free"
+else test_fail "left container, the plant failing (transcript: $(lc_file transcript | tr '\n' '|'); result: $(lc_file result | tr '\n' ' '))"; fi
+
+for scenario in "mig-mode=ignores|running" "mig-mode=changes|and changes nothing" "lock-left|it took and released the lifecycle lock" "mig-mode=no-left|exited"; do
+    lc_run "${scenario%%|*}"
+    if [ "$(lc_result rc)" = 1 ] && [ -z "$(lc_result planted)" ] && [ "$(lc_file planted)" = absent ] \
+        && [ "$(lc_file transcript | sed -n '$p')" = "RM -f $PLANT_NAME" ] && [ "$(lc_file transcript | sed -n 'x;$p')" = "INSPECT $PLANT_NAME" ] \
+        && [ "$(grep -c '^FAIL' "$LC_STATE/steps")" = 1 ] && grep -q "^FAIL .*${scenario#*|}" "$LC_STATE/steps"; then
+        test_pass "left container: a failure (${scenario%%|*}) removes the planted container at once (label checked, docker rm -f by exact name)"
+    else test_fail "left container, failing on ${scenario%%|*} (transcript: $(lc_file transcript | tr '\n' '|'); steps: $(grep -v '^PASS' "$LC_STATE/steps" | tr '\n' '|'))"; fi
+done
+if ! grep -q '^PASS dx-persist-migrate refuses while .* is exited' "$LC_STATE/steps" && grep -q '^left_container_running=refused$' "$LC_STATE/results" \
+    && ! grep -q '^left_container_exited=' "$LC_STATE/results"; then
+    test_pass "left container: a rerun that runs once the plant is stopped is the FAIL, with only the running refusal recorded"
+else test_fail "left container, the exited rerun ($(lc_file results | tr '\n' ' '))"; fi
+
+lc_run rm-fails
+if [ "$(lc_result rc)" = 1 ] && [ "$(lc_result planted)" = 1 ] && [ "$(lc_file planted)" = exited ] \
+    && [ "$(lc_file transcript | sed -n '$p')" = "watch gone 0" ] && grep -q "^RM -f $PLANT_NAME$" "$LC_STATE/transcript" \
+    && [ "$(lc_file hint | sed -n '$p')" = "    ssh dxe-fixture-nas.invalid \"/nas/bin/docker rm -f $PLANT_NAME\"" ]; then
+    test_pass "left container: when even docker rm -f fails, the planted container stays marked and lv_stop's hint names the exact docker rm -f"
+else test_fail "left container, rm failing (result: $(lc_file result | tr '\n' ' '); hint: $(lc_file hint | tr '\n' '|'))"; fi
 
 # --- the canary's cleanup, normal and emergency (WP7.2d) ----------------------------------------
 # A fake canary in a state directory, every command and runtime call

@@ -235,7 +235,8 @@
 #   paused` and `refused-left removing` (RC 1, one Error line, WP6.7's own
 #   refusals for a paused container and one Docker is removing, word for word
 #   up to the end, for either name); `refused-left <state>` (RC 1, one Error
-#   line, WP6.4c's refusal for a container left in any other state);
+#   line, WP6.4c's refusal for a container left in any other state, word
+#   for word up to the end, its docker inspect/logs/rm hint included);
 #   `copy-conflict` (RC 1, one Error line: the copy stopped with rsync exit
 #   125, Docker's name conflict); else `unexpected`. A refused-left outcome
 #   is the drop case's `missed` (a FINDING: the rerun did not meet the copy
@@ -294,6 +295,46 @@
 #   finished: ..." and status 0 -- the next migration resumes the directory;
 #   for any other outcome one lv_bad and status 1. Uses the caller's lv_run,
 #   lv_ok, lv_bad and lv_finding.
+#
+# The left copy container, planted (WP7.2g; run 3: the NAS copies the
+# largest allowed seed in about 22 s, so the controller drop cannot race a
+# copy there). A deterministic check of WP6.4c's refusals:
+# persist_migrate_live_plant_copy
+#   Refuses (status 2, one `Refusing:` line, no call) unless
+#   persist_migrate_live_copy_name copy forms (a canary DX_CONTAINER_NAME, a
+#   DX_REMOTE_HOST of [A-Za-z0-9_.-]) and DX_IMAGE contains "canary".
+#   Otherwise exactly one call:
+#     dxe_runtime_call dx_runtime_run_ephemeral -d --name <copy name> --network none
+#       --pull never --label dxe.role=persist-live --label dxe.live=planted-copy
+#       --entrypoint sleep <DX_IMAGE> 600
+#   (detached, no --rm, no mount: it only holds the product's name).
+# persist_migrate_live_planted_owned
+#   0 only when `dxe_runtime_call dx_runtime_docker_cli inspect --format
+#   {{index .Config.Labels "dxe.live"}} <copy name>` answers planted-copy.
+# persist_migrate_live_planted_stop, persist_migrate_live_planted_rm [-f]
+#   The same name refusal (status 2, no call); then planted_owned (not the
+#   suite's own: one `Refusing:` line, status 2, nothing stopped or removed);
+#   then exactly one call: dx_runtime_docker_cli stop -t 1 <copy name>, or
+#   dx_runtime_docker_cli rm [-f] <copy name>.
+# persist_migrate_live_left_container DOCKER_BIN MIGRATE LOCK
+#   Through the caller's lv_run, lv_check, lv_result, lv_rc_zero, lv_out_line,
+#   lv_show_logs, lv_state and lv_state_unchanged, in order:
+#     0. copy_watch gone 0: no copy or verify container of the canary yet
+#        (else a FAIL, and nothing is planted, stopped or removed); lv_state;
+#     1. plant_copy; copy_watch running 0 (it runs);
+#     2. MIGRATE: drop_classify must say refused-running <copy name>; the
+#        state unchanged; `LOCK status` says `not held`; copy_watch running 0
+#        (still running); results left_container_running=refused;
+#     3. planted_stop; MIGRATE: refused-left exited (the whole line word for
+#        word); unchanged; `not held`; results left_container_exited=refused;
+#     4. planted_rm; copy_watch gone 0.
+#   PERSIST_MIGRATE_LIVE_PLANTED is 1 from the plant until the container is
+#   seen gone; _PLANTED_DOCKER is DOCKER_BIN. Every failure after the plant
+#   runs persist_migrate_live_planted_cleanup (planted_rm -f, or the name
+#   seen gone, clears _PLANTED) and returns 1.
+# persist_migrate_live_planted_hint
+#   While _PLANTED is set: three lines naming the container and the exact
+#   `ssh <DX_REMOTE_HOST> "<docker> rm -f <copy name>"` (lv_stop prints them).
 #
 # The canary's cleanup (WP7.2d; Fable's re-check of WP7.2c: the cleanup after
 # a floor hit during the image build must not build the image first):
@@ -476,6 +517,10 @@ PERSIST_MIGRATE_LIVE_INODE_WATCH_SECONDS=7200
 # The controller-drop case looks for the copy container in slices this long,
 # so a controller that ended early is noticed within one slice.
 PERSIST_MIGRATE_LIVE_DROP_WATCH_SLICE=20
+# The left-container check (WP7.2g): the label that marks the container the
+# suite plants (it stops and removes nothing without it) and its lifetime.
+PERSIST_MIGRATE_LIVE_PLANT_LABEL=dxe.live=planted-copy
+PERSIST_MIGRATE_LIVE_PLANT_SECONDS=600
 # A full copy of the seed must last at least this long for the controller-drop
 # case to meet the copy container still running after the drop, the unlock
 # and the rerun's first checks (about a dozen ssh round trips).
@@ -1326,7 +1371,7 @@ persist_migrate_live_drop_classify() {
                 echo "refused-left removing"
                 return 0
                 ;;
-            "Error: the container $name of an earlier migration or rollback is left on "*" in state "*"; inspect it there"*)
+            "Error: the container $name of an earlier migration or rollback is left on "*" in state "*"; inspect it there (docker inspect $name, docker logs $name), then remove it with docker rm $name and run dx-persist-migrate again. Nothing was changed.")
                 state="${line#* in state }"
                 echo "refused-left ${state%%;*}"
                 return 0
@@ -1486,6 +1531,146 @@ persist_migrate_live_drop_directory() {
     fi
     lv_bad "the orphaned copy ran to its end on its own: the directory equals the rollback volume ($why)"
     return 1
+}
+
+# --- The left copy container, planted (WP7.2g) ------------------------------------------
+# A deterministic live check of WP6.4c's refusal while a copy container of an
+# earlier run is on the NAS: the suite plants one itself, with the product's
+# copy-container name, instead of racing a real copy (run 3: the NAS copies
+# the largest allowed seed in about 22 s).
+
+# persist_migrate_live_plant_copy
+persist_migrate_live_plant_copy() {
+    local name
+    name="$(persist_migrate_live_copy_name copy 2>/dev/null)" || {
+        _persist_live_refuse "persist_migrate_live_plant_copy: DX_REMOTE_HOST=${DX_REMOTE_HOST:-} and DX_CONTAINER_NAME=${DX_CONTAINER_NAME:-} do not name the canary's copy container; nothing was started."
+        return 2
+    }
+    case "${DX_IMAGE:-}" in
+        *canary*) : ;;
+        *)
+            _persist_live_refuse "persist_migrate_live_plant_copy: DX_IMAGE=${DX_IMAGE:-} is not a canary image; nothing was started."
+            return 2
+            ;;
+    esac
+    dxe_runtime_call dx_runtime_run_ephemeral -d --name "$name" --network none --pull never \
+        --label dxe.role=persist-live --label "$PERSIST_MIGRATE_LIVE_PLANT_LABEL" \
+        --entrypoint sleep "$DX_IMAGE" "$PERSIST_MIGRATE_LIVE_PLANT_SECONDS"
+}
+
+# persist_migrate_live_planted_owned
+persist_migrate_live_planted_owned() {
+    local name label
+    name="$(persist_migrate_live_copy_name copy 2>/dev/null)" || return 2
+    label="$(dxe_runtime_call dx_runtime_docker_cli inspect --format '{{index .Config.Labels "dxe.live"}}' "$name" 2>/dev/null)" || return 1
+    label="$(printf '%s\n' "$label" | tr -d '\r' | awk 'NF { last = $0 } END { print last }')"
+    [ "$label" = "${PERSIST_MIGRATE_LIVE_PLANT_LABEL#*=}" ]
+}
+
+# persist_migrate_live_planted_stop
+persist_migrate_live_planted_stop() {
+    local name
+    name="$(persist_migrate_live_copy_name copy 2>/dev/null)" || {
+        _persist_live_refuse "persist_migrate_live_planted_stop: DX_REMOTE_HOST and DX_CONTAINER_NAME do not name the canary's copy container; nothing was stopped."
+        return 2
+    }
+    if ! persist_migrate_live_planted_owned; then
+        _persist_live_refuse "persist_migrate_live_planted_stop: $name is not the container this suite planted (no label $PERSIST_MIGRATE_LIVE_PLANT_LABEL); nothing was stopped."
+        return 2
+    fi
+    dxe_runtime_call dx_runtime_docker_cli stop -t 1 "$name"
+}
+
+# persist_migrate_live_planted_rm [-f]
+persist_migrate_live_planted_rm() {
+    local name force=""
+    [ "${1:-}" != -f ] || force=-f
+    name="$(persist_migrate_live_copy_name copy 2>/dev/null)" || {
+        _persist_live_refuse "persist_migrate_live_planted_rm: DX_REMOTE_HOST and DX_CONTAINER_NAME do not name the canary's copy container; nothing was removed."
+        return 2
+    }
+    if ! persist_migrate_live_planted_owned; then
+        _persist_live_refuse "persist_migrate_live_planted_rm: $name is not the container this suite planted (no label $PERSIST_MIGRATE_LIVE_PLANT_LABEL); nothing was removed."
+        return 2
+    fi
+    dxe_runtime_call dx_runtime_docker_cli rm ${force:+"$force"} "$name"
+}
+
+# persist_migrate_live_planted_cleanup: after a failure inside the check.
+persist_migrate_live_planted_cleanup() {
+    [ -n "${PERSIST_MIGRATE_LIVE_PLANTED:-}" ] || return 0
+    lv_run planted-cleanup -- persist_migrate_live_planted_rm -f
+    if [ "$LV_RC" -ne 0 ]; then
+        lv_run planted-cleanup-gone -- persist_migrate_live_copy_watch "${PERSIST_MIGRATE_LIVE_PLANTED_DOCKER:-}" gone 0
+        if [ "$LV_RC" -ne 0 ]; then
+            echo "    (the planted container could not be removed; see the command below)"
+            return 1
+        fi
+    fi
+    PERSIST_MIGRATE_LIVE_PLANTED=""
+    echo "    (the planted container is gone: removed by its exact name after its label was checked)"
+    return 0
+}
+
+# persist_migrate_live_planted_hint: lv_stop's lines while one may be left.
+persist_migrate_live_planted_hint() {
+    local name
+    [ -n "${PERSIST_MIGRATE_LIVE_PLANTED:-}" ] || return 0
+    name="$(persist_migrate_live_copy_name copy 2>/dev/null)" || return 0
+    echo "  The left-container check's planted container $name may still be on the NAS (label"
+    echo "  $PERSIST_MIGRATE_LIVE_PLANT_LABEL; dx-persist-migrate refuses while it exists). After a look, remove it by its exact name:"
+    echo "    ssh ${DX_REMOTE_HOST:-<NAS>} \"${PERSIST_MIGRATE_LIVE_PLANTED_DOCKER:-docker} rm -f $name\""
+}
+
+# persist_migrate_live_left_rerun STATE EXPECTED MIGRATE LOCK BEFORE COPY VERIFY
+persist_migrate_live_left_rerun() {
+    local outcome
+    lv_run "migrate-left-$1" -- "$3"
+    outcome="$(persist_migrate_live_drop_classify "$LV_RC" "$LV_ERR" "$6" "$7")"
+    lv_check "dx-persist-migrate refuses while $6 is $1: exit 1 and exactly one Error line, WP6.4c's refusal word for word ($outcome)" \
+        test "$outcome" = "$2" || { lv_show_logs; return 1; }
+    lv_check "and changes nothing (the probe, the canary directory, the volumes, the guest stopped, the record)" lv_state_unchanged "$5" || return 1
+    lv_run "lock-after-left-$1" -- "$4" status
+    lv_check "it took and released the lifecycle lock: dx-lock status says not held" lv_out_line "not held"
+}
+
+# persist_migrate_live_left_container DOCKER_BIN MIGRATE LOCK
+persist_migrate_live_left_container() {
+    local docker_bin="$1" migrate="$2" lock="$3" copy verify before
+    PERSIST_MIGRATE_LIVE_PLANTED=""
+    PERSIST_MIGRATE_LIVE_PLANTED_DOCKER="$docker_bin"
+    copy="$(persist_migrate_live_copy_name copy)" || return 1
+    verify="$(persist_migrate_live_copy_name verify)" || return 1
+    lv_run left-none-before -- persist_migrate_live_copy_watch "$docker_bin" gone 0
+    lv_check "no copy or verify container of the canary is on the NAS yet (nothing that is not the suite's is ever stopped or removed)" lv_rc_zero || return 1
+    before="$(lv_state)"
+    # 1. The plant: the product's copy-container name, a container of the suite's own.
+    PERSIST_MIGRATE_LIVE_PLANTED=1
+    lv_run plant-copy-container -- persist_migrate_live_plant_copy
+    lv_check "a container named $copy is planted (the canary image, --network none, label $PERSIST_MIGRATE_LIVE_PLANT_LABEL, sleep $PERSIST_MIGRATE_LIVE_PLANT_SECONDS, no --rm)" \
+        lv_rc_zero || { persist_migrate_live_planted_cleanup; return 1; }
+    lv_run planted-running -- persist_migrate_live_copy_watch "$docker_bin" running 0
+    lv_check "it runs" lv_rc_zero || { persist_migrate_live_planted_cleanup; return 1; }
+    # 2. Running: WP6.4c's "still running" refusal, nothing changed.
+    persist_migrate_live_left_rerun running "refused-running $copy" "$migrate" "$lock" "$before" "$copy" "$verify" \
+        || { persist_migrate_live_planted_cleanup; return 1; }
+    lv_run planted-still-running -- persist_migrate_live_copy_watch "$docker_bin" running 0
+    lv_check "the refusal left the planted container running, untouched" lv_rc_zero || { persist_migrate_live_planted_cleanup; return 1; }
+    lv_result left_container_running refused
+    # 3. Stopped: the "left in state exited" refusal, nothing changed.
+    lv_run planted-stop -- persist_migrate_live_planted_stop
+    lv_check "docker stop -t 1 $copy (the suite's own, by its exact name, its label checked first)" lv_rc_zero \
+        || { persist_migrate_live_planted_cleanup; return 1; }
+    persist_migrate_live_left_rerun exited "refused-left exited" "$migrate" "$lock" "$before" "$copy" "$verify" \
+        || { persist_migrate_live_planted_cleanup; return 1; }
+    lv_result left_container_exited refused
+    # 4. Removed, and gone: the next migration may start.
+    lv_run planted-rm -- persist_migrate_live_planted_rm
+    lv_check "docker rm $copy removes the planted container (by its exact name, its label checked first)" lv_rc_zero || { persist_migrate_live_planted_cleanup; return 1; }
+    lv_run planted-gone -- persist_migrate_live_copy_watch "$docker_bin" gone 0
+    lv_check "no copy or verify container of the canary is left" lv_rc_zero || { persist_migrate_live_planted_cleanup; return 1; }
+    PERSIST_MIGRATE_LIVE_PLANTED=""
+    return 0
 }
 
 # --- The canary's cleanup, normal and after an INODE FLOOR HIT (WP7.2d) ----------------

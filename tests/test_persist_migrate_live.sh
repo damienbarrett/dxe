@@ -85,10 +85,13 @@
 # refuse (exit 1, one Error line naming the copy container and "running") and
 # change nothing, and the copy container must still run, untouched. The suite waits (bounded) until
 # the orphaned copy has ended and removed itself, checks that it ran to its
-# end on its own, and the next migration resumes and verifies. When a full
-# copy of the seed took under 30 s earlier in the run, the case is NOT
-# VALIDATED (a FINDING naming a bulk size that would do), as it is when the
-# rerun does not meet the copy still running; a directory that copy then
+# end on its own, and the next migration resumes and verifies. The case is
+# optional since WP7.2g: when a full copy of the seed took under 30 s earlier
+# in the run (the QNAP SSD copies the largest allowed seed in about 22 s), it
+# is skipped with a note naming a bulk size for a slower share -- the refusal
+# it races for is checked deterministically by the "left copy container"
+# case. When it runs but the rerun does not meet the copy still running, it
+# is NOT VALIDATED (a FINDING); a directory that copy then
 # left incomplete is one more FINDING (it ended before it finished), and the
 # next migration resumes it. The copy container is looked for in 20 s
 # slices: a controller that ended before its copy appeared (it refused or
@@ -112,7 +115,7 @@
 #   - FINDINGS are recorded as failures ("FINDING: ...", listed at the end) but
 #     the run goes on, so the later cases and the cleanup still run:
 #       * the inventory exiting 3 with a named blocker;
-#       * the controller-drop case NOT VALIDATED (see above), and, when the
+#       * the controller-drop case NOT VALIDATED when it ran (see above), and, when the
 #         rerun missed the copy, a directory the orphaned copy left
 #         incomplete (the next migration resumes it);
 #       * the /persist bind source reported resolved (as WP7.1).
@@ -130,7 +133,11 @@
 #     the suite itself kills are the canary's own copy container (the NAS
 #     watcher, by its name) and its own background controller and inode
 #     watcher (by process group, on the Mac); the only container it stops
-#     outside the dx commands is the canary itself, at the inode floor.
+#     outside the dx commands is the canary itself, at the inode floor, and
+#     the only one it creates, stops and removes outside them is the
+#     container it plants for the left-container check (the product's
+#     copy-container name, label dxe.live=planted-copy, checked before every
+#     stop and removal).
 #
 # Cases, in order (each name is its PASS/FAIL prefix):
 #   preflight            no canary container, volume (nix, persist, bootstrap,
@@ -188,7 +195,21 @@
 #                        dx-start-container refuse the retired directory.
 #   retired aside        mv persist persist.retired-<UTC> (root container,
 #                        canary directory only; only a retired leaf moves).
-#   controller drop      migrate from the rollback volume into a fresh
+#   left copy container  WP6.4c's refusals, deterministically: the suite plants
+#                        a container with the product's copy-container name
+#                        (canary image, --network none, no --rm, label
+#                        dxe.live=planted-copy, sleep 600; none of that name
+#                        may exist before); dx-persist-migrate must refuse
+#                        with the "still running" line, then (docker stop -t
+#                        1) the "left in state exited" line, word for word,
+#                        changing nothing and leaving no lock (dx-lock status:
+#                        not held); then docker rm by exact name, gone.
+#                        Every failure removes the planted container (label
+#                        checked); lv_stop prints `docker rm -f <name>` if one
+#                        may be left. Results: left_container_running,
+#                        left_container_exited.
+#   controller drop      (optional; skipped with a note when a full copy took
+#                        under 30 s) migrate from the rollback volume into a fresh
 #                        directory, the controller SIGKILLed mid-copy (above):
 #                        the copy container's DQ6 labels, the lock left and
 #                        cleared, the refusal while the copy runs, nothing
@@ -663,6 +684,7 @@ lv_stop() {
         echo "  The copy container $(persist_migrate_live_copy_name copy 2>/dev/null) that the dropped controller started may"
         echo "  still run on the NAS: it ends by itself (the cleanup waits up to $LV_INTERRUPT_DEADLINE s for it)."
     fi
+    persist_migrate_live_planted_hint
     if [ -n "${PERSIST_MIGRATE_LIVE_DROP_LOCK_LEFT:-}" ]; then
         echo "  The dropped controller (pid ${PERSIST_MIGRATE_LIVE_DROP_PID:-?}) may still hold the canary's lifecycle lock, and the"
         echo "  cleanup needs it: ./bin/dx-profile $LV_PROFILE_NAME ./bin/dx-lock status, then, once it names that pid,"
@@ -727,13 +749,17 @@ lv_preflight_inodes() {
 
 # --- Cases --------------------------------------------------------------------
 c_preflight() {
-    local report vol
+    local report vol docker_bin
     lv_case "preflight"
     lv_mode volume "$LV_ORIG"
     lv_check "no container named $DX_CONTAINER_NAME exists yet (a leftover? run the cleanup mode first)" lv_container_absent || return 1
     for vol in "$DX_NIX_VOLUME" "$LV_ORIG" "$DX_BOOTSTRAP_VOLUME" "$LV_ROLLBACK"; do
         lv_check "volume $vol does not exist yet" lv_volume_is absent "$vol" || return 1
     done
+    docker_bin="$(dxe_runtime_call dx_runtime_docker_require_bin 2>/dev/null)" || docker_bin=""
+    lv_check "the NAS's docker CLI path is known" test -n "$docker_bin" || return 1
+    lv_run copy-none-preflight -- persist_migrate_live_copy_watch "$docker_bin" gone 0
+    lv_check "no copy or verify container of the canary is on the NAS (one left by an aborted run, the left-container check's planted one included, blocks every migration: remove it first, see RUN.md)" lv_rc_zero || return 1
     lv_preflight_inodes || return 1
     report="$(lv_probe)"
     lv_check "the read-only probe of the share root answers" test -n "$report" || return 1
@@ -1134,6 +1160,18 @@ c_retired_aside() {
     lv_check "the record still exists (it refuses an empty replacement until migrated again)" test -f "$LV_RECORD"
 }
 
+# c_left_container: WP6.4c's refusals while a copy container of an earlier
+# run is on the NAS, made deterministic: the suite plants one with the
+# product's copy-container name (tests/lib: persist_migrate_live_left_container).
+c_left_container() {
+    local docker_bin
+    lv_case "left copy container"
+    docker_bin="$(dxe_runtime_call dx_runtime_docker_require_bin 2>/dev/null)" || docker_bin=""
+    lv_check "the NAS's docker CLI path is known" test -n "$docker_bin" || return 1
+    lv_check "the guest is stopped (the product refuses a running guest before it looks for containers)" lv_container_stopped || return 1
+    persist_migrate_live_left_container "$docker_bin" "$BIN_DIR/dx-persist-migrate" "$BIN_DIR/dx-lock"
+}
+
 # c_controller_drop: the second migration (from the rollback volume into a
 # fresh directory) with its controller dropped mid-copy; the orchestration is
 # persist_migrate_live_controller_drop (tests/lib/persist-migrate-live.sh).
@@ -1144,7 +1182,12 @@ c_controller_drop() {
     if lv_number "$LV_REF_COPY" && [ "$LV_REF_COPY" -lt "$PERSIST_MIGRATE_LIVE_DROP_MIN_COPY_SECONDS" ]; then
         hint="$(persist_migrate_live_drop_bulk_hint "$LV_BULK_MIB" "$LV_REF_COPY")"
         lv_result drop_outcome skipped
-        lv_finding "NOT VALIDATED: the controller drop needs a copy that outlasts the drop, the unlock and the rerun's first checks, but a full copy of the $LV_BULK_MIB MiB seed took only $LV_REF_COPY s here (at least $PERSIST_MIGRATE_LIVE_DROP_MIN_COPY_SECONDS s needed); run again with DXE_PERSIST_LIVE_BULK_MIB=$hint (the second migration below creates its directory as usual)"
+        # Not a FINDING since WP7.2g: the refusal this case races for is
+        # validated deterministically by "left copy container".
+        echo "    (skipped: the controller drop needs a copy that outlasts the drop, the unlock and the rerun's first checks, but a full copy"
+        echo "    of the $LV_BULK_MIB MiB seed took only $LV_REF_COPY s here, at least $PERSIST_MIGRATE_LIVE_DROP_MIN_COPY_SECONDS s needed; the refusal it would race for"
+        echo "    is checked by the \"left copy container\" case. On a slower share: DXE_PERSIST_LIVE_BULK_MIB=$hint. The second migration below"
+        echo "    creates its directory as usual.)"
         return 0
     fi
     echo "    a full copy of the seed took ${LV_REF_COPY:-?} s in the first migration; the drop has to land well inside that"
@@ -1303,7 +1346,7 @@ c_real_inventory() {
 if [ -n "$LV_REAL" ]; then
     LV_CASES="c_real_inventory"
 else
-    LV_CASES="c_preflight c_volume_bring_up c_seed c_inventory c_stop_and_list c_migrate_interrupted c_migrate_resume c_switch_to_dir c_changes c_rollback c_switch_back c_retired_refused c_retired_aside c_controller_drop c_migrate_again c_switch_again"
+    LV_CASES="c_preflight c_volume_bring_up c_seed c_inventory c_stop_and_list c_migrate_interrupted c_migrate_resume c_switch_to_dir c_changes c_rollback c_switch_back c_retired_refused c_retired_aside c_left_container c_controller_drop c_migrate_again c_switch_again"
     if [ "${DXE_PERSIST_LIVE_KEEP:-}" != 1 ]; then
         LV_CASES="$LV_CASES c_final_cleanup"
     fi
