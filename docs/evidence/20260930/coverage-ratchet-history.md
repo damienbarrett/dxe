@@ -2169,3 +2169,16 @@ Measured on the merged head `35a2289` (the merge plus the test-only
 The provisional int-4 line the merge commit wrote, superseded, verbatim:
 
     # 2026-10-13 int-4 (merge of main 557d645; provisional until measured): floor 5854 (feat's; main's own 4543 is below it), ceiling 2644 (main's; feat measured 2633 before main's +6 exempt GC lines). main's dated lines and feat's WP6.5b line are quoted verbatim in docs/evidence/20260930/coverage-ratchet-history.md (int-4).
+
+## 2026-10-14: tar extractors drain their pipes (fix/tar-pipe-drain, WP-TAR)
+
+Floor 5947 -> 5955 (measured, 100% covered): dx_tar_extract_host and
+dx_tar_extract_guest in bin/lib/dx-runtime.sh, +8 executable lines. Ceiling
+unchanged at 2639 (measured 2639): the extractor lines in bin/dx-get and
+bin/dx-put were rewritten in place to call the helpers, none added. The line
+moved out of ratchet.env to keep it at 10 lines is the WP6.4c entry
+(floor 5800 -> 5827), whose section is above.
+
+The WP6.4c line, verbatim:
+
+    # 2026-10-12 WP6.4c: floor 5800 -> 5827 (measured, 100% covered; +27: the copy-container check in dx-persist-dir.sh and its two calls, +12; the copy/verify container name and labels and dx_runtime_docker_host_copy_containers in the docker adapter, +13; the neutral op and the Apple arm, +1 each); ceiling unchanged at 2633 (measured 2633, no entry-point line). History: docs/evidence/20260930/coverage-ratchet-history.md.
