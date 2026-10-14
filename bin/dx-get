@@ -39,11 +39,11 @@ if [ "$IS_DIR" -eq 1 ]; then
     if [[ "$DEST" == */ ]] || [ -d "$DEST" ]; then
         mkdir -p "$DEST"
         dx_runtime_exec "$DX_CONTAINER_NAME" tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
-            | tar -xf - -C "$DEST"
+            | dx_tar_extract_host "$DEST"
     else
         mkdir -p "$DEST"
         dx_runtime_exec "$DX_CONTAINER_NAME" tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
-            | tar -xf - -C "$DEST" --strip-components=1
+            | dx_tar_extract_host "$DEST" --strip-components=1
     fi
 else
     # File: land at DEST/basename(SOURCE) if DEST is/looks like a directory,
