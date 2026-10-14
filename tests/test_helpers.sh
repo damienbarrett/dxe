@@ -234,24 +234,27 @@ assert_git_not_tracked() {
 # actually trust is _dxe_harness_record/skip's append to $DXE_TEST_RESULTS,
 # which -- unlike these counters -- is still there to read even when the
 # call was made inside a `( ... )` subshell or a background job.
+# Each case is recorded BEFORE its line is printed (WP-TMPGUARD): a case the
+# harness cannot record stops the suite (tests/lib/harness.sh fails closed)
+# without ever showing a result line for it.
 test_pass() {
     local message="$1"
-    echo -e "  ${GREEN}✓ PASS${NC}: $message"
     _dxe_harness_record pass "$message"
+    echo -e "  ${GREEN}✓ PASS${NC}: $message"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 }
 
 test_fail() {
     local message="$1"
-    echo -e "  ${RED}✗ FAIL${NC}: $message"
     _dxe_harness_record fail "$message"
+    echo -e "  ${RED}✗ FAIL${NC}: $message"
     TESTS_FAILED=$((TESTS_FAILED + 1))
 }
 
 test_skip() {
     local message="$1"
-    echo -e "  ${YELLOW}○ SKIP${NC}: $message"
     skip "$message"
+    echo -e "  ${YELLOW}○ SKIP${NC}: $message"
     TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
 }
 

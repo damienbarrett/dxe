@@ -77,6 +77,81 @@ it() {
     DXE_HARNESS_LABEL="$1"
 }
 
+# _dxe_harness_die WHAT -- the harness could not create or write something it
+# needs (WP-TMPGUARD, incident 2026-10-15): stop the calling shell here,
+# non-zero, rather than carry on with an empty path. An unrecorded case used
+# to read as a pass (a suite run with a missing TMPDIR "passed" with nothing
+# recorded), and an empty fake-runtime directory put an empty entry -- the
+# current directory -- at the front of PATH.
+_dxe_harness_die() {
+    printf 'tests/lib/harness.sh: cannot create or write the %s (TMPDIR=%s); stopping\n' "$1" "${TMPDIR:-/tmp}" >&2
+    exit 1
+}
+
+# dxe_test_mktemp_dir VAR TEMPLATE -- `mktemp -d TEMPLATE` for a suite's
+# fixture directory, failing closed (WP-TMPGUARD). The idiom it replaces,
+#     X="$(mktemp -d ...)"; X="$(cd "$X" && pwd -P)"; trap 'rm -rf "$X"' EXIT
+# turned a failed mktemp into the CURRENT DIRECTORY (`cd ""` succeeds without
+# moving) and its cleanup then deleted the checkout (incident 2026-10-15).
+#
+# Success: sets VAR in the CALLING shell (printf -v; never call this in
+# `$(...)`) to the new directory's physical path, prints nothing, returns 0.
+# Failure: prints why on stderr and EXITS the calling shell with 1 -- never
+# `return`, so a caller without `set -e` cannot carry on with a bad path --
+# leaving VAR unassigned and running no destructive command. Refused: mktemp
+# failing or printing nothing; a path that is not a directory or is a symlink;
+# a path that is (or contains) the current directory, $HOME or the checkout
+# this file belongs to, so `/` and `.` never pass. The physical path is taken
+# only after the first checks, and a relative path is resolved as `./PATH`, so
+# CDPATH is never consulted. Locals carry a prefix VAR may not use, so
+# printf -v always reaches the caller's variable.
+dxe_test_mktemp_dir() {
+    local _dxe_mtd_var="${1:-}" _dxe_mtd_template="${2:-}" _dxe_mtd_dir _dxe_mtd_phys _dxe_mtd_here _dxe_mtd_guard _dxe_mtd_resolved
+    case "$_dxe_mtd_var" in
+        "" | [0-9]* | *[!A-Za-z0-9_]* | _dxe_mtd_*) _dxe_harness_mktemp_refuse "$_dxe_mtd_template" "[$_dxe_mtd_var] is not a usable variable name" ;;
+    esac
+    _dxe_mtd_dir="$(command mktemp -d "$_dxe_mtd_template")" || _dxe_harness_mktemp_refuse "$_dxe_mtd_template" "mktemp failed"
+    [ -n "$_dxe_mtd_dir" ] || _dxe_harness_mktemp_refuse "$_dxe_mtd_template" "mktemp printed no path"
+    if [ ! -d "$_dxe_mtd_dir" ] || [ -L "$_dxe_mtd_dir" ]; then
+        _dxe_harness_mktemp_refuse "$_dxe_mtd_template" "[$_dxe_mtd_dir] is not a real directory"
+    fi
+    _dxe_mtd_phys="$(_dxe_harness_physical "$_dxe_mtd_dir")" || _dxe_harness_mktemp_refuse "$_dxe_mtd_template" "[$_dxe_mtd_dir] does not resolve"
+    _dxe_mtd_here="${BASH_SOURCE[0]}"
+    case "$_dxe_mtd_here" in
+        */*) _dxe_mtd_here="${_dxe_mtd_here%/*}" ;;
+        *) _dxe_mtd_here=. ;;
+    esac
+    # The current directory and the checkout (two levels above tests/lib)
+    # must resolve; $HOME is checked whenever it exists.
+    set -- . "$_dxe_mtd_here/../.."
+    if [ -n "${HOME:-}" ] && [ -d "$HOME" ]; then set -- "$@" "$HOME"; fi
+    for _dxe_mtd_guard in "$@"; do
+        _dxe_mtd_resolved="$(_dxe_harness_physical "$_dxe_mtd_guard")" \
+            || _dxe_harness_mktemp_refuse "$_dxe_mtd_template" "cannot resolve [$_dxe_mtd_guard] to check it against"
+        case "$_dxe_mtd_resolved/" in
+            "${_dxe_mtd_phys%/}"/*) _dxe_harness_mktemp_refuse "$_dxe_mtd_template" "[$_dxe_mtd_phys] is or contains $_dxe_mtd_resolved" ;;
+        esac
+    done
+    printf -v "$_dxe_mtd_var" '%s' "$_dxe_mtd_phys"
+}
+
+# _dxe_harness_physical PATH -- PATH's physical form (cd -P), a relative PATH
+# taken from the current directory, never through CDPATH.
+_dxe_harness_physical() {
+    local path="$1"
+    case "$path" in
+        /*) : ;;
+        *) path="./$path" ;;
+    esac
+    (cd -P -- "$path" && pwd -P)
+}
+
+# _dxe_harness_mktemp_refuse TEMPLATE REASON -- dxe_test_mktemp_dir's one way out.
+_dxe_harness_mktemp_refuse() {
+    printf 'dxe_test_mktemp_dir: cannot create a temporary directory from %s: %s; stopping\n' "$1" "$2" >&2
+    exit 1
+}
+
 # Ensure $DXE_TEST_RESULTS names a real, writable, append-only file OWNED BY
 # THIS PROCESS, creating one with mktemp under ${TMPDIR:-/tmp} the first
 # time it is needed, if the caller has not already set one -- or if
@@ -105,10 +180,15 @@ it() {
 # $$, so an inherited DXE_TEST_RESULTS whose recorded owner is not THIS
 # $$ is treated as if it were never set at all, and a fresh, private file
 # is minted (and its ownership claimed) instead of adopting the parent's.
+#
+# Fails closed (WP-TMPGUARD): a results file that cannot be created or
+# appended to stops the suite at that record, non-zero (_dxe_harness_die), so
+# print_summary/exit_with_code/finish never report success over cases that
+# were never recorded.
 _dxe_harness_results_file() {
     if [ -z "${DXE_TEST_RESULTS:-}" ] || [ "${DXE_TEST_RESULTS_OWNER:-}" != "$$" ]; then
         local file
-        file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-results.XXXXXX")"
+        file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-results.XXXXXX")" && [ -f "$file" ] || _dxe_harness_die "results file"
         DXE_TEST_RESULTS="$file"
         DXE_TEST_RESULTS_OWNER="$$"
         export DXE_TEST_RESULTS DXE_TEST_RESULTS_OWNER
@@ -118,7 +198,7 @@ _dxe_harness_results_file() {
 # Append one pass/fail record. $1: pass|fail. $2: the case label.
 _dxe_harness_record() {
     _dxe_harness_results_file
-    printf '%s\t%s\n' "$1" "$2" >> "$DXE_TEST_RESULTS"
+    printf '%s\t%s\n' "$1" "$2" >> "$DXE_TEST_RESULTS" || _dxe_harness_die "results file"
 }
 
 # Count of recorded lines of one kind (pass|fail|skip). The `-s` guard
@@ -134,6 +214,16 @@ _dxe_harness_count() {
         done < "$DXE_TEST_RESULTS"
     fi
     printf '%s\n' "$c"
+}
+
+# _dxe_harness_capture_files -- sets the CALLER's out_file/err_file (its own
+# locals, reached by dynamic scope) to two fresh capture files, or stops the
+# suite: with an empty path `"$@" >""` never runs the command at all, and
+# `expect_exit 1` would then pass over a command that never ran.
+_dxe_harness_capture_files() {
+    out_file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-out.XXXXXX")" && [ -f "$out_file" ] \
+        && err_file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-err.XXXXXX")" && [ -f "$err_file" ] \
+        || _dxe_harness_die "capture files"
 }
 
 # expect_exit N cmd [args...]
@@ -152,8 +242,7 @@ expect_exit() {
     shift
     local label="${DXE_HARNESS_LABEL:-expect_exit $expected: $*}"
     local out_file err_file
-    out_file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-out.XXXXXX")"
-    err_file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-err.XXXXXX")"
+    _dxe_harness_capture_files
     local status
     if "$@" >"$out_file" 2>"$err_file"; then
         status=0
@@ -187,8 +276,7 @@ expect_stdout() {
     shift
     local label="${DXE_HARNESS_LABEL:-expect_stdout $pattern: $*}"
     local out_file err_file
-    out_file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-out.XXXXXX")"
-    err_file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-err.XXXXXX")"
+    _dxe_harness_capture_files
     "$@" >"$out_file" 2>"$err_file" || true
     if grep -Eq -- "$pattern" "$out_file"; then
         _dxe_harness_record pass "$label"
@@ -209,8 +297,7 @@ expect_stderr() {
     shift
     local label="${DXE_HARNESS_LABEL:-expect_stderr $pattern: $*}"
     local out_file err_file
-    out_file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-out.XXXXXX")"
-    err_file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-err.XXXXXX")"
+    _dxe_harness_capture_files
     "$@" >"$out_file" 2>"$err_file" || true
     if grep -Eq -- "$pattern" "$err_file"; then
         _dxe_harness_record pass "$label"
@@ -304,7 +391,8 @@ wait_for_pid_exit() {
 _dxe_harness_fake_runtime_dir() {
     if [ -z "${DXE_FAKE_RUNTIME_DIR:-}" ]; then
         local dir
-        dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-fake-runtime.XXXXXX")"
+        dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-fake-runtime.XXXXXX")" && [ -d "$dir" ] && [ ! -L "$dir" ] \
+            || _dxe_harness_die "fake-runtime directory"
         DXE_FAKE_RUNTIME_DIR="$dir"
         export DXE_FAKE_RUNTIME_DIR
     fi
@@ -316,7 +404,7 @@ _dxe_harness_fake_runtime_dir() {
 _dxe_harness_fake_transcript_file() {
     if [ -z "${FAKE_TRANSCRIPT:-}" ]; then
         local file
-        file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-fake-transcript.XXXXXX")"
+        file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-fake-transcript.XXXXXX")" && [ -f "$file" ] || _dxe_harness_die "fake transcript file"
         FAKE_TRANSCRIPT="$file"
         export FAKE_TRANSCRIPT
     fi
@@ -347,6 +435,10 @@ _dxe_harness_fake_transcript_file() {
 # `expect_transcript` can match it as an ERE without caring how the
 # original call happened to quote anything). By default a call exits 0
 # with no output; fake_fail_nth and fake_respond script anything else.
+#
+# Fails closed (WP-TMPGUARD): if the directory or the fake cannot be made,
+# the calling shell exits non-zero rather than put an empty (current
+# directory) or fake-less entry first on PATH, where the REAL tool answers.
 with_fake_runtime() {
     local tool="$1"
     _dxe_harness_fake_runtime_dir
@@ -354,7 +446,7 @@ with_fake_runtime() {
     rm -f "$DXE_FAKE_RUNTIME_DIR/.count-$tool" "$DXE_FAKE_RUNTIME_DIR/.failplan-$tool" "$DXE_FAKE_RUNTIME_DIR/.responses-$tool"
     : > "$DXE_FAKE_RUNTIME_DIR/.failplan-$tool"
     : > "$DXE_FAKE_RUNTIME_DIR/.responses-$tool"
-    cat > "$DXE_FAKE_RUNTIME_DIR/$tool" <<FAKE_EOF
+    cat > "$DXE_FAKE_RUNTIME_DIR/$tool" <<FAKE_EOF || _dxe_harness_die "fake $tool"
 #!/usr/bin/env bash
 dxe_fake_transcript="$FAKE_TRANSCRIPT"
 dxe_fake_count_file="$DXE_FAKE_RUNTIME_DIR/.count-$tool"
@@ -483,13 +575,15 @@ with_fixture() {
         DXE_HARNESS_FIXTURE_REAL_XDG_STATE_HOME="${XDG_STATE_HOME:-}"
         DXE_HARNESS_FIXTURE_KNOWN_HOSTS_BEFORE="$(_dxe_harness_known_hosts_snapshot)"
     fi
+    # Fails closed (WP-TMPGUARD): HOME/XDG_STATE_HOME/TMPDIR are only
+    # redirected once every directory exists -- never under an empty $dir.
     local dir
-    dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-fixture.XXXXXX")"
+    dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-fixture.XXXXXX")" && [ -d "$dir" ] && [ ! -L "$dir" ] \
+        && mkdir -p "$dir/home" "$dir/xdg-state" "$dir/tmp" || _dxe_harness_die "fixture directory"
     DXE_FIXTURE_DIR="$dir"
     HOME="$dir/home"
     XDG_STATE_HOME="$dir/xdg-state"
     TMPDIR="$dir/tmp"
-    mkdir -p "$HOME" "$XDG_STATE_HOME" "$TMPDIR"
     export DXE_FIXTURE_DIR HOME XDG_STATE_HOME TMPDIR
     local dxe_fixture_config_var
     for dxe_fixture_config_var in ${!DXE_CONFIG_@}; do
@@ -545,7 +639,7 @@ skip() {
         reason="${1:-}"
     fi
     _dxe_harness_results_file
-    printf 'skip\t%s\t%s\n' "$class" "$reason" >> "$DXE_TEST_RESULTS"
+    printf 'skip\t%s\t%s\n' "$class" "$reason" >> "$DXE_TEST_RESULTS" || _dxe_harness_die "results file"
 }
 
 # finish -- prints the same summary line print_summary does (byte-identical

@@ -742,6 +742,47 @@ else
 fi
 rm -rf "$gg_dir"
 
+# --- (hh) WP-TMPGUARD: the harness fails closed when it cannot create or
+# write a file it needs (tests/test_tmpdir_failure_safety.sh pins the
+# missing-TMPDIR shapes; these are the ones it does not reach). Each probe
+# is its own bash with cwd and the missing TMPDIR inside a scratch directory,
+# never the checkout, and must stop non-zero before "@@continued@@".
+hh_dir="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir hh_dir "${TMPDIR:-/tmp}/dxe-harness-hh.XXXXXX"
+hh_probe() { # LIBRARY BODY
+    (cd "$hh_dir" && TMPDIR="$hh_dir/missing" DXE_HH_LIB="$SCRIPT_DIR/$1" bash -c '
+        source "$DXE_HH_LIB" >/dev/null
+        '"$2"'
+        echo "@@continued@@"' 2>&1)
+}
+# The results file exists, but the capture files cannot be made: with an
+# empty path `false >""` never runs, and expect_exit 1 used to pass over it.
+hh_out="$(hh_probe lib/harness.sh 'DXE_TEST_RESULTS="$PWD/results"; DXE_TEST_RESULTS_OWNER=$$; expect_exit 1 false')" && hh_status=0 || hh_status=$?
+check test "$hh_status" -eq 1
+check contains "$hh_out" "capture files"
+check reject contains "$hh_out" "@@continued@@"
+check reject test -s "$hh_dir/results"
+# A results file that cannot be appended to stops the suite at that record,
+# and the case's own result line is never printed (recorded before printed).
+hh_out="$(hh_probe test_helpers.sh 'DXE_TEST_RESULTS="$PWD/no-such-dir/results"; DXE_TEST_RESULTS_OWNER=$$; test_pass "hh-unrecorded-case"')" && hh_status=0 || hh_status=$?
+check test "$hh_status" -eq 1
+check contains "$hh_out" "results file"
+check reject contains "$hh_out" "hh-unrecorded-case"
+check reject contains "$hh_out" "@@continued@@"
+# A fake that cannot be written never reaches PATH.
+hh_out="$(hh_probe lib/harness.sh 'DXE_FAKE_RUNTIME_DIR="$PWD/no-such-dir"; FAKE_TRANSCRIPT="$PWD/transcript"; with_fake_runtime docker; echo "PATH=$PATH"')" && hh_status=0 || hh_status=$?
+check test "$hh_status" -eq 1
+check contains "$hh_out" "fake docker"
+check reject contains "$hh_out" "@@continued@@"
+# dxe_test_mktemp_dir refuses a VAR that is not a usable name before mktemp
+# runs, so nothing is created.
+hh_out="$(hh_probe lib/harness.sh 'dxe_test_mktemp_dir not-a-name "$PWD/dxe-hh-name.XXXXXX"')" && hh_status=0 || hh_status=$?
+check test "$hh_status" -eq 1
+check contains "$hh_out" "cannot create a temporary directory from $hh_dir/dxe-hh-name.XXXXXX"
+check reject contains "$hh_out" "@@continued@@"
+check test -z "$(find "$hh_dir" -name 'dxe-hh-name.*')"
+rm -rf "$hh_dir"
+
 rm -f "$RESULTS"
 
 [ "$failures" -eq 0 ]
