@@ -31,7 +31,11 @@ source "$SCRIPT_DIR/test_helpers.sh"
 
 test_section "Section 20: --skip-integration Truthfulness"
 
-STUB_DIR="$(mktemp -d -t dxe-stub-bin.XXXXXX)"
+# Fixture directories come from dxe_test_mktemp_dir (tests/lib/harness.sh),
+# which assigns them in this shell; declared once so ShellCheck (SC2154) sees
+# the assignments.
+probe_dir="" lt_probe_dir="" ev_dir="" hn_dir="" rn_dir=""
+dxe_test_mktemp_dir STUB_DIR "${TMPDIR:-/tmp}/dxe-stub-bin.XXXXXX"
 FAKE_CONTAINER_NAME="dxe-stub-fake-container-$$"
 
 cleanup_stub_dir() {
@@ -121,7 +125,7 @@ rm -f "$SANITY_MARKER"
 # enough that the captured output exceeds the pipe buffer and grep is certain
 # to have exited (and closed the pipe) before printf finishes writing the
 # rest.
-BIGLIST_STUB_DIR="$(mktemp -d -t dxe-biglist-stub-bin.XXXXXX)"
+dxe_test_mktemp_dir BIGLIST_STUB_DIR "${TMPDIR:-/tmp}/dxe-biglist-stub-bin.XXXXXX"
 BIGLIST_TARGET="dxe-biglist-target-$$"
 BIGLIST_ABSENT="dxe-biglist-absent-$$"
 BIGLIST_FILLER_LINES=20000
@@ -356,7 +360,7 @@ rm -f "$runsh_unset_marker"
 # live suite -- but the fixture still needs the `# tier:`/`# bash32:` header
 # tests/run.sh's own suite_has_valid_tier check requires of every selected
 # file, --file included.
-probe_dir="$(mktemp -d -t dxe-run-sh-live-probe.XXXXXX)"
+dxe_test_mktemp_dir probe_dir "${TMPDIR:-/tmp}/dxe-run-sh-live-probe.XXXXXX"
 probe_file="$probe_dir/test_skip_integration_probe.sh"
 # Built with printf rather than a literal heredoc so this suite's OWN source
 # text never contains a contiguous `# tier: `/`# bash32: ` line: those two
@@ -523,7 +527,7 @@ else
 fi
 rm -f "$lt_marker"
 
-lt_probe_dir="$(mktemp -d -t dxe-run-sh-live-guard.XXXXXX)"
+dxe_test_mktemp_dir lt_probe_dir "${TMPDIR:-/tmp}/dxe-run-sh-live-guard.XXXXXX"
 lt_probe="$lt_probe_dir/test_live_guard_probe.sh"
 {
     printf '#!/bin/bash\n'
@@ -566,7 +570,7 @@ rm -rf "$lt_probe_dir" "$lt_marker"
 # scratch directory holding one unit-tier and one live-tier probe suite, so
 # nothing real can be reached; the probe reports the SKIP_INTEGRATION it was
 # handed and what the default-guest guard says.
-ev_dir="$(mktemp -d -t dxe-run-all-live.XXXXXX)"
+dxe_test_mktemp_dir ev_dir "${TMPDIR:-/tmp}/dxe-run-all-live.XXXXXX"
 cp "$SCRIPT_DIR/run.sh" "$SCRIPT_DIR/run_all_tests.sh" "$ev_dir/"
 ln -s "$SCRIPT_DIR/profiles" "$ev_dir/profiles"
 for ev_tier in unit live; do
@@ -630,7 +634,7 @@ rm -rf "$ev_dir" "$ev_marker"
 # command dx-ssh sends and answering the hostname questions with
 # DXE_STUB_HOSTNAME. A matching name passes both checks; a different name
 # fails both. Nothing real is reachable: the stubs are first on PATH.
-hn_dir="$(mktemp -d -t dxe-hostname-case.XXXXXX)"
+dxe_test_mktemp_dir hn_dir "${TMPDIR:-/tmp}/dxe-hostname-case.XXXXXX"
 mkdir "$hn_dir/profiles"
 : > "$hn_dir/key"
 {
@@ -690,7 +694,7 @@ rm -rf "$hn_dir"
 # on PATH at all, and the guest address comes from the adapter's own cache
 # variable (assembled from parts, as the adapter suites do, so no dotted quad
 # sits in this file's source).
-rn_dir="$(mktemp -d -t dxe-runtime-neutral.XXXXXX)"
+dxe_test_mktemp_dir rn_dir "${TMPDIR:-/tmp}/dxe-runtime-neutral.XXXXXX"
 source "$SCRIPT_DIR/lib/fake-tools.sh"
 mkdir "$rn_dir/profiles" "$rn_dir/bin"
 : > "$rn_dir/key"

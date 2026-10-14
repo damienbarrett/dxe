@@ -39,7 +39,12 @@ assert_file_not_contains "$AI_SCRIPT" 'cd /guest-bootstrap' "dx-ai never changes
 assert_file_not_contains "$AI_SCRIPT" 'sed -i' "dx-ai pin refresh is independent of Nix source formatting"
 assert_file_contains_literal "$AI_SCRIPT" '/persist/home/dx/.local/state/dx-ai' "dx-ai mutable generations live under persist"
 
-ai_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-ai-generations.XXXXXX")"
+# Fixture directories come from dxe_test_mktemp_dir (tests/lib/harness.sh),
+# which assigns them in this shell; declared once so ShellCheck (SC2154) sees
+# the assignments.
+ai_fixture="" cache_fixture="" creds_fixture="" idempotent_fixture="" unsafe_fixture=""
+hardening_fixture="" statusline_fixture="" mergeempty_fixture="" keyring_ensure_fixture="" keyring_fail_fixture=""
+dxe_test_mktemp_dir ai_fixture "${TMPDIR:-/tmp}/dxe-ai-generations.XXXXXX"
 trap 'chmod -R u+w "$ai_fixture" 2>/dev/null || true; rm -rf "$ai_fixture"' EXIT
 published="$ai_fixture/published"; state="$ai_fixture/state"
 mkdir -p "$published/pins" "$state/generations/previous"
@@ -369,7 +374,7 @@ fi
 # own fetch+unpack (both unfree-licensed upstream, so Hydra never builds or
 # caches either one, on any revision -- see the progress file for the
 # nixpkgs package.nix evidence).
-cache_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-ai-cache.XXXXXX")"
+dxe_test_mktemp_dir cache_fixture "${TMPDIR:-/tmp}/dxe-ai-cache.XXXXXX"
 trap 'chmod -R u+w "$cache_fixture" 2>/dev/null || true; rm -rf "$cache_fixture"' EXIT
 
 dryrun_all_cached="these 6 derivations will be built:
@@ -1842,8 +1847,7 @@ fi
 creds_ln_shim() { ln() { if [ "${1:-}" = -sfnT ]; then command ln -sfn "$2" "$3"; else command ln "$@"; fi; }; }
 creds_ln_unshim() { unset -f ln; }
 
-creds_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-creds-test.XXXXXX")"
-creds_fixture="$(cd "$creds_fixture" && pwd -P)"
+dxe_test_mktemp_dir creds_fixture "${TMPDIR:-/tmp}/dxe-creds-test.XXXXXX"
 trap 'rm -rf "$creds_fixture"' EXIT
 creds_persist="$creds_fixture/persist/home/dx"
 creds_home="$creds_fixture/home/dx"
@@ -1987,8 +1991,7 @@ rm -rf "$shared_loader_fixture"
 
 # Repeated setup (a second guest activation, or a second dx-ai run) must be
 # side-effect-free once every link is already correct.
-idempotent_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-creds-idempotent.XXXXXX")"
-idempotent_fixture="$(cd "$idempotent_fixture" && pwd -P)"
+dxe_test_mktemp_dir idempotent_fixture "${TMPDIR:-/tmp}/dxe-creds-idempotent.XXXXXX"
 idempotent_persist="$idempotent_fixture/persist/home/dx"
 idempotent_home="$idempotent_fixture/home/dx"
 mkdir -p "$idempotent_persist" "$idempotent_home"
@@ -2012,8 +2015,7 @@ rm -rf "$idempotent_fixture"
 # helper, exactly as tested directly against the helper in
 # test_sourceable_coverage.sh -- this proves dx_ai_setup_credentials actually
 # calls it and propagates its failure rather than proceeding regardless.
-unsafe_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-creds-unsafe.XXXXXX")"
-unsafe_fixture="$(cd "$unsafe_fixture" && pwd -P)"
+dxe_test_mktemp_dir unsafe_fixture "${TMPDIR:-/tmp}/dxe-creds-unsafe.XXXXXX"
 unsafe_outside="$unsafe_fixture/outside"; unsafe_home="$unsafe_fixture/home/dx"
 mkdir -p "$unsafe_outside" "$unsafe_home"
 ln -s "$unsafe_outside" "$unsafe_fixture/persist"
@@ -2040,8 +2042,7 @@ rm -rf "$unsafe_fixture"
 # the pre-existing real directory's content moves into $persist_home/.claude
 # (conflicts renamed aside, none here), and ~/.claude ends up the intended
 # symlink, exactly as a repeat run from a clean state would.
-hardening_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-creds-hardening.XXXXXX")"
-hardening_fixture="$(cd "$hardening_fixture" && pwd -P)"
+dxe_test_mktemp_dir hardening_fixture "${TMPDIR:-/tmp}/dxe-creds-hardening.XXXXXX"
 hardening_persist="$hardening_fixture/persist/home/dx"
 hardening_home="$hardening_fixture/home/dx"
 mkdir -p "$hardening_persist" "$hardening_home/.claude"
@@ -2070,8 +2071,7 @@ rm -rf "$hardening_fixture"
 # anything -- an unparseable settings.json got clobbered with zero bytes.
 # dx_ai_setup_credentials runs in `||` context in dx_ai_main, so errexit is
 # suspended inside it; only an explicit check-and-return stops the clobber.
-statusline_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-creds-statusline.XXXXXX")"
-statusline_fixture="$(cd "$statusline_fixture" && pwd -P)"
+dxe_test_mktemp_dir statusline_fixture "${TMPDIR:-/tmp}/dxe-creds-statusline.XXXXXX"
 
 # (1) A non-JSON settings.json must fail loudly and survive untouched.
 corrupt_persist="$statusline_fixture/corrupt/persist/home/dx"
@@ -2150,7 +2150,7 @@ rm -rf "$statusline_fixture"
 # empty) must never be allowed to overwrite a working settings file with
 # silence -- `-s "$tmp"` is what tells this apart from a merge that legitimately
 # writes zero bytes, since `jq`'s own exit code is 0 either way.
-mergeempty_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-merge-json-empty.XXXXXX")"
+dxe_test_mktemp_dir mergeempty_fixture "${TMPDIR:-/tmp}/dxe-merge-json-empty.XXXXXX"
 printf '%s\n' '{"kept":"value"}' > "$mergeempty_fixture/settings.json"
 cp "$mergeempty_fixture/settings.json" "$mergeempty_fixture/before.json"
 mergeempty_stderr="$(dx_ai_merge_json_setting "$mergeempty_fixture/settings.json" 'empty' 2>&1 >/dev/null)"
@@ -2168,7 +2168,7 @@ rm -rf "$mergeempty_fixture"
 # --- dx_ai_ensure_keyring: its own address_file is fixed and depends on
 # nothing about the caller's environment. Verified directly, since every
 # dx_ai_main-level test stubs this function away entirely.
-keyring_ensure_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-ensure-keyring.XXXXXX")"
+dxe_test_mktemp_dir keyring_ensure_fixture "${TMPDIR:-/tmp}/dxe-ensure-keyring.XXXXXX"
 keyring_ensure_marker="$keyring_ensure_fixture/marker"
 (
     dx_ai_load_keyring() { :; }
@@ -2200,7 +2200,7 @@ rm -rf "$keyring_ensure_fixture"
 # AF_UNIX socket, matching tests/test_sourceable_coverage.sh's own
 # established fixture shape for this library) plus a gnome-keyring-daemon
 # that always fails, and assert dx-keyring no longer claims success.
-keyring_fail_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-keyring-fail.XXXXXX")"
+dxe_test_mktemp_dir keyring_fail_fixture "${TMPDIR:-/tmp}/dxe-keyring-fail.XXXXXX"
 mkdir -p "$keyring_fail_fixture/fakebin/bin" "$keyring_fail_fixture/fakebin/share/dbus-1"
 : > "$keyring_fail_fixture/fakebin/share/dbus-1/session.conf"
 keyring_fail_socket="$keyring_fail_fixture/fake.sock"

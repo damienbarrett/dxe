@@ -177,7 +177,10 @@ fixture_commit() {
 # must be caught (red), and the same fixture with the violation removed
 # must be clean (green). This is the increment's red/green evidence,
 # without needing to revert real production code.
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX")"
+# dxe_test_mktemp_dir (tests/lib/harness.sh) assigns $fixture in this shell;
+# declared once so ShellCheck (SC2154) sees the assignment.
+fixture=""
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/bin/lib"
 fixture_git_init "$fixture"
@@ -288,7 +291,7 @@ rm -rf "$fixture"
 # Phase 3, Increment 4): a fully-spelled call to either adapter's own
 # namespace, outside the two adapter files, bypasses dx_runtime.sh's
 # dispatch and so runs unconditionally regardless of DX_RUNTIME.
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX")"
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/bin/lib"
 fixture_git_init "$fixture"
@@ -371,7 +374,7 @@ rm -rf "$fixture"
 # padding lines push the real line past single digits; the comment names an
 # operation no OTHER exception arm above covers, so a false positive here
 # could not hide behind one of those.
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX")"
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/bin"
 fixture_git_init "$fixture"
@@ -408,7 +411,7 @@ rm -rf "$fixture"
 # containing a `Bash(container run --rm ...)` permission string tripped
 # audit_bin_tree, because it enumerated the filesystem (`find`) rather
 # than git's tracked-file list.
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX")"
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-runtime-audit.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/bin/.claude" "$fixture/bin/lib"
 fixture_git_init "$fixture"
