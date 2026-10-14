@@ -715,7 +715,9 @@ if [ "$(cat "$guest_root/target1/source-dir/sub/one.txt" 2>/dev/null)" = "alpha"
 else
     test_fail "dx-put streams a directory via piped tar (tree: $(find "$guest_root/target1" 2>&1), log=$(cat "$log"))"
 fi
-if grep -F -x -q -- -i "$log" && grep -F -x -q -- tar "$log"; then
+# The extractor is a small `sh -c` program (extract, then drain: WP-TAR), so
+# the tar words are in its program text rather than a bare `tar` argument.
+if grep -F -x -q -- -i "$log" && grep -F -q -- "tar -xf -" "$log"; then
     test_pass "dx-put's directory-copy exec includes -i (stdin attached for the piped tar)"
 else
     test_fail "dx-put's directory-copy exec includes -i (log=$(cat "$log"))"
