@@ -2182,6 +2182,15 @@ The provisional int-4 line the merge commit wrote, superseded, verbatim:
 
     # 2026-10-13 int-4 (merge of main 557d645; provisional until measured): floor 5854 (feat's; main's own 4543 is below it), ceiling 2644 (main's; feat measured 2633 before main's +6 exempt GC lines). main's dated lines and feat's WP6.5b line are quoted verbatim in docs/evidence/20260930/coverage-ratchet-history.md (int-4).
 
+## 2026-10-14: tar extractors drain their pipes (fix/tar-pipe-drain, WP-TAR)
+
+Floor 5947 -> 5955 (measured, 100% covered): dx_tar_extract_host and
+dx_tar_extract_guest in bin/lib/dx-runtime.sh, +8 executable lines. Ceiling
+unchanged at 2639 (measured 2639): the extractor lines in bin/dx-get and
+bin/dx-put were rewritten in place to call the helpers, none added. The line
+moved out of ratchet.env to keep it at 10 lines is the WP6.4c entry
+(floor 5800 -> 5827), whose section is above.
+
 ## 2026-10-14: int tmux-sockets (main 723b8a1 merged into fix/usage-tmux-sockets)
 
 Measured on the merge head `deb9560` with `tests/run-coverage-linux.sh` (Apple
@@ -2197,3 +2206,7 @@ unscoped_prod_exec_lines=2639`.
 The oldest dated ratchet.env line was moved here to keep that file at 10 lines:
 
     # 2026-10-12 WP6.4c: floor 5800 -> 5827 (measured, 100% covered; +27: the copy-container check in dx-persist-dir.sh and its two calls, +12; the copy/verify container name and labels and dx_runtime_docker_host_copy_containers in the docker adapter, +13; the neutral op and the Apple arm, +1 each); ceiling unchanged at 2633 (measured 2633, no entry-point line). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+The oldest dated ratchet.env line, moved here when the tmux and tar branches were combined (int/tmux-and-tar) to keep that file at 10 lines:
+
+    # 2026-10-12 WP6.7: floor 5827 -> 5852 (measured, 100% covered; +25: dx_path_names_filesystem_root and the host-path root rule in dx-config.sh, +12; the rsync floor 3.1.3 (version_below) and establish's filesystem-root check in the docker adapter, +6; the filesystem-root start decision and refusal, the unmarked hint, the paused/removing arms and the migrate rule in dx-persist-dir.sh, +7); ceiling unchanged at 2633 (measured 2633, no entry-point line). History: docs/evidence/20260930/coverage-ratchet-history.md.

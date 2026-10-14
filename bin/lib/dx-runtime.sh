@@ -308,6 +308,28 @@ dx_runtime_exec() { dx_runtime_dispatch exec "$@"; }
 dx_runtime_logs() { dx_runtime_dispatch logs "$@"; }
 dx_runtime_export() { dx_runtime_dispatch export "$@"; }
 
+# Tar extractors that read a pipe must drain it: after a SUCCESSFUL extract they
+# consume what tar left unread (see the comment in dx-bootstrap-sync.sh for why
+# bsdtar leaving the trailing padding fails the creator with EPIPE). `&&`, not
+# `;`: a failed extract keeps its own status.
+# dx_tar_extract_host DEST [TAR_ARG...]: host extractor reading stdin.
+dx_tar_extract_host() {
+    local dest="$1"
+    shift
+    tar -xf - -C "$dest" "$@" && cat >/dev/null
+}
+# dx_tar_extract_guest EXEC_USER CONTAINER DEST [TAR_ARG...]: guest extractor
+# reading stdin; DEST is a positional argument so the program text is constant.
+# EXEC_USER may be empty (the exec default user).
+dx_tar_extract_guest() {
+    local exec_user="$1" container_name="$2"
+    shift 2
+    local user_args=()
+    [ -z "$exec_user" ] || user_args=(-u "$exec_user")
+    dx_runtime_exec -i "${user_args[@]+"${user_args[@]}"}" "$container_name" \
+        sh -c 'tar -xf - -C "$@" && cat >/dev/null' -- "$@"
+}
+
 # Runtime capability queries (qnap-dxe-plan.md DQ2/DQ8): direct named-volume
 # mounts, bind mounts, restart policy, host filesystem reclamation. See each
 # adapter file's own comment for what its answers mean and why.

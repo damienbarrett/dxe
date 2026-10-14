@@ -44,12 +44,12 @@ if [ -d "$SOURCE" ]; then
         # stray ._pack-*.idx alongside a real git pack corrupts git's object
         # store ("index file too small"). Exclude them on every put.
         COPYFILE_DISABLE=1 tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
-            | dx_runtime_exec -i "$DX_CONTAINER_NAME" tar -xf - -C "$TARGET_DIR"
+            | dx_tar_extract_guest "" "$DX_CONTAINER_NAME" "$TARGET_DIR"
     else
         FINAL_DEST="$DEST"
         dx_put_ensure_guest_dir "$DEST"
         COPYFILE_DISABLE=1 tar -C "$(dirname "$SOURCE")" --exclude '._*' -cf - "$(basename "$SOURCE")" \
-            | dx_runtime_exec -i "$DX_CONTAINER_NAME" tar -xf - -C "$DEST" --strip-components=1
+            | dx_tar_extract_guest "" "$DX_CONTAINER_NAME" "$DEST" --strip-components=1
     fi
     dx_runtime_exec "$DX_CONTAINER_NAME" chown -R dx:dx "$FINAL_DEST"
 else

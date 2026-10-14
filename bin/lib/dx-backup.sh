@@ -356,7 +356,7 @@ dx_backup_fetch_paths() {
         # independent regular-file copy instead, so a duplicate can never
         # produce a self-referential hardlink record.
         if dx_runtime_exec -u dx "$container_name" tar -C "$DX_BACKUP_GUEST_ROOT" --exclude '._*' --hard-dereference --null -T "$guest_list" -cf - </dev/null \
-            | tar -xf - -C "$dest_dir"; then
+            | dx_tar_extract_host "$dest_dir"; then
             rc=0
         else
             rc=$?
@@ -1083,7 +1083,7 @@ dx_backup_restore_push() {
     # tar-creation direction.
     printf '%s\n' "${target_list[@]}" | tr '\n' '\0' \
         | COPYFILE_DISABLE=1 tar -C "$backup_dir/current" --exclude '._*' --null -T - -cf - \
-        | dx_runtime_exec -i -u dx "$container_name" tar -xf - -C "$DX_BACKUP_GUEST_ROOT" || return $?
+        | dx_tar_extract_guest dx "$container_name" "$DX_BACKUP_GUEST_ROOT" || return $?
 
     # --- Ownership: one batched `chown -h dx:dx` (never plain `chown`,
     # which follows a symlink's target instead of re-owning the symlink
