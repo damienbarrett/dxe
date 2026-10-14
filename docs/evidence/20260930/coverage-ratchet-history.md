@@ -2181,3 +2181,19 @@ Measured on the merged head `35a2289` (the merge plus the test-only
 The provisional int-4 line the merge commit wrote, superseded, verbatim:
 
     # 2026-10-13 int-4 (merge of main 557d645; provisional until measured): floor 5854 (feat's; main's own 4543 is below it), ceiling 2644 (main's; feat measured 2633 before main's +6 exempt GC lines). main's dated lines and feat's WP6.5b line are quoted verbatim in docs/evidence/20260930/coverage-ratchet-history.md (int-4).
+
+## 2026-10-14: int tmux-sockets (main 723b8a1 merged into fix/usage-tmux-sockets)
+
+Measured on the merge head `deb9560` with `tests/run-coverage-linux.sh` (Apple
+`container` as the provider): `covered=100% scope_exec_lines=5981
+unscoped_prod_exec_lines=2639`.
+
+- `scope_exec_lines_floor` 5947 -> 5981 (+34): main's 5947 plus the in-scope
+  lines of the stale tmux socket prune in `scripts/lib/dx-usage-service.sh`.
+  Neither side lost a line.
+- `unscoped_prod_exec_lines_ceiling` unchanged at 2639: the branch touches no
+  excluded entry point.
+
+The oldest dated ratchet.env line was moved here to keep that file at 10 lines:
+
+    # 2026-10-12 WP6.4c: floor 5800 -> 5827 (measured, 100% covered; +27: the copy-container check in dx-persist-dir.sh and its two calls, +12; the copy/verify container name and labels and dx_runtime_docker_host_copy_containers in the docker adapter, +13; the neutral op and the Apple arm, +1 each); ceiling unchanged at 2633 (measured 2633, no entry-point line). History: docs/evidence/20260930/coverage-ratchet-history.md.
