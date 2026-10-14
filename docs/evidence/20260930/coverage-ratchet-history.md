@@ -2210,3 +2210,19 @@ The oldest dated ratchet.env line was moved here to keep that file at 10 lines:
 The oldest dated ratchet.env line, moved here when the tmux and tar branches were combined (int/tmux-and-tar) to keep that file at 10 lines:
 
     # 2026-10-12 WP6.7: floor 5827 -> 5852 (measured, 100% covered; +25: dx_path_names_filesystem_root and the host-path root rule in dx-config.sh, +12; the rsync floor 3.1.3 (version_below) and establish's filesystem-root check in the docker adapter, +6; the filesystem-root start decision and refusal, the unmarked hint, the paused/removing arms and the migrate rule in dx-persist-dir.sh, +7); ceiling unchanged at 2633 (measured 2633, no entry-point line). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+The next-oldest dated ratchet.env line, moved here when the tmux and tar branches were combined, to make room for the combined entry:
+
+    # 2026-10-13 WP6.1b: floor 5852 -> 5854 (measured, 100% covered; +2 in dx-persist-manifest.sh: generate's symlink MODE "-" and compare's symlink-pair skip); ceiling unchanged at 2633 (measured 2633, no entry-point line). History: docs/evidence/20260930/coverage-ratchet-history.md.
+
+## 2026-10-15: int/tmux-and-tar (fix/tar-pipe-drain merged into int/usage-tmux-sockets)
+
+Measured on the merge head with `tests/run-coverage-linux.sh` (Apple
+`container` as the provider): `covered=100% scope_exec_lines=5989
+unscoped_prod_exec_lines=2639`.
+
+- `scope_exec_lines_floor` 5981 -> 5989 (+8): the tmux branch's 5981 plus the
+  tar branch's +8 (dx_tar_extract_host and dx_tar_extract_guest in
+  bin/lib/dx-runtime.sh). The two branches touch disjoint product files, so
+  nothing was lost.
+- `unscoped_prod_exec_lines_ceiling` unchanged at 2639 (measured 2639).
