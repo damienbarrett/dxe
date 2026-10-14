@@ -1124,8 +1124,11 @@ if [ "${1:-}" = exec ]; then
     if [ "${1:-}" = -u ]; then shift; shift; fi
     shift
     if [ "${1:-}" = sh ]; then
-        echo "fake container: refusing to ship (simulated failure)" >&2
-        exit 1
+        # WP-TAR: the guest extractor is itself a small `sh -c` program (extract, then drain) and must pass; only a ship-list sh is refused.
+        case "${3:-}" in
+            *"tar -xf"*) : ;;
+            *) echo "fake container: refusing to ship (simulated failure)" >&2; exit 1 ;;
+        esac
     fi
     args=()
     for a in "$@"; do
