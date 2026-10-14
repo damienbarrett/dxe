@@ -128,6 +128,28 @@ five-tool inventory: Codex, Gemini, Claude, `agy`, and `herdr`). A newly
 published generation must still contain the complete current optional
 bundle, including OpenCode.
 
+Each retained AI generation is protected from Nix garbage collection
+(`dx-reclaim`'s `nix-collect-garbage -d`) by a GC root at its final path,
+`generations/<id>/profile-1-link`. `dx-ai` builds the profile in a
+`generations/.staging-<id>` stage, and the root Nix registers during that
+build names the stage path, which no longer exists once the stage is
+renamed into place. So `dx-ai` registers the root again at the final path
+(`nix-store --add-root generations/<id>/profile-1-link --indirect -r <store
+path>`) after the rename and before `current` moves. If that fails, the
+publish fails with `Error: could not register a GC root for AI generation
+<id>`, the new generation is removed, and `current` is left unchanged.
+
+Every `dx-ai` run, `--recover` included, starts under its lock by removing
+any `.staging-*` stage a killed run left behind and re-registering the roots
+of `current` and the predecessor it records. A guest whose generations were
+published without those roots is healed by its next `dx-ai` or
+`dx-ai --recover`, with no rebuild. If a generation's profile has already
+been collected, the run prints `Warning: could not register a GC root for AI
+generation <id>` and carries on: an ordinary `dx-ai` then builds and
+publishes a replacement. `dx-ai` never runs a garbage collection and never
+edits `/nix/var/nix/gcroots`. The stale link a renamed stage leaves there
+is removed by Nix's next collection.
+
 Connect to Herdr from the host using:
 
 ```bash
@@ -372,3 +394,83 @@ Then connect normally with `./bin/dx-ssh`, run `dx-theme dark` and `dx-theme lig
 - **Bootstrap Payload:** `/guest-bootstrap` is backed by the `dx-bootstrap`
   volume and populated from the local checkout at start time, keeping repository
   changes out of the image layer.
+
+## Browsing /persist from the Mac
+
+Use this to browse and manage files under `/persist` from the Mac, for example to move or copy a project tree around. Editing happens in the guest, not on the Mac. Two access paths are supported, both over the guest's existing SSH: VS Code Remote-SSH and an SFTP file browser such as ForkLift, Transmit or Cyberduck. There is no helper command; you add an `~/.ssh/config` entry once. For one-off copies keep using `dx-get` and `dx-put`.
+
+Browsing works only while the guest is running. When the guest is stopped there is nothing listening on the SSH port, so the connection is refused until you start it again.
+
+Add this to `~/.ssh/config` for the default profile:
+
+```sshconfig
+Host dx-host
+  HostName 127.0.0.1
+  Port 2222
+  User dx
+  IdentityFile ~/.ssh/dxe/dx_key
+  IdentitiesOnly yes
+  HostKeyAlias dx-host
+  StrictHostKeyChecking accept-new
+```
+
+Other profiles substitute their own name, port and key (`DX_SSH_PORT` and `DX_SSH_KEY` from the profile file). Every guest is reached through `127.0.0.1`, so `HostKeyAlias` keeps each guest's pinned host key under its own name instead of colliding on the shared address. The guest's host key persists in `/persist/etc/ssh`, so the pin survives rebuilds and recreates.
+
+VS Code needs a second alias that shares the first one's pinned key. They cannot be merged, because `RemoteCommand` clashes with the subsystem request an SFTP client makes:
+
+```sshconfig
+Host dx-host-vscode
+  HostName 127.0.0.1
+  Port 2222
+  User dx
+  IdentityFile ~/.ssh/dxe/dx_key
+  IdentitiesOnly yes
+  HostKeyAlias dx-host
+  StrictHostKeyChecking accept-new
+  RemoteCommand bash -l
+```
+
+Turn on the VS Code user setting `"remote.SSH.enableRemoteCommand": true`, then connect with:
+
+```bash
+code --remote ssh-remote+dx-host-vscode /persist
+```
+
+The guest runs VS Code's server through nix-ld, set up at every boot with no manual step: bootstrap links nix-ld at the glibc loader path (`/lib` or `/lib64`, whichever nix-ld names for the architecture), fills nix-ld's default library directory with the four libraries the server needs, and creates VS Code's `/tmp/vscode-skip-server-requirements-check` marker. An existing guest, on the Mac or on the QNAP, gets nix-ld on its next boot: bootstrap uses the nix-ld from the essentials that boot runs (after a best-effort upgrade of the guest's essentials when it lacks nix-ld). If that fails the boot continues with a warning and VS Code is simply unsupported. The same best-effort upgrade also brings rsync into an existing guest's essentials (rsync is on the optional essentials list beside nix-ld), so an existing guest, such as the QNAP guest, has rsync on its next boot, before a /persist migration needs it; if that upgrade fails the boot continues with a warning and the migration's rsync check later asks you to boot the guest once more. The first connection to a guest downloads the VS Code server from Microsoft and installs it, so it is slow once (the downloaded server lives in the dx home and is reused afterwards). Delete the `/tmp` marker only if you want VS Code to check the host again; it comes back on the next boot.
+
+For an SFTP client, create a connection to the `dx-host` alias (or enter host `127.0.0.1`, the profile's port, user `dx` and the same key). SSHFS and Finder mounts are out of scope.
+
+Both paths run as `dx`, with `dx`'s permissions. Root-only entries such as `etc/ssh` stay unreadable. This is intended.
+
+### After a factory reset
+
+`dx-factory-reset` deletes the volume, so the guest gets a new host key and your Mac refuses the connection with a changed-key warning. Do not clear the pin blindly. First confirm the new key's fingerprint from inside the guest, through `dx-ssh`, which does not pin anything:
+
+```bash
+dx-ssh 'ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
+```
+
+(`/etc/ssh` is the live copy of the key kept in `/persist/etc/ssh`; the persisted store itself is root-only.) Once that fingerprint matches the one your Mac reports in the warning, remove the old pin and reconnect:
+
+```bash
+ssh-keygen -R dx-host
+```
+
+## Changing /persist from the host
+
+This applies to a QNAP guest with `DX_PERSIST_STORAGE=host-path`, whose `/persist` is a directory on the NAS share (`<qnap-share>/dxe/<container name>/persist`) that you can open from the Mac over SMB. Host access is for browsing and file management; editing happens mostly in the guest, and guest tools manage their own live state. The rule for changing files from the host while the guest runs:
+
+- Browse anything.
+- Change project files and `inbox/` freely.
+
+Leave the guest's own state alone: the tool-state folders (`.claude`, `.codex`, `.gemini`, herdr, tmux, and `etc/ssh`, which holds the guest's SSH host keys) and any in-progress git operation (a rebase, merge or index lock) under `git/`. Tools keep these open and rewrite them, so a change from the host can be lost or corrupt them.
+
+During a migration (`dx-persist-migrate`) or a rollback, change nothing under the guest's `/persist`: the copy is verified against the source, and an edit from the host while it runs makes it fail or, worse, pass on stale data.
+
+Nothing enforces this rule. The share, the guest and the tooling all allow every change; keeping to it is up to you.
+
+A guest tool that watches files may not notice a change made from the host. Refresh it or restart the watcher; the remedy is in `troubleshooting.md` ("A guest tool does not notice a change made from the host").
+
+On the QNAP's Public share, every user with Read/Write access over SMB can read and modify everything in `/persist`, whatever the file owner or mode says. That includes `etc/ssh` (the guest's SSH host private keys) and all stored credentials (the `gh`, Claude, Codex and Gemini logins under the guest's home). This was observed on the NAS and is an accepted exposure; a dedicated private share, readable only by your own account, would remove it, and only `DX_PERSIST_HOST_ROOT` changes. Until then, treat anyone with Read/Write on Public as having the guest's secrets, and see section 11 of `docs/qnap-runbook.md`.
+
+Finder over SMB leaves no `.DS_Store` or `._*` files on the share (the NAS keeps Mac metadata in streams), so no remedy is needed. Files and folders made from Finder are owned by the account you logged in with, mode 0777, and the guest can use them; deletions go to the share's own `@Recycle` folder, outside `/persist`.

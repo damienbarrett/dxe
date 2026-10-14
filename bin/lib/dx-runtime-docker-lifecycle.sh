@@ -57,6 +57,26 @@ dx_runtime_docker_volume_exists() {
     dx_runtime_docker_cli volume inspect "$1" >/dev/null 2>&1
 }
 
+# dx_runtime_volume_state's docker-ssh answer, from the same single
+# `volume inspect`: success is present; a failure that says "no such volume"
+# in any letter case (the CLI's "Error: No such volume: NAME", the daemon's
+# "get NAME: no such volume") is absent; any other failure -- the daemon or
+# the ssh connection down, permission denied -- is unknown, and its message
+# is passed on as `dx:` lines, never an `Error:` line.
+dx_runtime_docker_volume_state() {
+    local err
+    if err="$(dx_runtime_docker_cli volume inspect "$1" 2>&1 >/dev/null)"; then
+        printf 'present\n'
+        return 0
+    fi
+    case "$(printf '%s' "$err" | tr '[:upper:]' '[:lower:]')" in
+        *"no such volume"*) printf 'absent\n'; return 0 ;;
+    esac
+    [ -z "$err" ] || printf '%s\n' "$err" | sed 's/^/dx: volume inspect: /' >&2
+    printf 'unknown\n'
+    return 1
+}
+
 dx_runtime_docker_container_exists() {
     dx_runtime_docker_cli container inspect "$1" >/dev/null 2>&1
 }
@@ -72,6 +92,35 @@ dx_runtime_docker_container_restart_count() {
     local count
     count="$(dx_runtime_docker_cli container inspect --format '{{.RestartCount}}' "$1" 2>/dev/null)" || return 1
     printf '%s\n' "$count" | tail -n1 | tr -d '\r'
+}
+
+# dx_runtime_container_state's docker-ssh answer (plans/do WP6.4), from ONE
+# `container inspect --format {{.State.Running}}` (stdout and stderr read
+# together): a last line of true is running, false is stopped; a failure that
+# says "no such container" or "no such object" in any letter case is absent.
+# Anything else -- the daemon or the ssh connection down, an answer that is
+# neither true nor false, an empty name (no call) -- is unknown, non-zero, its
+# message passed on as `dx:` lines, never an `Error:` line.
+dx_runtime_docker_container_state() {
+    local out="" rc=0
+    if [ -z "${1:-}" ]; then
+        rc=1
+    else
+        out="$(dx_runtime_docker_cli container inspect --format '{{.State.Running}}' "$1" 2>&1)" || rc=$?
+    fi
+    if [ "$rc" -eq 0 ]; then
+        case "$(printf '%s\n' "$out" | tail -n 1 | tr -d '\r')" in
+            true) printf 'running\n'; return 0 ;;
+            false) printf 'stopped\n'; return 0 ;;
+        esac
+    else
+        case "$(printf '%s' "$out" | tr '[:upper:]' '[:lower:]')" in
+            *"no such container"* | *"no such object"*) printf 'absent\n'; return 0 ;;
+        esac
+    fi
+    [ -z "$out" ] || printf '%s\n' "$out" | sed 's/^/dx: container inspect: /' >&2
+    printf 'unknown\n'
+    return 1
 }
 
 dx_runtime_docker_container_list() {
@@ -134,9 +183,22 @@ dx_runtime_docker_label_flags() {
     DXE_RUNTIME_DOCKER_LABEL_ARGV=(--label io.dxe.managed=true --label "io.dxe.schema=$DXE_RUNTIME_DOCKER_LABEL_SCHEMA" --label "io.dxe.profile=$(dx_runtime_docker_profile_id)" --label "io.dxe.role=$1" --label "io.dxe.system=${DX_GUEST_SYSTEM:?}")
 }
 
+# ",readonly" for MODE ro, nothing otherwise.
+dx_runtime_docker_mount_ro_suffix() {
+    [ "$1" != ro ] || printf ',readonly'
+}
+
 dx_runtime_docker_container_create() {
     dx_runtime_docker_require_bin >/dev/null || return 1
-    local name="" image="" entrypoint_cmd="" flags=() entrypoint_args=() guest_addr=""
+    local name="" image="" entrypoint_cmd="" flags=() entrypoint_args=() guest_addr="" prev="" arg
+    # PREPASS: parse every --volume spec before the first runtime call, so a
+    # malformed persist-dir path (':' or ',') is refused with nothing sent.
+    for arg in "$@"; do
+        if [ "$prev" = --volume ]; then
+            dx_runtime_container_create_parse_volume_spec "$arg" || return 1
+        fi
+        prev="$arg"
+    done
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --name) name="$2"; shift 2 ;;
@@ -144,6 +206,13 @@ dx_runtime_docker_container_create() {
             --volume)
                 dx_runtime_container_create_parse_volume_spec "$2" || return 1
                 case "$DXE_VOLSPEC_ROLE" in
+                    persist-dir)
+                        # No ownership proof and no host mutation: the
+                        # directory is operator-owned (D-4/D-5), one --mount
+                        # pair, never -v/--volume (a missing source would be
+                        # silently created by -v).
+                        flags+=(--mount "type=bind,source=$DXE_VOLSPEC_NAME,target=$DXE_VOLSPEC_TARGET$(dx_runtime_docker_mount_ro_suffix "$DXE_VOLSPEC_MODE")")
+                        ;;
                     nix)
                         # Astra F3's "writable attachment" checkpoint: an
                         # EXISTING nix/persist/bootstrap volume is proven
@@ -624,12 +693,17 @@ dx_runtime_docker_run_ephemeral() {
 # capability message"). container_healthcheck
 # (qnap-dxe-plan.md Phase 6 item 4): yes -- the one neutral create-time
 # health flag; --health-cmd/--health-interval/--health-retries render as
-# Docker's own real create flags (above).
+# Docker's own real create flags (above). runtime_host_directories: yes --
+# the persist-dir: role renders as --mount type=bind (plans/do D-5).
 
 dx_runtime_docker_capability() {
     case "$1" in
         direct_named_volume_mounts) return 0 ;;
         bind_mounts) return 1 ;;
+        # runtime_host_directories: the adapter can bind an operator-owned
+        # host directory as /persist (the persist-dir: role, plans/do D-4/D-5),
+        # which bind_mounts (the dx-mount/git: host-folder kind) stays off for.
+        runtime_host_directories) return 0 ;;
         restart_policy) return 0 ;;
         host_filesystem_reclamation) return 1 ;;
         raw_nix_disk) return 1 ;;
@@ -641,3 +715,515 @@ dx_runtime_docker_capability() {
     esac
 }
 
+
+# dx_runtime_container_mounts <name> -- one `type|source|destination|rw` line
+# per mount (plans/do D-6). A named volume reports its VOLUME NAME as the
+# source, a bind its host path. One remote call through the transport; the
+# reply has CR and blank lines stripped. A missing container is non-zero with
+# no output.
+dx_runtime_docker_container_mounts() {
+    local out
+    out="$(dx_runtime_docker_cli container inspect --format '{{range .Mounts}}{{.Type}}|{{if eq .Type "volume"}}{{.Name}}{{else}}{{.Source}}{{end}}|{{.Destination}}|{{if .RW}}rw{{else}}ro{{end}}{{println}}{{end}}' "$1" 2>/dev/null)" || return 1
+    printf '%s\n' "$out" | tr -d '\r' | awk 'NF'
+}
+
+# NAS directory operations (WP4.2; plan D-6; spec R15-R17). Each operation is
+# exactly one ssh call through dx_runtime_docker_ssh_exec running
+#   sh -c <constant SCRIPT> sh <data words...>
+# so the data (root, guest, path, sentinel) is only ever positional "$@" in a
+# fixed single-line POSIX program, never interpolated into it. The scripts use
+# only POSIX/busybox tools, no newline and no single quote. The marker text
+# is validated here with dx_persist_marker_parse and travels on stdin.
+
+# $1 ROOT, $2 GUEST, $3 sentinel (empty = none). Reports facts only.
+DX_RUNTIME_DOCKER_HOST_DIR_PROBE_SCRIPT='unset CDPATH; cd -P -- "$1" 2>/dev/null || { echo "dx: not a directory: $1" >&2; exit 1; }; r=$(pwd -P) || exit 1; mt=unknown; if [ -n "$3" ]; then mt=no; if [ -f "$r/$3" ] && [ ! -L "$r/$3" ]; then mt=yes; fi; fi; p="$r/dxe/$2/persist"; k="$p/.dxe-persist-dir"; mk=absent; if [ -L "$r/dxe" ] || [ -L "$r/dxe/$2" ] || [ -L "$p" ]; then st=symlink; elif [ -d "$p" ]; then l=$(ls -A -- "$p") || { echo "dx: cannot list: $p" >&2; exit 1; }; if [ -n "$l" ]; then st=nonempty; else st=empty; fi; if [ -f "$k" ] && [ ! -L "$k" ]; then mk=present; fi; elif [ -e "$p" ]; then echo "dx: not a directory: $p" >&2; exit 1; else st=absent; fi; printf "root=%s\nmounted=%s\nstate=%s\nmarker=%s\n" "$r" "$mt" "$st" "$mk"; if [ "$mk" = present ]; then cat -- "$k"; fi'
+
+# The marker step shared by create, marker_write, establish and marker_set, run
+# with the target directory as cwd: the slot may be replaced only if missing
+# or a regular file; a temp file in the directory receives the marker bytes
+# from stdin, then ONE mv onto the marker; on failure only that temp file is
+# removed. Before the mv it checks the bytes it received (WP6.4b): a stdin
+# the transport swallowed arrives as nothing (WP-T1), and an empty marker
+# must never replace a real one. Each script sets two variables before it:
+# mg, the guest the marker must name (one exact guest= line), and ms, the
+# state it must hold (one exact state= line); empty means not checked. Empty
+# bytes are always refused. Shell built-ins only: the bare image has no sed,
+# awk or grep.
+DX_RUNTIME_DOCKER_HOST_DIR_MARKER_TAIL='s=.dxe-persist-dir; if [ -L "$s" ] || { [ -e "$s" ] && [ ! -f "$s" ]; }; then echo "dx: marker slot is not a regular file: $s" >&2; exit 1; fi; t=$(mktemp ./.dxe-persist-dir.XXXXXX) || exit 1; if cat >"$t"; then cg=0; cs=0; cb=0; while IFS= read -r l || [ -n "$l" ]; do case "$l" in guest=*) if [ -z "$mg" ] || [ "$l" = "guest=$mg" ]; then cg=$((cg + 1)); else cb=1; fi ;; state=*) if [ -z "$ms" ] || [ "$l" = "state=$ms" ]; then cs=$((cs + 1)); else cb=1; fi ;; esac; done <"$t"; if [ ! -s "$t" ] || [ "$cb" -ne 0 ] || { [ -n "$mg" ] && [ "$cg" -ne 1 ]; } || { [ -n "$ms" ] && [ "$cs" -ne 1 ]; }; then echo "dx: the marker bytes received are empty or not a marker${mg:+ for guest $mg}${ms:+ in state $ms}; nothing was replaced" >&2; elif chmod 0644 "$t" && mv -- "$t" "$s"; then exit 0; fi; fi; rm -f -- "$t"; exit 1'
+
+# $1 ROOT, $2 GUEST; marker bytes on stdin. Creates exactly dxe/$2/persist
+# (plain mkdir of the leaf, then the marker step) holding the marker.
+DX_RUNTIME_DOCKER_HOST_DIR_CREATE_SCRIPT='unset CDPATH; mg=; ms=; cd -P -- "$1" 2>/dev/null || { echo "dx: not a directory: $1" >&2; exit 1; }; g="dxe/$2"; p="$g/persist"; if [ -L dxe ] || [ -L "$g" ]; then echo "dx: refusing a symlinked path: $g" >&2; exit 1; fi; if [ -e "$p" ] || [ -L "$p" ]; then echo "dx: exists: $p" >&2; exit 1; fi; if [ ! -d dxe ]; then mkdir -- dxe || exit 1; fi; if [ ! -d "$g" ]; then mkdir -- "$g" || exit 1; fi; mkdir -- "$p" || exit 1; cd -P -- "$p" || exit 1; '"$DX_RUNTIME_DOCKER_HOST_DIR_MARKER_TAIL"
+
+# $1 PATH (the persist directory); marker bytes on stdin. Temp file in PATH,
+# then mv onto the marker; a failed mv leaves the old marker and no temp file.
+DX_RUNTIME_DOCKER_HOST_DIR_MARKER_WRITE_SCRIPT='unset CDPATH; mg=; ms=; if [ -L "$1" ] || [ ! -d "$1" ]; then echo "dx: not a directory: $1" >&2; exit 1; fi; cd -P -- "$1" || exit 1; '"$DX_RUNTIME_DOCKER_HOST_DIR_MARKER_TAIL"
+
+DX_RUNTIME_DOCKER_HOST_DIR_USAGE_SCRIPT='unset CDPATH; du -sk -- "$1"'
+
+# dx_runtime_docker_host_dir_marker_stream TEXT: the marker bytes -- TEXT plus
+# exactly one trailing newline -- after proving TEXT is a valid marker.
+dx_runtime_docker_host_dir_marker_stream() {
+    local nl=$'\n'
+    printf '%s\n' "$1" | dx_persist_marker_parse || return 1
+    if [ "${1%"$nl"}" = "$1" ]; then
+        printf '%s\n' "$1"
+    else
+        printf '%s' "$1"
+    fi
+}
+
+# dx_runtime_docker_host_dir_guest_ok GUEST: the guest is a path component of
+# the derived directory, so it must be a plain marker-class name.
+dx_runtime_docker_host_dir_guest_ok() {
+    dx_persist_marker_valid_name "$1" && return 0
+    echo "Error: invalid guest name for the NAS directory: $1" >&2
+    return 1
+}
+
+dx_runtime_docker_host_dir_operand_ok() {
+    case "$1" in
+        ""|-) echo "Error: refusing an empty or '-' NAS path." >&2; return 1 ;;
+    esac
+}
+
+dx_runtime_docker_host_dir_probe() {
+    dx_runtime_docker_host_dir_operand_ok "$1" || return 1
+    dx_runtime_docker_host_dir_guest_ok "$2" || return 1
+    dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_PROBE_SCRIPT" sh "$1" "$2" "${DX_PERSIST_HOST_MOUNT_SENTINEL:-}"
+}
+
+dx_runtime_docker_host_dir_create() {
+    local stream
+    dx_runtime_docker_host_dir_operand_ok "$1" || return 1
+    dx_runtime_docker_host_dir_guest_ok "$2" || return 1
+    stream="$(dx_runtime_docker_host_dir_marker_stream "$3" && printf x)" || return 1
+    stream="${stream%x}"
+    printf '%s' "$stream" | dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_CREATE_SCRIPT" sh "$1" "$2"
+}
+
+dx_runtime_docker_host_dir_marker_write() {
+    local stream
+    dx_runtime_docker_host_dir_operand_ok "$1" || return 1
+    stream="$(dx_runtime_docker_host_dir_marker_stream "$2" && printf x)" || return 1
+    stream="${stream%x}"
+    printf '%s' "$stream" | dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_MARKER_WRITE_SCRIPT" sh "$1"
+}
+
+dx_runtime_docker_host_dir_usage() {
+    dx_runtime_docker_host_dir_operand_ok "$1" || return 1
+    dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_USAGE_SCRIPT" sh "$1"
+}
+
+# rsync operations (WP6.2/WP6.2b; plan D-10 as revised and clarified 2026-10-11;
+# spec R31, R32). QTS ships rsync 3.0.7 and the NAS account is not root, so
+# rsync runs INSIDE a one-off container on the NAS (root via Docker). $DX_IMAGE
+# is only the bare nix base: the modern rsync lives in the guest's nix volume
+# (root profile, installed from bootstrapEssentials at boot), mounted read-only
+# at /nix after that volume's own DQ6 check. Every docker call goes through
+# dx_runtime_docker_cli, so paths are only ever quoted argv words.
+DX_RUNTIME_DOCKER_RSYNC_BIN=/nix/var/nix/profiles/per-user/root/profile/bin/rsync
+
+# dx_runtime_docker_rsync_nix_check: the nix volume (configuration only, no
+# fallback name) must be this profile's, role nix; sets DX_RSYNC_NIX_VOLUME.
+dx_runtime_docker_rsync_nix_check() {
+    DX_RSYNC_NIX_VOLUME="${DX_NIX_VOLUME-}"
+    dx_runtime_docker_volume_owned "$DX_RSYNC_NIX_VOLUME" "run rsync from"
+}
+
+# Facts from `rsync --version` on stdin, one per line: version=N.N.N (or
+# nothing when no version line exists), then hard_links, acls, xattrs as
+# yes/no. A capability counts only as an exact comma-separated token between
+# "Capabilities:" and "Optimizations:"; "hard links" is the older spelling.
+DX_RUNTIME_DOCKER_RSYNC_FACTS_AWK='$1 == "rsync" && $2 == "version" && v == "" && $3 ~ /^[0-9]+[.][0-9]+([.][0-9]+)?$/ { v = $3 } /^Optimizations:/ { on = 0 } on { caps = caps "," $0 } /^Capabilities:/ { on = 1; caps = caps "," substr($0, 14) } END { n = split(caps, t, ","); for (i = 1; i <= n; i++) { s = t[i]; gsub(/^[ \t]+|[ \t]+$/, "", s); if (s == "hardlinks" || s == "hard links") hl = "yes"; if (s == "ACLs") acl = "yes"; if (s == "xattrs") xa = "yes" } if (v != "") print "version=" v; print "hard_links=" (hl == "yes" ? "yes" : "no"); print "acls=" (acl == "yes" ? "yes" : "no"); print "xattrs=" (xa == "yes" ? "yes" : "no") }'
+
+# dx_runtime_docker_rsync_options_parse OPTION... -> sets DX_RSYNC_ACL/_XATTR
+# (yes|no); anything but -A / -X is a usage error (the caller prints it).
+dx_runtime_docker_rsync_options_parse() {
+    local opt
+    DX_RSYNC_ACL=no
+    DX_RSYNC_XATTR=no
+    for opt in "$@"; do
+        case "$opt" in
+            -A) DX_RSYNC_ACL=yes ;;
+            -X) DX_RSYNC_XATTR=yes ;;
+            *) return 1 ;;
+        esac
+    done
+}
+
+# The oldest rsync the copy accepts (WP6.7). The copy runs --modify-window=-1,
+# which compares modification times to the nanosecond only when the receiving
+# rsync is at least 3.1.3 (rsync's NEWS for 3.1.3; rsync(1), --modify-window).
+DX_RUNTIME_DOCKER_RSYNC_FLOOR=3.1.3
+
+# dx_runtime_docker_version_below VERSION FLOOR: status 0 when VERSION is below
+# FLOOR, compared numerically by (major, minor, patch), a missing part counting
+# as 0 (so 3.1 is 3.1.0, and 3.1.10 is above 3.1.3). Both are N.N or N.N.N.
+dx_runtime_docker_version_below() {
+    local v1 v2 v3 f1 f2 f3
+    IFS=. read -r v1 v2 v3 <<<"$1"
+    IFS=. read -r f1 f2 f3 <<<"$2"
+    [ "$v1" -eq "$f1" ] || { [ "$v1" -lt "$f1" ]; return; }
+    [ "$v2" -eq "$f2" ] || { [ "$v2" -lt "$f2" ]; return; }
+    [ "${v3:-0}" -lt "${f3:-0}" ]
+}
+
+# dx_runtime_docker_rsync_gap FACTS ACL_NEEDED XATTR_NEEDED: print the first
+# missing requirement (naming only that one) and return 1, or return 0.
+dx_runtime_docker_rsync_gap() {
+    local facts="$1" version
+    version="$(sed -n 's/^version=//p' <<<"$facts")"
+    if dx_runtime_docker_version_below "$version" "$DX_RUNTIME_DOCKER_RSYNC_FLOOR"; then
+        echo "Error: rsync $version in the guest's nix volume is below $DX_RUNTIME_DOCKER_RSYNC_FLOOR (the copy compares modification times to the nanosecond with --modify-window=-1, which needs $DX_RUNTIME_DOCKER_RSYNC_FLOOR or newer)." >&2
+        return 1
+    fi
+    if ! grep -Fqx hard_links=yes <<<"$facts"; then
+        echo "Error: rsync $version in the guest's nix volume lacks hard links support." >&2
+        return 1
+    fi
+    if [ "$2" = yes ] && ! grep -Fqx acls=yes <<<"$facts"; then
+        echo "Error: rsync $version in the guest's nix volume lacks ACLs support (needed here)." >&2
+        return 1
+    fi
+    if [ "$3" = yes ] && ! grep -Fqx xattrs=yes <<<"$facts"; then
+        echo "Error: rsync $version in the guest's nix volume lacks xattrs support (needed here)." >&2
+        return 1
+    fi
+}
+
+# dx_runtime_docker_host_rsync_check [-A] [-X]
+dx_runtime_docker_host_rsync_check() {
+    local out facts rc=0
+    dx_runtime_docker_rsync_options_parse "$@" || {
+        echo "Usage: dx_runtime_host_rsync_check [-A] [-X]" >&2
+        return 1
+    }
+    dx_runtime_docker_rsync_nix_check || return 1
+    out="$(dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never -v "$DX_RSYNC_NIX_VOLUME:/nix:ro" --entrypoint "$DX_RUNTIME_DOCKER_RSYNC_BIN" "${DX_IMAGE:?}" --version)" || rc=$?
+    if [ "$rc" -eq 127 ]; then
+        echo "Error: rsync is not in the guest's nix volume '$DX_RSYNC_NIX_VOLUME'; boot the guest once on the current image so its essentials include rsync." >&2
+        return 1
+    elif [ "$rc" -ne 0 ]; then
+        echo "Error: could not run rsync from the guest's nix volume '$DX_RSYNC_NIX_VOLUME' on the NAS." >&2
+        return 1
+    fi
+    facts="$(awk "$DX_RUNTIME_DOCKER_RSYNC_FACTS_AWK" <<<"$out")"
+    if ! grep -Fq version= <<<"$facts"; then
+        echo "Error: could not parse the rsync version from the image's output." >&2
+        return 1
+    fi
+    dx_runtime_docker_rsync_gap "$facts" "$DX_RSYNC_ACL" "$DX_RSYNC_XATTR" || return 1
+    printf '%s\n' "$facts"
+}
+
+# dx_runtime_docker_rsync_dir_ok DIR: an absolute NAS path that is neither "/"
+# nor able to carry extra --mount options (",") or a second line.
+dx_runtime_docker_rsync_dir_ok() {
+    local nl=$'\n'
+    case "$1" in
+        /) : ;;
+        /*,*|*"$nl"*) : ;;
+        /*) return 0 ;;
+    esac
+    echo "Error: refusing the rsync directory '$1': it must be an absolute path other than / without a comma or newline." >&2
+    return 1
+}
+
+# The copy and verify containers (WP6.4c; spec R35). The one rsync copy run
+# and the one manifest verify run carry a fixed name per profile,
+# dxe-persist-copy-<profile id> and dxe-persist-verify-<profile id> (named like
+# the lock, dxe-lock-<profile id>), and the DQ6 labels of role persist-copy and
+# persist-verify. A container an earlier run left on the NAS -- still running
+# after the controller lost its connection, or stopped by a NAS restart -- is
+# then found by name (dx_runtime_docker_host_copy_containers), and Docker
+# itself refuses a second container of that name.
+
+# dx_runtime_docker_copy_container_name copy|verify
+dx_runtime_docker_copy_container_name() {
+    printf 'dxe-persist-%s-%s' "$1" "$(dx_runtime_docker_profile_id)"
+}
+
+# dx_runtime_docker_copy_id_flags copy|verify: sets DX_RUNTIME_DOCKER_COPY_ID_ARGV
+# to `--name <that container's name>` and its DQ6 labels (role persist-ROLE),
+# the words a copy or verify run puts right before --entrypoint.
+dx_runtime_docker_copy_id_flags() {
+    dx_runtime_docker_label_flags "persist-$1"
+    DX_RUNTIME_DOCKER_COPY_ID_ARGV=(--name "$(dx_runtime_docker_copy_container_name "$1")" "${DXE_RUNTIME_DOCKER_LABEL_ARGV[@]}")
+}
+
+# dx_runtime_docker_host_copy_containers: one `ps -a` per container, filtered
+# on its exact name; prints "<name> <state>" (Docker's state word, the last
+# line of the answer) for each that exists, the copy container first, and
+# nothing when neither does. Read-only: it never stops or removes anything. A
+# failing `ps` makes it fail with nothing on stdout, Docker's own message
+# passed on unchanged (the caller prints the one Error line).
+dx_runtime_docker_host_copy_containers() {
+    local nl=$'\n' role name out state lines=""
+    if [ "$#" -ne 0 ]; then
+        echo "Usage: dx_runtime_host_copy_containers (it takes no arguments)" >&2
+        return 1
+    fi
+    for role in copy verify; do
+        name="$(dx_runtime_docker_copy_container_name "$role")"
+        out="$(dx_runtime_docker_cli ps -a --filter "name=^/$name\$" --format '{{.State}}')" || return 1
+        state="$(printf '%s\n' "$out" | tail -n 1 | tr -d '\r')"
+        [ -z "$state" ] || lines="$lines$name $state$nl"
+    done
+    printf '%s' "$lines"
+}
+
+# dx_runtime_docker_host_rsync forward|reverse VOLUME DIR [-A] [-X]
+dx_runtime_docker_host_rsync() {
+    local direction="${1:-}" volume="${2:-}" dir="${3:-}" extra=() mounts=()
+    if [ "$#" -lt 3 ]; then
+        echo "Usage: dx_runtime_host_rsync forward|reverse VOLUME DIR [-A] [-X]" >&2
+        return 1
+    fi
+    shift 3
+    case "$direction" in
+        forward) mounts=(-v "$volume:/src:ro" --mount "type=bind,source=$dir,target=/dst") ;;
+        reverse) mounts=(--mount "type=bind,source=$dir,target=/src,readonly" -v "$volume:/dst") ;;
+        *) echo "Error: unknown rsync direction '$direction' (forward or reverse)." >&2; return 1 ;;
+    esac
+    dx_runtime_docker_rsync_options_parse "$@" || {
+        echo "Error: unsupported rsync option (only -A and -X are accepted)." >&2
+        return 1
+    }
+    if [ "$DX_RSYNC_ACL" = yes ]; then extra+=(-A); fi
+    if [ "$DX_RSYNC_XATTR" = yes ]; then extra+=(-X); fi
+    dx_runtime_docker_rsync_dir_ok "$dir" || return 1
+    if [ "$volume" = "${DX_NIX_VOLUME-}" ]; then
+        echo "Error: refusing to copy with volume '$volume': it is the guest's nix volume, already mounted at /nix (the persist volume is required)." >&2
+        return 1
+    fi
+    if [ "$volume" = "${DX_BOOTSTRAP_VOLUME-}" ]; then
+        echo "Error: refusing to copy with volume '$volume': it is the guest's bootstrap volume, never a copy's source or target (the persist volume is required)." >&2
+        return 1
+    fi
+    dx_runtime_docker_volume_owned "$volume" copy || return 1
+    dx_runtime_docker_rsync_nix_check || return 1
+    dx_runtime_docker_copy_id_flags copy
+    # --inplace (WP6.4c): an interrupted copy leaves no rsync temp file, only
+    # a possibly partial file under its final name, which the rerun rewrites.
+    # --modify-window=-1: mtimes compare to the nanosecond, as the manifest
+    # does, so a change within the same second is copied again.
+    dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never -v "$DX_RSYNC_NIX_VOLUME:/nix:ro" "${mounts[@]}" \
+        "${DX_RUNTIME_DOCKER_COPY_ID_ARGV[@]}" --entrypoint "$DX_RUNTIME_DOCKER_RSYNC_BIN" "${DX_IMAGE:?}" \
+        -aH --numeric-ids --inplace --modify-window=-1 "${extra[@]+"${extra[@]}"}" \
+        --exclude=/.dxe-persist-dir '--exclude=._*' /src/ /dst/
+}
+
+# Inventory operations (WP6.3; plan D-10; spec R37). Read-only: the volume is
+# read by a one-off container that mounts it ":ro" with no network, and the
+# share root's free space by one `df` on the NAS. The container script is POSIX
+# sh in ONE line (kcov counts every line of a multi-line literal) and prints
+# tagged key=value lines; it computes everything first and prints last, so a
+# failing find/du/df exits non-zero without status=ok (never a partial number).
+# Counts use `-exec printf ".%.0s" {} +` and then the length of the dots, so a
+# name containing a newline is still one entry. It works from "." after a cd
+# (relative paths need no prefix stripping that a path's own characters could
+# disturb). The script holds no single quote, so the whole text is one
+# single-quoted bash literal.
+DX_RUNTIME_DOCKER_VOLUME_INVENTORY_SCRIPT='export LC_ALL=C; cd -- "$1" || exit 1; t=$(df -P -k .) || exit 1; set -- $(printf "%s\n" "$t" | tail -n 1); dt=$2; da=$4; s=$(du -sk .) || exit 1; s=${s%%[!0-9]*}; e=$(find . -mindepth 1 -exec printf ".%.0s" {} +) || exit 1; h=$(find . -mindepth 1 ! -type d -links +1 -exec printf ".%.0s" {} +) || exit 1; ac=$(find . -mindepth 1 -name "._*" -exec printf ".%.0s" {} +) || exit 1; al=$(find . -mindepth 1 -name "._*" -print) || exit 1; al=$(printf "%s\n" "$al" | while IFS= read -r l; do printf "%s\n" "${l#./}"; done | sort); sc=$(find . -mindepth 1 \( -type p -o -type s -o -type b -o -type c \) -exec printf ".%.0s" {} +) || exit 1; sl=$(find . -mindepth 1 \( -type p -o -type s -o -type b -o -type c \) -print) || exit 1; sl=$(printf "%s\n" "$sl" | while IFS= read -r l; do printf "%s\n" "${l#./}"; done | sort); acl=unknown; if command -v getfacl >/dev/null 2>&1; then a=$(getfacl -R -s -p . 2>/dev/null) && acl=$(printf "%s\n" "$a" | grep -c "^# file:"); fi; xa=unknown; if command -v getfattr >/dev/null 2>&1; then a=$(getfattr -R -h -d -m - . 2>/dev/null) && xa=$(printf "%s\n" "$a" | grep -c "^# file:"); fi; printf "df_total_kb=%s\ndf_avail_kb=%s\nsize_kb=%s\nentries=%s\nhardlinks=%s\nappledouble=%s\n" "$dt" "$da" "$s" "${#e}" "${#h}" "${#ac}"; if [ -n "$al" ]; then printf "%s\n" "$al" | while IFS= read -r l; do printf "apple=%s\n" "$l"; done; fi; printf "special=%s\n" "${#sc}"; if [ -n "$sl" ]; then printf "%s\n" "$sl" | while IFS= read -r l; do printf "special_path=%s\n" "$l"; done; fi; printf "acl=%s\nxattr=%s\nstatus=ok\n" "$acl" "$xa"'
+
+# $1 ROOT: prints fs=, total_kb=, avail_kb= (KiB) of the filesystem holding it.
+DX_RUNTIME_DOCKER_HOST_DIR_FREE_SCRIPT='t=$(df -P -k -- "$1") || exit 1; set -- $(printf "%s\n" "$t" | tail -n 1); printf "fs=%s\ntotal_kb=%s\navail_kb=%s\n" "$1" "$2" "$4"'
+
+# dx_runtime_docker_volume_inventory VOLUME
+dx_runtime_docker_volume_inventory() {
+    if [ "$#" -ne 1 ]; then
+        echo "Usage: dx_runtime_volume_inventory VOLUME" >&2
+        return 1
+    fi
+    dx_runtime_docker_volume_owned "$1" inventory || return 1
+    dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never -v "$1:/v:ro" --entrypoint sh "${DX_IMAGE:?}" \
+        -c "$DX_RUNTIME_DOCKER_VOLUME_INVENTORY_SCRIPT" sh /v
+}
+
+# dx_runtime_docker_host_dir_inventory DIR (WP6.5): the same inventory of a
+# host DIRECTORY on the NAS (the rollback's source), with the very script the
+# volume inventory runs -- one script for both, so its bare-image rule covers
+# both. DIR is bound read-only at /v with --mount (never -v, which would
+# create a missing path), so it must be absolute, not "/", and free of ","
+# (another mount option) and newlines. The checks before the one docker call
+# print a `dx:` reason (status 1, no call); the container's stdout, stderr and
+# status pass through.
+dx_runtime_docker_host_dir_inventory() {
+    local nl=$'\n' why=""
+    [ "$#" -eq 1 ] || why="expected one DIR"
+    case "${1-}" in
+        / | "" | [!/]* | *,* | *"$nl"*) why="${why:-the directory '${1-}' cannot be bound: it must be an absolute path other than / without ',' or a newline}" ;;
+    esac
+    [ -n "${DX_IMAGE:-}" ] || why="${why:-no DX_IMAGE to run the one-off container from}"
+    if [ -n "$why" ]; then
+        echo "dx: refusing to read the NAS directory: $why" >&2
+        return 1
+    fi
+    dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never \
+        --mount "type=bind,source=$1,target=/v,readonly" --entrypoint sh "$DX_IMAGE" \
+        -c "$DX_RUNTIME_DOCKER_VOLUME_INVENTORY_SCRIPT" sh /v
+}
+
+# dx_runtime_docker_host_dir_free ROOT
+dx_runtime_docker_host_dir_free() {
+    dx_runtime_docker_host_dir_operand_ok "${1-}" || return 1
+    dx_runtime_docker_ssh_exec sh -c "$DX_RUNTIME_DOCKER_HOST_DIR_FREE_SCRIPT" sh "$1"
+}
+
+# Establishing a directory (WP4.4; spec R15, R18; plans/do D-3, D-10) needs
+# root on the NAS -- the new directory belongs to the guest's dx user, and
+# the management SSH account is not root -- so it runs in ONE one-off
+# container from $DX_IMAGE: --user 0:0, no network, never pulled, the share
+# root bound with --mount (never -v, which would create a missing root) at
+# this target. The script reads everything from "$@": $1 the bind target,
+# $2 GUEST, $3 MODE, $4 OWNER, $5 the mount sentinel; the marker bytes come
+# on stdin. In order it: refuses unless the sentinel is a regular file at
+# the root (the share may have been unmounted since the probe); refuses a
+# symlink at dxe, dxe/GUEST or the leaf; for create, refuses a leaf that
+# exists in any form, makes the missing parents (never chowned or chmodded)
+# and the leaf; for adopt and fresh-start, needs the leaf to be a directory
+# with no entries at all; then chowns the leaf to OWNER and sets mode 0755;
+# and writes the marker last through the shared marker step (temp file, one
+# mv), which refuses bytes that are empty or do not name GUEST (WP6.4b). A
+# refusal writes nothing; a later failure leaves the leaf empty and
+# unmarked, which the next dx-create-volumes adopts.
+DX_RUNTIME_DOCKER_HOST_DIR_BIND_TARGET=/dxe-share
+DX_RUNTIME_DOCKER_HOST_DIR_ESTABLISH_SCRIPT='unset CDPATH; umask 022; mg=$2; ms=; cd -P -- "$1" || exit 1; m="$5"; if [ ! -f "$m" ] || [ -L "$m" ]; then echo "dx: the share does not look mounted: no sentinel file $m at its root" >&2; exit 1; fi; g="dxe/$2"; p="$g/persist"; if [ -L dxe ] || [ -L "$g" ] || [ -L "$p" ]; then echo "dx: refusing a symlinked path: $p" >&2; exit 1; fi; case "$3" in create) if [ -e "$p" ]; then echo "dx: exists: $p" >&2; exit 1; fi; if [ ! -d dxe ]; then mkdir -- dxe || exit 1; fi; if [ ! -d "$g" ]; then mkdir -- "$g" || exit 1; fi; mkdir -- "$p" || exit 1 ;; adopt | fresh-start) if [ ! -d "$p" ]; then echo "dx: not a directory: $p" >&2; exit 1; fi; l=$(ls -A -- "$p") || exit 1; if [ -n "$l" ]; then echo "dx: not empty: $p" >&2; exit 1; fi ;; *) echo "dx: unknown mode: $3" >&2; exit 1 ;; esac; chown "$4" "$p" || exit 1; chmod 0755 "$p" || exit 1; cd -P -- "$p" || exit 1; '"$DX_RUNTIME_DOCKER_HOST_DIR_MARKER_TAIL"
+
+# dx_runtime_docker_host_dir_establish_ok MODE ROOT GUEST OWNER: the checks
+# made before establish's one docker call. ROOT becomes part of a --mount
+# option, so it must be absolute and free of ',' (another option) and
+# newlines; it is bound read-write into a root container, so it must not name
+# the filesystem root in any spelling (WP6.7; dx_path_names_filesystem_root,
+# bin/lib/dx-config.sh); OWNER is UID:GID in digits. Each reason is a `dx:`
+# line, so the caller's own Error line is the only one.
+dx_runtime_docker_host_dir_establish_ok() {
+    local nl=$'\n' why="" owner=bad
+    case "$1" in
+        create | adopt | fresh-start) : ;;
+        *) why="unknown mode '$1' (expected create, adopt or fresh-start)" ;;
+    esac
+    case "$2" in
+        "" | [!/]* | *,* | *"$nl"*) why="${why:-the share root '$2' cannot be bound: it must be an absolute path without ',' or a newline}" ;;
+    esac
+    if dx_path_names_filesystem_root "$2"; then
+        why="${why:-the share root '$2' names the filesystem root, which is never a share root}"
+    fi
+    dx_persist_marker_valid_name "$3" || why="${why:-invalid guest name for the NAS directory: $3}"
+    case "$4" in
+        *[!0-9:]* | *:*:*) : ;;
+        [0-9]*:[0-9]*) owner=ok ;;
+    esac
+    [ "$owner" = ok ] || why="${why:-the owner '$4' is not UID:GID in digits}"
+    [ -n "${DX_PERSIST_HOST_MOUNT_SENTINEL:-}" ] || why="${why:-no DX_PERSIST_HOST_MOUNT_SENTINEL, so nothing would prove the share is mounted}"
+    [ -n "${DX_IMAGE:-}" ] || why="${why:-no DX_IMAGE to run the one-off container from}"
+    [ -n "$why" ] || return 0
+    echo "dx: refusing to establish the NAS directory: $why" >&2
+    return 1
+}
+
+dx_runtime_docker_host_dir_establish() {
+    local stream
+    dx_runtime_docker_host_dir_establish_ok "$1" "$2" "$3" "$4" || return 1
+    stream="$(dx_runtime_docker_host_dir_marker_stream "$5" && printf x)" || return 1
+    stream="${stream%x}"
+    printf '%s' "$stream" | dx_runtime_docker_cli run --rm -i --network none --user 0:0 --pull never \
+        --mount "type=bind,source=$2,target=$DX_RUNTIME_DOCKER_HOST_DIR_BIND_TARGET" \
+        --entrypoint sh "$DX_IMAGE" -c "$DX_RUNTIME_DOCKER_HOST_DIR_ESTABLISH_SCRIPT" sh \
+        "$DX_RUNTIME_DOCKER_HOST_DIR_BIND_TARGET" "$3" "$1" "$4" "$DX_PERSIST_HOST_MOUNT_SENTINEL" >&2
+}
+
+# Setting the marker during a migration (WP6.4; plans/do D-3; spec R16, R35)
+# needs root on the NAS for the same reason as establish, so it is ONE
+# one-off container from $DX_IMAGE with the share root bound at the same
+# target. It is a compare-and-set: the script reads everything from "$@" --
+# $1 the bind target, $2 GUEST, $3 EXPECTED_STATE, $4 SOURCE (the new marker's
+# source volume, "" for none) -- and the new marker bytes from stdin. It
+# refuses, writing nothing, unless dxe, dxe/GUEST and the leaf are no symlinks
+# and the leaf is a directory; the marker is a regular file (no symlink); and
+# its guest=, state= and source-volume= lines are exactly GUEST, EXPECTED_STATE
+# and SOURCE (one each; no source-volume line when SOURCE is ""). Then the
+# shared marker step (temp file, one mv), and no chown; it refuses new bytes
+# that are empty, do not name GUEST or do not hold the state that follows
+# EXPECTED_STATE (WP6.4b): copying -> ready (the migration), ready -> retired
+# (the rollback). Nothing follows retired, so that is refused before anything
+# is read. $DX_IMAGE is the bare nix base (no sed, no awk), so the script uses
+# only sh built-ins and the coreutils of the marker step (mktemp, cat, chmod,
+# mv, rm).
+DX_RUNTIME_DOCKER_HOST_DIR_MARKER_SET_SCRIPT='unset CDPATH; umask 022; mg=$2; case "$3" in copying) ms=ready ;; ready) ms=retired ;; *) echo "dx: no marker state follows $3, so the marker in dxe/$2/persist was not changed" >&2; exit 1 ;; esac; cd -P -- "$1" || exit 1; g="dxe/$2"; p="$g/persist"; if [ -L dxe ] || [ -L "$g" ] || [ -L "$p" ] || [ ! -d "$p" ]; then echo "dx: not a real directory: $p" >&2; exit 1; fi; cd -P -- "$p" || exit 1; if [ -L .dxe-persist-dir ] || [ ! -f .dxe-persist-dir ]; then echo "dx: no marker file in $p" >&2; exit 1; fi; ng=0; ns=0; nv=0; bad=0; while IFS= read -r l || [ -n "$l" ]; do case "$l" in guest=*) if [ "$l" = "guest=$2" ]; then ng=$((ng + 1)); else bad=1; fi ;; state=*) if [ "$l" = "state=$3" ]; then ns=$((ns + 1)); else bad=1; fi ;; source-volume=*) if [ -n "$4" ] && [ "$l" = "source-volume=$4" ]; then nv=$((nv + 1)); else bad=1; fi ;; esac; done <.dxe-persist-dir || exit 1; if [ -n "$4" ] && [ "$nv" -ne 1 ]; then bad=1; fi; if [ "$bad" -ne 0 ] || [ "$ng" -ne 1 ] || [ "$ns" -ne 1 ]; then echo "dx: the marker in $p is not $3 for this guest and source volume; nothing was changed" >&2; exit 1; fi; '"$DX_RUNTIME_DOCKER_HOST_DIR_MARKER_TAIL"
+
+# dx_runtime_docker_host_dir_marker_set ROOT GUEST EXPECTED_STATE MARKER_TEXT.
+# The checks before its one docker call print a `dx:` reason, so the caller's
+# own Error line is the only one: ROOT becomes part of a --mount option
+# (absolute, no ',' or newline) and must be the probe's canonical root, so
+# "/" in any spelling and any other non-canonical form (an empty, "." or ".."
+# component, a trailing "/") is refused (WP6.4b); MARKER_TEXT must be a valid
+# marker for GUEST.
+dx_runtime_docker_host_dir_marker_set() {
+    local nl=$'\n' why="" source="" stream
+    if [ "$#" -ne 4 ]; then
+        echo "dx: refusing to set the NAS directory's marker: expected ROOT GUEST EXPECTED_STATE MARKER_TEXT" >&2
+        return 1
+    fi
+    case "$1" in
+        "" | [!/]* | *,* | *"$nl"*) why="the share root '$1' cannot be bound: it must be an absolute path without ',' or a newline" ;;
+        */ | *//* | */. | */./* | */.. | */../*) why="the share root '$1' is / or not canonical (an empty, '.' or '..' component, or a trailing /); it must be the probe's canonical root" ;;
+    esac
+    dx_persist_marker_valid_name "$2" || why="${why:-invalid guest name for the NAS directory: $2}"
+    dx_persist_marker_valid_state "$3" || why="${why:-unknown expected marker state '$3'}"
+    if dx_persist_marker_parse 2>/dev/null <<<"$4"; then
+        [ "$DX_PERSIST_MARKER_GUEST" = "$2" ] || why="${why:-the new marker names guest $DX_PERSIST_MARKER_GUEST, not $2}"
+        source="$DX_PERSIST_MARKER_SOURCE_VOLUME"
+    else
+        why="${why:-the new marker text is not a valid marker}"
+    fi
+    [ -n "${DX_IMAGE:-}" ] || why="${why:-no DX_IMAGE to run the one-off container from}"
+    if [ -n "$why" ]; then
+        echo "dx: refusing to set the NAS directory's marker: $why" >&2
+        return 1
+    fi
+    stream="$(dx_runtime_docker_host_dir_marker_stream "$4" && printf x)" || return 1
+    stream="${stream%x}"
+    printf '%s' "$stream" | dx_runtime_docker_cli run --rm -i --network none --user 0:0 --pull never \
+        --mount "type=bind,source=$1,target=$DX_RUNTIME_DOCKER_HOST_DIR_BIND_TARGET" \
+        --entrypoint sh "$DX_IMAGE" -c "$DX_RUNTIME_DOCKER_HOST_DIR_MARKER_SET_SCRIPT" sh \
+        "$DX_RUNTIME_DOCKER_HOST_DIR_BIND_TARGET" "$2" "$3" "$source" >&2
+}
+
+# The migration's verification (WP6.4; plans/do D-8; spec R33): the WP6.1
+# manifest tool's text is the inline script of ONE read-only one-off container
+# from $DX_IMAGE, whose own bash 5, coreutils and findutils run it (no nix
+# volume: the guest's root profile has no findutils). The volume is mounted
+# ":ro" after its DQ6 check and the host directory as a readonly bind, so the
+# verification cannot change either side. Read at call time, never at import.
+DX_RUNTIME_DOCKER_MANIFEST_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/container/dx-nixos-26.05/scripts/lib/dx-persist-manifest.sh"
+
+# dx_runtime_docker_host_manifest_verify forward|reverse VOLUME DIR. The
+# checks before any call print a `dx:` reason (status 1); the tool's stdout,
+# stderr and status (0 match, 1 differ, 2 error) pass through unchanged.
+dx_runtime_docker_host_manifest_verify() {
+    local nl=$'\n' direction="${1:-}" volume="${2:-}" dir="${3:-}" mounts=() why="" tool
+    [ "$#" -eq 3 ] || why="expected forward|reverse VOLUME DIR"
+    case "$direction" in
+        forward) mounts=(-v "$volume:/src:ro" --mount "type=bind,source=$dir,target=/dst,readonly") ;;
+        reverse) mounts=(--mount "type=bind,source=$dir,target=/src,readonly" -v "$volume:/dst:ro") ;;
+        *) why="${why:-unknown direction '$direction' (forward or reverse)}" ;;
+    esac
+    case "$dir" in
+        / | *,* | *"$nl"* | [!/]* | "") why="${why:-the directory '$dir' cannot be bound: it must be an absolute path other than / without ',' or a newline}" ;;
+    esac
+    [ -n "${DX_IMAGE:-}" ] || why="${why:-no DX_IMAGE to run the one-off container from}"
+    if [ -n "$why" ]; then
+        echo "dx: refusing to verify the manifest: $why" >&2
+        return 1
+    fi
+    if ! tool="$(cat -- "$DX_RUNTIME_DOCKER_MANIFEST_TOOL" 2>/dev/null)" || [ -z "$tool" ]; then
+        echo "Error: cannot read the manifest tool $DX_RUNTIME_DOCKER_MANIFEST_TOOL." >&2
+        return 2
+    fi
+    dx_runtime_docker_volume_owned "$volume" verify || return 1
+    dx_runtime_docker_copy_id_flags verify
+    dx_runtime_docker_cli run --rm --network none --user 0:0 --pull never "${mounts[@]}" \
+        "${DX_RUNTIME_DOCKER_COPY_ID_ARGV[@]}" --entrypoint bash "$DX_IMAGE" -c "$tool" dx-persist-manifest verify /src /dst
+}

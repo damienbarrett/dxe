@@ -1,0 +1,31 @@
+rc=0
+--- output ---
+Immutable plan (docker-ssh ownership proof, qnap-dxe-plan.md DQ6):
+  volume dx-hp-nix: labels=true|1|dxe-fixture-nas.invalid__dx-hp|nix|x86_64-linux
+  volume dx-hp-persist: labels=true|1|dxe-fixture-nas.invalid__dx-hp|persist|x86_64-linux
+  volume dx-hp-bootstrap: labels=true|1|dxe-fixture-nas.invalid__dx-hp|bootstrap|x86_64-linux
+Removing volume dx-hp-nix...
+Removing volume dx-hp-persist...
+Removing volume dx-hp-bootstrap...
+--- docker ---
+version --format {{.Server.Version}}
+info --format {{.ID}}|{{.Name}}|{{.Architecture}}|{{.OperatingSystem}}
+volume inspect dx-hp-nix
+volume inspect dx-hp-persist
+volume inspect dx-hp-bootstrap
+volume inspect dx-hp-nix
+volume inspect --format {{index .Labels "io.dxe.managed"}}|{{index .Labels "io.dxe.schema"}}|{{index .Labels "io.dxe.profile"}}|{{index .Labels "io.dxe.role"}}|{{index .Labels "io.dxe.system"}} dx-hp-nix
+volume inspect dx-hp-persist
+volume inspect --format {{index .Labels "io.dxe.managed"}}|{{index .Labels "io.dxe.schema"}}|{{index .Labels "io.dxe.profile"}}|{{index .Labels "io.dxe.role"}}|{{index .Labels "io.dxe.system"}} dx-hp-persist
+volume inspect dx-hp-bootstrap
+volume inspect --format {{index .Labels "io.dxe.managed"}}|{{index .Labels "io.dxe.schema"}}|{{index .Labels "io.dxe.profile"}}|{{index .Labels "io.dxe.role"}}|{{index .Labels "io.dxe.system"}} dx-hp-bootstrap
+volume inspect --format {{index .Labels "io.dxe.managed"}}|{{index .Labels "io.dxe.schema"}}|{{index .Labels "io.dxe.profile"}}|{{index .Labels "io.dxe.role"}}|{{index .Labels "io.dxe.system"}} dx-hp-nix
+volume rm dx-hp-nix
+volume inspect --format {{index .Labels "io.dxe.managed"}}|{{index .Labels "io.dxe.schema"}}|{{index .Labels "io.dxe.profile"}}|{{index .Labels "io.dxe.role"}}|{{index .Labels "io.dxe.system"}} dx-hp-persist
+volume rm dx-hp-persist
+volume inspect --format {{index .Labels "io.dxe.managed"}}|{{index .Labels "io.dxe.schema"}}|{{index .Labels "io.dxe.profile"}}|{{index .Labels "io.dxe.role"}}|{{index .Labels "io.dxe.system"}} dx-hp-bootstrap
+volume rm dx-hp-bootstrap
+--- volume rm ---
+dx-hp-nix
+dx-hp-persist
+dx-hp-bootstrap

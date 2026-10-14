@@ -20,7 +20,7 @@ every root plan document must be indexed in [`../plans.md`](../plans.md).
 
 - [`lifecycle.md`](lifecycle.md) — lifecycle, helpers, migration, and recovery.
 - [`configuration.md`](configuration.md) — configuration, profiles, and `dx-mount`.
-- [`guest.md`](guest.md) — guest bootstrap, persistence, optional AI tools, NixVim, and theming.
+- [`guest.md`](guest.md) — guest bootstrap, persistence, browsing `/persist` from the Mac, optional AI tools, NixVim, and theming.
 - [`troubleshooting.md`](troubleshooting.md) — troubleshooting.
 - [`release-maintenance.md`](release-maintenance.md) — release, pin, upgrade, and base-image changeover procedures.
 - [`qnap-runbook.md`](qnap-runbook.md) — QNAP operator runbook.

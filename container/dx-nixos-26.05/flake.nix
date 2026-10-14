@@ -123,6 +123,17 @@
             "node" # home.nix's own home.packages (nodejs)
           ];
 
+          # WP1.4: the library set nix-ld exposes at its default path
+          # (/run/current-system/sw/share/nix-ld/lib, linked by bootstrap's
+          # configure_vscode_server_support): glibc's loader plus the
+          # libraries VS Code's Remote-SSH server needs. Exactly these four.
+          nixLdLibraries = pkgs.linkFarm "dx-nix-ld-libraries" {
+            "share/nix-ld/lib/ld.so" = pkgs.stdenv.cc.bintools.dynamicLinker;
+            "share/nix-ld/lib/libstdc++.so.6" = "${pkgs.stdenv.cc.cc.lib}/lib/libstdc++.so.6";
+            "share/nix-ld/lib/libgcc_s.so.1" = "${pkgs.stdenv.cc.cc.lib}/lib/libgcc_s.so.1";
+            "share/nix-ld/lib/libz.so.1" = "${pkgs.lib.getLib pkgs.zlib}/lib/libz.so.1";
+          };
+
           # The tools required before Home Manager starts are one locked flake
           # output. Keeping this list here prevents bootstrap from resolving
           # nixpkgs through the mutable global registry.
@@ -136,6 +147,7 @@
             bashInteractive
             shadow
             openssh
+            rsync
             gnutar
             gzip
             sudo
@@ -148,6 +160,8 @@
             btrfs-progs
             e2fsprogs
             s6
+            nix-ld
+            nixLdLibraries
           ];
 
           # Antigravity CLI (`agy`) — Google's agentic coding tool. The nixpkgs

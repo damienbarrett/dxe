@@ -3,6 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
+# Sourced here, not in dx-lib.sh's facade: only this entrypoint and
+# bin/dx-gc use it, and the facade's order is a tested contract.
+# shellcheck source=lib/dx-nix-gc.sh
+source "$SCRIPT_DIR/lib/dx-nix-gc.sh"
 
 rule() {
     printf '%s\n' "------------------------------------------------------------"
@@ -22,7 +26,7 @@ run_in_guest() {
 report_host_images() {
     echo "Volume usage:"
     printf '  %-14s %s\n' "$DX_NIX_VOLUME" "$(dx_runtime_volume_usage "$DX_NIX_VOLUME")"
-    printf '  %-14s %s\n' "$DX_PERSIST_VOLUME" "$(dx_runtime_volume_usage "$DX_PERSIST_VOLUME")"
+    dx_persist_usage_line
 }
 
 report_guest_filesystems() {
@@ -76,6 +80,11 @@ report_usage
 rule
 echo "Running Nix garbage collection in guest..."
 rule
+# Root Nix calls leave two things behind that each stop the whole collection:
+# stale root-owned temporary-roots files and root-owned store paths. Clear
+# the first and hand the second back to the store owner before collecting.
+# Best effort: a failure warns and GC still runs.
+dx_nix_gc_prepare "$DX_CONTAINER_NAME"
 run_in_guest "nix-collect-garbage -d"
 
 rule
@@ -85,7 +94,7 @@ if dx_runtime_capability host_filesystem_reclamation; then
     trim_mount "$DX_NIX_MOUNT"
     trim_mount /persist
 else
-    echo "Skipping filesystem trim: not supported against a Docker volume under this runtime (qnap-dxe-plan.md DQ4)."
+    dx_persist_trim_skip_message
 fi
 
 rule

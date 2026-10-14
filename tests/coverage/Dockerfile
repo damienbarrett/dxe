@@ -5,7 +5,7 @@ RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       bash binutils-dev build-essential ca-certificates cmake coreutils findutils git jq \
       libcurl4-openssl-dev libdw-dev libelf-dev libiberty-dev libssl-dev \
-      libstdc++-12-dev python3 zlib1g-dev \
+      libstdc++-12-dev python3 rsync zlib1g-dev \
  && git clone --filter=blob:none https://github.com/SimonKagstrom/kcov.git /tmp/kcov \
  && git -C /tmp/kcov checkout "$KCOV_COMMIT" \
  && cmake -S /tmp/kcov -B /tmp/kcov/build -DCMAKE_BUILD_TYPE=Release \

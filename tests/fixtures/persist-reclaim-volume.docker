@@ -1,0 +1,101 @@
+version --format {{.Server.Version}}
+info --format {{.ID}}|{{.Name}}|{{.Architecture}}|{{.OperatingSystem}}
+container inspect --format {{.State.Running}} dx-rc
+system df -v --format {{range .Volumes}}{{if eq .Name "dxe-rc-nix"}}{{.Size}}{{end}}{{end}}
+system df -v --format {{range .Volumes}}{{if eq .Name "dxe-rc-persist"}}{{.Size}}{{end}}{{end}}
+exec dx-rc /usr/bin/bash -lc 
+        export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"
+        store_path="$1/store"
+        store_usage="$(du -sh "$store_path" 2>/dev/null)" || exit $?
+        store_size="${store_usage%%	*}"
+        [ "$store_size" = "$store_usage" ] && store_size="${store_usage%% *}"
+        printf "  %-14s %s\n" "$store_path" "$store_size"
+        df_output="$(df -h "$@")" || exit $?
+        while IFS= read -r line; do
+            printf "  %s\n" "$line"
+        done <<EOF
+$df_output
+EOF
+     bash /nix /persist
+exec -u dx dx-rc bash -c PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"
+temproots=$1
+proc=$2
+if [ ! -d "$proc/1" ]; then
+    echo "cannot see the process table ($proc/1 is not visible); not judging which temporary roots are stale" >&2
+    exit 3
+fi
+removed=0
+status=0
+for path in "$temproots"/*; do
+    name=${path##*/}
+    case $name in
+        ''|*[!0-9]*) continue ;;
+    esac
+    if [ -L "$path" ] || [ ! -f "$path" ] || [ -e "$proc/$name" ]; then
+        continue
+    fi
+    if rm -f -- "$path"; then
+        removed=$((removed + 1))
+    else
+        status=1
+    fi
+done
+printf '%s\n' "$removed"
+exit "$status"
+ bash /nix/var/nix/temproots /proc
+exec -u root dx-rc bash -c PATH="${PATH:+$PATH:}/nix/var/nix/profiles/per-user/root/profile/bin:/nix/var/nix/profiles/default/bin"
+store=$1
+log=$2
+if [ -L "$store" ] || [ ! -d "$store" ]; then
+    printf '0\n'
+    exit 0
+fi
+for tool in stat find chown; do
+    if ! command -v "$tool" >/dev/null; then
+        echo "$tool not found; not handing root-owned Nix paths back" >&2
+        exit 127
+    fi
+done
+owner=$(stat -c '%u:%g' -- "$store") || exit 1
+if [ "${owner%%:*}" = 0 ]; then
+    printf '0\n'
+    exit 0
+fi
+handed=0
+status=0
+while IFS= read -r -d '' path; do
+    if chown -R -P -- "$owner" "$path"; then
+        handed=$((handed + 1))
+    else
+        status=1
+    fi
+done < <(find "$store" -mindepth 1 -maxdepth 1 -uid 0 -print0)
+if [ -d "$log" ] && [ ! -L "$log" ]; then
+    while IFS= read -r -d '' path; do
+        if chown -h -- "$owner" "$path"; then
+            handed=$((handed + 1))
+        else
+            status=1
+        fi
+    done < <(find "$log" -mindepth 1 -uid 0 -print0)
+fi
+printf '%s\n' "$handed"
+exit "$status"
+ bash /nix/store /nix/var/log/nix
+exec -u dx dx-rc /usr/bin/bash -lc nix-collect-garbage -d
+system df -v --format {{range .Volumes}}{{if eq .Name "dxe-rc-nix"}}{{.Size}}{{end}}{{end}}
+system df -v --format {{range .Volumes}}{{if eq .Name "dxe-rc-persist"}}{{.Size}}{{end}}{{end}}
+exec dx-rc /usr/bin/bash -lc 
+        export PATH="/nix/var/nix/profiles/per-user/root/profile/bin:$PATH"
+        store_path="$1/store"
+        store_usage="$(du -sh "$store_path" 2>/dev/null)" || exit $?
+        store_size="${store_usage%%	*}"
+        [ "$store_size" = "$store_usage" ] && store_size="${store_usage%% *}"
+        printf "  %-14s %s\n" "$store_path" "$store_size"
+        df_output="$(df -h "$@")" || exit $?
+        while IFS= read -r line; do
+            printf "  %s\n" "$line"
+        done <<EOF
+$df_output
+EOF
+     bash /nix /persist

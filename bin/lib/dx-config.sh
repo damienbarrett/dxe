@@ -77,6 +77,9 @@ DX_NIX_MOUNT	abspath	=/nix
 DX_NIX_DISK	abspath	@home:.dx-cache/nix-store.img
 DX_NIX_DISK_SIZE	size	=64G
 DX_PERSIST_VOLUME	name	=dx-persist
+DX_PERSIST_STORAGE	enum:volume,host-path	=volume
+DX_PERSIST_HOST_ROOT	optpath	=
+DX_PERSIST_HOST_MOUNT_SENTINEL	optname	=
 DX_GIT_MOUNT_SOURCE	optpath	=
 DX_GIT_MOUNT_TARGET	abspath	=/workspace
 DX_GUEST_WORKDIR	optpath	=
@@ -222,6 +225,31 @@ dx_config_validate_value() {
     esac
 }
 
+# dx_path_names_filesystem_root PATH: status 0 when PATH is absolute and every
+# one of its "/"-separated components is empty, "." or ".." -- "/", "//", "/.",
+# "/./", "/.." and the like all name the filesystem root -- and 1 otherwise
+# ("/share/x/" with its trailing slash, "/...", a relative or empty PATH). Pure
+# string work, no file-system call. The filesystem root is never a NAS share
+# root (WP6.7), and every check of that uses this one rule:
+# DX_PERSIST_HOST_ROOT's cross-field rule below, the docker adapter's
+# establish (before its root container binds the root read-write) and the
+# /persist start and migration decisions on the probe's canonical root
+# (bin/lib/dx-persist-dir.sh). This file comes first in the bin/dx-lib.sh
+# facade, and bin/dx-profile sources it alone, so it is defined here.
+dx_path_names_filesystem_root() {
+    local rest
+    case "${1-}" in /*) rest="$1/" ;; *) return 1 ;; esac
+    while :; do
+        case "$rest" in
+            /) return 0 ;;
+            //*) rest="${rest#/}" ;;
+            /./*) rest="${rest#/.}" ;;
+            /../*) rest="${rest#/..}" ;;
+            *) return 1 ;;
+        esac
+    done
+}
+
 # Cross-field checks that need more than one already-resolved field at once
 # (qnap-dxe-plan.md DQ3: "Invalid cross-field combinations fail before
 # contacting either runtime"). Called only after every field in
@@ -269,6 +297,37 @@ dx_config_validate_cross_fields() {
             return 1
             ;;
     esac
+
+    # /persist storage mode (plans/do D-1; R13, R14, R22). host-path puts
+    # /persist in a QNAP share directory, which only the docker-ssh runtime
+    # can bind: Apple Container cannot (its host-folder binds break git's
+    # ownership checks and are slow), so it is refused here with a pointer to
+    # the Mac access docs. The guest directory is derived from the root and
+    # DX_CONTAINER_NAME, never configured; the root must be non-empty and
+    # colon-free because the volume spec splits on ':', and never the
+    # filesystem root in any spelling (WP6.7: establish binds the root
+    # read-write into a root container). volume mode ignores
+    # DX_PERSIST_HOST_ROOT entirely.
+    if [ "${DX_PERSIST_STORAGE:-}" = host-path ]; then
+        [ "${DX_RUNTIME:-}" = docker-ssh ] || {
+            echo "Error: DX_PERSIST_STORAGE=host-path requires DX_RUNTIME=docker-ssh (the Apple runtime cannot bind a share directory); to reach /persist from the Mac see docs/guest.md." >&2
+            return 1
+        }
+        [ -n "${DX_PERSIST_HOST_ROOT:-}" ] || {
+            echo "Error: DX_PERSIST_HOST_ROOT is required when DX_PERSIST_STORAGE=host-path (the share root; the guest directory is derived beneath it)." >&2
+            return 1
+        }
+        case "$DX_PERSIST_HOST_ROOT" in
+            *:*)
+                echo "Error: DX_PERSIST_HOST_ROOT must not contain ':' (the volume spec splits on it)." >&2
+                return 1
+                ;;
+        esac
+        if dx_path_names_filesystem_root "$DX_PERSIST_HOST_ROOT"; then
+            echo "Error: DX_PERSIST_HOST_ROOT must not be the filesystem root (it is '$DX_PERSIST_HOST_ROOT'); set it to the NAS share root the guest directories go under." >&2
+            return 1
+        fi
+    fi
 
     # The three named-volume roles must never collide (Astra F10, Muse C1):
     # a shared name would let one role's guest-side traffic reach another
@@ -453,7 +512,7 @@ dx_init_config() {
             value=$(dx_config_default "$name")
             origin=default
         fi
-        dx_config_set_resolved "$name" "$value" "$origin"
+        dx_config_set_resolved "$name" "$value" "$origin" || return 1
         unset "$parsed_name"
     done
 

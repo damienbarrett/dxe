@@ -1,0 +1,13 @@
+#!/bin/bash
+# Read-only inventory of a guest's /persist volume before a host-path
+# migration (spec R37). The logic is dx_persist_inventory_main in
+# bin/lib/dx-persist-dir.sh; select the guest like the sibling commands:
+#   ./bin/dx-profile <profile> ./bin/dx-persist-inventory
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dx-lib.sh"
+# The entry-point contract (tests/test_refactor_contracts.sh) wants <name>_main
+# defined in the entry point itself.
+persist_inventory_main() { dx_persist_inventory_main "$@"; }
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then persist_inventory_main "$@"; fi

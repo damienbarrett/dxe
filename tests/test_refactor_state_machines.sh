@@ -18,6 +18,8 @@ source "$BASE_DIR/bin/lib/dx-container.sh"
 source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
 source "$BASE_DIR/bin/lib/dx-mount-plan.sh"
 source "$BASE_DIR/bin/lib/dx-tunnel.sh"
+# WP4.1: the /persist directory module (marker format), last in the facade.
+source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 test_section "Refactor State-Machine Contracts"
 
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-refactor-state.XXXXXX")"
@@ -573,9 +575,9 @@ registry_actual_count=0
     done
 ) > "$registry_actual"
 for registry_name in $DXE_CONFIG_FIELDS; do registry_actual_count=$((registry_actual_count + 1)); done
-[ "$registry_actual_count" -eq 42 ] \
-    && test_pass "the config registry has exactly 42 fields" \
-    || test_fail "the config registry has exactly 42 fields (got $registry_actual_count)"
+[ "$registry_actual_count" -eq 45 ] \
+    && test_pass "the config registry has exactly 45 fields" \
+    || test_fail "the config registry has exactly 45 fields (got $registry_actual_count)"
 if diff -q "$registry_fixture" "$registry_actual" >/dev/null 2>&1; then
     test_pass "the heredoc registry's dx_config_kind/dx_config_default per field match the pre-refactor fixture"
 else

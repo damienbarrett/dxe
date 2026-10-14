@@ -60,24 +60,35 @@ assert_grep_in_file "$SSH_COMMON_LIB" \
     "mkdir -p /persist" \
     "bootstrap launch command creates fixed /persist path"
 
+# WP3.3: the persist --volume spec is chosen by mode in bin/lib/dx-container.sh
+# (dx_persist_create_volume_spec); dx-create-container only calls it.
 assert_grep_in_file "$DX_CREATE" \
-    "DX_PERSIST_VOLUME" \
-    "dx-create-container references DX_PERSIST_VOLUME"
-assert_grep_in_file "$DX_CREATE" \
-    "[-]-volume[= ].*DX_PERSIST_VOLUME:/persist:rw" \
-    "dx-create-container mounts the persist volume at /persist"
+    "dx_persist_create_volume_spec" \
+    "dx-create-container takes its persist volume spec from dx_persist_create_volume_spec"
+assert_grep_in_file "$BASE_DIR/bin/lib/dx-container.sh" \
+    "persist:%s:/persist:rw.*DX_PERSIST_VOLUME" \
+    "dx_persist_create_volume_spec mounts the persist volume at /persist in volume mode"
 assert_file_not_contains "$DX_CREATE" \
     "DX_PERSIST_PATH" \
     "dx-create-container does not consume DX_PERSIST_PATH"
+# WP4.3 moved the persist step into bin/lib/dx-persist-dir.sh
+# (dx_persist_storage_ensure: the named volume in volume mode, never in
+# host-path mode); dx-create-volumes only calls it.
 assert_grep_in_file "$DX_CREATE_VOLUMES" \
+    "dx_persist_storage_ensure" \
+    "dx-create-volumes ensures /persist storage through dx_persist_storage_ensure"
+assert_grep_in_file "$BASE_DIR/bin/lib/dx-persist-dir.sh" \
     "container_ensure_volume.*DX_PERSIST_VOLUME" \
-    "dx-create-volumes ensures the persist volume exists"
+    "dx_persist_storage_ensure ensures the persist volume exists in volume mode"
 assert_grep_in_file "$DX_CREATE_VOLUMES" \
     "DX_LEGACY_WORKSPACE_VOLUME" \
     "dx-create-volumes checks legacy migration source"
-assert_grep_in_file "$DX_CREATE_VOLUMES" \
+# WP4.4 moved the legacy-volume check and its message into
+# bin/lib/dx-persist-dir.sh (dx_persist_legacy_volume_check, worded per
+# storage mode); dx-create-volumes passes it the legacy volume name.
+assert_grep_in_file "$BASE_DIR/bin/lib/dx-persist-dir.sh" \
     "bin/dx-migrate-persist" \
-    "dx-create-volumes tells users to run the migration helper"
+    "dx-create-volumes' legacy-volume check tells users to run the migration helper"
 
 assert_grep_in_file "$SHELL_NIX" \
     "PERSIST[[:space:]]*=" \
@@ -123,8 +134,20 @@ STALE_MATCHES=$(printf '%s\n' "$STALE_MATCHES" | grep -vE 'tests/test_usage_tmux
 # (/persist/services/agent-stats/workspace, the package's contract); it is
 # unrelated to the retired workspace volume, so its launcher library and test
 # are exempt by name, like the legacy-migration fixtures above.
+# tests/test_persist_status_mounts.sh, tests/test_persist_start_decision.sh and
+# tests/test_persist_dir_create.sh unset DX_LEGACY_WORKSPACE_VOLUME to isolate
+# the entry points they source. WP4.4 moved dx-create-volumes' legacy-volume
+# check, whose message names DX_LEGACY_WORKSPACE_VOLUME, into
+# bin/lib/dx-persist-dir.sh, and tests/test_persist_dir_create_unit.sh pins
+# that message.
+# tests/test_persist_migrate.sh (WP6.4), tests/test_persist_rollback.sh (WP6.5)
+# and tests/test_persist_copy_resume.sh (WP6.4c) unset it for the same
+# isolation.
+# That state-directory path is exempt wherever it appears (e.g. in plan and
+# docs references), because the name alone is not a workspace-volume reference.
 UNEXPECTED_STALE=$(printf '%s\n' "$STALE_MATCHES" | grep -vE \
-    'bin/dx-lib.sh|bin/lib/dx-config.sh|bin/dx-create-volumes|bin/dx-migrate-persist|bin/dx-mount|README.md|refactor-plan.md|docs/|tests/test_section9_host_scripts.sh|tests/test_section10_docs.sh|tests/test_section16_persist_storage.sh|tests/test_section18_mount_git.sh|tests/test_runtime_boundary_characterisation.sh|tests/test_docker_runtime_adapter.sh|tests/test_docker_adapter_.*\.sh|tests/fixtures/config-registry-defaults.txt|scripts/lib/dx-usage-service.sh|tests/test_usage_service.sh' || true)
+    'bin/dx-lib.sh|bin/lib/dx-config.sh|bin/dx-create-volumes|bin/dx-migrate-persist|bin/dx-mount|README.md|refactor-plan.md|docs/|tests/test_section9_host_scripts.sh|tests/test_section10_docs.sh|tests/test_section16_persist_storage.sh|tests/test_section18_mount_git.sh|tests/test_runtime_boundary_characterisation.sh|tests/test_docker_runtime_adapter.sh|tests/test_docker_adapter_.*\.sh|tests/fixtures/config-registry-defaults.txt|scripts/lib/dx-usage-service.sh|tests/test_usage_service.sh|tests/test_persist_status_mounts.sh|tests/test_persist_start_decision.sh|tests/test_persist_dir_create(_unit)?\.sh|tests/test_persist_migrate\.sh|tests/test_persist_rollback\.sh|tests/test_persist_copy_resume\.sh|bin/lib/dx-persist-dir.sh' \
+    | grep -vF 'services/agent-stats/workspace' || true)
 if [ -z "$UNEXPECTED_STALE" ]; then
     test_pass "no stale workspace runtime references outside explicit legacy docs/tests"
 else

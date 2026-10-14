@@ -56,6 +56,14 @@ dx_runtime_docker_ssh_raw() {
     ssh "${ssh_opts[@]}" "${DX_REMOTE_HOST:?}" "$1"
 }
 
+# Same as ssh_raw, but the remote command reads /dev/null, never the caller's
+# stdin: for the adapter's own probes and discovery (often run inside a
+# command substitution ahead of a call that DOES forward stdin, such as
+# `docker run -i`), which must not swallow bytes meant for that call.
+dx_runtime_docker_ssh_raw_noin() {
+    dx_runtime_docker_ssh_raw "$1" </dev/null
+}
+
 # The one production entry point for "run <docker-bin> <verb> <args...> on
 # DX_REMOTE_HOST": quotes every argument, joins into ssh's single remote
 # command string, and runs it with stdin/stdout/stderr all passed straight

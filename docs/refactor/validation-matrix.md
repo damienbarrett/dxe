@@ -59,6 +59,16 @@ still writes to the real file exactly as before -- is therefore live-tier
 only now: confirmed by an actual guest boot on the Live isolated tier, the
 same as the `prepare_nix_volume_impl` calls described just above.
 
+`setup_persist`'s host-path mount check (WP4.5,
+`dx_persist_storage_check` in `bootstrap/persistence.sh`) calls util-linux
+`mountpoint`, which `tests/test_persist_guest_check.sh` replaces with a
+function over a fixture mount table. `tests/test_persist_guest_check_unit.sh`
+validates that stub against the real tool wherever one exists (Linux CI and
+the kcov image): a fresh temporary directory is refused as not a mount
+point, and `/proc` gets past the probe to the marker check. A host without
+`mountpoint` (the dev Mac) fails closed at the probe instead. The real
+Docker bind of a share directory is confirmed live in WP7.1.
+
 **WP6.4 / Astra F3 (the DQ6 owned-resource check) -- live-only assertion,
 not yet confirmed.** `dx_runtime_docker_resource_owned`'s absent-vs-
 could-not-inspect distinction (`bin/lib/dx-runtime-docker-identity.sh`'s

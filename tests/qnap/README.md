@@ -303,3 +303,54 @@ Before moving into Phase 1, the plan requires:
 Record only the one-line outcome (native architecture supported yes/no;
 Docker-over-SSH viability) in `qnap-dxe-plan.md` -- never the full or
 summary report content.
+
+## 7. Phase 1 persist inspection (`phase1-persist-inspect.sh`)
+
+Spec section 9 "QNAP inspection", checks Q-1 to Q-10 for the `/persist`
+host-access plan. Same rules as above: non-interactive, idempotent,
+fail-closed on an unreachable host, report kept outside the repository.
+
+```sh
+DXE_QNAP_SHARE_ROOT=<qnap-share> tests/qnap/phase1-persist-inspect.sh
+DXE_QNAP_SHARE_ROOT=<qnap-share> tests/qnap/phase1-persist-inspect.sh --write-probe
+DXE_QNAP_SHARE_ROOT=<qnap-share> tests/qnap/phase1-persist-inspect.sh --report FILE
+```
+
+`DXE_QNAP_SHARE_ROOT` (the candidate share path on the NAS) is required.
+Optional: `DXE_QNAP_HOST`, `DXE_QNAP_DOCKER` (absolute docker path on the
+NAS, discovered if unset), `DXE_QNAP_PERSIST_VOLUME` (default
+`dx-qnap-persist`), `DXE_QNAP_PROBE_IMAGE` (default: the spike's pinned
+base image, tag only).
+
+Output is exactly ten lines `Q-<n> | <ok|fail|manual|unknown> | <evidence>`
+on stdout and in `$HOME/dxe-recovery/qnap/phase1-persist-inspect-<UTC
+date>.md` (overwritten on a re-run). Q-3, Q-5, Q-6 and Q-7 are always
+`manual`. A failing remote command turns only its own check to `fail`; the
+rest still run. Exit 0 when no check failed, else 1. A missing `getfacl` or
+`getfattr` on the NAS is reported as `acl=n/a` / `xattr=n/a`, not a failure.
+
+Rules:
+
+- Read-only by default: no `mkdir`, `chown`, `chmod`, `rm`, `mv`, `cp`,
+  `touch` or `ln` reaches the NAS, and the only docker subcommands are
+  `info`, `volume inspect` and one `run --rm` of the read-only inspection
+  container (below). Docker is always reached as
+  `<DXE_QNAP_DOCKER> ...` over ssh, never the local docker CLI.
+- Root-only facts (Q-2 filesystem and mount, Q-8 counts, Q-10 owner and mode)
+  come from ONE read-only one-off container: `docker run --rm --network none
+  -v <volume>:/v:ro --entrypoint sh <image> -c <script>`. The SSH account is
+  not root and Container Station's volume path is root-only, so the script
+  never reads the mountpoint host-side. A `df` that fails or prints only a
+  header makes the check `fail` with `df failed: <reason>` (Q-1 and Q-2),
+  never `fs=Filesystem`. A `find` that fails gives `n/a` for its count and a
+  `partial` Q-8.
+- `--write-probe` adds one write probe for Q-10: a single `docker run --rm`
+  of a container named `dxe-spike-*`, labelled `dxe.role=spike`, that binds
+  only the share root. Inside it: `mkdir <root>/.dxe-spike-<random>`,
+  `chown`, a root-owned `0700` `mkdir`, then removal of that one directory.
+  Every write operand is that `.dxe-spike-*` path; the removal always runs.
+  If the ssh connection drops mid-probe, delete a leftover
+  `<root>/.dxe-spike-*` directory by hand (and run
+  `phase0-spike.sh --cleanup` for a stray labelled container).
+- Run the read-only form first; use `--write-probe` only once its output
+  looks right.

@@ -741,6 +741,10 @@ fi
 reword_home="$fixture/reword-home"; mkdir -p "$reword_home"
 reword_bin="$fixture/reword-bin"
 cp -R "$BASE_DIR/bin" "$reword_bin"
+# WP4.1: bin/lib/dx-persist-dir.sh (in the dx-lib.sh facade) sources the marker
+# library relative to the checkout root, which here is $fixture.
+mkdir -p "$fixture/container/dx-nixos-26.05/scripts"
+cp -R "$BASE_DIR/container/dx-nixos-26.05/scripts/lib" "$fixture/container/dx-nixos-26.05/scripts/lib"
 cat > "$reword_bin/dx-sync-bootstrap" <<'FAKESYNC'
 #!/bin/bash
 set -euo pipefail

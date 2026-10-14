@@ -20,9 +20,16 @@ trap dx_lifecycle_lock_release EXIT HUP INT TERM
 
 dx_nix_volume_claim_acquire "$DX_NIX_VOLUME" "$DX_CONTAINER_NAME"
 
+# Plans/do D-6: warn (once) when the existing container's /persist is not on
+# the configured storage; only dx-recreate changes that, so carry on.
+dx_persist_warn_mismatch
+
 if container_is_running "$DX_CONTAINER_NAME"; then
     echo "Container $DX_CONTAINER_NAME is already running; skipping start."
 else
+    # Host-path mode (plans/do D-9, R17): the share directory and its marker
+    # are checked, inside the lock, before the start; volume mode: no-op.
+    dx_persist_start_check || exit 1
     echo "Starting container $DX_CONTAINER_NAME..."
     dx_runtime_container_start "$DX_CONTAINER_NAME"
 fi

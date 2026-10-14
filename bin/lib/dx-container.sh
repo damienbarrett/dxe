@@ -632,3 +632,216 @@ dx_connect_or_bring_up() {
     dx_lifecycle_lock_drop
     exec "$script_dir/dx-ssh" "$@"
 }
+
+# The --volume spec for /persist (plans/do D-4, D-9): the named persist volume
+# in volume mode (today's spec, unchanged), or the derived per-guest host
+# directory $DX_PERSIST_HOST_ROOT/dxe/$DX_CONTAINER_NAME/persist as a
+# persist-dir bind in host-path mode.
+dx_persist_create_volume_spec() {
+    if [ "${DX_PERSIST_STORAGE:-volume}" = host-path ]; then
+        printf 'persist-dir:%s/dxe/%s/persist:/persist:rw' "$DX_PERSIST_HOST_ROOT" "$DX_CONTAINER_NAME"
+    else
+        printf 'persist:%s:/persist:rw' "$DX_PERSIST_VOLUME"
+    fi
+}
+
+# The source /persist is configured to have (plans/do D-6): the named volume
+# in volume mode, the derived host directory in host-path mode. Same
+# derivation as dx_persist_create_volume_spec above.
+dx_persist_configured_source() {
+    if [ "${DX_PERSIST_STORAGE:-volume}" = host-path ]; then
+        printf '%s/dxe/%s/persist\n' "$DX_PERSIST_HOST_ROOT" "$DX_CONTAINER_NAME"
+    else
+        printf '%s\n' "$DX_PERSIST_VOLUME"
+    fi
+}
+
+# dx_persist_actual_source <name> -- the source of the container's mount whose
+# destination is /persist (a volume name or a host path), read from
+# dx_runtime_container_mounts; "(no /persist mount)" when it has none.
+# Non-zero when the mounts cannot be read.
+dx_persist_actual_source() {
+    local mounts actual
+    mounts="$(dx_runtime_container_mounts "$1")" || return 1
+    actual="$(awk -F'|' '$3 == "/persist" { print $2; exit }' <<<"$mounts")"
+    printf '%s\n' "${actual:-(no /persist mount)}"
+}
+
+# The body of dx-status's "/persist storage" section: configured, actual and,
+# when they differ, a mismatch line. It never says a switch happened: only
+# dx-recreate changes what a container mounts.
+dx_persist_status_report() {
+    _dx_persist_status_core
+    dx_persist_status_kept_lines
+}
+
+_dx_persist_status_core() {
+    local configured actual
+    configured="$(dx_persist_configured_source)"
+    printf 'configured: %s\n' "$configured"
+    if ! container_exists "$DX_CONTAINER_NAME"; then
+        printf 'actual: (container not present)\n'
+        return 0
+    fi
+    if ! actual="$(dx_persist_actual_source "$DX_CONTAINER_NAME")"; then
+        printf 'actual: (unavailable)\n'
+        return 0
+    fi
+    printf 'actual: %s\n' "$actual"
+    if [ "$actual" != "$configured" ]; then
+        printf 'mismatch: /persist is not on the configured storage; dx-recreate applies the configuration\n'
+    fi
+    return 0
+}
+
+# --- destroy / reset volume lists (WP5.1; plans/do D-7; spec R25, R26) -------
+# In host-path mode the persist data is a directory on the NAS, and neither
+# destroy nor reset ever deletes it -- nor any persist VOLUME, because a
+# volume left over from an earlier volume-mode life (the configured one, or
+# the marker's source-volume) may still hold the only copy of the user's work.
+# So the destroy list and the ownership proof cover nix and bootstrap only.
+# Volume mode is exactly as before: nix, persist, bootstrap.
+
+# Sets DX_DESTROY_VOLUMES / DX_DESTROY_ROLES (parallel arrays), in deletion order.
+dx_destroy_volume_lists() {
+    if [ "${DX_PERSIST_STORAGE:-volume}" = host-path ]; then
+        DX_DESTROY_VOLUMES=("$DX_NIX_VOLUME" "$DX_BOOTSTRAP_VOLUME")
+        DX_DESTROY_ROLES=(nix bootstrap)
+    else
+        DX_DESTROY_VOLUMES=("$DX_NIX_VOLUME" "$DX_PERSIST_VOLUME" "$DX_BOOTSTRAP_VOLUME")
+        DX_DESTROY_ROLES=(nix persist bootstrap)
+    fi
+}
+
+# dx_destroy_plan_and_verify [container]: the whole-operation ownership proof
+# over the destroy list (plus the container for a factory reset).
+dx_destroy_plan_and_verify() {
+    local specs=() index=0 vol
+    dx_destroy_volume_lists
+    [ "${1:-}" != container ] || specs+=("container:$DX_CONTAINER_NAME:container")
+    for vol in "${DX_DESTROY_VOLUMES[@]}"; do
+        specs+=("volume:$vol:${DX_DESTROY_ROLES[$index]}")
+        index=$((index + 1))
+    done
+    dx_destructive_plan_and_verify "${specs[@]}"
+}
+
+# dx_destroy_volume_describe VOL: the typed-confirmation line for one volume.
+dx_destroy_volume_describe() {
+    case "$1" in
+        "$DX_NIX_VOLUME")       echo "  $1  (Nix store — re-download takes hours)" ;;
+        "$DX_PERSIST_VOLUME")   echo "  $1  (Your work in /persist — IRREVERSIBLE)" ;;
+        "$DX_BOOTSTRAP_VOLUME") echo "  $1  (Bootstrap payload — auto-rebuilt on next start)" ;;
+        *)                      echo "  $1" ;;
+    esac
+}
+
+# The volume lines of dx-factory-reset's typed-confirmation list.
+dx_factory_reset_volume_lines() {
+    echo "  - Volume $DX_NIX_VOLUME (Nix store — re-download takes hours)"
+    if [ "${DX_PERSIST_STORAGE:-volume}" = host-path ]; then
+        echo "  (kept: the /persist directory on the NAS and every persist volume)"
+    else
+        echo "  - Volume $DX_PERSIST_VOLUME (Your work in /persist — IRREVERSIBLE)"
+    fi
+    echo "  - Volume $DX_BOOTSTRAP_VOLUME (Bootstrap payload — auto-rebuilt)"
+}
+
+# The persist volumes that still exist in host-path mode, one name per line:
+# the configured DX_PERSIST_VOLUME first, then the directory marker's
+# source-volume (read through the read-only probe; a failed probe or a marker
+# without one contributes nothing), de-duplicated.
+dx_persist_kept_volumes() {
+    local probe="" source="" vol
+    [ "${DX_PERSIST_STORAGE:-volume}" = host-path ] || return 0
+    probe="$(dx_runtime_host_dir_probe "$DX_PERSIST_HOST_ROOT" "$DX_CONTAINER_NAME" 2>/dev/null)" || probe=""
+    source="$(awk '/^source-volume=/ { print substr($0, 15); exit }' <<<"$probe")"
+    dx_persist_marker_valid_name "$source" || source=""
+    [ "$source" != "$DX_PERSIST_VOLUME" ] || source=""
+    for vol in "$DX_PERSIST_VOLUME" ${source:+"$source"}; do
+        if dx_runtime_volume_exists "$vol"; then printf '%s\n' "$vol"; fi
+    done
+    return 0
+}
+
+# The record path for the manual-removal line, or a placeholder naming the
+# variables it is built from when it cannot be formed (fail-closed helper).
+dx_persist_kept_record_label() {
+    dx_persist_dir_record_path || echo "<XDG_STATE_HOME>/dxe/persist-dirs/<DX_REMOTE_HOST>__<DX_CONTAINER_NAME>"
+}
+
+# What destroy and reset print in host-path mode: the directory they keep and
+# how to remove it by hand, then each kept persist volume with its delete
+# command. Silent in volume mode. The probe is read-only and a failure of it
+# changes nothing here.
+dx_persist_kept_report() {
+    local vol
+    [ "${DX_PERSIST_STORAGE:-volume}" = host-path ] || return 0
+    echo "Kept /persist host directory: $(dx_persist_configured_source)"
+    echo "  manual removal 1: with the guest stopped, remove $DX_PERSIST_HOST_ROOT/dxe/$DX_CONTAINER_NAME on the NAS"
+    echo "  manual removal 2: delete the record file $(dx_persist_kept_record_label)"
+    while IFS= read -r vol; do
+        [ -n "$vol" ] || continue
+        echo "Kept persist volume: $vol"
+        echo "  delete with: docker volume rm $vol"
+    done <<<"$(dx_persist_kept_volumes)"
+    return 0
+}
+
+# dx-status lines: one per kept persist volume (host-path mode only).
+dx_persist_status_kept_lines() {
+    local vol
+    while IFS= read -r vol; do
+        [ -n "$vol" ] || continue
+        printf 'kept volume: %s\n' "$vol"
+    done <<<"$(dx_persist_kept_volumes)"
+    return 0
+}
+
+# One Warning line (stderr) when the existing container's /persist source
+# differs from the configured one; silent otherwise or when unreadable. The
+# caller carries on either way.
+dx_persist_warn_mismatch() {
+    local configured actual
+    actual="$(dx_persist_actual_source "$DX_CONTAINER_NAME")" || return 0
+    configured="$(dx_persist_configured_source)"
+    [ "$actual" = "$configured" ] && return 0
+    echo "Warning: $DX_CONTAINER_NAME's /persist is on $actual but the configuration says $configured; run dx-recreate to apply the configuration." >&2
+    return 0
+}
+
+# dx-reclaim's persist line in its "Volume usage:" report (WP5.2; spec R29).
+# Volume mode prints the persist volume's size, as before. Host-path mode never
+# queries the volume: it prints the host directory and its KiB from
+# dx_runtime_host_dir_usage, or "unknown" when that read fails.
+dx_persist_usage_line() {
+    local dir usage
+    if [ "${DX_PERSIST_STORAGE:-volume}" != host-path ]; then
+        printf '  %-14s %s\n' "$DX_PERSIST_VOLUME" "$(dx_runtime_volume_usage "$DX_PERSIST_VOLUME")"
+        return 0
+    fi
+    dir="$(dx_persist_configured_source)"
+    if usage="$(dx_runtime_host_dir_usage "$dir" 2>/dev/null)"; then
+        printf '  %s %sK\n' "$dir" "${usage%%[[:space:]]*}"
+    else
+        printf '  %s unknown\n' "$dir"
+    fi
+    return 0
+}
+
+# The "Skipping filesystem trim" message dx-reclaim prints when the runtime
+# cannot trim (WP5.2): the persist side is named for what it is in this mode.
+dx_persist_trim_skip_message() {
+    local what="Docker volume"
+    if [ "${DX_PERSIST_STORAGE:-volume}" = host-path ]; then
+        what="host directory"
+    fi
+    printf 'Skipping filesystem trim: not supported against a %s under this runtime (qnap-dxe-plan.md DQ4).\n' "$what"
+}
+
+# Appends the guest environment for host-path mode to CREATE_ARGS; volume mode
+# appends nothing, so its create argv is byte-identical to before.
+dx_persist_create_env_args() {
+    [ "${DX_PERSIST_STORAGE:-volume}" = host-path ] || return 0
+    CREATE_ARGS+=(--env "DX_PERSIST_STORAGE=host-path" --env "DX_PERSIST_DIR_GUEST=$DX_CONTAINER_NAME")
+}

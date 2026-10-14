@@ -16,6 +16,8 @@
 # Safe to source: defines functions only, no command availability exit,
 # service start, or I/O at import time.
 
+DX_RUNTIME_APPLE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 dx_runtime_apple_available() {
     command -v container >/dev/null 2>&1 && return 0
     cat >&2 <<'EOF'
@@ -55,6 +57,24 @@ dx_runtime_apple_container_running() { dx_runtime_apple_container_list_names fal
 # Apple has no restart policy (dx_runtime_apple_capability restart_policy is
 # false), so a container is never restarted by the runtime: always 0.
 dx_runtime_apple_container_restart_count() { printf '0\n'; }
+# dx_runtime_container_state <name> (plans/do WP6.4): from `container list
+# [-a] --quiet`. Unknown (non-zero) for an empty name or when either listing
+# fails -- an older CLI without --quiet included, with no fallback to the
+# tabular form -- so a runtime this cannot read is never taken for "stopped".
+dx_runtime_apple_container_state() {
+    local all running
+    if [ -z "${1:-}" ] || ! all="$(container list -a --quiet 2>/dev/null)" || ! running="$(container list --quiet 2>/dev/null)"; then
+        printf 'unknown\n'
+        return 1
+    fi
+    if grep -Fqx -- "$1" <<<"$running"; then
+        printf 'running\n'
+    elif grep -Fqx -- "$1" <<<"$all"; then
+        printf 'stopped\n'
+    else
+        printf 'absent\n'
+    fi
+}
 dx_runtime_apple_container_list() { container list "$@"; }
 
 dx_runtime_apple_image_exists() {
@@ -89,6 +109,19 @@ dx_runtime_apple_image_identity() {
 }
 
 dx_runtime_apple_volume_exists() { container volume inspect "$1" >/dev/null 2>&1; }
+
+# dx_runtime_volume_state's Apple answer is two-state: present, or absent on
+# any inspect failure, the reading volume_exists has always made. The runtime
+# is local, and dx_require_container_cli proves it running before any
+# command gets this far; host-path mode, the reason for `unknown`, is refused
+# under Apple by the configuration.
+dx_runtime_apple_volume_state() {
+    if dx_runtime_apple_volume_exists "$1"; then
+        printf 'present\n'
+    else
+        printf 'absent\n'
+    fi
+}
 dx_runtime_apple_volume_create() { container volume create "$@"; }
 dx_runtime_apple_volume_delete() { container volume rm "$@"; }
 
@@ -142,6 +175,10 @@ dx_runtime_apple_container_create() {
             --volume)
                 dx_runtime_container_create_parse_volume_spec "$2" || return 1
                 case "$DXE_VOLSPEC_ROLE" in
+                    persist-dir)
+                        echo "Error: a persist-dir volume (DX_PERSIST_STORAGE=host-path) is not supported by DX_RUNTIME=apple; see docs/guest.md for reaching /persist from the Mac." >&2
+                        return 1
+                        ;;
                     nix) flags+=(--volume "$DXE_VOLSPEC_NAME:/var/lib/dx-nix-raw:$DXE_VOLSPEC_MODE") ;;
                     *) flags+=(--volume "$DXE_VOLSPEC_NAME:$DXE_VOLSPEC_TARGET:$DXE_VOLSPEC_MODE") ;;
                 esac
@@ -277,10 +314,13 @@ dx_runtime_apple_guest_ssh_address() { printf '%s\n' 127.0.0.1; }
 #     Phase 6 item 4): `container create` has no HEALTHCHECK concept;
 #     --health-cmd/--health-interval/--health-retries are read and
 #     discarded by dx_runtime_apple_container_create above, unconditionally.
+#   runtime_host_directories -- no (plans/do D-5): Apple's host-folder binds
+#     lose ownership and are slow, so the persist-dir: role is refused and
+#     DX_PERSIST_STORAGE=host-path is rejected for DX_RUNTIME=apple.
 dx_runtime_apple_capability() {
     case "$1" in
         direct_named_volume_mounts|bind_mounts|host_filesystem_reclamation|raw_nix_disk) return 0 ;;
-        restart_policy|container_healthcheck|usage_service) return 1 ;;
+        restart_policy|container_healthcheck|usage_service|runtime_host_directories) return 1 ;;
         *) echo "Error: unknown runtime capability '$1'." >&2; return 2 ;;
     esac
 }
@@ -332,3 +372,39 @@ dx_runtime_apple_lock_acquire() {
 dx_runtime_apple_lock_release() {
     dx_lock_release "$1"
 }
+
+# dx_runtime_container_mounts <name> (plans/do D-6): one `type|source|
+# destination|rw` line per mount, parsed from the `container inspect` JSON
+# without jq or python. The real shape (container 1.4.1) is
+# configuration.mounts[] = {destination, options[], source, type:{volume:
+# {cache:{..}, format, name, sync:{..}}} | type:{virtiofs:{}}} with
+# alphabetical keys and nested objects both before and after "name", so a
+# small brace-depth-aware tokenizer reads each mount's own top-level keys
+# instead of grepping for the first "name". A volume reports its VOLUME NAME,
+# a virtiofs host share is a `bind` with its source path; `ro` when
+# "options" contains "ro".
+dx_runtime_apple_container_mounts() {
+    local json
+    json="$(container inspect "$1" 2>/dev/null)" || return 1
+    printf '%s\n' "$json" | awk -f "$DX_RUNTIME_APPLE_LIB_DIR/dx-inspect-mounts.awk"
+}
+
+# NAS directory operations (WP4.2): there is no NAS behind the Apple
+# runtime, so every operation refuses without touching any tool.
+dx_runtime_apple_host_dir_unsupported() {
+    echo "Error: NAS directory operations are unsupported under DX_RUNTIME=apple." >&2
+    return 1
+}
+dx_runtime_apple_host_dir_probe() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_create() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_marker_write() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_usage() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_rsync_check() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_rsync() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_volume_inventory() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_free() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_establish() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_marker_set() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_manifest_verify() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_dir_inventory() { dx_runtime_apple_host_dir_unsupported; }
+dx_runtime_apple_host_copy_containers() { dx_runtime_apple_host_dir_unsupported; }

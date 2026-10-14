@@ -34,6 +34,13 @@ bootstrap_phases() {
     verify_remount_prerequisites
     nix_restore_image_default_profile
     ensure_essentials_valid
+    # Hand root-owned store paths back to the store owner, once per boot, here:
+    # the store is in its final place in both modes and the essentials closure
+    # is verified. auto-optimise-store can hard-link a new file to a root-owned
+    # .links copy, and an earlier root Nix call against the volume can leave
+    # root-owned entries. The function warns itself; a failure never fails the
+    # boot (errexit is on).
+    hand_back_root_nix_paths || true
     # The remounted essentials closure is content-verified before ownership
     # markers are published. This lets activation avoid a redundant recursive
     # chown on a freshly owner-mapped import.
@@ -41,6 +48,7 @@ bootstrap_phases() {
     configure_release_identity
     setup_persist
     configure_ssh
+    configure_vscode_server_support || echo "Warning: VS Code server support step failed; continuing without it." >&2
     configure_guest true
     verify_guest_tools
     configure_timezone

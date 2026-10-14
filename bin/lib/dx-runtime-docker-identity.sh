@@ -44,7 +44,7 @@ dx_runtime_docker_bin_discovery_script() {
 dx_runtime_docker_discover_bin() {
     [ -z "${DXE_RUNTIME_DOCKER_BIN:-}" ] || return 0
     local discovered
-    discovered="$(dx_runtime_docker_ssh_raw "$(dx_runtime_docker_bin_discovery_script)")" || {
+    discovered="$(dx_runtime_docker_ssh_raw_noin "$(dx_runtime_docker_bin_discovery_script)")" || {
         echo "Error: could not reach $DX_REMOTE_HOST to discover the Docker CLI (connection failed or refused)." >&2
         return 1
     }
@@ -113,7 +113,7 @@ dx_runtime_docker_guest_ssh_address_valid() {
 dx_runtime_docker_discover_guest_ssh_address() {
     [ -z "${DXE_RUNTIME_GUEST_SSH_ADDRESS:-}" ] || return 0
     local discovered
-    discovered="$(dx_runtime_docker_ssh_raw "$(dx_runtime_docker_guest_ssh_address_discovery_script)")" || {
+    discovered="$(dx_runtime_docker_ssh_raw_noin "$(dx_runtime_docker_guest_ssh_address_discovery_script)")" || {
         echo "Error: could not reach $DX_REMOTE_HOST to discover its Tailscale address (connection failed or refused)." >&2
         return 1
     }
@@ -169,7 +169,7 @@ dx_runtime_docker_host_reachable() {
     local stderr_file rc
     stderr_file="$(mktemp "${TMPDIR:-/tmp}/dxe-docker-ssh-stderr.XXXXXX")" || return 1
     rc=0
-    dx_runtime_docker_ssh_raw true >/dev/null 2>"$stderr_file" || rc=$?
+    dx_runtime_docker_ssh_raw_noin true >/dev/null 2>"$stderr_file" || rc=$?
     DXE_RUNTIME_DOCKER_LAST_FAILURE="$(cat "$stderr_file")"
     rm -f "$stderr_file"
     return "$rc"

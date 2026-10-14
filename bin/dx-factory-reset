@@ -3,9 +3,10 @@ set -euo pipefail
 
 # dx-factory-reset
 # Removes every host-side artefact: container, image, persistent volumes,
-# and the SSH keypair. The /nix store and /persist contents are GONE after
-# this — re-downloading Nix takes hours. Prompts once for confirmation; pass
-# --force to skip.
+# and the SSH keypair. The /nix store is GONE after this — re-downloading Nix
+# takes hours. /persist volumes are removed too in volume mode; in host-path
+# mode the NAS directory and every persist volume are kept. Prompts once for
+# confirmation; pass --force to skip.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/dx-lib.sh"
@@ -31,12 +32,7 @@ done
 # dx-destroy-image's own exact-name addressing is the only protection there,
 # unchanged. A no-op under DX_RUNTIME=apple (Apple has no DQ6 labels at
 # all), so Apple's behaviour below is unaffected, byte for byte.
-dx_destructive_plan_and_verify \
-    "container:$DX_CONTAINER_NAME:container" \
-    "volume:$DX_NIX_VOLUME:nix" \
-    "volume:$DX_PERSIST_VOLUME:persist" \
-    "volume:$DX_BOOTSTRAP_VOLUME:bootstrap" \
-    || {
+dx_destroy_plan_and_verify container || {
         echo "Error: refusing to factory-reset: the plan above found a resource that does not belong to this profile (qnap-dxe-plan.md DQ6)." >&2
         exit 1
     }
@@ -50,9 +46,7 @@ if [ "$force" -ne 1 ]; then
     echo "Factory reset will remove ALL of the following:"
     echo "  - Container $DX_CONTAINER_NAME"
     echo "  - Image $DX_IMAGE"
-    echo "  - Volume $DX_NIX_VOLUME (Nix store — re-download takes hours)"
-    echo "  - Volume $DX_PERSIST_VOLUME (Your work in /persist — IRREVERSIBLE)"
-    echo "  - Volume $DX_BOOTSTRAP_VOLUME (Bootstrap payload — auto-rebuilt)"
+    dx_factory_reset_volume_lines
     echo "  - SSH keypair $DX_SSH_KEY / $DX_SSH_KEY_PUB"
     echo
     printf 'Type "factory-reset" to confirm: '

@@ -23,7 +23,8 @@ operations.
    To force a rebuild at any layer, destroy that layer first.
 6. **Persistent volumes are protected by construction.** `/nix` and `/persist`
    survive everything except `dx-factory-reset` (or an explicit
-   `dx-destroy-volumes`). `bin/dx-reset-nix-volume` is the one other
+   `dx-destroy-volumes`), and in `host-path` mode even those keep the NAS
+   directory (see "/persist storage modes"). `bin/dx-reset-nix-volume` is the one other
    explicit, narrower exception: it removes only the Nix volume (never
    `/persist` or the bootstrap volume), for the one case `dx-destroy-volumes`
    is too broad for — recovering from a store-trust refusal
@@ -165,8 +166,26 @@ fire-and-forget.
 | --- | --- |
 | [`bin/dx`](../bin/dx) | Checks the container service first, starts Apple Container if needed, and waits up to `DX_SYSTEM_WAIT_TIMEOUT` (default 30s) for readiness; connects directly when running; otherwise `create-keys → create-image → create-volumes → create-container → start-container → wait-ssh → ssh`. |
 | [`bin/dx-destroy`](../bin/dx-destroy) | `destroy-container → destroy-image` (preserves volumes and keys) |
-| [`bin/dx-recreate`](../bin/dx-recreate) | `dx-destroy → exec dx` (preserves volumes and keys) |
+| [`bin/dx-recreate`](../bin/dx-recreate) | `dx-destroy → exec dx` (preserves /nix, keys and /persist: the volume, or the host directory in host-path mode) |
 | [`bin/dx-factory-reset`](../bin/dx-factory-reset) | prompts once, then `destroy-container → destroy-image → destroy-volumes --force → destroy-keys` |
+
+### /persist storage modes
+
+`/persist` has two storage modes, chosen per profile with `DX_PERSIST_STORAGE` and recorded on the container when it is created.
+
+`DX_PERSIST_STORAGE=volume` (the default) keeps `/persist` in the named volume `DX_PERSIST_VOLUME`. It is the only mode on Apple Container, where the volume is a sparse host image, and it is the original mode on the QNAP.
+
+`DX_PERSIST_STORAGE=host-path` (QNAP/`docker-ssh` only) binds a real directory on the NAS share, `<qnap-share>/dxe/<container name>/persist`, at `/persist`, so the Mac can browse it through the share. The directory carries a `.dxe-persist-dir` marker naming the guest and its state. Only a directory whose marker is `ready` is used: `dx-create-volumes` makes it for a new guest, `dx-persist-migrate` fills it from the existing volume, and every other state is a refusal (see "/persist host directory refusals" in `troubleshooting.md`).
+
+The mounts are fixed at creation: changing `DX_PERSIST_STORAGE` or `DX_PERSIST_HOST_ROOT` in the profile does not change an existing container, and `dx-status` shows the mismatch. `dx-recreate` is what applies the configured mode; it keeps `/nix`, the SSH keypair and `/persist` in whichever form the profile now names.
+
+In host-path mode `dx-destroy-volumes` and `dx-factory-reset` keep the host directory, the per-profile host-path record under `$XDG_STATE_HOME/dxe/persist-dirs/`, and every persist volume, so a reset cannot remove the NAS directory; the reset guest then reuses the same directory (and so its SSH host key and credentials). Deleting a guest's host-path storage for good is a manual act.
+
+After a migration (or a rollback) the persist volume named as `source-volume` in the directory's marker stays in Docker as a safety copy, and the directory stays after a rollback. Nothing deletes either one for you.
+
+Everything kept is listed rather than hidden: `dx-destroy-volumes` and `dx-factory-reset` end by printing the kept directory, the record file and each kept persist volume with the manual removal steps, and `dx-status` shows `kept volume:` lines. Removal is always by hand, and recursive deletion of the NAS directory is yours to run.
+
+`dx-reclaim` works in both modes. In host-path mode its persist line reports the directory's size in KiB (`du -sk`), or `unknown` when that read fails, and it never queries the persist volume; see "Reclaiming host disk space".
 
 ### The lifecycle lock (Astra F4)
 
@@ -248,8 +267,8 @@ or perform maintenance operations.
 | [`bin/dx-forward`](../bin/dx-forward) | Exposes guest web ports on macOS loopback addresses with SSH local forwarding. |
 | [`bin/dx-reverse`](../bin/dx-reverse) | Exposes macOS loopback services inside the guest with SSH reverse forwarding. |
 | [`bin/dx-enter`](../bin/dx-enter) | Direct `container exec` shell, bypassing SSH. Over `docker-ssh`, the management SSH transport forces its own pty (`-tt`) whenever a TTY was requested, so it works both interactively and driven non-interactively (e.g. `dx-enter <cmd>`). |
-| [`bin/dx-gc`](../bin/dx-gc) | Runs Nix garbage collection and store optimization inside the guest. |
-| [`bin/dx-reclaim`](../bin/dx-reclaim) | Reclaims host disk space by deleting old Nix generations in the guest and trimming persistent filesystems. |
+| [`bin/dx-gc`](../bin/dx-gc) | Runs Nix garbage collection and store optimization inside the guest, as `dx`, after clearing stale Nix temporary-roots files and handing root-owned store paths back to the store owner (see [Reclaiming host disk space](#reclaiming-host-disk-space)). |
+| [`bin/dx-reclaim`](../bin/dx-reclaim) | Reclaims host disk space by deleting old Nix generations in the guest (after the same stale temporary-roots clear and root-owned paths hand-back as `dx-gc`) and trimming persistent filesystems. |
 | [`bin/dx-export`](../bin/dx-export) | Archives the container to a tar file. Atomic: streams to a `.partial` sibling first, verified non-empty, then renamed into place; a mid-stream failure or an interruption removes the partial rather than leaving a truncated file at the final path. |
 | [`bin/dx-nix-disk`](../bin/dx-nix-disk) | Prepares a sparse Nix disk image; lifecycle-adjacent storage prep. Apple-only (`raw_nix_disk` capability); refuses immediately under `DX_RUNTIME=docker-ssh`, before any mutation. |
 | [`bin/dx-usage-service`](../bin/dx-usage-service) | `start`, `stop`, `restart`, `status`, `logs [N]` for the guest's agent-stats service (only in a guest created with `DX_USAGE_SERVICE=on`; docker-ssh only, `usage_service` capability). Drives the guest's s6 tree through `exec`; touches only agent-stats, never sshd or the keyring. |
@@ -257,6 +276,9 @@ or perform maintenance operations.
 | [`bin/dx-reset-nix-volume`](../bin/dx-reset-nix-volume) | Removes ONLY the Nix volume (`/persist` and the bootstrap volume are untouched); refuses while the container still exists or the runtime reports the volume in use. The volume-scoped recovery path both `store-trust-plan.md` refusals (a collision at a pin bump, or a broken prerequisite right after the volume reaches its final place) name by command: run this, then `./bin/dx` to rebuild `/nix` from the image and re-seed it. Replaces the earlier "no valid procedure, full destroy-and-rebuild with salvage" pin-bump text in `docs/release-maintenance.md`. |
 | [`bin/dx-backup`](../bin/dx-backup) | Captures the at-risk contents of `/persist` into a Mac folder, incrementally. |
 | [`bin/dx-restore`](../bin/dx-restore) | Pushes a captured mirror (or a named subpath of it) back into a running guest's `/persist`. |
+| [`bin/dx-persist-inventory`](../bin/dx-persist-inventory) | `DX_RUNTIME=docker-ssh` only, strictly read-only: before a move of `/persist` to a NAS directory it reports the volume's size, entry and hard-link counts, `._*` and special files, whether ACLs or extended attributes are present, the `rsync` version in the guest's nix volume (the guest must have booted once on the current image so its essentials include `rsync`; otherwise `rsync_check` is refused, a blocker), and whether the share root (`DX_PERSIST_HOST_ROOT`) and the Docker volume pool have room (a copy and a rollback volume). Exit 0 nothing blocks; 1 refused (another profile's volume, no `DX_PERSIST_HOST_ROOT`, not docker-ssh) or unreadable; 2 usage; 3 the report names a blocker (`rsync_check` refused, or a `*_room` of `no`). Run it as `./bin/dx-profile <profile> ./bin/dx-persist-inventory`. |
+| [`bin/dx-persist-migrate`](../bin/dx-persist-migrate) | `DX_RUNTIME=docker-ssh` only: copies the guest's `/persist` volume into its NAS directory `<DX_PERSIST_HOST_ROOT>/dxe/<DX_CONTAINER_NAME>/persist` and proves the copy. Stop the guest first (`dx-stop-container`); it refuses while the guest is running or its state cannot be read, and never starts it. Under the lifecycle lock it checks the guest is stopped, both volumes' DQ6 labels, the share root (canonical, mounted per `DX_PERSIST_HOST_MOUNT_SENTINEL`, no symlink) and the destination, reads the inventory (adding `rsync -A`/`-X` unless it shows no ACLs or extended attributes) and checks `rsync` in the guest's nix volume -- all before anything is written. Then, each step in a root one-off container on the NAS: it creates the directory (or takes the empty one an interrupted run left) with the marker `copying`, copies with `rsync` (the volume mounted read-only; `._*` files and the volume's own `.dxe-persist-dir` are left out), verifies the copy against the volume with the manifest tool (both sides read-only), checks again that the guest is stopped (one started during the copy is refused and the directory stays `copying`), sets the marker to `ready`, and only then writes the host-path record. Both marker writes refuse marker bytes that arrived empty or name another guest, and the change to `ready` refuses bytes in any other state. The report ends stdout: the destination, the record, the copy and verify times in seconds (the downtime), and the dropped `._*` files. A non-empty destination is refused unless its marker is `copying` for this guest and volume: after an interruption, run the command again and it resumes into the same directory. A copy that does not verify exits 3 and stays `copying`, so no start uses it; the profile is never edited and the volume is kept, so switching (`DX_PERSIST_STORAGE=host-path`, then `dx-recreate`) is the operator's step. Exit 0 migrated; 1 refused (one `Error:` line naming the fix, nothing written) or failed before the verification; 2 usage; 3 the copy did not verify. Run it as `./bin/dx-profile <profile> ./bin/dx-persist-migrate`, after `dx-persist-inventory`. |
+| [`bin/dx-persist-rollback`](../bin/dx-persist-rollback) | `DX_RUNTIME=docker-ssh` only: the way back from a NAS directory. `--volume NAME` copies the guest's directory `<DX_PERSIST_HOST_ROOT>/dxe/<DX_CONTAINER_NAME>/persist` into a NEW volume NAME and proves the copy; the original volume (the marker's `source-volume`, still in the profile as `DX_PERSIST_VOLUME`) is never read, written or named, so it works after that volume was deleted. NAME must not exist yet and may not be the profile's `DX_PERSIST_VOLUME`, `DX_NIX_VOLUME` or `DX_BOOTSTRAP_VOLUME`, or the marker's `source-volume`. Stop the guest first (`dx-stop-container`); it refuses while the guest is running or its state cannot be read, and never starts it. Under the lifecycle lock it checks the guest is stopped, the share root (canonical, mounted per `DX_PERSIST_HOST_MOUNT_SENTINEL`, no symlink), that the directory's marker is `ready` for this guest, that NAME is absent, reads the directory's inventory (adding `rsync -A`/`-X` unless it shows no ACLs or extended attributes) and checks `rsync` in the guest's nix volume -- all before anything is written. Then it creates NAME with this profile's DQ6 persist labels, copies with `rsync` in a root one-off container (the directory bound read-only; `._*` files and the marker are left out), verifies NAME against the directory with the manifest tool (both sides read-only), checks again that the guest is stopped (in host-path mode the directory is its `/persist`; one started during the copy or the verification is refused, the directory stays `ready`), and sets the marker to `retired`, so no host-path start uses the directory again. The report ends stdout: the directory, the new and the original volume, the copy and verify times in seconds, the dropped `._*` files, and the next step (`DX_PERSIST_STORAGE=volume` and `DX_PERSIST_VOLUME=NAME` in the profile, then `dx-recreate`). Nothing is ever deleted: the directory's data stays, and any failure once NAME exists leaves NAME as it is and prints one more line with the `docker volume rm NAME` that removes it if you do not want it (only printed, never run; run again with a new `--volume` name); a copy that does not verify exits 3 and the marker stays `ready`. The profile is never edited and the host-path record is left as it is. Exit 0 rolled back; 1 refused (one `Error:` line naming the fix, nothing written) or failed; 2 usage; 3 the copy did not verify. Run it as `./bin/dx-profile <profile> ./bin/dx-persist-rollback --volume <new volume>`. |
 | [`container/.../bootstrap.sh`](../container/dx-nixos-26.05/bootstrap.sh) | Runs the ordered sourceable phases from the atomically published, leased bootstrap generation. |
 
 ### Reclaiming host disk space
@@ -276,10 +298,20 @@ want to return unused space. The container must already be running.
 `dx-reclaim` prints volume usage (via `dx_runtime_volume_usage`: Apple's own
 host sparse-image size; a `docker-ssh` guest's Docker-visible volume size, or
 `unknown` when Docker cannot say) and guest filesystem usage before and after
-the operation. It then:
+the operation. With `DX_PERSIST_STORAGE=host-path` the persist line instead
+reports the persist host directory's size in KiB (`du -sk`), or `unknown` when
+that read fails, and the persist volume is never queried. The trim skip message
+then names the host directory rather than a Docker volume. It then:
 
 1. Deletes old Nix generations inside the guest with `nix-collect-garbage -d`
-   (identical for both runtimes).
+   (identical for both runtimes), after clearing stale Nix temporary-roots
+   files and handing root-owned store paths back to the store owner (below).
+   The optional AI tools' `current` generation and its retained predecessor
+   are GC roots at their final paths (see
+   [Optional AI Tools](guest.md#optional-ai-tools)), so this never removes
+   the AI tools in use. On a guest whose AI generations were published
+   before `dx-ai` registered those roots, run `dx-ai` once first: it
+   re-registers them before doing anything else.
 2. **`apple-image` only:** runs `fstrim -v` on `/nix` and `/persist` so
    already-free blocks can be discarded from the sparse host images.
    **`direct-volume` (`docker-ssh`) skips this step entirely** and prints one
@@ -292,6 +324,69 @@ paths and, under `apple-image`, discards blocks the guest filesystem has
 already marked free. It is reasonable to run occasionally after large
 rebuilds or dependency churn, but it does not need to run constantly or on a
 tight schedule.
+
+**Stale temporary-roots files.** Both `dx-gc` and `dx-reclaim` run Nix GC as
+`dx`, and Nix's collector opens every file in `/nix/var/nix/temproots` to
+lock-test it: a single file `dx` cannot open stops the whole collection
+(`error: opening temporary roots file "/nix/var/nix/temproots/<pid>":
+Permission denied`, nothing collected). Nix 2.34's flake-building commands
+do not remove that file when they exit, so a root `nix profile install` (the
+bootstrap's essentials install) leaves a `root:root 0600` one behind.
+Before the GC command, both commands therefore first remove, as `dx`
+(which owns the directory) in one guest call
+(`bin/lib/dx-nix-gc.sh`), every temp-roots file whose name is a pid with no
+running process (`/proc/<pid>` absent); live pids' files, other names,
+directories and symlinks are never touched, and nothing is removed when
+`dx` cannot see `/proc/1` (hidepid). It prints `Cleared N stale Nix temporary
+roots file(s).` when it removed any and nothing otherwise. A failed clear
+prints a warning and the GC still runs, so it is never worse than no clear.
+The bootstrap also removes each of its own root Nix calls' temp-roots file
+as soon as that call exits (`run_root_nix` in `bootstrap/common.sh`), so new
+guests do not accumulate one.
+
+**Root-owned store paths.** Every path a root Nix call adds to `dx`'s
+single-user store is root-owned (Nix gives a new path to the user that
+created it): the bootstrap's essentials install and upgrade add the built
+output, its `.drv`, the flake source, substituted paths and each new profile
+environment (`…-profile`, including the empty one `nix profile remove`
+leaves), and a root shell from `dx-enter` can add more. Nix must make a store
+directory writable before it can empty it, and `dx` cannot chmod a
+root-owned one, so a single such garbage directory stops the whole
+collection (`error: fchmodat2 "/nix/store/…-profile": Operation not
+permitted`). The same calls leave root-owned log buckets under
+`/nix/var/log/nix`, which stop `dx`'s builds whose logs fall in them
+(`creating log file …: Permission denied`). Right after the temp-roots clear
+and right before the GC command, both commands therefore hand those paths
+back, as root, in one guest call (`bin/lib/dx-nix-gc.sh`): every root-owned
+top-level entry of `/nix/store` (dot-entries included) goes, with everything
+inside it, to the store directory's own owner (`chown -R -P`: a symlink is
+re-owned itself and never followed), and so does every root-owned entry
+beneath `/nix/var/log/nix`. Modes and modification times stay as they are,
+and nothing else is ever touched: not entries owned by anyone else nor
+anything inside them (a root-owned file inside a `dx` path does not stop GC,
+so the store is never walked in full), not `/nix/store` or
+`/nix/var/log/nix` themselves, not `/nix/var/nix` (the database, profiles,
+GC roots, temp roots), not a symlinked log directory, and nothing outside
+the two trees. Nothing at all happens when `/nix/store` is missing, is a
+symlink, or is owned by root (the image's own store, or a volume before its
+one-time ownership migration: there is no one to hand back to). It prints
+`Handed N root-owned Nix path(s) back to the store owner.` when it handed
+any back and nothing otherwise; a failed hand-back prints a warning and the
+GC still runs. The bootstrap also runs the same hand-back once per boot, as its own
+step right after the essentials closure is verified and before the store
+identity is published (the store is then in its final place in both image
+modes), so a hard link to a root-owned `.links` copy or an earlier root Nix
+call against the volume cannot leave root-owned entries behind; a failed
+hand-back there warns and never fails the boot. Running GC as root instead is not an option (a root `nix`
+re-owns the store's state); `chown` is not Nix. This heals an existing guest
+at its next `dx-gc` or `dx-reclaim`, with no restart and no bootstrap sync.
+The bootstrap applies the same rule after each of its own root Nix calls
+(`run_root_nix` calls `hand_back_root_nix_paths`; that includes the
+best-effort upgrade that brings optional tools such as nix-ld and rsync into
+an existing guest's essentials), so the essentials closure
+belongs to the store owner from the moment it exists. Residual: a root Nix
+process running during the hand-back gives its own new output to root when
+it finishes; GC then fails as before until the next hand-back.
 
 ### Reaching a QNAP guest over SSH
 

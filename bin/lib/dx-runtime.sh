@@ -83,6 +83,14 @@ dx_runtime_image_identity() { dx_runtime_dispatch image_identity "$@"; }
 
 # Volume: exists, create, delete, usage.
 dx_runtime_volume_exists() { dx_runtime_dispatch volume_exists "$@"; }
+
+# dx_runtime_volume_state <name> -- one line, `present`, `absent` or
+# `unknown` (plans/do WP4.4): unlike volume_exists, it never mistakes a
+# runtime it could not ask for an absent volume. Status 0 for present and
+# absent, non-zero for unknown; it prints no `Error:` line, so the caller's
+# refusal is the only one. Host-path mode decides on it, because "no persist
+# volume" there can mean "create a new, empty /persist".
+dx_runtime_volume_state() { dx_runtime_dispatch volume_state "$@"; }
 dx_runtime_volume_create() { dx_runtime_dispatch volume_create "$@"; }
 dx_runtime_volume_delete() { dx_runtime_dispatch volume_delete "$@"; }
 
@@ -113,7 +121,20 @@ dx_runtime_container_running() { dx_runtime_dispatch container_running "$@"; }
 # restarted the container (docker-ssh: its restart policy; Apple: always 0, it
 # has no restart policy). bin/dx-wait-ssh uses the rise to spot a crash loop.
 dx_runtime_container_restart_count() { dx_runtime_dispatch container_restart_count "$@"; }
+# dx_runtime_container_state <name> -- one line, `running`, `stopped` or
+# `absent` (status 0), or `unknown` (non-zero) when the runtime could not be
+# asked (plans/do WP6.4). Unlike container_running, it never mistakes a
+# runtime it could not reach for a stopped container: dx-persist-migrate
+# copies only while the guest is provably down. It prints no `Error:` line, so
+# the caller's refusal is the only one.
+dx_runtime_container_state() { dx_runtime_dispatch container_state "$@"; }
 dx_runtime_container_list() { dx_runtime_dispatch container_list "$@"; }
+# dx_runtime_container_mounts <name> -- the container's ACTUAL mounts, one
+# `type|source|destination|rw` line each (a named volume's source is its
+# name, a bind's its host path). Non-zero with no output when the container
+# does not exist. bin/dx-status and bin/dx-start-container compare the
+# /persist line with the configured source (plans/do D-6).
+dx_runtime_container_mounts() { dx_runtime_dispatch container_mounts "$@"; }
 
 # dx_runtime_container_create's parameter vocabulary is deliberately
 # runtime-NEUTRAL (qnap-dxe-plan.md DQ2: "runtime-specific CLI syntax ...
@@ -134,6 +155,15 @@ dx_runtime_container_list() { dx_runtime_dispatch container_list "$@"; }
 #                               /nix per DQ4, never CAP_SYS_ADMIN)
 #   --volume persist:VOLNAME:TARGET:MODE    today's target is always the
 #                               fixed guest path /persist
+#   --volume persist-dir:PATH:TARGET:MODE  (plans/do D-4) a host directory
+#                               PATH bound at TARGET instead of the persist
+#                               volume, for DX_PERSIST_STORAGE=host-path.
+#                               PATH must not contain ':' (the spec splits
+#                               on it) or ',' (it would inject extra --mount
+#                               options); the parser refuses both. docker-ssh
+#                               renders ONE `--mount type=bind,source=PATH,
+#                               target=TARGET[,readonly]` and touches nothing
+#                               on the host; Apple refuses the role.
 #   --volume bootstrap:VOLNAME:TARGET:MODE  target is DX_BOOTSTRAP_PATH
 #   --volume git:SRC:TARGET:MODE            optional host bind mount
 #   --env KEY=VALUE             repeatable, rendered in the order given
@@ -201,6 +231,27 @@ dx_runtime_container_create_parse_volume_spec() {
             DXE_VOLSPEC_TARGET=""
             DXE_VOLSPEC_MODE="${rest##*:}"
             ;;
+        persist-dir:*)
+            DXE_VOLSPEC_ROLE=persist-dir
+            rest="${spec#persist-dir:}"
+            case "$rest" in
+                *,*)
+                    echo "Error: a persist-dir path must not contain ',' (it would inject extra --mount options): '$spec'." >&2
+                    return 1
+                    ;;
+            esac
+            # PATH:TARGET:MODE is exactly three fields: a ':' in PATH makes four.
+            case "$rest" in
+                *:*:*:*)
+                    echo "Error: a persist-dir path must not contain ':' (the volume spec splits on it): '$spec'." >&2
+                    return 1
+                    ;;
+            esac
+            DXE_VOLSPEC_NAME="${rest%%:*}"
+            rest="${rest#*:}"
+            DXE_VOLSPEC_TARGET="${rest%%:*}"
+            DXE_VOLSPEC_MODE="${rest##*:}"
+            ;;
         persist:*|bootstrap:*|git:*)
             DXE_VOLSPEC_ROLE="${spec%%:*}"
             rest="${spec#*:}"
@@ -210,7 +261,7 @@ dx_runtime_container_create_parse_volume_spec() {
             DXE_VOLSPEC_MODE="${rest##*:}"
             ;;
         *)
-            echo "Error: unrecognized --volume spec '$spec' (expected nix:NAME:MODE or {persist,bootstrap,git}:NAME:TARGET:MODE)." >&2
+            echo "Error: unrecognized --volume spec '$spec' (expected nix:NAME:MODE or {persist,bootstrap,git,persist-dir}:NAME:TARGET:MODE)." >&2
             return 1
             ;;
     esac
@@ -286,3 +337,67 @@ dx_runtime_capability() { dx_runtime_dispatch capability "$@"; }
 dx_runtime_lock_acquire() { dx_runtime_dispatch lock_acquire "$@"; }
 dx_runtime_lock_release() { dx_runtime_dispatch lock_release "$@"; }
 dx_runtime_lock_path() { dx_runtime_dispatch lock_path "$@"; }
+
+# NAS directory operations (WP4.2; plan D-6; spec R15-R17): probe, create and
+# write the marker of, and size, <ROOT>/dxe/<GUEST>/persist on the share the
+# docker-ssh host fronts. Apple has no NAS, so its adapter answers
+# "unsupported" without making any call.
+#   dx_runtime_host_dir_probe ROOT GUEST            facts, one per line
+#   dx_runtime_host_dir_create ROOT GUEST MARKER    new directory + marker
+#   dx_runtime_host_dir_marker_write PATH MARKER    atomic marker replace
+#   dx_runtime_host_dir_usage PATH                  `du -sk -- PATH`
+#   dx_runtime_host_dir_establish MODE ROOT GUEST OWNER MARKER
+#       (WP4.4) as root, in one one-off container: create the directory, or
+#       take the existing empty one (MODE adopt or fresh-start), give it
+#       OWNER and mode 0755, then write MARKER last
+dx_runtime_host_dir_probe() { dx_runtime_dispatch host_dir_probe "$@"; }
+dx_runtime_host_dir_create() { dx_runtime_dispatch host_dir_create "$@"; }
+dx_runtime_host_dir_marker_write() { dx_runtime_dispatch host_dir_marker_write "$@"; }
+dx_runtime_host_dir_usage() { dx_runtime_dispatch host_dir_usage "$@"; }
+
+# rsync operations (WP6.2; plan D-10): rsync runs inside a one-off container
+# on the NAS, from the guest's nix volume (not $DX_IMAGE). Apple has no NAS:
+# it answers "unsupported".
+#   dx_runtime_host_rsync_check [-A] [-X]            facts, one per line
+#   dx_runtime_host_rsync forward|reverse VOL DIR [-A] [-X]
+dx_runtime_host_rsync_check() { dx_runtime_dispatch host_rsync_check "$@"; }
+dx_runtime_host_rsync() { dx_runtime_dispatch host_rsync "$@"; }
+
+# Inventory operations (WP6.3; plan D-10; spec R37): read-only measurements for
+# `dx-persist-inventory`. Apple has no NAS: it answers "unsupported".
+#   dx_runtime_volume_inventory VOLUME   tagged key=value lines (DQ6 check first)
+#   dx_runtime_host_dir_free ROOT        fs=, total_kb=, avail_kb= of ROOT's filesystem
+dx_runtime_volume_inventory() { dx_runtime_dispatch volume_inventory "$@"; }
+dx_runtime_host_dir_free() { dx_runtime_dispatch host_dir_free "$@"; }
+dx_runtime_host_dir_establish() { dx_runtime_dispatch host_dir_establish "$@"; }
+
+# Migration operations (WP6.4; plan D-3, D-8, D-10; spec R16, R33). Both run in
+# a root one-off container on the NAS. Apple has no NAS: "unsupported".
+#   dx_runtime_host_dir_marker_set ROOT GUEST EXPECTED_STATE MARKER
+#       replace the marker of ROOT/dxe/GUEST/persist only while its current
+#       one is EXPECTED_STATE for this guest and MARKER's source volume
+#       (compare-and-set: a transition never jumps a state)
+#   dx_runtime_host_manifest_verify forward|reverse VOLUME DIR
+#       the WP6.1 manifest verify of VOLUME against DIR, both read-only;
+#       its output and status (0 match, 1 differ, 2 error) pass through
+dx_runtime_host_dir_marker_set() { dx_runtime_dispatch host_dir_marker_set "$@"; }
+dx_runtime_host_manifest_verify() { dx_runtime_dispatch host_manifest_verify "$@"; }
+
+# Rollback operation (WP6.5; plan D-6, D-10; spec R36, R37). Read-only, in a
+# root one-off container on the NAS. Apple has no NAS: "unsupported".
+#   dx_runtime_host_dir_inventory DIR
+#       dx_runtime_volume_inventory's report (the same script) for a host
+#       DIRECTORY, bound read-only; its output and status pass through
+dx_runtime_host_dir_inventory() { dx_runtime_dispatch host_dir_inventory "$@"; }
+
+# Copy-container check (WP6.4c; spec R35). Read-only. The rsync copy and the
+# manifest verify of host_rsync and host_manifest_verify run in containers
+# named per profile (dxe-persist-copy-<profile id>, dxe-persist-verify-<profile
+# id>); this tells whether an earlier run left either one on the NAS. Apple has
+# no NAS: "unsupported".
+#   dx_runtime_host_copy_containers
+#       one "<container name> <state>" line per existing container (Docker's
+#       state word: running, created, exited, ...), the copy container
+#       first; nothing when neither exists. Non-zero, with nothing on stdout,
+#       when the runtime could not tell.
+dx_runtime_host_copy_containers() { dx_runtime_dispatch host_copy_containers "$@"; }
