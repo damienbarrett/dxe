@@ -810,8 +810,8 @@ LUA_EOF
 #!/bin/bash
 set -u
 probe="$1"
-dxe_test_mktemp_dir workdir /tmp/dxe-project-empty-XXXXXX
-dxe_test_mktemp_dir xdgdata /tmp/dxe-project-empty-data-XXXXXX
+workdir=$(mktemp -d /tmp/dxe-project-empty-XXXXXX) || exit 1
+xdgdata=$(mktemp -d /tmp/dxe-project-empty-data-XXXXXX) || exit 1
 cd "$workdir" || exit 1
 XDG_DATA_HOME="$xdgdata" nvim --headless -c "luafile $probe" -c "qa" 2>&1
 rc=$?
@@ -866,8 +866,8 @@ LUA_EOF
 #!/bin/bash
 set -u
 probe="$1"
-dxe_test_mktemp_dir workdir /tmp/dxe-project-real-XXXXXX
-dxe_test_mktemp_dir xdgdata /tmp/dxe-project-real-data-XXXXXX
+workdir=$(mktemp -d /tmp/dxe-project-real-XXXXXX) || exit 1
+xdgdata=$(mktemp -d /tmp/dxe-project-real-data-XXXXXX) || exit 1
 mkdir -p "$workdir/.git"
 printf 'probe\n' > "$workdir/README.md"
 cd "$workdir" || exit 1

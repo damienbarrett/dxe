@@ -50,11 +50,18 @@ assert_file_not_contains "$QNAP_SPIKE" 'DOCKER_HOST=tcp' "spike never exposes th
 assert_file_not_contains "$QNAP_SPIKE" '0.0.0.0:2222:2222' "spike never publishes guest port 2222 to all interfaces"
 
 dxe_test_mktemp_dir STUB_DIR "${TMPDIR:-/tmp}/dxe-qnap-stub.XXXXXX"
-MARKER="$(mktemp "${TMPDIR:-/tmp}/dxe-qnap-marker.XXXXXX")"
+MARKER="$(mktemp "${TMPDIR:-/tmp}/dxe-qnap-marker.XXXXXX")" || {
+    echo "test_section27_qnap_scripts: cannot create a temporary file from dxe-qnap-marker.XXXXXX" >&2
+    exit 1
+}
 export MARKER
 dxe_test_mktemp_dir FAKE_HOME "${TMPDIR:-/tmp}/dxe-qnap-home.XXXXXX"
+# One run directory for every run_with_stubs call: those are made inside "$(...)", where
+# a failed mktemp would only end the substitution and the case would go on.
+RUN_DIR="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir RUN_DIR "${TMPDIR:-/tmp}/dxe-qnap-run.XXXXXX"
 rm -f "$MARKER"
-cleanup_stub() { rm -rf "$STUB_DIR" "$FAKE_HOME"; rm -f "$MARKER"; }
+cleanup_stub() { rm -rf "$STUB_DIR" "$FAKE_HOME" "$RUN_DIR"; rm -f "$MARKER"; }
 trap cleanup_stub EXIT
 
 write_stub() {
@@ -647,13 +654,11 @@ run_with_stubs() {
     # $1: space-separated stub names to symlink as ssh/docker for this call;
     # remaining args: the command to run.
     local names="$1"; shift
-    local run_dir
-    dxe_test_mktemp_dir run_dir "${TMPDIR:-/tmp}/dxe-qnap-run.XXXXXX"
-    local n
+    local run_dir="$RUN_DIR" n
     for n in $names; do ln -sf "$STUB_DIR/$n" "$run_dir/${n%%_*}"; done
     PATH="$run_dir:$PATH" "$@"
     local status=$?
-    rm -rf "$run_dir"
+    for n in $names; do rm -f "$run_dir/${n%%_*}"; done
     return $status
 }
 
