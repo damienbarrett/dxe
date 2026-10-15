@@ -43,6 +43,20 @@ cleanup_stub_dir() {
 }
 trap cleanup_stub_dir EXIT
 
+ev_marker="" lt_marker="" refuse_marker="" runsh_unset_marker="" # assigned by section20_tmpfile; declared for ShellCheck (SC2154)
+# section20_tmpfile VAR NAME: VAR = a new file "${TMPDIR:-/tmp}/NAME" (macOS
+# `mktemp -t` ignores TMPDIR). Failing closed: a marker that cannot be made would
+# turn "invokes no container/ssh command" into a vacuous pass, so the suite stops
+# (never call this in `$(...)` or a subshell).
+section20_tmpfile() {
+    local _s20_path
+    _s20_path="$(mktemp "${TMPDIR:-/tmp}/$2")" || {
+        echo "test_section20_skip_integration: cannot create a temporary file from $2" >&2
+        exit 1
+    }
+    printf -v "$1" '%s' "$_s20_path"
+}
+
 write_stub() {
     local name="$1" body="$2"
     printf '#!/bin/bash\n%s\n' "$body" > "$STUB_DIR/$name"
@@ -83,7 +97,7 @@ exit 0
 
 # Sanity-check the stub against the real predicates in bin/dx-lib.sh before
 # trusting it to drive the sections below.
-SANITY_MARKER="$(mktemp -t dxe-stub-marker-sanity.XXXXXX)"
+section20_tmpfile SANITY_MARKER dxe-stub-marker-sanity.XXXXXX
 rm -f "$SANITY_MARKER"
 
 sanity_out="$(DXE_STUB_MARKER="$SANITY_MARKER" DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" PATH="$STUB_DIR:$PATH" container list | awk '{print $1}')"
@@ -204,6 +218,10 @@ fi
 # Reuse the big-list stub from above: DX_CONTAINER_NAME set to the target
 # that is really first in a 20,000-line `container list --quiet` output must
 # be reported as present (no skip), and an absent name must still skip.
+# Private results files for the two probes below, made here (not inside their
+# subshell bodies) so a failure stops the suite.
+section20_tmpfile BIGLIST_RESULTS_RUNNING dxe-biglist-results.XXXXXX
+section20_tmpfile BIGLIST_RESULTS_ABSENT dxe-biglist-results.XXXXXX
 requires_container_reports_running() (
     set -o pipefail
     PATH="$BIGLIST_STUB_DIR:$PATH"
@@ -217,13 +235,13 @@ requires_container_reports_running() (
     # test_pass/test_fail line (a recorded-but-uncaptured outcome would make
     # the count disagree with the printed lines). Port and runtime are
     # declared explicitly: the default guest port is refused by design.
-    DXE_TEST_RESULTS="$(mktemp -t dxe-biglist-results.XXXXXX)" DXE_TEST_RESULTS_OWNER=$$ \
+    DXE_TEST_RESULTS="$BIGLIST_RESULTS_RUNNING" DXE_TEST_RESULTS_OWNER=$$ \
         SKIP_INTEGRATION=false DX_RUNTIME=apple DX_SSH_PORT=2399 DX_CONTAINER_NAME="$BIGLIST_TARGET" requires_container >/dev/null 2>&1
 )
 requires_container_reports_absent() (
     set -o pipefail
     PATH="$BIGLIST_STUB_DIR:$PATH"
-    DXE_TEST_RESULTS="$(mktemp -t dxe-biglist-results.XXXXXX)" DXE_TEST_RESULTS_OWNER=$$ \
+    DXE_TEST_RESULTS="$BIGLIST_RESULTS_ABSENT" DXE_TEST_RESULTS_OWNER=$$ \
         SKIP_INTEGRATION=false DX_RUNTIME=apple DX_SSH_PORT=2399 DX_CONTAINER_NAME="$BIGLIST_ABSENT" requires_container >/dev/null 2>&1
 )
 
@@ -247,7 +265,7 @@ run_section_under_skip() {
     local label="$2"
     local marker rc
 
-    marker="$(mktemp -t dxe-stub-marker.XXXXXX)"
+    section20_tmpfile marker dxe-stub-marker.XXXXXX
     rm -f "$marker"
 
     rc=0
@@ -339,7 +357,7 @@ fi
 # Case 1: `--section 17` with SKIP_INTEGRATION unset in the environment (the
 # incident's exact shape) must still make section 17 report its integration
 # skip line, never reach requires_container/wait_for_ssh/guest work.
-runsh_unset_marker="$(mktemp -t dxe-stub-marker-runsh-unset.XXXXXX)"
+section20_tmpfile runsh_unset_marker dxe-stub-marker-runsh-unset.XXXXXX
 rm -f "$runsh_unset_marker"
 runsh_unset_out="$(DXE_TEST_RESULTS="" DXE_STUB_MARKER="$runsh_unset_marker" DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" PATH="$STUB_DIR:$PATH" env -u SKIP_INTEGRATION bash "$SCRIPT_DIR/run.sh" --section 17 2>&1)"
 if printf '%s' "$runsh_unset_out" | stdin_matches -F 'dx-ai guest runtime checks'; then
@@ -401,7 +419,7 @@ rm -rf "$probe_dir"
 # stub PATH/FAKE_CONTAINER_NAME: a still-broken runner would otherwise run
 # section 17's live case for real with SKIP_INTEGRATION=false exactly as
 # case 1 above demonstrates.
-refuse_marker="$(mktemp -t dxe-stub-marker-runsh-refuse.XXXXXX)"
+section20_tmpfile refuse_marker dxe-stub-marker-runsh-refuse.XXXXXX
 rm -f "$refuse_marker"
 refuse_out="$(DXE_TEST_RESULTS="" DXE_STUB_MARKER="$refuse_marker" DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" PATH="$STUB_DIR:$PATH" SKIP_INTEGRATION=false bash "$SCRIPT_DIR/run.sh" --section 17 2>&1)"
 refuse_status=$?
@@ -445,7 +463,7 @@ live_probe() {
 }
 
 for setting in unset true other; do
-    lt_marker="$(mktemp -t dxe-stub-marker-lt.XXXXXX)"
+    section20_tmpfile lt_marker dxe-stub-marker-lt.XXXXXX
     rm -f "$lt_marker"
     lt_out="$(live_probe "$lt_marker" "$setting" 'live_tail_enabled; echo "enabled=$?"')"
     if printf '%s' "$lt_out" | stdin_matches -F -x 'enabled=1'; then
@@ -462,7 +480,7 @@ for setting in unset true other; do
     rm -f "$lt_marker"
 done
 
-lt_marker="$(mktemp -t dxe-stub-marker-lt.XXXXXX)"
+section20_tmpfile lt_marker dxe-stub-marker-lt.XXXXXX
 rm -f "$lt_marker"
 lt_out="$(live_probe "$lt_marker" false 'live_tail_enabled; echo "enabled=$?"; requires_container; echo "rc=$?"')"
 if printf '%s' "$lt_out" | stdin_matches -F -x 'enabled=0' && printf '%s' "$lt_out" | stdin_matches -F -x 'rc=0' && stdin_matches -F 'container list' < "$lt_marker"; then
@@ -475,7 +493,7 @@ rm -f "$lt_marker"
 # A unit-tier file invoked directly (no runner) with SKIP_INTEGRATION unset
 # must skip its tail without touching container/ssh/scp/dx-ai.
 for lt_file in test_section17_dx_ai_runtime.sh test_section7_lazyvim.sh test_section4_ssh.sh; do
-    lt_marker="$(mktemp -t dxe-stub-marker-lt.XXXXXX)"
+    section20_tmpfile lt_marker dxe-stub-marker-lt.XXXXXX
     rm -f "$lt_marker"
     DXE_TEST_RESULTS="" DXE_STUB_MARKER="$lt_marker" DX_CONTAINER_NAME="$FAKE_CONTAINER_NAME" \
         PATH="$STUB_DIR:$PATH" env -u SKIP_INTEGRATION bash "$SCRIPT_DIR/$lt_file" >/dev/null 2>&1
@@ -496,7 +514,7 @@ default_port="$(DX_PROJECT_ROOT="$SCRIPT_DIR/.." bash -c 'source "$1/bin/lib/dx-
 for lt_case in "name:DX_CONTAINER_NAME=$default_name" "port:DX_SSH_PORT=$default_port"; do
     lt_label="${lt_case%%:*}"
     lt_assign="${lt_case#*:}"
-    lt_marker="$(mktemp -t dxe-stub-marker-lt.XXXXXX)"
+    section20_tmpfile lt_marker dxe-stub-marker-lt.XXXXXX
     rm -f "$lt_marker"
     lt_out="$(live_probe "$lt_marker" false "$lt_assign; live_tail_enabled; echo \"enabled=\$?\"; requires_container; echo \"rc=\$?\"; wait_for_ssh 1; echo \"wait=\$?\"")"
     if printf '%s' "$lt_out" | stdin_matches -F -x 'enabled=1' \
@@ -515,7 +533,7 @@ done
 # The dx-test fixture profile (profiles dir = tests/profiles) proceeds, both
 # directly and through the real runner exactly as the coordinator invokes the
 # Apple live tier: ./bin/dx-profile dx-test tests/run.sh --live ...
-lt_marker="$(mktemp -t dxe-stub-marker-lt.XXXXXX)"
+section20_tmpfile lt_marker dxe-stub-marker-lt.XXXXXX
 rm -f "$lt_marker"
 lt_out="$(DXE_TEST_RESULTS="" DXE_STUB_MARKER="$lt_marker" PATH="$STUB_DIR:$PATH" SKIP_INTEGRATION=false \
     DX_PROFILES_DIR="$SCRIPT_DIR/profiles" "$SCRIPT_DIR/../bin/dx-profile" dx-test \
@@ -538,7 +556,7 @@ lt_probe="$lt_probe_dir/test_live_guard_probe.sh"
     printf 'exit 0\n'
 } > "$lt_probe"
 chmod +x "$lt_probe"
-lt_marker="$(mktemp -t dxe-stub-marker-lt.XXXXXX)"
+section20_tmpfile lt_marker dxe-stub-marker-lt.XXXXXX
 rm -f "$lt_marker"
 lt_out="$(DXE_TEST_RESULTS="" DXE_STUB_MARKER="$lt_marker" PATH="$STUB_DIR:$PATH" env -u SKIP_INTEGRATION \
     DX_PROFILES_DIR="$SCRIPT_DIR/profiles" "$SCRIPT_DIR/../bin/dx-profile" dx-test \
@@ -584,7 +602,7 @@ for ev_tier in unit live; do
         printf 'exit 0\n'
     } > "$ev_dir/test_probe_$ev_tier.sh"
 done
-ev_marker="$(mktemp -t dxe-stub-marker-ev.XXXXXX)"
+section20_tmpfile ev_marker dxe-stub-marker-ev.XXXXXX
 rm -f "$ev_marker"
 
 # Under the dx-test fixture profile, --live reaches BOTH tiers' live tails.
