@@ -70,6 +70,11 @@ set -uo pipefail
 #       tests/test_persist_rollback.sh         dxe-persist-share.XXXXXX      2 (world's ROOT)
 #           (world() canonicalises with CANON="$(cd -P "$ROOT" && pwd -P)",
 #            which is the checkout when ROOT is empty)
+#       tests/test_section27_qnap_scripts.sh   dxe-qnap-marker.XXXXXX        1
+#       tests/test_section27_qnap_scripts.sh   dxe-qnap-run.XXXXXX           1
+#           (the marker file is the "--dry-run never invokes ssh/docker"
+#            proof; run_with_stubs makes its run directory inside "$(...)",
+#            where a failure would leave only the substitution)
 #     (persist_fixture_root_create is the dxe-persist-share caller: a
 #     failure there must stop test_persist_reclaim.sh too, so its callers have
 #     to check it.)
@@ -127,7 +132,19 @@ set -uo pipefail
 #       persist_fixture_nas_create ROOT PARENT
 #     each returns non-zero, prints nothing on stdout, prints on stderr one
 #     line holding both its own name and "cannot create a temporary", and
-#     creates or removes nothing.
+#     creates or removes nothing. The same holds when mktemp exits 0 but
+#     prints nothing.
+#
+#  2d. dxe_test_mktemp_dir is called only where tests/lib/harness.sh is
+#     loaded. A tests/test_*.sh file that calls it sources
+#     tests/test_helpers.sh or tests/lib/harness.sh (`source`/`.` of a path
+#     ending in one of those names); program text in a string or a
+#     here-document (run by another shell: a guest driver, `bash -c`, ssh)
+#     that calls it sources one of them itself. Elsewhere the call fails
+#     with "command not found" and the program carries on. tests/lib/*.sh
+#     are sourced into suites and are exempt. The acceptance probes that run
+#     under the harness are allowlisted (tests/test_harness.sh's (hh) body,
+#     tests/test_tmpdir_failure_safety.sh's probe.sh).
 #
 #  3. tests/lib/harness.sh (pinned in tests/test_harness.sh, case (ii)):
 #     with_fake_runtime exits non-zero, naming the "fake transcript", when the
@@ -136,6 +153,13 @@ set -uo pipefail
 #     PATH lookup and the REAL tool answers); skip/test_skip exits non-zero,
 #     naming the "results file", when the skip record cannot be appended.
 #     None of them lets the caller go on to print a pass or a skip.
+#
+#  4. Section 14's two guest drivers (the <<'DRIVER_EOF' bodies of
+#     tests/test_section14_tinty_theming.sh, shipped to the guest and run as
+#     `bash DRIVER PROBE`), each run standalone as shipped with bash: with
+#     every mktemp working it runs nvim once and exits 0; when its 1st or
+#     2nd mktemp call fails it stops there, non-zero (no later mktemp call),
+#     and runs neither nvim nor rm.
 #
 # Safety design of THIS suite (incidents 2026-10-11 and 2026-10-15):
 #   - every suite run happens in a DECOY copy of tests/, bin/ and container/
@@ -288,6 +312,7 @@ use strict;
 use warnings;
 
 my $TOOL = 'mk' . 'temp';
+my $DTM = "dxe_test_" . $TOOL . "_dir";
 # Functions whose call makes and prints a new directory (found below).
 our %PRODUCER;
 our $EMBED_RE = qr/\Q$TOOL\E/;
@@ -806,6 +831,18 @@ sub propagates {
 }
 
 our @RESULTS;
+# Per program (a file, or program text in a string or here-document):
+# helper (dxe_test_..._dir) calls, and whether it sources the harness that
+# defines it.
+our @DTM_CALLS;
+our $SOURCES_HARNESS = 0;
+sub check_dtm {
+    my ($ctx, $where) = @_;
+    return if $SOURCES_HARNESS || !@DTM_CALLS;
+    for my $line (@DTM_CALLS) {
+        push @RESULTS, [ 'unguarded', $ctx->{file}, $line, "$DTM in $where that does not source tests/lib/harness.sh (or tests/test_helpers.sh): there it is not defined, the call fails with 127 and the program carries on", $DTM ];
+    }
+}
 # analyze TOKS CTX: finds temp-dir sites. CTX: { file, embedded_depth }
 # Returns a list of "carriers": sites whose fate depends on the enclosing
 # command substitution: [ { line, sole => 1 } ].
@@ -852,6 +889,14 @@ sub analyze {
         my $k = name_index($toks, $words);
         my @found;    # sites whose status this command carries: { line, kind, what }
         my $what = site_name($toks, $words, $k);
+        if (defined $k) {
+            my $nm = lit($toks->[ $words->[$k] ]);
+            if (defined $nm && $nm eq $DTM) { push @DTM_CALLS, $toks->[ $words->[$k] ]{line}; }
+            if (defined $nm && ($nm eq 'source' || $nm eq '.') && $k + 1 <= $#$words
+                && $toks->[ $words->[ $k + 1 ] ]{v} =~ m{(?:^|/)(?:lib/harness|test_helpers)\.sh["']?$}) {
+                $SOURCES_HARNESS = 1;
+            }
+        }
         push @found, { line => $toks->[ $words->[$k] ]{line}, kind => 'bare', what => $what } if defined $what;
         my $first = lit($toks->[ $words->[0] ]);
         for my $w (map { $toks->[$_] } @$words) {
@@ -1046,7 +1091,11 @@ for my $file (@files) {
     grow_producers($toks);
     %DIE = (%$libdie, %{ die_functions($toks) });
     my $ctx = { file => $file };
+    @DTM_CALLS = ();
+    $SOURCES_HARNESS = 0;
     analyze($toks, $ctx, 0);
+    # tests/lib/*.sh are sourced into a suite that has the harness already.
+    check_dtm($ctx, 'a script') unless $file =~ m{(?:^|/)tests/lib/[^/]+\.sh$};
     # string literals that mention the tool or a helper are scanned again as programs
     my %seen;
     my $rounds = 0;
@@ -1061,7 +1110,10 @@ for my $file (@files) {
             my %psave = %PRODUCER;
             %DIE = (%DIE, %{ die_functions($etoks) });
             grow_producers($etoks);
+            @DTM_CALLS = ();
+            $SOURCES_HARNESS = 0;
             analyze($etoks, $ctx, 0);
+            check_dtm($ctx, 'program text (a string or here-document run by another shell)');
             %DIE = %save;
             %PRODUCER = %psave;
         }
@@ -1104,11 +1156,12 @@ tgb_scan() {
 TGB_FTD=fake_tool_dir_create
 TGB_PFR=persist_fixture_root_create
 TGB_PFN=persist_fixture_nas_create
+TGB_DTM=dxe_test_mktemp_dir
 TGB_SAMPLES="$TGB_ROOT_P/samples"
 mkdir "$TGB_SAMPLES" || tgb_abort "cannot create $TGB_SAMPLES"
 TGB_SAMPLE_LIST=""
 tgb_sample() { # NAME EXPECTED BODY -- EXPECTED: the site verdicts, in line order, comma-separated ("none": no site)
-    printf '%s\n' "$3" | sed -e "s/@MK@/$TGB_TOOL/g" -e "s/@FTD@/$TGB_FTD/g" -e "s/@PFR@/$TGB_PFR/g" > "$TGB_SAMPLES/$1.sh"
+    printf '%s\n' "$3" | sed -e "s/@MK@/$TGB_TOOL/g" -e "s/@FTD@/$TGB_FTD/g" -e "s/@PFR@/$TGB_PFR/g" -e "s/@DTM@/$TGB_DTM/g" > "$TGB_SAMPLES/$1.sh"
     TGB_SAMPLE_LIST="$TGB_SAMPLE_LIST $1:$2"
 }
 tgb_sample plain unguarded 'X="$(@MK@ -d "$T/a.XXXXXX")"
@@ -1169,7 +1222,28 @@ tgb_sample dt unguarded 'X="$(@MK@ -dt a.XXXXXX)"'
 tgb_sample long-option unguarded 'X="$(@MK@ --directory "$T/a.XXXXXX")"'
 tgb_sample file-only none 'X="$(@MK@ -t a.XXXXXX)" || exit 1
 Y="$(@MK@ "$T/f.XXXXXX")"'
-tgb_sample helper none 'dxe_test_mktemp_dir X "$T/a.XXXXXX"'
+tgb_sample helper none 'source "$SCRIPT_DIR/test_helpers.sh"
+@DTM@ X "$T/a.XXXXXX"'
+# dxe_test_mktemp_dir is defined only where tests/lib/harness.sh is loaded
+# (contract item 2d): not in a script, or in program text, that does not
+# source it (a guest driver, a probe another shell runs).
+tgb_sample helper-unsourced unguarded '@DTM@ X "$T/a.XXXXXX"
+cd "$X"'
+tgb_sample helper-here-document unguarded 'source "$SCRIPT_DIR/test_helpers.sh"
+cat > "$p" <<'"'"'EOF'"'"'
+#!/bin/bash
+@DTM@ workdir /tmp/x-XXXXXX
+cd "$workdir" || exit 1
+EOF'
+tgb_sample helper-here-document-sourced none 'source "$SCRIPT_DIR/test_helpers.sh"
+cat > "$p" <<'"'"'EOF'"'"'
+source "$1/tests/lib/harness.sh"
+@DTM@ workdir /tmp/x-XXXXXX
+EOF'
+tgb_sample helper-string unguarded 'source "$SCRIPT_DIR/test_helpers.sh"
+ssh h '"'"'@DTM@ X /tmp/x.XXXXXX; cd "$X"'"'"
+tgb_sample helper-string-sourced none 'source "$SCRIPT_DIR/test_helpers.sh"
+bash -c '"'"'source "$1/test_helpers.sh"; @DTM@ X /tmp/x.XXXXXX'"'"' _ "$D"'
 tgb_sample commented-out none '# X="$(@MK@ -d "$T/a.XXXXXX")"'
 tgb_sample tool-list none 'for t in rm @MK@ mkdir; do ln -s "$(command -v "$t")" "$d/$t"; done'
 tgb_sample nested-guarded guarded 'Y="$(X="$(@MK@ -d "$T/a.XXXXXX")" || exit 1; printf "%s\n" "$X")" || exit 1'
@@ -1256,6 +1330,10 @@ printf '%s\t%s\t%s\n' \
     "Nushell program text (LAZYGIT_PROBE) run by nu in the guest: a failing call raises a Nushell error that ends the program before 'cd \$repo'; there is no shell || exit form" \
     tests/test_persist_fixtures.sh "err=\"\$($TGB_PFN \"\$missing\" \"\$SCRATCH\" 2>&1)\"; rc=\$?" \
     "the case asserts that the helper refuses a missing share root: it expects the failure, and the value it captures is the error text, never a path" \
+    tests/test_harness.sh "hh_out=\"\$(hh_probe lib/harness.sh '$TGB_DTM not-a-name \"\$PWD/dxe-hh-name.XXXXXX\"')\" && hh_status=0 || hh_status=\$?" \
+    "acceptance probe body: hh_probe runs it in a bash that has sourced tests/lib/harness.sh first" \
+    tests/test_tmpdir_failure_safety.sh "$TGB_DTM X \"\$2\"" \
+    "acceptance probe (probe.sh) that sources the harness copy it is given as \$1 before this call" \
     > "$TGB_ALLOW"
 TGB_TREE_OUT="$TGB_ROOT_P/tree.out"
 (cd -P -- "$BASE_DIR" && set -- tests/test_*.sh tests/lib/*.sh && tgb_scan "$TGB_ALLOW" "$@") > "$TGB_TREE_OUT" 2>&1
@@ -1310,6 +1388,13 @@ else
     test_fail "static guard: every call of a suite's own function that makes and prints a directory fails closed on the same statement ($(grep -c . "$tgb_local_calls") unguarded)"
     awk -F'\t' '{ printf "      | %s  %s  (%s)\n", $2, $5, $3 }' "$tgb_local_calls"
 fi
+tgb_dtm_calls="$(awk -F'\t' -v dtm="$TGB_DTM" '$1 == "unguarded" && $5 == dtm' "$TGB_TREE_OUT")"
+if [ -z "$tgb_dtm_calls" ]; then
+    test_pass "static guard: dxe_test_mktemp_dir is called only where tests/lib/harness.sh is loaded (never in program text another shell runs)"
+else
+    test_fail "static guard: dxe_test_mktemp_dir is called only where tests/lib/harness.sh is loaded (never in program text another shell runs) ($(grep -c . <<<"$tgb_dtm_calls") unguarded)"
+    awk -F'\t' '{ printf "      | %s  %s\n", $2, $4 }' <<<"$tgb_dtm_calls"
+fi
 if ! grep -q '^stale' "$TGB_TREE_OUT"; then
     test_pass "static guard: every allowlist entry still names a site"
 else
@@ -1344,15 +1429,21 @@ printf '%s' "$probe_out" > "$probe_result.stdout"
 exit 0
 PROBE
 
-# tgb_helper_fails ID FUNCTION ARG...: the four checks of contract item 2c.
-# ARG may name @PARENT@ and @ROOT@, two empty directories of the probe's own.
+# tgb_helper_fails ID FUNCTION [MODE]: the four checks of contract item 2c,
+# with the arguments in TGB_HELPER_ARGS (@PARENT@ and @ROOT@ name two empty
+# directories of the probe's own). MODE fail (the default): mktemp exits 1;
+# MODE empty: mktemp exits 0 and prints nothing.
 tgb_helper_fails() {
-    local id="$1" fn="$2" h label tool a tgb_helper_args
+    local id="$1" fn="$2" mode="${3:-fail}" h label tool a tgb_helper_args stub_exit=1 what="fails"
+    if [ "$mode" = empty ]; then
+        stub_exit=0
+        what="exits 0 but prints nothing"
+    fi
     h="$TGB_HELPERS_DIR/$id"
     mkdir -p "$h/cwd" "$h/tmp" "$h/parent" "$h/root" "$h/stub" "$h/rec" || tgb_abort "cannot create $h"
     tgb_refuse_dangerous "helper probe $id" "$h/cwd"
     fake_tool_write "$h/stub" "$TGB_TOOL" "printf '%s\n' \"\$*\" >> $(printf '%q' "$h/mktemp.log")
-exit 1"
+exit $stub_exit"
     for tool in rm rmdir unlink mv chmod chown chgrp find; do
         fake_tool_write "$h/rec" "$tool" "printf '%s %s\n' \"\${0##*/}\" \"\$*\" >> $(printf '%q' "$h/destructive.log")
 exit 0"
@@ -1369,7 +1460,7 @@ exit 0"
     tgb_supervise 60 "$h/cwd" "$h/stderr" -- "$TGB_ENV" -i HOME="$h/cwd" LANG="${LANG:-C}" \
         PATH="$h/stub:$h/rec:$TGB_SYS_PATH" TMPDIR="$h/tmp" \
         "$TGB_BASH" "$TGB_HELPERS_DIR/probe.sh" "$TGB_CHECKOUT_P" "$h/result" "$fn" "${tgb_helper_args[@]+"${tgb_helper_args[@]}"}"
-    label="library helper $fn, called in \$(...) when its mktemp fails"
+    label="library helper $fn, called in \$(...) when its mktemp $what"
     if [ -s "$h/result" ] && ! grep -qx 'status=0' "$h/result"; then
         test_pass "$label: returns non-zero ($(cat "$h/result"))"
     else
@@ -1401,6 +1492,12 @@ TGB_HELPER_ARGS=(@PARENT@)
 tgb_helper_fails pfr persist_fixture_root_create
 TGB_HELPER_ARGS=(@ROOT@ @PARENT@)
 tgb_helper_fails pfn persist_fixture_nas_create
+TGB_HELPER_ARGS=(@PARENT@)
+tgb_helper_fails ftd-empty fake_tool_dir_create empty
+TGB_HELPER_ARGS=(@PARENT@)
+tgb_helper_fails pfr-empty persist_fixture_root_create empty
+TGB_HELPER_ARGS=(@ROOT@ @PARENT@)
+tgb_helper_fails pfn-empty persist_fixture_nas_create empty
 
 # =====================================================================
 # 1. Fixture sites, from decoys with one mktemp failing (contract item 1)
@@ -1749,6 +1846,114 @@ tgb_site s20-runsh-refuse tests/test_section20_skip_integration.sh dxe-stub-mark
 tgb_site s20-lt-1 tests/test_section20_skip_integration.sh dxe-stub-marker-lt.XXXXXX 1 "the first live-tail marker file"
 tgb_site s20-lt-5 tests/test_section20_skip_integration.sh dxe-stub-marker-lt.XXXXXX 5 "the directly-run section 17 marker file"
 tgb_site s20-ev tests/test_section20_skip_integration.sh dxe-stub-marker-ev.XXXXXX 1 "the run_all_tests marker file"
+
+# Section 27: its marker file (the "--dry-run never invokes ssh/docker"
+# proof) and run_with_stubs' run directory, made inside "$(...)".
+tgb_site s27-marker tests/test_section27_qnap_scripts.sh dxe-qnap-marker.XXXXXX 1 "the marker file"
+tgb_site s27-run tests/test_section27_qnap_scripts.sh dxe-qnap-run.XXXXXX 1 "the first run_with_stubs directory"
+
+# =====================================================================
+# 4. Section 14's guest drivers, run standalone (contract item 4)
+# =====================================================================
+# The suite ships each <<'DRIVER_EOF' body to the guest and runs it there as
+# `bash DRIVER PROBE`: no harness, no test_helpers.sh. Each body is
+# extracted as shipped and run with bash from a scratch directory, with
+# recording stubs for nvim and rm, a mktemp that makes its directories in the
+# scratch directory (or fails on the Nth call), and, on macOS, sandbox-exec
+# keeping every write inside the scratch directory.
+TGB_DRIVERS="$TGB_ROOT_P/drivers"
+mkdir "$TGB_DRIVERS" || tgb_abort "cannot create $TGB_DRIVERS"
+tgb_driver_count="$("$TGB_PERL" -e '
+    my ($src, $dir) = @ARGV;
+    open(my $h, "<", $src) or die "cannot read $src\n";
+    my ($n, $in, $body) = (0, 0, "");
+    while (my $l = <$h>) {
+        if ($in) {
+            if ($l =~ /^DRIVER_EOF$/) {
+                $n++;
+                open(my $o, ">", "$dir/driver-$n.sh") or die "cannot write\n";
+                print $o $body;
+                close $o;
+                ($in, $body) = (0, "");
+            } else {
+                $body .= $l;
+            }
+        } elsif ($l =~ /<<\x27DRIVER_EOF\x27\s*$/) {
+            $in = 1;
+        }
+    }
+    print "$n\n";
+' "$BASE_DIR/tests/test_section14_tinty_theming.sh" "$TGB_DRIVERS")" || tgb_driver_count=0
+if [ "$tgb_driver_count" = 2 ]; then
+    test_pass "section 14 ships two guest drivers (<<'DRIVER_EOF' bodies)"
+else
+    test_fail "section 14 ships two guest drivers (<<'DRIVER_EOF' bodies): found [$tgb_driver_count]"
+fi
+
+# tgb_driver_run ID DRIVER NTH: runs DRIVER; NTH 0 = every mktemp works.
+# Sets TGB_DR (the run directory) and TGB_DRC.
+tgb_driver_run() {
+    local id="$1" driver="$2" nth="$3" sandbox_args
+    TGB_DR="$TGB_DRIVERS/run-$id"
+    mkdir -p "$TGB_DR/cwd" "$TGB_DR/bin" "$TGB_DR/made" "$TGB_DR/tmp" || tgb_abort "cannot create $TGB_DR"
+    tgb_refuse_dangerous "driver run $id" "$TGB_DR"
+    : > "$TGB_DR/probe.lua"
+    : > "$TGB_DR/mktemp.log"
+    : > "$TGB_DR/nvim.log"
+    : > "$TGB_DR/rm.log"
+    fake_tool_write "$TGB_DR/bin" "$TGB_TOOL" "n=0
+[ -s $(printf '%q' "$TGB_DR/mktemp.count") ] && read -r n < $(printf '%q' "$TGB_DR/mktemp.count")
+n=\$((n + 1))
+printf '%s\n' \"\$n\" > $(printf '%q' "$TGB_DR/mktemp.count")
+printf '%s\n' \"\$*\" >> $(printf '%q' "$TGB_DR/mktemp.log")
+[ \"\$n\" -ne $nth ] || exit 1
+d=$(printf '%q' "$TGB_DR/made")/m\$n
+mkdir \"\$d\" || exit 1
+printf '%s\n' \"\$d\""
+    fake_tool_write "$TGB_DR/bin" nvim "printf '%s | cwd=%s | XDG_DATA_HOME=%s\n' \"\$*\" \"\$(pwd -P)\" \"\${XDG_DATA_HOME:-}\" >> $(printf '%q' "$TGB_DR/nvim.log")
+exit 0"
+    fake_tool_write "$TGB_DR/bin" rm "printf '%s\n' \"\$*\" >> $(printf '%q' "$TGB_DR/rm.log")
+exit 0"
+    sandbox_args=()
+    if [ "$TGB_SANDBOX" = yes ]; then
+        sandbox_args=(/usr/bin/sandbox-exec -p "$(tgb_sandbox_profile "$TGB_DR" "$TGB_DR")")
+    fi
+    : > "$TGB_DR/out"
+    tgb_supervise 60 "$TGB_DR/cwd" "$TGB_DR/out" -- "$TGB_ENV" -i HOME="$TGB_DR/cwd" LANG="${LANG:-C}" \
+        PATH="$TGB_DR/bin:$TGB_SYS_PATH" TMPDIR="$TGB_DR/tmp" \
+        "${sandbox_args[@]+"${sandbox_args[@]}"}" "$TGB_BASH" "$driver" "$TGB_DR/probe.lua"
+    TGB_DRC=$?
+}
+
+tgb_n=1
+while [ "$tgb_n" -le "$tgb_driver_count" ]; do
+    tgb_driver="$TGB_DRIVERS/driver-$tgb_n.sh"
+    tgb_label="section 14 guest driver $tgb_n, run standalone as shipped"
+    tgb_driver_run "d$tgb_n-ok" "$tgb_driver" 0
+    if [ "$TGB_DRC" -eq 0 ] && [ "$(grep -c . "$TGB_DR/nvim.log")" -eq 1 ] && [ -s "$TGB_DR/mktemp.log" ]; then
+        test_pass "$tgb_label: with every mktemp working it runs nvim once and exits 0"
+    else
+        test_fail "$tgb_label: with every mktemp working it runs nvim once and exits 0 (status $TGB_DRC)"
+        tgb_show "$TGB_DR/out" 4
+    fi
+    for tgb_nth in 1 2; do
+        tgb_driver_run "d$tgb_n-fail$tgb_nth" "$tgb_driver" "$tgb_nth"
+        if [ "$TGB_DRC" -ne 0 ] && [ "$TGB_DRC" -ne 124 ] && [ "$(grep -c . "$TGB_DR/mktemp.log")" -eq "$tgb_nth" ]; then
+            test_pass "$tgb_label: stops non-zero at its failing mktemp call $tgb_nth (status $TGB_DRC)"
+        else
+            test_fail "$tgb_label: stops non-zero at its failing mktemp call $tgb_nth (status $TGB_DRC; mktemp calls: $(grep -c . "$TGB_DR/mktemp.log"))"
+            tgb_show "$TGB_DR/out" 4
+        fi
+        if [ ! -s "$TGB_DR/nvim.log" ] && [ ! -s "$TGB_DR/rm.log" ]; then
+            test_pass "$tgb_label: after a failing mktemp call $tgb_nth it runs neither nvim nor rm"
+        else
+            test_fail "$tgb_label: after a failing mktemp call $tgb_nth it runs neither nvim nor rm"
+            tgb_show "$TGB_DR/nvim.log" 2
+            tgb_show "$TGB_DR/rm.log" 2
+        fi
+    done
+    tgb_n=$((tgb_n + 1))
+done
 
 if [ "$TGB_SANDBOX" = yes ]; then
     echo "  (decoy runs executed under sandbox-exec: no write outside the decoy and its run directory)"
