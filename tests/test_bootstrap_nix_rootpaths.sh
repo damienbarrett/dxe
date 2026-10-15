@@ -88,7 +88,7 @@ source "$SCRIPT_DIR/lib/nix-rootpaths-fixture.sh"
 source "$CONTAINER_DIR/bootstrap/common.sh"
 test_section "Bootstrap: root Nix calls hand root-owned store and log paths back to the store owner"
 
-RB_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bootstrap-rootpaths.XXXXXX")"
+dxe_test_mktemp_dir RB_ROOT "${TMPDIR:-/tmp}/dxe-bootstrap-rootpaths.XXXXXX"
 rb_cleanup() {
     case "$RB_ROOT" in
         "${TMPDIR:-/tmp}"/dxe-bootstrap-rootpaths.?*) chmod -R u+rwx "$RB_ROOT" 2>/dev/null; rm -rf "$RB_ROOT" ;;
@@ -96,7 +96,7 @@ rb_cleanup() {
 }
 trap rb_cleanup EXIT
 
-FAKE_DIR="$(fake_tool_dir_create "$RB_ROOT")"
+FAKE_DIR="$(fake_tool_dir_create "$RB_ROOT")" || exit 1
 STUB_DIR="$RB_ROOT/stubs"
 rp_write_chown_stub "$STUB_DIR"
 RP_REAL_CHOWN="$(command -v chown)"
@@ -132,7 +132,7 @@ exit 0'
 # rb_new_case [full|clean|none] -- a fresh case directory: the full fixture,
 # the clean one, or nothing at all (no store).
 rb_new_case() {
-    RB_CASE="$(mktemp -d "$RB_ROOT/case.XXXXXX")"
+    dxe_test_mktemp_dir RB_CASE "$RB_ROOT/case.XXXXXX"
     RB_NIX_LOG="$RB_CASE/nix.log"
     RP_CHOWN_LOG="$RB_CASE/chown.log"
     RP_FENCE="$RB_CASE"

@@ -52,7 +52,8 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     test_section "Docker-ssh runtime adapter (Branch 11 / Phase 2) -- identity"
 fi
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-docker-adapter.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-docker-adapter.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 
 # WP3.4 (Fable A1): dx_runtime_docker_discover_daemon_id now persists a
@@ -87,7 +88,7 @@ expect_reject() { local label="$1"; shift; if "$@" >/dev/null 2>&1; then test_fa
 # ...) can never be found ahead of, or instead of, a fixture's own fakes.
 new_tool_dir() {
     local dir
-    dir="$(fake_tool_dir_create "$fixture")"
+    dir="$(fake_tool_dir_create "$fixture")" || exit 1
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
     # WP3.4 (Fable A1): clear any daemon-identity cache a PRIOR scenario in
     # this file left on disk (under the private HOME set up above) before
@@ -128,7 +129,7 @@ tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
 # --- Queries (item 3) -------------------------------------------------------
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "image inspect" ] && [ "$3" = dx-qnap-nixos ] && exit 0; exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -138,7 +139,7 @@ tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
 )
 [ "$?" -eq 0 ] && test_pass "image_exists: true for an image docker inspect finds" || test_fail "image_exists: true for an image docker inspect finds"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -153,7 +154,7 @@ tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
 # so a caller's existing name-anchored grep keeps working under either
 # runtime.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     # Repository and Tag must be SEPARATE columns, not joined by a colon:
     # a real NAS live gate found dx-status's `grep "^${DX_IMAGE}[[:space:]]"`
@@ -183,7 +184,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
 [ "$?" -eq 0 ] && test_pass "image_list: name-anchored first column (Repository and Tag are separate columns), name-prefixed grep still works" || test_fail "image_list: name-anchored first column (Repository and Tag are separate columns), name-prefixed grep still works"
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = volume ] && [ "$2" = inspect ] && [ "$3" = dx-qnap-nix ] && exit 0; exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -193,7 +194,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
 )
 [ "$?" -eq 0 ] && test_pass "volume_exists: true for a volume docker inspect finds" || test_fail "volume_exists: true for a volume docker inspect finds"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -204,7 +205,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
 [ "$?" -ne 0 ] && test_pass "volume_exists: false for a volume docker inspect cannot find" || test_fail "volume_exists: false for a volume docker inspect cannot find"
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = container ] && [ "$2" = inspect ] && [ "$3" = dx-qnap ] && exit 0; exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -214,7 +215,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
 )
 [ "$?" -eq 0 ] && test_pass "container_exists: true for a container docker inspect finds" || test_fail "container_exists: true for a container docker inspect finds"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -225,7 +226,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
 [ "$?" -ne 0 ] && test_pass "container_exists: false for a container docker inspect cannot find" || test_fail "container_exists: false for a container docker inspect cannot find"
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$5" = dx-qnap ] && echo true'
     PATH="$dir:/usr/bin:/bin"
@@ -235,7 +236,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
 )
 [ "$?" -eq 0 ] && test_pass "container_running: true when State.Running is true" || test_fail "container_running: true when State.Running is true"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$5" = dx-qnap ] && echo false'
     PATH="$dir:/usr/bin:/bin"
@@ -245,7 +246,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
 )
 [ "$?" -ne 0 ] && test_pass "container_running: false when State.Running is false" || test_fail "container_running: false when State.Running is false"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -256,7 +257,7 @@ echo "dx-qnap-nixos	latest	abc123	1 day ago	500MB"'
 [ "$?" -ne 0 ] && test_pass "container_running: false when the container does not exist at all" || test_fail "container_running: false when the container does not exist at all"
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 [ "$1" = ps ] || { echo "UNMATCHED: $*" >&2; exit 99; }
@@ -275,7 +276,7 @@ echo "dx-qnap	dx-qnap-nixos	Up 2 hours"'
 # container_delete: label check passes (managed=true, matching profile,
 # role=container), then the real rm/--force call happens.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -292,7 +293,7 @@ esac'
 # container_delete: refuses when the target is unlabelled (a collision, not
 # an adoption candidate) -- the fake rm would fail loudly if ever reached.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -309,7 +310,7 @@ esac'
 
 # container_delete: refuses when labelled for a DIFFERENT profile.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -325,7 +326,7 @@ esac'
 [ "$?" -eq 0 ] && test_pass "container_delete: refuses a container labelled for a different profile" || test_fail "container_delete: refuses a container labelled for a different profile"
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = image ] && [ "$2" = rm ] && [ "$3" = dx-qnap-nixos ] && exit 0; exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -337,7 +338,7 @@ esac'
 
 # volume_create: role derived from the configured volume name, labels attached.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/volcreate-argv.log"
     fake_tool_write "$dir" docker "
@@ -354,7 +355,7 @@ printf '%s\n' \"\$@\" > '$argv_log'
 )
 [ "$?" -eq 0 ] && test_pass "volume_create: role derived from the configured name, DQ6 labels attached" || test_fail "volume_create: role derived from the configured name, DQ6 labels attached"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/volcreate-system-argv.log"
     fake_tool_write "$dir" docker "
@@ -373,7 +374,7 @@ printf '%s\n' \"\$@\" > '$argv_log'
 # volume_create: refuses a name that is not one of the three configured
 # volumes rather than creating something unlabelled.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -386,7 +387,7 @@ printf '%s\n' \"\$@\" > '$argv_log'
 
 # volume_delete: label match succeeds.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -402,7 +403,7 @@ esac'
 
 # volume_delete: refuses an unlabelled same-named volume.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -419,7 +420,7 @@ esac'
 
 # volume_delete: refuses a name outside the three configured volumes.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -438,7 +439,7 @@ mkdir -p "$containerfile_root"
 printf 'FROM docker.io/library/debian@sha256:%040d\n' 1 > "$containerfile_root/Containerfile"
 pinned_ref="$(sed -n 's/^FROM //p' "$containerfile_root/Containerfile")"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker "
 case \"\$1 \$2\" in
@@ -459,7 +460,7 @@ containerfile_multi="$fixture/context-multi"
 mkdir -p "$containerfile_multi"
 printf 'FROM docker.io/library/debian@sha256:%040d\nRUN echo hi\n' 2 > "$containerfile_multi/Containerfile"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -474,7 +475,7 @@ containerfile_norun="$fixture/context-norun"
 mkdir -p "$containerfile_norun"
 printf 'RUN echo hi\n' > "$containerfile_norun/Containerfile"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -489,7 +490,7 @@ containerfile_comments="$fixture/context-comments"
 mkdir -p "$containerfile_comments"
 printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$containerfile_comments/Containerfile"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = pull ] || [ "$1" = tag ] || { echo UNMATCHED >&2; exit 99; }; exit 0'
     PATH="$dir:/usr/bin:/bin"
@@ -500,7 +501,7 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
 [ "$?" -eq 0 ] && test_pass "image_build: comments and blank lines around the one FROM line are not significant" || test_fail "image_build: comments and blank lines around the one FROM line are not significant"
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -572,7 +573,7 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
 
 # dx_tunnel_key: docker-ssh gains a fourth, identity segment.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "info --format" ] && echo "abc123def|qnap-fake|x86_64|linux"'
     PATH="$dir:/usr/bin:/bin"
@@ -586,14 +587,14 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
 # dx_tunnel_key: two different remote hosts (same container name) never
 # collide -- the whole point of item 7.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "info --format" ] && echo "aaa111|host-a|x86_64|linux"'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-a.invalid DX_CONTAINER_NAME=dx-qnap
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     key_a="$(dx_tunnel_key forward 8080)"
-    dir2="$(new_tool_dir)"
+    dir2="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir2"
     fake_tool_write "$dir2" docker '[ "$1 $2" = "info --format" ] && echo "bbb222|host-b|x86_64|linux"'
     PATH="$dir2:/usr/bin:/bin"
@@ -614,7 +615,7 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
 # dx_backup_resolve_dir: docker-ssh gains a third, identity path segment
 # (colons replaced with underscores for a cleaner directory name).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "info --format" ] && echo "abc123def|qnap-fake|x86_64|linux"'
     PATH="$dir:/usr/bin:/bin"
@@ -641,7 +642,7 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
 # override, proving a cross-profile restore can only ever be same-NAS
 # (docs/refactor/qnap-promotion.md section B2's "known limitation").
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "info --format" ] && echo "abc123def|qnap-fake|x86_64|linux"'
     PATH="$dir:/usr/bin:/bin"
@@ -665,7 +666,7 @@ printf '# a comment\n\nFROM docker.io/library/debian@sha256:%040d\n' 3 > "$conta
 # extracts it without a JSON parser (bin/lib/dx-runtime-docker.sh's own
 # module comment: "the Mac side has no guaranteed jq").
 out="$(
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2 $3 $4" = "image inspect --format {{.Id}}" ] && [ "$5" = dx-qnap-nixos ] && echo sha256:abc123def456 || exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -675,7 +676,7 @@ out="$(
 )"
 [ "$out" = sha256:abc123def456 ] && test_pass "image_identity (docker-ssh): returns docker image inspect's {{.Id}} verbatim" || test_fail "image_identity (docker-ssh): returns docker image inspect's {{.Id}} verbatim (got: $out)"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -704,7 +705,7 @@ apple_image_inspect_json='[
   }
 ]'
 out="$(
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dir" container "printf '%s\n' '$apple_image_inspect_json'"
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=apple
@@ -714,7 +715,7 @@ out="$(
     && test_pass "image_identity (apple): extracts the top-level \"id\" field, not the nested \"digest\" fields, prefixed sha256:" \
     || test_fail "image_identity (apple): extracts the top-level \"id\" field, not the nested \"digest\" fields, prefixed sha256: (got: $out)"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dir" container 'exit 1'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=apple
@@ -739,7 +740,7 @@ out="$(
 # loudly here instead of silently on the NAS. The correct field is
 # `{{.Label "io.dxe.system"}}` (singular, a method -- not `index .Labels`).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/list-format-argv.log"
     fake_tool_write "$dir" docker "
@@ -776,7 +777,7 @@ done
 # it is never reached now that dx_container_list_names routes through
 # dx_runtime_container_list.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" container 'echo "apple adapter should never run" >&2; exit 99'
     fake_tool_write "$dir" docker '
@@ -791,7 +792,7 @@ echo "dx-qnap-all	dx-qnap-nixos	Up 2 hours"'
 )
 [ "$?" -eq 0 ] && test_pass "dx_container_list_names(true): docker-ssh reaches the docker adapter, never the local Apple container binary" || test_fail "dx_container_list_names(true): docker-ssh reaches the docker adapter, never the local Apple container binary"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" container 'echo "apple adapter should never run" >&2; exit 99'
     fake_tool_write "$dir" docker '
@@ -821,7 +822,7 @@ echo "dx-qnap-running	dx-qnap-nixos	Up 2 hours"'
 # for real afterward -- asserted here by requiring the cache directory be
 # left with neither the tmp file nor a published host-identity file.
 (
-    dxe_s33cw_dir="$(new_tool_dir)"
+    dxe_s33cw_dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dxe_s33cw_dir" mv 'echo "fake mv: refusing to rename" >&2; exit 1'
     PATH="$dxe_s33cw_dir:/usr/bin:/bin"
     DX_CONTAINER_NAME=dxe-cachewrite-fail-container
@@ -852,7 +853,7 @@ echo "dx-qnap-running	dx-qnap-nixos	Up 2 hours"'
 # directly, exactly as it would be misused, to prove it fails closed rather
 # than silently treating an unrecognized kind as owned.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"

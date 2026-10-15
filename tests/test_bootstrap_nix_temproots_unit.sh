@@ -23,7 +23,7 @@ source "$SCRIPT_DIR/lib/fake-tools.sh"
 source "$CONTAINER_DIR/bootstrap/common.sh"
 test_section "Bootstrap root Nix wrapper: unit cases"
 
-BU_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bootstrap-nix-unit.XXXXXX")"
+dxe_test_mktemp_dir BU_ROOT "${TMPDIR:-/tmp}/dxe-bootstrap-nix-unit.XXXXXX"
 bu_cleanup() {
     case "$BU_ROOT" in
         "${TMPDIR:-/tmp}"/dxe-bootstrap-nix-unit.?*) rm -rf "$BU_ROOT" ;;
@@ -31,7 +31,7 @@ bu_cleanup() {
 }
 trap bu_cleanup EXIT
 
-FAKE_DIR="$(fake_tool_dir_create "$BU_ROOT")"
+FAKE_DIR="$(fake_tool_dir_create "$BU_ROOT")" || exit 1
 STUB_DIR="$BU_ROOT/stubs"
 
 # A fake `nix` that logs its own pid and copies whatever it reads on stdin.
@@ -54,7 +54,7 @@ printf "%s\n" "$*" >> "$BU_CHOWN_LOG"
 exit 0'
 
 bu_new_case() {
-    BU_CASE="$(mktemp -d "$BU_ROOT/case.XXXXXX")"
+    dxe_test_mktemp_dir BU_CASE "$BU_ROOT/case.XXXXXX"
     BU_NIX_LOG="$BU_CASE/nix.log"
     BU_STDIN_CAPTURE="$BU_CASE/stdin"
     BU_RM_LOG="$BU_CASE/rm.log"

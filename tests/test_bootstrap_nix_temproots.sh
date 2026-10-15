@@ -43,7 +43,7 @@ source "$SCRIPT_DIR/lib/fake-tools.sh"
 source "$CONTAINER_DIR/bootstrap/common.sh"
 test_section "Bootstrap: root Nix calls leave no temporary-roots file behind"
 
-BT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bootstrap-temproots.XXXXXX")"
+dxe_test_mktemp_dir BT_ROOT "${TMPDIR:-/tmp}/dxe-bootstrap-temproots.XXXXXX"
 bt_cleanup() {
     case "$BT_ROOT" in
         "${TMPDIR:-/tmp}"/dxe-bootstrap-temproots.?*) chmod -R u+rwx "$BT_ROOT" 2>/dev/null; rm -rf "$BT_ROOT" ;;
@@ -51,7 +51,7 @@ bt_cleanup() {
 }
 trap bt_cleanup EXIT
 
-FAKE_DIR="$(fake_tool_dir_create "$BT_ROOT")"
+FAKE_DIR="$(fake_tool_dir_create "$BT_ROOT")" || exit 1
 
 # A fake `nix` that behaves like Nix 2.34's flake commands as root: it writes
 # its temp-roots file, named after its own pid, and exits WITHOUT removing
@@ -74,7 +74,7 @@ exit 0'
 # two files that belong to other processes (one readable, one not); they
 # must never be touched.
 bt_new_case() {
-    BT_CASE="$(mktemp -d "$BT_ROOT/case.XXXXXX")"
+    dxe_test_mktemp_dir BT_CASE "$BT_ROOT/case.XXXXXX"
     BT_TEMPROOTS="$BT_CASE/nix/var/nix/temproots"
     BT_NIX_LOG="$BT_CASE/nix.log"
     mkdir -p "$BT_TEMPROOTS"

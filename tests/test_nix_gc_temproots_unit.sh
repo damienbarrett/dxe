@@ -29,7 +29,7 @@ source "$BASE_DIR/bin/lib/dx-runtime.sh"
 source "$BASE_DIR/bin/lib/dx-nix-gc.sh"
 test_section "Nix GC temp-roots clear: unit cases"
 
-UT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-nix-gc-unit.XXXXXX")"
+dxe_test_mktemp_dir UT_ROOT "${TMPDIR:-/tmp}/dxe-nix-gc-unit.XXXXXX"
 ut_cleanup() {
     case "$UT_ROOT" in
         "${TMPDIR:-/tmp}"/dxe-nix-gc-unit.?*) rm -rf "$UT_ROOT" ;;
@@ -38,7 +38,7 @@ ut_cleanup() {
 trap ut_cleanup EXIT
 
 UT_ESSENTIALS_BIN=/nix/var/nix/profiles/per-user/root/profile/bin
-FAKE_DIR="$(fake_tool_dir_create "$UT_ROOT")"
+FAKE_DIR="$(fake_tool_dir_create "$UT_ROOT")" || exit 1
 
 # A recording `rm`: logs its argv (one call per line) and the PATH it was
 # found under, removes nothing, and fails for any path ending in /545.
@@ -62,7 +62,7 @@ echo "unexpected exec: $*" >&2
 exit 98'
 
 ut_new_case() {
-    UT_CASE="$(mktemp -d "$UT_ROOT/case.XXXXXX")"
+    dxe_test_mktemp_dir UT_CASE "$UT_ROOT/case.XXXXXX"
     UT_TEMPROOTS="$UT_CASE/temproots"
     UT_PROC="$UT_CASE/proc"
     UT_RM_LOG="$UT_CASE/rm.log"

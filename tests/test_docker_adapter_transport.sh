@@ -51,7 +51,8 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     test_section "Docker-ssh runtime adapter (Branch 11 / Phase 2) -- transport"
 fi
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-docker-adapter.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-docker-adapter.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 
 # WP3.4 (Fable A1): dx_runtime_docker_discover_daemon_id now persists a
@@ -86,7 +87,7 @@ expect_reject() { local label="$1"; shift; if "$@" >/dev/null 2>&1; then test_fa
 # ...) can never be found ahead of, or instead of, a fixture's own fakes.
 new_tool_dir() {
     local dir
-    dir="$(fake_tool_dir_create "$fixture")"
+    dir="$(fake_tool_dir_create "$fixture")" || exit 1
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
     # WP3.4 (Fable A1): clear any daemon-identity cache a PRIOR scenario in
     # this file left on disk (under the private HOME set up above) before
@@ -171,7 +172,7 @@ eval "set -- $joined"
 # discovered via plain `command -v docker` on the fake PATH, uname -m
 # matches DX_GUEST_SYSTEM, engine reports a version, daemon ID captured.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -189,7 +190,7 @@ esac'
 # dx_runtime_docker_available: unreachable host (fake ssh exits non-zero for
 # everything -- simulates a dead endpoint / connection loss).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dir" ssh 'exit 255'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
@@ -202,7 +203,7 @@ esac'
 # dx_runtime_docker_available: docker CLI not found anywhere (neither plain
 # PATH nor the qpkg glob) -- distinct "missing Docker access" message.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     PATH="$dir:/usr/bin:/bin"
     # The fake remote's PATH is the fixture directory alone (fake uname, no
@@ -223,7 +224,7 @@ esac'
 # shape). The fake docker executable lives ONLY at the glob path, never as
 # a bare PATH entry.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     # "fixturepool", never a real-shaped "<NAME>_DATA" pool/dataset name --
     # tests/test_section1_secrets.sh's generic leak scan flags that shape on
@@ -261,7 +262,7 @@ esac'
 # Docker call at all (DQ7) -- the fake docker would fail loudly (exit 99) if
 # reached, proving the refusal happens first.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "UNMATCHED: $*" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -275,7 +276,7 @@ esac'
 # dx_runtime_docker_available: unsupported architecture (e.g. 32-bit ARM;
 # DQ7 "Unsupported for DXE. Stop the plan.").
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" uname 'case "$1" in -m) echo armv7l ;; esac'
     PATH="$dir:/usr/bin:/bin"
@@ -290,7 +291,7 @@ esac'
 # succeeds but reports no server version -- e.g. daemon unreachable/wrong
 # API version).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -309,7 +310,7 @@ esac'
 # field is empty (older/newer Engine variance) -- derived from the other
 # three fields instead of a second round trip.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -328,7 +329,7 @@ esac'
 # second call within the same process -- the fake ssh/docker would fail the
 # second time if called again (a marker file counts invocations).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     call_log="$fixture/discover-calls.log"
     rm -f "$call_log"
     fake_tool_write "$dir" ssh "
@@ -356,7 +357,7 @@ esac'
 
 # Exported so a child process inherits the cache instead of re-discovering.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -374,7 +375,7 @@ esac'
 
 # dx_runtime_system_running: live daemon-reachable check, true and false.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = info ] && [ "$#" -eq 1 ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -384,7 +385,7 @@ esac'
 )
 [ "$?" -eq 0 ] && test_pass "system_running: true when the daemon answers" || test_fail "system_running: true when the daemon answers"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -397,7 +398,7 @@ esac'
 # dx_runtime_system_start: always refuses, names the App Center UI, never
 # invokes ssh/docker at all (a fake ssh that would fail loudly proves it).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dir" ssh 'echo "ssh should never be called" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
@@ -408,7 +409,7 @@ esac'
 
 # dx_runtime_host_identity: docker-ssh:<alias>:<daemon-id>.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -425,7 +426,7 @@ esac'
 # Two different DX_REMOTE_HOST aliases (simulating two different QNAPs, or
 # the same alias resolving to a different daemon) never collide.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -436,7 +437,7 @@ esac'
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=qnap-a.invalid
     unset DXE_RUNTIME_DOCKER_BIN DXE_RUNTIME_DOCKER_DAEMON_ID
     id_a="$(dx_runtime_host_identity)"
-    dir2="$(new_tool_dir)"
+    dir2="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir2"
     fake_tool_write "$dir2" docker '
 case "$1 $2" in
@@ -486,7 +487,7 @@ esac'
 
 # Apple: a fixed constant, no ssh call at all.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dir" ssh 'echo "ssh should never be called" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=apple
@@ -497,7 +498,7 @@ esac'
 # docker-ssh: discovers via the Tailscale qpkg CLI's own "ip -4" when it is
 # on the remote's bare PATH.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" tailscale 'case "$*" in
     "ip -4") printf "%s.%s.%s.%s\n" 100 64 1 2 ;;
@@ -515,7 +516,7 @@ esac'
 # discipline as the Docker-path glob fallback test above): the fake
 # tailscale executable lives ONLY at the glob path.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     qpkg_dir="$dir/share/fixturepool/.qpkg/Tailscale"
     mkdir -p "$qpkg_dir"
@@ -537,7 +538,7 @@ esac'
 # Falls back to reading the tailscale0 interface directly when the
 # Tailscale CLI cannot be found at all (neither bare PATH nor the glob).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
     rm -f "$dir/tailscale" # absence is the scenario: drop the fail-closed default from new_tool_dir
@@ -556,7 +557,7 @@ esac'
 
 # Refuses (DQ5's exact wording) when neither path yields an address at all.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
     rm -f "$dir/tailscale" # absence is the scenario: drop the fail-closed default from new_tool_dir
@@ -574,7 +575,7 @@ esac'
 # A distinct failure class: the ssh ROUND TRIP itself fails (connection
 # refused/dead host), not merely a NOTFOUND/out-of-range answer.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dir" ssh 'case "$*" in *DXE_TAILSCALE_BIN*) exit 255 ;; *) exit 0 ;; esac'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
@@ -592,7 +593,7 @@ esac'
 # reason): first, that the raw discovery round trip really did yield the
 # planted LAN address; second, that the validated op still refuses it.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
     fake_tool_write "$dir" tailscale 'case "$*" in
@@ -613,7 +614,7 @@ esac'
 # Cached, never re-discovered in the same process (same call-counting idiom
 # as the Docker-bin/daemon-ID caching proof above).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     call_log="$fixture/guest-ssh-address-calls.log"
     rm -f "$call_log"
     # A private directory holding ONLY a `bash` symlink (never the real
@@ -623,7 +624,7 @@ esac'
     # defeat the very isolation this is meant to preserve; the same fix
     # tests/lib/fake-tools.sh's fake_qnap_ssh_write carries -- this ssh
     # fake is hand-rolled, not that shared one, so it needs its own copy).
-    dxe_s33_bash_dir="$(fake_tool_dir_create "$fixture")"
+    dxe_s33_bash_dir="$(fake_tool_dir_create "$fixture")" || exit 1
     ln -s "$(command -v bash)" "$dxe_s33_bash_dir/bash"
     fake_tool_write "$dir" ssh "
 echo called >> '$call_log'
@@ -690,7 +691,8 @@ esac'
 # held rather than just trusting it.
 known_hosts_render_real_state_before="$(dx_real_ssh_known_hosts_snapshot)"
 (
-    home_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts.XXXXXX")"
+    home_dir="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+    dxe_test_mktemp_dir home_dir "${TMPDIR:-/tmp}/dxe-known-hosts.XXXXXX"
     unset XDG_STATE_HOME
     export HOME="$home_dir"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap
@@ -719,11 +721,12 @@ fi
 # Refuses a symlinked pin directory rather than following it.
 known_hosts_symlink_real_state_before="$(dx_real_ssh_known_hosts_snapshot)"
 (
-    home_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts-symlink.XXXXXX")"
+    dxe_test_mktemp_dir home_dir "${TMPDIR:-/tmp}/dxe-known-hosts-symlink.XXXXXX"
     unset XDG_STATE_HOME
     export HOME="$home_dir"
     mkdir -p "$home_dir/.local/state/dxe/dx-qnap"
-    elsewhere="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts-elsewhere.XXXXXX")"
+    elsewhere="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+    dxe_test_mktemp_dir elsewhere "${TMPDIR:-/tmp}/dxe-known-hosts-elsewhere.XXXXXX"
     ln -s "$elsewhere" "$home_dir/.local/state/dxe/dx-qnap/docker-ssh_dxe-fixture-nas.invalid_fixturedaemonid"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dx-qnap
     # shellcheck disable=SC2034
@@ -753,7 +756,7 @@ fi
 # calls in one fixture, so the assertion is a property of the real ssh
 # invocation, not merely of dx_runtime_docker_exec's own flags array.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     ssh_argv_log="$fixture/exec-tty-ssh-argv.log"
     : > "$ssh_argv_log"
     fake_tool_write "$dir" ssh "
@@ -782,7 +785,7 @@ eval \"\$dx_fake_last\"
 # must work non-interactively too) drives the same -tt behaviour end to
 # end, not only through a direct dx_runtime_docker_exec call.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     ssh_argv_log="$fixture/dx-enter-ssh-argv.log"
     : > "$ssh_argv_log"
     fake_tool_write "$dir" ssh "
@@ -807,7 +810,7 @@ case "$1" in exec) exit 0 ;; *) echo "UNMATCHED: $*" >&2; exit 99 ;; esac'
     || test_fail "bin/dx-enter (docker-ssh): drives ssh -tt end to end, including when run non-interactively"
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = logs ] && [ "$2" = -n ] && [ "$3" = 40 ] && [ "$4" = dx-qnap ] && printf "line1\nline2\n"'
     PATH="$dir:/usr/bin:/bin"
@@ -818,7 +821,7 @@ case "$1" in exec) exit 0 ;; *) echo "UNMATCHED: $*" >&2; exit 99 ;; esac'
 [ "$?" -eq 0 ] && test_pass "logs: -n N NAME passthrough (Docker and Apple agree)" || test_fail "logs: -n N NAME passthrough (Docker and Apple agree)"
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = export ] && [ "$2" = dx-qnap ] && printf "tarbytes"'
     PATH="$dir:/usr/bin:/bin"
@@ -829,7 +832,7 @@ case "$1" in exec) exit 0 ;; *) echo "UNMATCHED: $*" >&2; exit 99 ;; esac'
 [ "$?" -eq 0 ] && test_pass "export: passthrough stream" || test_fail "export: passthrough stream"
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = run ] && [ "$2" = --rm ] && [ "$3" = dx-qnap-nixos ] && printf "ran"'
     PATH="$dir:/usr/bin:/bin"
@@ -852,7 +855,7 @@ case "$1" in exec) exit 0 ;; *) echo "UNMATCHED: $*" >&2; exit 99 ;; esac'
 # destination argument, independent of what dx_runtime_docker_ssh_raw's own
 # code currently does.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     ssh_argv_log="$fixture/put-get-ssh-argv.log"
     : > "$ssh_argv_log"
     fake_tool_write "$dir" ssh "
@@ -907,7 +910,7 @@ esac'
 # sh -c ...`, the stream phase renders `docker exec -u dx NAME tar ...`
 # with NO `-i` at all.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     bk_log="$dir/exec-argv.log"
     fake_tool_write "$dir" docker '
@@ -928,7 +931,7 @@ exit 0'
 )
 [ "$?" -eq 0 ] && test_pass "dx-backup (docker-ssh): the stdin-shipping phase renders 'docker exec -i -u dx NAME sh -c ...'" || test_fail "dx-backup (docker-ssh): the stdin-shipping phase renders 'docker exec -i -u dx NAME sh -c ...'"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     bk_log="$dir/exec-argv.log"
     # dx_backup_fetch_paths issues THREE separate execs (ship, stream,
@@ -946,7 +949,8 @@ exit 0'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
     DXE_RUNTIME_DOCKER_BIN=docker
-    fetch_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bk-fetch.XXXXXX")"
+    fetch_dir="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+    dxe_test_mktemp_dir fetch_dir "${TMPDIR:-/tmp}/dxe-bk-fetch.XXXXXX"
     fetch_lines="$fetch_dir/lines.tsv"
     printf 'persist/one\tabc\n' > "$fetch_lines"
     export DX_BACKUP_GUEST_ROOT=/persist

@@ -53,7 +53,8 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     test_section "Docker-ssh runtime adapter (Branch 11 / Phase 2) -- lifecycle"
 fi
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-docker-adapter.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-docker-adapter.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 
 # WP3.4 (Fable A1): dx_runtime_docker_discover_daemon_id now persists a
@@ -88,7 +89,7 @@ expect_reject() { local label="$1"; shift; if "$@" >/dev/null 2>&1; then test_fa
 # ...) can never be found ahead of, or instead of, a fixture's own fakes.
 new_tool_dir() {
     local dir
-    dir="$(fake_tool_dir_create "$fixture")"
+    dir="$(fake_tool_dir_create "$fixture")" || exit 1
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
     # WP3.4 (Fable A1): clear any daemon-identity cache a PRIOR scenario in
     # this file left on disk (under the private HOME set up above) before
@@ -140,7 +141,7 @@ tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
 # the subshell exiting, precisely so these ~10 assertions all count.
 cc_argv_log="$fixture/create-argv.log"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" tailscale 'case "$*" in
     "ip -4") printf "%s.%s.%s.%s\n" 100 64 1 2 ;;
@@ -213,7 +214,7 @@ ul_off_log="$fixture/create-argv-usage-off.log"
 ul_on_log="$fixture/create-argv-usage-on.log"
 for ul_mode in off on; do
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" tailscale 'case "$*" in
     "ip -4") printf "%s.%s.%s.%s\n" 100 64 1 2 ;;
@@ -265,7 +266,7 @@ ul_on_without="$(printf '%s\n' "$ul_on" | awk '$0=="-p"{getline nxt; if (nxt ~ /
 # guessing (protects against a future bin/dx-create-container change that
 # forgets to update both adapters).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -286,7 +287,7 @@ ul_on_without="$(printf '%s\n' "$ul_on" | awk '$0=="-p"{getline nxt; if (nxt ~ /
 # discovery genuinely runs and comes back NOTFOUND, and a real, working
 # fake `docker create` sits ready to prove it was never reached.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     export DXE_FAKE_SSH_REMOTE_PATH="$dir"
     rm -f "$dir/tailscale" # absence is the scenario: drop the fail-closed default from new_tool_dir
@@ -308,7 +309,7 @@ exit 0
 
 # container_create: an unrecognized --volume role also fails closed.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -325,7 +326,7 @@ exit 0
 # zero "docker create ... -v/--volume" call is ever reached, proven by the
 # fake exiting loudly if "create" is ever invoked.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -349,7 +350,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # named volumes (persist/bootstrap), which share the switch's default arm
 # rather than the nix branch's own dedicated case label above.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -372,7 +373,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # An ABSENT volume needs no ownership proof (nothing to adopt yet); the
 # create proceeds normally.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -393,7 +394,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 
 # container_create: --name/--image are required.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -410,7 +411,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # below match on "$1 $2" (container/inspect), leaving the real verb
 # matched on "$1" alone, same shape as the delete tests further down.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -425,7 +426,7 @@ esac'
 [ "$?" -eq 0 ] && test_pass "container_start: owned -> passthrough" || test_fail "container_start: owned -> passthrough"
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -440,7 +441,7 @@ esac'
 [ "$?" -eq 0 ] && test_pass "container_stop: owned -> --time N NAME passthrough (Docker and Apple agree)" || test_fail "container_stop: owned -> --time N NAME passthrough (Docker and Apple agree)"
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -460,7 +461,7 @@ esac'
 # ownership mismatch. Proven at the fake-transcript level (call count),
 # not merely by exit status, exactly what the regression asks for.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     calls_log="$dir/mutating-calls.log"
     : > "$calls_log"
@@ -498,7 +499,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # (it must never be reached at all) while answering "image inspect" as
 # absent.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/wp65-create-container-no-image.log"
     fake_tool_write "$dir" docker "
@@ -528,7 +529,7 @@ esac
 # dx-create-volumes: every volume it ensures is created with DQ6 labels,
 # the role resolved correctly for all three configured volumes.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     cv_log="$dir/create-argv.log"
     export DX_FAKE_ARGV_LOG="$cv_log"
@@ -570,7 +571,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # delete; a mismatched label refuses the delete as a collision, never an
 # adoption candidate (DQ6).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -618,7 +619,7 @@ esac'
 # count (the fake exits 99 loudly if any of them is ever invoked), and the
 # whole command exits non-zero naming the ownership mismatch.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     calls_log="$dir/mutating-calls.log"
     : > "$calls_log"
@@ -667,7 +668,7 @@ esac'
 # (container_stop_bounded, shared with dx-destroy-container above): zero
 # stop/kill calls reach the fake, and the command exits non-zero.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     calls_log="$dir/mutating-calls.log"
     : > "$calls_log"
@@ -717,7 +718,7 @@ esac'
 # skipping create") without ever checking whether it was this profile's
 # own. It must now fail instead.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -748,7 +749,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # The correctly-labelled case is unaffected: still a plain, successful
 # no-op ("already exists; skipping create").
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -780,7 +781,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # refuses before returning, no later "docker create ... -v/--mount" with
 # that volume is ever reached (zero writable attachment).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -815,7 +816,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # entrypoint: an existing but foreign-labelled volume is never treated as
 # "already there and fine."
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -849,7 +850,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # attributable to schema alone (managed/profile/role are all otherwise a
 # clean, exact match).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -870,7 +871,7 @@ esac'
 # system check: schema/managed/profile/role are all a clean exact match,
 # so the refusal is attributable to the missing system label alone.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -911,7 +912,7 @@ esac'
 # unlabelled/mislabelled refuses as a collision, never an adoption
 # candidate; "volume rm" must never run.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -938,7 +939,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # Nix volume's own docker-ssh argv shape ("volume rm NAME"), proving the
 # entrypoint end to end under docker-ssh, never touching persist/bootstrap.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     rn_log="$dir/volume-rm.log"
     fake_tool_write "$dir" docker '
@@ -971,7 +972,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # the three volumes fails its DQ6 label check, never a resource-by-
 # resource partial destroy.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     rm_log="$dir/volume-rm-calls.log"
     : > "$rm_log"
@@ -1010,7 +1011,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # All three correctly labelled: the plan passes, and exactly three
 # "volume rm" calls are reached, one per configured volume.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     rm_log="$dir/volume-rm-calls.log"
     : > "$rm_log"
@@ -1052,7 +1053,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # dx-destroy-volumes/dx-destroy-keys are even invoked, proven by call
 # count: neither a container "rm" nor any "volume rm" is ever reached.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     rm_log="$dir/delete-calls.log"
     : > "$rm_log"
@@ -1106,7 +1107,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # label), so this is a plain passthrough once the image is confirmed to
 # exist -- proves the entrypoint reaches the docker adapter at all.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     di_log="$dir/image-rm.log"
     fake_tool_write "$dir" docker '
@@ -1137,7 +1138,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # "if a real incompatibility appears, STOP and report, do not redesign
 # run_ephemeral"). The legacy volume exists and is empty of anything but
 # the sentinel-check reads, so migration completes.
-mp_dir="$(new_tool_dir)"
+mp_dir="$(new_tool_dir)" || exit 1
 mp_log="$mp_dir/run-argv.log"
 : > "$mp_log"
 (

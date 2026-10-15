@@ -106,7 +106,8 @@ AI_SCRIPT="$CONTAINER_DIR/scripts/dx-ai.sh"
 source "$AI_SCRIPT"
 dx_ai_load_lock || test_fail "dx_ai_load_lock resolves the publication-lock library"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-ai-gcroots.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-ai-gcroots.XXXXXX"
 trap 'chmod -R u+w "$fixture" 2>/dev/null || true; rm -rf "$fixture"' EXIT
 
 # GNU mv -T/-Tf for hosts whose mv lacks it (macOS), as in

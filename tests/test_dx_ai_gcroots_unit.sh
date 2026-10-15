@@ -26,7 +26,8 @@ AI_SCRIPT="$CONTAINER_DIR/scripts/dx-ai.sh"
 # shellcheck source=/dev/null
 source "$AI_SCRIPT"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-ai-gcroots-unit.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-ai-gcroots-unit.XXXXXX"
 trap 'chmod -R u+w "$fixture" 2>/dev/null || true; rm -rf "$fixture"' EXIT
 
 fake_bin="$(fake_tool_dir_create "$fixture")" || { echo "could not create fake tools" >&2; exit 1; }

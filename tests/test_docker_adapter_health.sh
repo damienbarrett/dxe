@@ -52,7 +52,8 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     test_section "Docker-ssh runtime adapter (Branch 11 / Phase 2) -- health"
 fi
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-docker-adapter.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-docker-adapter.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 
 # WP3.4 (Fable A1): dx_runtime_docker_discover_daemon_id now persists a
@@ -87,7 +88,7 @@ expect_reject() { local label="$1"; shift; if "$@" >/dev/null 2>&1; then test_fa
 # ...) can never be found ahead of, or instead of, a fixture's own fakes.
 new_tool_dir() {
     local dir
-    dir="$(fake_tool_dir_create "$fixture")"
+    dir="$(fake_tool_dir_create "$fixture")" || exit 1
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
     # WP3.4 (Fable A1): clear any daemon-identity cache a PRIOR scenario in
     # this file left on disk (under the private HOME set up above) before
@@ -184,7 +185,7 @@ tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
 # the Apple one, and vice versa (proves dx_runtime_dispatch's dynamic
 # function-name construction actually selects the right adapter).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 0'
     fake_tool_write "$dir" container 'echo "apple adapter should never run" >&2; exit 99'
@@ -195,7 +196,7 @@ tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
 )
 [ "$?" -eq 0 ] && test_pass "dispatch: DX_RUNTIME=docker-ssh never reaches the Apple adapter" || test_fail "dispatch: DX_RUNTIME=docker-ssh never reaches the Apple adapter"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dir" ssh 'echo "docker adapter should never run" >&2; exit 99'
     fake_tool_write "$dir" container 'case "$*" in "system status") exit 0 ;; esac'
     PATH="$dir:/usr/bin:/bin"
@@ -215,7 +216,7 @@ tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
 
 # All resources correctly labelled: prints the plan for both, passes.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 # "$3" is only the name for the plain existence check (container/volume
@@ -247,7 +248,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # One of two resources mislabelled: the plan still names BOTH (printed in
 # full before any failure is decided), and the function refuses overall.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -273,7 +274,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # A resource that does not exist at all: named in the plan, never
 # label-checked, and never counted as a failure on its own.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -301,7 +302,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # exit status unchanged under `set -o pipefail`, no intermediate cat/subshell
 # -- the same explicit proof shape test_sourceable_coverage.sh uses for Apple.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/exec-argv.log"
     fake_tool_write "$dir" docker "
@@ -318,7 +319,7 @@ if [ \"\${1:-}\" = exec ]; then cat; fi
 )
 [ "$?" -eq 0 ] && test_pass "exec: piped stdin passes through unchanged" || test_fail "exec: piped stdin passes through unchanged"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "${1:-}" = exec ] && cat'
     PATH="$dir:/usr/bin:/bin"
@@ -331,7 +332,7 @@ if [ \"\${1:-}\" = exec ]; then cat; fi
 )
 [ "$?" -eq 0 ] && test_pass "exec: file-redirected stdin passes through unchanged" || test_fail "exec: file-redirected stdin passes through unchanged"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 17'
     PATH="$dir:/usr/bin:/bin"
@@ -343,7 +344,7 @@ if [ \"\${1:-}\" = exec ]; then cat; fi
 )
 [ "$?" -eq 0 ] && test_pass "exec: exit status is preserved unchanged even under set -o pipefail" || test_fail "exec: exit status is preserved unchanged even under set -o pipefail"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/exec-argv2.log"
     fake_tool_write "$dir" docker "printf '%s\n' \"\$@\" > '$argv_log'"
@@ -374,7 +375,7 @@ if [ \"\${1:-}\" = exec ]; then cat; fi
 # available: connection loss is named distinctly (a timeout-shaped ssh
 # failure, not a generic "cannot reach").
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dir" ssh 'echo "ssh: connect to host dxe-fixture-nas.invalid port 22: Operation timed out" >&2; exit 255'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
@@ -386,7 +387,7 @@ if [ \"\${1:-}\" = exec ]; then cat; fi
 
 # available: authentication failure is named distinctly.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dir" ssh 'echo "Permission denied (publickey)." >&2; exit 255'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
@@ -399,7 +400,7 @@ if [ \"\${1:-}\" = exec ]; then cat; fi
 # available: engine incompatibility is named with the classified reason
 # too (a daemon-restart-shaped docker-level failure this time, not ssh).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -414,7 +415,7 @@ if [ \"\${1:-}\" = exec ]; then cat; fi
 # convention) but still records the classifiable reason for a caller that
 # wants it.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "Cannot connect to the Docker daemon. Is the docker daemon running?" >&2; exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -473,7 +474,7 @@ if [ \"\${1:-}\" = exec ]; then cat; fi
 # discover_bin: the ssh round trip for bin discovery itself fails (distinct
 # from host_reachable's own earlier, separate check).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dir" ssh '
 last=""; for a in "$@"; do last="$a"; done
 case "$last" in
@@ -490,7 +491,7 @@ esac'
 
 # check_arch: the uname round trip itself fails.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dir" ssh 'exit 255'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid
@@ -502,7 +503,7 @@ esac'
 # check_arch: aarch64 maps and matches successfully (every other case so
 # far only ever exercised x86_64 or a mismatch/unsupported value).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" uname 'case "$1" in -m) echo aarch64 ;; esac'
     PATH="$dir:/usr/bin:/bin"
@@ -513,7 +514,7 @@ esac'
 
 # discover_daemon_id: the info round trip itself fails.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -531,7 +532,7 @@ esac'
 # drop, a daemon restart, ...) -- an inspect error must be reported as an
 # error, never silently folded into "absent".
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "Error: No such container: dx-qnap" >&2; exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -552,7 +553,7 @@ esac'
 # flags. This also upgrades what was previously a single combined-wording
 # case (pre-Astra-F3: "does not exist or its labels could not be read").
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -568,7 +569,7 @@ esac'
 # The same distinction for a volume, and for a more realistic connection-
 # style failure (never Docker's own "No such volume" wording).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "Error: Cannot connect to the Docker daemon at unix:///var/run/docker.sock" >&2; exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -589,7 +590,7 @@ containerfile_empty="$fixture/context-empty-from"
 mkdir -p "$containerfile_empty"
 printf 'FROM \n' > "$containerfile_empty/Containerfile"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -604,7 +605,7 @@ containerfile_multi_token="$fixture/context-multi-token-from"
 mkdir -p "$containerfile_multi_token"
 printf 'FROM alpine AS builder\n' > "$containerfile_multi_token/Containerfile"
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "docker should never run" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -626,7 +627,7 @@ printf 'FROM alpine AS builder\n' > "$containerfile_multi_token/Containerfile"
 
 # lock_release: nothing to release at all (inspect fails outright).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -655,7 +656,7 @@ printf 'FROM alpine AS builder\n' > "$containerfile_multi_token/Containerfile"
 # failed live. The fake therefore answers only a template that asks for
 # `.Size`.
 out="$(
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -676,7 +677,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 )"
 [ "$out" = 4.835MB ] && test_pass "volume_usage (docker-ssh): returns the matching volume's human-readable .Size from docker system df -v" || test_fail "volume_usage (docker-ssh): returns the matching volume's human-readable .Size from docker system df -v (got: $out)"
 out="$(
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -690,7 +691,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 )"
 [ "$out" = unknown ] && test_pass "volume_usage (docker-ssh): 'unknown' when Docker reports the size as N/A" || test_fail "volume_usage (docker-ssh): 'unknown' when Docker reports the size as N/A (got: $out)"
 out="$(
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "system df" ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -700,7 +701,7 @@ out="$(
 )"
 [ "$out" = unknown ] && test_pass "volume_usage (docker-ssh): 'unknown' when the volume is absent from the report" || test_fail "volume_usage (docker-ssh): 'unknown' when the volume is absent from the report (got: $out)"
 out="$(
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -715,7 +716,7 @@ out="$(
 # fstrim proves it is never reached. Volume usage still reports (via
 # dx_runtime_volume_usage) and Nix GC still runs in the guest.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -760,7 +761,8 @@ echo "UNMATCHED: $*" >&2; exit 99'
 
 # bin/dx-nix-disk (apple): unaffected, still prepares the sparse image.
 (
-    nix_disk_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-nix-disk-apple.XXXXXX")"
+    nix_disk_home="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+    dxe_test_mktemp_dir nix_disk_home "${TMPDIR:-/tmp}/dxe-nix-disk-apple.XXXXXX"
     nix_disk_path="$nix_disk_home/nix-store.img"
     env HOME="$nix_disk_home" DX_RUNTIME=apple DX_NIX_DISK="$nix_disk_path" DX_NIX_DISK_SIZE=1M \
         "$BASE_DIR/bin/dx-nix-disk" >/dev/null 2>&1
@@ -773,7 +775,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # no directory created, no file written, not even the "already exists"
 # check reached.
 (
-    nix_disk_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-nix-disk-docker.XXXXXX")"
+    dxe_test_mktemp_dir nix_disk_home "${TMPDIR:-/tmp}/dxe-nix-disk-docker.XXXXXX"
     nix_disk_path="$nix_disk_home/does-not-exist-yet/nix-store.img"
     out="$(env HOME="$nix_disk_home" DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_NIX_STORAGE_MODE=direct-volume DX_NIX_DISK="$nix_disk_path" DX_NIX_DISK_SIZE=1M \
         "$BASE_DIR/bin/dx-nix-disk" 2>&1)"; rc=$?
@@ -787,10 +789,11 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # runs -- a hard-failing fake ssh/docker would be reached if the guard
 # were not first, proving the refusal really does come first.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dir" ssh 'echo "ssh should never be called" >&2; exit 99'
     fake_tool_write "$dir" docker 'echo "docker should never be called" >&2; exit 99'
-    mount_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-mount-docker.XXXXXX")"
+    mount_home="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+    dxe_test_mktemp_dir mount_home "${TMPDIR:-/tmp}/dxe-mount-docker.XXXXXX"
     PATH="$dir:/usr/bin:/bin"
     out="$(env HOME="$mount_home" DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_NIX_STORAGE_MODE=direct-volume DX_CONTAINER_NAME=dx-qnap-mount PATH="$PATH" \
         "$BASE_DIR/bin/dx-mount" "$mount_home" 2>&1)"; rc=$?
@@ -806,13 +809,14 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # the DX_GIT_MOUNT_SOURCE-set-directly gap the design note flagged: this
 # is the adapter-level backstop, not only bin/dx-mount's own guard above).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_tool_write "$dir" ssh 'echo "ssh should never be called" >&2; exit 99'
     fake_tool_write "$dir" docker 'echo "docker should never be called" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
     DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_GUEST_SYSTEM=x86_64-linux
     DXE_RUNTIME_DOCKER_BIN=docker
-    git_src="$(mktemp -d "${TMPDIR:-/tmp}/dxe-git-src.XXXXXX")"
+    git_src="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+    dxe_test_mktemp_dir git_src "${TMPDIR:-/tmp}/dxe-git-src.XXXXXX"
     out="$(dx_runtime_container_create --name dx-qnap --image dx-qnap-nixos \
         --volume "git:$git_src:/workspace:rw" --publish 2222:2222 --entrypoint-cmd 'echo hi' 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] \
@@ -827,7 +831,7 @@ echo "UNMATCHED: $*" >&2; exit 99'
 # answers no -- but the rendering line the check guards must still be
 # proven to work correctly if that answer ever changed).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/git-volume-success-argv.log"
     fake_tool_write "$dir" docker "
@@ -843,7 +847,7 @@ esac"
     # when it caches/returns the address -- genuinely consumed, dynamically,
     # by the container_create call below.
     DXE_RUNTIME_GUEST_SSH_ADDRESS="$(tailnet_fixture_addr 64 3 3)"
-    git_src="$(mktemp -d "${TMPDIR:-/tmp}/dxe-git-src-ok.XXXXXX")"
+    dxe_test_mktemp_dir git_src "${TMPDIR:-/tmp}/dxe-git-src-ok.XXXXXX"
     dx_runtime_docker_capability() { [ "$1" = bind_mounts ] && return 0 || return 1; }
     dx_runtime_container_create --name dx-qnap --image dx-qnap-nixos \
         --volume "git:$git_src:/workspace:rw" --publish 2222:2222 --entrypoint-cmd 'echo hi' >/dev/null 2>&1

@@ -87,7 +87,7 @@ source "$BASE_DIR/bin/lib/dx-runtime.sh"
 source "$BASE_DIR/bin/lib/dx-nix-gc.sh"
 test_section "Nix GC: root-owned store paths are handed back to the store owner before collection"
 
-RG_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-nix-gc-rootpaths.XXXXXX")"
+dxe_test_mktemp_dir RG_ROOT "${TMPDIR:-/tmp}/dxe-nix-gc-rootpaths.XXXXXX"
 rg_cleanup() {
     case "$RG_ROOT" in
         "${TMPDIR:-/tmp}"/dxe-nix-gc-rootpaths.?*) chmod -R u+rwx "$RG_ROOT" 2>/dev/null; rm -rf "$RG_ROOT" ;;
@@ -95,7 +95,7 @@ rg_cleanup() {
 }
 trap rg_cleanup EXIT
 
-FAKE_DIR="$(fake_tool_dir_create "$RG_ROOT")"
+FAKE_DIR="$(fake_tool_dir_create "$RG_ROOT")" || exit 1
 STUB_DIR="$RG_ROOT/stubs"
 rp_write_chown_stub "$STUB_DIR"
 RP_REAL_CHOWN="$(command -v chown)"
@@ -189,7 +189,7 @@ exit 99'
 # rg_new_case MODE [full|clean|none] -- a fresh case directory and mode.
 rg_new_case() {
     RG_MODE="$1"
-    RG_CASE="$(mktemp -d "$RG_ROOT/case.XXXXXX")"
+    dxe_test_mktemp_dir RG_CASE "$RG_ROOT/case.XXXXXX"
     RG_TRANSCRIPT="$RG_CASE/transcript"
     RP_CHOWN_LOG="$RG_CASE/chown.log"
     RP_FENCE="$RG_CASE"

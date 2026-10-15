@@ -31,7 +31,7 @@ source "$SCRIPT_DIR/lib/fake-tools.sh"
 source "$CONTAINER_DIR/bootstrap/common.sh"
 test_section "Bootstrap root-owned paths hand-back: unit cases"
 
-BR_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bootstrap-rootpaths-unit.XXXXXX")"
+dxe_test_mktemp_dir BR_ROOT "${TMPDIR:-/tmp}/dxe-bootstrap-rootpaths-unit.XXXXXX"
 br_cleanup() {
     case "$BR_ROOT" in
         "${TMPDIR:-/tmp}"/dxe-bootstrap-rootpaths-unit.?*) rm -rf "$BR_ROOT" ;;
@@ -40,7 +40,7 @@ br_cleanup() {
 trap br_cleanup EXIT
 
 BR_REAL_FIND="$(command -v find)"
-FAKE_DIR="$(fake_tool_dir_create "$BR_ROOT")"
+FAKE_DIR="$(fake_tool_dir_create "$BR_ROOT")" || exit 1
 # The tools a "find is missing" bootstrap has: bash (the fakes run under
 # `/usr/bin/env bash`), stat and chown only.
 NOFIND_DIR="$BR_ROOT/nofind"
@@ -88,7 +88,7 @@ mkdir -p "$BR_CASE/nix/store/r-new-profile"
 exit "${BR_NIX_RC:-0}"'
 
 br_new_case() {
-    BR_CASE="$(mktemp -d "$BR_ROOT/case.XXXXXX")"
+    dxe_test_mktemp_dir BR_CASE "$BR_ROOT/case.XXXXXX"
     BR_CHOWN_LOG="$BR_CASE/chown.log"
     BR_STORE_OWNER=4242:4243
     unset BR_CHOWN_FAIL BR_STAT_FAIL BR_NIX_RC

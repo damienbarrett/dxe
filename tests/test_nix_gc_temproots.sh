@@ -94,7 +94,7 @@ else
     test_fail "bin/lib/dx-nix-gc.sh exists"
 fi
 
-GCT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-nix-gc-temproots.XXXXXX")"
+dxe_test_mktemp_dir GCT_ROOT "${TMPDIR:-/tmp}/dxe-nix-gc-temproots.XXXXXX"
 gct_cleanup() {
     case "$GCT_ROOT" in
         "${TMPDIR:-/tmp}"/dxe-nix-gc-temproots.?*) chmod -R u+rwx "$GCT_ROOT" 2>/dev/null; rm -rf "$GCT_ROOT" ;;
@@ -102,7 +102,7 @@ gct_cleanup() {
 }
 trap gct_cleanup EXIT
 
-FAKE_DIR="$(fake_tool_dir_create "$GCT_ROOT")"
+FAKE_DIR="$(fake_tool_dir_create "$GCT_ROOT")" || exit 1
 GCT_CONTAINER=dxe-gc-temproots-test
 GCT_RULE="------------------------------------------------------------"
 
@@ -206,7 +206,7 @@ exit 99'
 #   hidden-proc: the full mix, but /proc/1 is not visible.
 gct_new_case() {
     local kind="${1:-stale}"
-    GCT_CASE="$(mktemp -d "$GCT_ROOT/case.XXXXXX")"
+    dxe_test_mktemp_dir GCT_CASE "$GCT_ROOT/case.XXXXXX"
     GCT_TEMPROOTS="$GCT_CASE/temproots"
     GCT_PROC="$GCT_CASE/proc"
     GCT_TRANSCRIPT="$GCT_CASE/transcript"

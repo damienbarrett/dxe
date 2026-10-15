@@ -104,7 +104,7 @@ source "$CONTAINER_DIR/bootstrap/common.sh"
 source "$BOOTSTRAP"
 test_section "Bootstrap: the boot hands root-owned paths in the final Nix store back once, before it moves on"
 
-FS_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bootfinal-rootpaths.XXXXXX")"
+dxe_test_mktemp_dir FS_ROOT "${TMPDIR:-/tmp}/dxe-bootfinal-rootpaths.XXXXXX"
 fs_cleanup() {
     case "$FS_ROOT" in
         "${TMPDIR:-/tmp}"/dxe-bootfinal-rootpaths.?*) chmod -R u+rwx "$FS_ROOT" 2>/dev/null; rm -rf "$FS_ROOT" ;;
@@ -116,7 +116,7 @@ FS_REAL_FIND="$(command -v find)"
 export FS_REAL_FIND
 
 # Any-host fakes (fail-closed for nix and every remote tool).
-FAKE_DIR="$(fake_tool_dir_create "$FS_ROOT")"
+FAKE_DIR="$(fake_tool_dir_create "$FS_ROOT")" || exit 1
 # chown: appends "chown <operand relative to the case>" to the shared event
 # log, changes nothing, and fails for an operand containing $FS_CHOWN_FAIL.
 fake_tool_write "$FAKE_DIR" chown '
@@ -190,7 +190,7 @@ fs_stdout_with() {
 
 # fs_new_case -- a fresh case directory with empty logs and default knobs.
 fs_new_case() {
-    FS_CASE="$(mktemp -d "$FS_ROOT/case.XXXXXX")"
+    dxe_test_mktemp_dir FS_CASE "$FS_ROOT/case.XXXXXX"
     FS_EVENTS="$FS_CASE/events"
     FS_PUBLISH_SNAPSHOT="$FS_CASE/root-owned-at-publish"
     RP_CHOWN_LOG="$FS_CASE/chown.log"

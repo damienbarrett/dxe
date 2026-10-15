@@ -11,7 +11,8 @@ test_section "dx-usage-service host lifecycle command (bin/dx-usage-service, bin
 
 # DX_PROFILES_DIR points at an empty fixture: nothing here may resolve a real
 # profile, and every ssh is the fixture's own fake (asserted before use).
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-usage-host.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-usage-host.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 export HOME="$fixture/home" DX_PROFILES_DIR="$fixture/profiles"
 mkdir -p "$HOME" "$DX_PROFILES_DIR"
@@ -37,7 +38,7 @@ source "$BASE_DIR/bin/lib/dx-backup.sh"
 # answers the service-mode probe (`exec NAME test -d ...`) from US_PROBE_RC.
 new_tool_dir() {
     local dir
-    dir="$(fake_tool_dir_create "$fixture")"
+    dir="$(fake_tool_dir_create "$fixture")" || exit 1
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
     fake_qnap_ssh_write "$dir"
     [ -x "$dir/ssh" ] || { echo "test setup: fake ssh missing in $dir" >&2; exit 1; }
@@ -52,7 +53,7 @@ S6=/run/dx-services/.s6-bin
 SVC=/run/dx-services/agent-stats
 run_docker() {
     # $@ = dx-usage-service arguments. Output on stdout, status in $us_rc.
-    local dir; dir="$(new_tool_dir)"
+    local dir; dir="$(new_tool_dir)" || exit 1
     : > "$US_DOCKER_LOG"
     us_rc=0
     us_out="$( (
@@ -141,7 +142,7 @@ else
 fi
 
 # --- Apple refuses ----------------------------------------------------------------------
-dir="$(new_tool_dir)"; : > "$US_DOCKER_LOG"; ap_rc=0
+dir="$(new_tool_dir)" || exit 1; : > "$US_DOCKER_LOG"; ap_rc=0
 ap_out="$( ( PATH="$dir:/usr/bin:/bin"; DX_RUNTIME=apple DX_CONTAINER_NAME=dx-svc dx_usage_host_main status ) 2>&1 )" || ap_rc=$?
 if [ "$ap_rc" -eq 1 ] && [ ! -s "$US_DOCKER_LOG" ] && printf '%s\n' "$ap_out" | grep -qF "no usage_service capability" \
     && printf '%s\n' "$ap_out" | grep -qF "DX_RUNTIME=apple"; then
@@ -152,7 +153,7 @@ fi
 
 # --- the entrypoint itself (profile applied, fixture profile, fake ssh) -------------------
 printf '%s\n' 'DX_RUNTIME=docker-ssh' 'DX_REMOTE_HOST=dxe-fixture-nas.invalid' 'DX_CONTAINER_NAME=dx-svc' 'DX_GUEST_SYSTEM=x86_64-linux' 'DX_NIX_STORAGE_MODE=direct-volume' > "$DX_PROFILES_DIR/svc.env"
-dir="$(new_tool_dir)"; : > "$US_DOCKER_LOG"; en_rc=0
+dir="$(new_tool_dir)" || exit 1; : > "$US_DOCKER_LOG"; en_rc=0
 en_out="$( ( PATH="$dir:/usr/bin:/bin"; export DXE_RUNTIME_DOCKER_BIN=docker; "$BASE_DIR/bin/dx-profile" svc "$CMD" status ) 2>&1 )" || en_rc=$?
 if [ "$en_rc" -eq 0 ] && expect_calls "$probe" "exec|dx-svc|$S6/s6-svstat|$SVC"; then
     test_pass "bin/dx-usage-service under dx-profile runs status through the entrypoint end to end (fake ssh/docker)"

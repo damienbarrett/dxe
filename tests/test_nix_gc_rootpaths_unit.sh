@@ -33,7 +33,7 @@ source "$BASE_DIR/bin/lib/dx-runtime.sh"
 source "$BASE_DIR/bin/lib/dx-nix-gc.sh"
 test_section "Nix GC root-owned paths hand-back: guest program unit cases"
 
-RU_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-nix-gc-rootpaths-unit.XXXXXX")"
+dxe_test_mktemp_dir RU_ROOT "${TMPDIR:-/tmp}/dxe-nix-gc-rootpaths-unit.XXXXXX"
 ru_cleanup() {
     case "$RU_ROOT" in
         "${TMPDIR:-/tmp}"/dxe-nix-gc-rootpaths-unit.?*) rm -rf "$RU_ROOT" ;;
@@ -43,7 +43,7 @@ trap ru_cleanup EXIT
 
 RU_FALLBACKS="/nix/var/nix/profiles/per-user/root/profile/bin:/nix/var/nix/profiles/default/bin"
 RU_REAL_FIND="$(command -v find)"
-FAKE_DIR="$(fake_tool_dir_create "$RU_ROOT")"
+FAKE_DIR="$(fake_tool_dir_create "$RU_ROOT")" || exit 1
 # The tools a "find is missing" exec has: stat and chown only.
 NOFIND_DIR="$RU_ROOT/nofind"
 export RU_REAL_FIND
@@ -88,7 +88,7 @@ done
 exec "$RU_REAL_FIND" "${args[@]}"'
 
 ru_new_case() {
-    RU_CASE="$(mktemp -d "$RU_ROOT/case.XXXXXX")"
+    dxe_test_mktemp_dir RU_CASE "$RU_ROOT/case.XXXXXX"
     RU_STORE="$RU_CASE/nix/store"
     RU_LOG="$RU_CASE/nix/var/log/nix"
     RU_CHOWN_LOG="$RU_CASE/chown.log"

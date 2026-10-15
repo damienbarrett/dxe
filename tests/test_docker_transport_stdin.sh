@@ -21,9 +21,9 @@ source "$BASE_DIR/bin/lib/dx-runtime.sh"
 
 test_section "Docker transport: non-stdin ssh calls never consume the caller's stdin (WP-T1)"
 
-SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/dxe-docker-stdin.XXXXXX")"
+dxe_test_mktemp_dir SCRATCH "${TMPDIR:-/tmp}/dxe-docker-stdin.XXXXXX"
 trap 'rm -rf "$SCRATCH"' EXIT
-TOOLS="$(fake_tool_dir_create "$SCRATCH")"
+TOOLS="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 LOG="$SCRATCH/calls"
 mkdir -p "$LOG"
 # A fake ssh that records each call's command string and, separately, every

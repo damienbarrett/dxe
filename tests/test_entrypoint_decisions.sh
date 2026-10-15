@@ -17,7 +17,8 @@ source "$BASE_DIR/bin/lib/dx-host-util.sh"
 source "$BASE_DIR/bin/lib/dx-container.sh"
 test_section "Entrypoint decisions (dx connect-or-bring-up, profile helpers)"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-entrypoint.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-entrypoint.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 unset DX_PROFILES_DIR
 export ENTRY_TEST_LOG="$fixture/log"

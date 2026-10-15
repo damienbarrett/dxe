@@ -51,7 +51,8 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     test_section "Docker-ssh runtime adapter (Branch 11 / Phase 2) -- lock"
 fi
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-docker-adapter.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-docker-adapter.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 
 # WP3.4 (Fable A1): dx_runtime_docker_discover_daemon_id now persists a
@@ -94,7 +95,7 @@ expect_reject() { local label="$1"; shift; if "$@" >/dev/null 2>&1; then test_fa
 # ...) can never be found ahead of, or instead of, a fixture's own fakes.
 new_tool_dir() {
     local dir
-    dir="$(fake_tool_dir_create "$fixture")"
+    dir="$(fake_tool_dir_create "$fixture")" || exit 1
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
     # WP3.4 (Fable A1): clear any daemon-identity cache a PRIOR scenario in
     # this file left on disk (under the private HOME set up above) before
@@ -136,7 +137,7 @@ tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
 
 # Acquire: succeeds, prints the owner token it just claimed.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1" = create ] && [ "$2" = --name ] && [ "$3" = dxe-lock-dxe-fixture-nas.invalid__dx-qnap ] && exit 0; echo "UNMATCHED: $*" >&2; exit 99'
     PATH="$dir:/usr/bin:/bin"
@@ -151,7 +152,7 @@ tailnet_fixture_addr() { printf '%s.%s.%s.%s' 100 "$1" "$2" "$3"; }
 # 4) -- proven via the shared dx_runtime_docker_label_flags helper, not a
 # hand-duplicated label list.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/lock-acquire-argv.log"
     fake_tool_write "$dir" docker "
@@ -173,7 +174,7 @@ printf '%s\n' \"\$@\" > '$argv_log'
 # The lock container is never started, so it gets no hostname flag (only the
 # guest container does; see test_docker_adapter_lifecycle.sh).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/lock-acquire-nohostname.log"
     fake_tool_write "$dir" docker "
@@ -191,7 +192,7 @@ printf '%s\n' \"\$@\" > '$argv_log'
 
 # Acquire: fails (name conflict) when already held.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'echo "Error: Conflict. The container name ... is already in use" >&2; exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -206,7 +207,7 @@ printf '%s\n' \"\$@\" > '$argv_log'
 # base reference, never $DX_IMAGE -- the profile's own image is a local-only
 # tag that does not exist (and cannot be pulled) before dx-create-image.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/lock-acquire-image.log"
     fake_tool_write "$dir" docker "
@@ -225,7 +226,7 @@ printf '%s\\n' \"\${!#}\" > '$argv_log'
 # fake daemon only knows the pinned base image (create of any other image
 # fails like a missing, un-pullable local tag), and the acquire succeeds.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker "
 [ \"\$1\" = create ] || { echo UNMATCHED >&2; exit 99; }
@@ -243,7 +244,7 @@ echo \"Unable to find image '\${!#}' locally\" >&2; exit 1
 # error (no guessing, no docker call at all), for a missing Containerfile
 # and for an unset DX_CONTEXT_DIR alike.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/lock-acquire-noref.log"
     : > "$argv_log"
@@ -263,7 +264,7 @@ echo \"Unable to find image '\${!#}' locally\" >&2; exit 1
 # Acquire: held case still refuses and prints the owner metadata (directly,
 # not only through dx_lifecycle_lock_acquire).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -284,7 +285,7 @@ esac'
 # acquired BEFORE dx-create-image (WP6.5) and the bring-up still runs
 # dx-create-keys -> ... -> dx-start-container in order, then dx-ssh.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     flow_log="$fixture/dx-new-profile-flow.log"
     : > "$flow_log"
@@ -317,7 +318,7 @@ esac
 
 # Audit: "not held" when absent.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -329,7 +330,7 @@ esac
 
 # Audit: "held by ... since ..." when present. (owner|created -- 2 fields)
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '[ "$1 $2" = "container inspect" ] && echo "somehost:123:456:20260927T000000Z|2026-09-27T00:00:00Z"'
     PATH="$dir:/usr/bin:/bin"
@@ -346,7 +347,7 @@ esac
 # dx_runtime_docker_container_labels' managed|schema|profile|role shape
 # used elsewhere).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -362,7 +363,7 @@ esac'
 
 # Release: refuses when labelled for a different profile.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -379,7 +380,7 @@ esac'
 
 # Release: refuses when an expected owner is given and does not match.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -397,7 +398,7 @@ esac'
 # --- bin/dx-lock end to end --------------------------------------------
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker 'exit 1'
     PATH="$dir:/usr/bin:/bin"
@@ -407,7 +408,7 @@ esac'
 [ "$?" -eq 0 ] && test_pass "bin/dx-lock refuses for DX_RUNTIME=apple" || test_fail "bin/dx-lock refuses for DX_RUNTIME=apple"
 
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -426,7 +427,7 @@ esac'
 # -- release is never reached, so the fake never needs to answer its
 # 4-field shape here.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -446,7 +447,7 @@ esac'
 # requested --format string, since both are the same "container inspect"
 # verb with a different --format argument.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     fake_tool_write "$dir" docker '
 case "$1 $2" in
@@ -478,7 +479,7 @@ esac'
 # exactly one create, then exactly one rm, and DXE_LIFECYCLE_LOCK_OWNER is
 # set only in between.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/lifecycle-lock-direct.log"
     fake_tool_write "$dir" docker "
@@ -507,7 +508,7 @@ esac
 # process is long gone (this fixture's own token names a PID this test
 # never started).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/lifecycle-lock-held.log"
     fake_tool_write "$dir" docker "
@@ -537,7 +538,7 @@ esac
 # release responsibility (DXE_LIFECYCLE_LOCK_HELD) belongs only to whichever
 # frame actually performed the acquire.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/lifecycle-lock-nested.log"
     fake_tool_write "$dir" docker "printf '%s\\n' \"\$*\" >> '$argv_log'; exit 99"
@@ -561,7 +562,7 @@ esac
 # inherit" shape, exercised here through a real process boundary rather
 # than the single in-process check above).
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/lifecycle-lock-fork.log"
     fake_tool_write "$dir" docker "
@@ -669,7 +670,7 @@ esac
 # dx-create-container: image exists, container absent -- would otherwise
 # proceed straight to the real create.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/wp65-create-container-lock-held.log"
     dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 0 1
@@ -683,7 +684,7 @@ esac
 # dx-start-container: container already exists -- would otherwise proceed
 # to the nix claim and dx_runtime_container_start.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/wp65-start-container-lock-held.log"
     dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 1 1
@@ -697,7 +698,7 @@ esac
 # dx-stop-container: the lock is acquired right after preflight, before
 # container_stop_bounded ever asks whether the container exists.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/wp65-stop-container-lock-held.log"
     dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 1 1
@@ -711,7 +712,7 @@ esac
 # dx-destroy-container: container exists -- would otherwise proceed to
 # container_is_running/stop/delete.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/wp65-destroy-container-lock-held.log"
     dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 1 1
@@ -727,7 +728,7 @@ esac
 # at all) and by dx-destroy-container/dx-destroy-image's own "does not
 # exist"/"Removing" prose never appearing, since neither script ran.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/wp65-recreate-lock-held.log"
     dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 0 1
@@ -744,7 +745,7 @@ esac
 # container_system_ensure_started or any of its child scripts
 # (dx-create-keys/dx-create-image/.../dx-start-container) ever run.
 (
-    dir="$(new_tool_dir)"
+    dir="$(new_tool_dir)" || exit 1
     fake_qnap_ssh_write "$dir"
     argv_log="$fixture/wp65-dx-lock-held.log"
     dxe_wp65_write_lock_held_docker "$dir" "$argv_log" 0 1

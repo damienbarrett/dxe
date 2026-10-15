@@ -23,7 +23,8 @@ source "$SCRIPT_DIR/test_helpers.sh"
 source "$BASE_DIR/bin/lib/dx-host-util.sh"
 test_section "Host Util: dx_wait_until"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-host-util.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-host-util.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 
 # (1) A predicate that never succeeds waits out the full bound: exactly
