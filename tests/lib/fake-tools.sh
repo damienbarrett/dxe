@@ -12,7 +12,7 @@ FAKE_TOOLS_FAIL_CLOSED_LIST="ssh scp sftp docker tailscale container nix curl"
 fake_tool_dir_create() {
     local parent="${1:-${TMPDIR:-/tmp}}" directory fake_tool_name
     directory="$(mktemp -d "$parent/dxe-fake-tools.XXXXXX" 2>/dev/null)" && [ -n "$directory" ] || {
-        echo "fake_tool_dir_create: cannot create a temporary directory under $parent" >&2
+        echo "fake_tool_dir_create: cannot create a temporary directory from dxe-fake-tools.XXXXXX under $parent" >&2
         return 1
     }
     for fake_tool_name in $FAKE_TOOLS_FAIL_CLOSED_LIST; do

@@ -18,7 +18,7 @@ PERSIST_FIXTURE_NAS_HOST="dxe-fixture-nas.invalid"
 persist_fixture_root_create() {
     local parent="${1:-${TMPDIR:-/tmp}}" root
     root="$(mktemp -d "$parent/dxe-persist-share.XXXXXX" 2>/dev/null)" && [ -n "$root" ] || {
-        echo "persist_fixture_root_create: cannot create a temporary directory under $parent" >&2
+        echo "persist_fixture_root_create: cannot create a temporary directory from dxe-persist-share.XXXXXX under $parent" >&2
         return 1
     }
     printf '%s\n' "$root"
@@ -136,7 +136,7 @@ persist_fixture_nas_create() {
             ;;
     esac
     tools="$(fake_tool_dir_create "$parent" 2>/dev/null)" && [ -n "$tools" ] || {
-        echo "persist_fixture_nas_create: cannot create a temporary directory under $parent" >&2
+        echo "persist_fixture_nas_create: cannot create a temporary directory from dxe-fake-tools.XXXXXX under $parent" >&2
         return 1
     }
     fake_qnap_ssh_write "$tools"
