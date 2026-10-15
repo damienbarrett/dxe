@@ -75,7 +75,7 @@ source "$SCRIPT_DIR/lib/fake-tools.sh"
 
 test_section "WP9.1: final /persist host-access documentation"
 
-TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-final-docs.XXXXXX")"
+dxe_test_mktemp_dir TMP_ROOT "${TMPDIR:-/tmp}/dxe-final-docs.XXXXXX"
 trap 'rmdir "$TMP_ROOT" 2>/dev/null || :' EXIT
 SEC_FILE="$TMP_ROOT/section"
 cleanup_section() { [ ! -f "$SEC_FILE" ] || rm -f "$SEC_FILE"; }
@@ -187,7 +187,7 @@ done
 check_has "$CF" "DX_PERSIST_FRESH_START" "configuration: DX_PERSIST_FRESH_START is described"
 
 # --- bin/dx-recreate: banner (behaviour) and header comment ---
-FAKES="$(fake_tool_dir_create "$TMP_ROOT")"
+FAKES="$(fake_tool_dir_create "$TMP_ROOT")" || exit 1
 HOME_DIR="$TMP_ROOT/home"
 mkdir -p "$HOME_DIR"
 BANNER="$(env -i PATH="$FAKES:/usr/bin:/bin" HOME="$HOME_DIR" "$BASE_DIR/bin/dx-recreate" 2>/dev/null </dev/null | sed -n 1p)"

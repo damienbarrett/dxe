@@ -23,7 +23,8 @@ source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 
 test_section "WP4.3: start decision helpers (in-process)"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-persist-start-unit.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-persist-start-unit.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 
 DX_CONTAINER_NAME=dx-u DX_REMOTE_HOST=nas-u.invalid DX_PERSIST_VOLUME=dx-u-persist
@@ -32,7 +33,7 @@ unset DX_PERSIST_FRESH_START DX_PERSIST_HOST_MOUNT_SENTINEL
 DIR=/share-u/dxe/dx-u/persist
 
 # Recording stubs for every boundary a pure helper must not touch.
-BIN="$(fake_tool_dir_create "$fixture")"
+BIN="$(fake_tool_dir_create "$fixture")" || exit 1
 CALLS="$fixture/calls"
 : >"$CALLS"
 for t in ssh docker container mkdir mv rm chmod touch; do

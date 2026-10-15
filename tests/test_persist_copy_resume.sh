@@ -126,7 +126,7 @@ source "$BASE_DIR/bin/lib/dx-config.sh"
 
 test_section "WP6.4c: resumable, mutually exclusive copies"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
@@ -151,7 +151,7 @@ MANIFEST="$CONTAINER_DIR/scripts/lib/dx-persist-manifest.sh"
 # event line, answers the DQ6 label inspects, the guest's state, the remote
 # lock, `ps -a` (from ps.<name> / ps.fail.<name>) and `run` (run.out /
 # run.rc). Anything else is "other" and exits 99.
-TOOLS="$(fake_tool_dir_create "$SCRATCH")"
+TOOLS="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 fake_tool_write "$TOOLS" ssh 'last=""
 for a in "$@"; do last="$a"; done
 eval "set -- $last"
@@ -232,7 +232,7 @@ exit 99'
 
 # A fresh recording area, with this profile's persist and nix volumes labelled.
 new_fake() {
-    FAKE_DOCKER_DIR="$(mktemp -d "$SCRATCH/dxe-fake-docker.XXXXXX")"
+    dxe_test_mktemp_dir FAKE_DOCKER_DIR "$SCRATCH/dxe-fake-docker.XXXXXX"
     mkdir "$FAKE_DOCKER_DIR/labels"
     : >"$FAKE_DOCKER_DIR/events"
     set_labels dx-fix-persist persist

@@ -83,7 +83,8 @@ source "$BASE_DIR/container/dx-nixos-26.05/scripts/lib/dx-persist-marker.sh"
 
 test_section "WP5.3: reuse of the host directory after a factory reset"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-persist-reuse.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-persist-reuse.XXXXXX"
 trap 'persist_fixture_cleanup "$fixture"' EXIT
 NAS="$PERSIST_FIXTURE_NAS_HOST"
 PROFILE="${NAS}__dx-hp"
@@ -105,9 +106,9 @@ STUB_NAMES="rm rmdir mv chmod chown find rsync unlink ln mkdir mktemp touch cp t
 # Sets ROOT TOOLS RBIN DLOG RMLOG CRLOG ARGV DESTLOG VOLS STATE.
 new_world() {
     local tool real
-    ROOT="$(persist_fixture_root_create "$fixture")"
-    TOOLS="$(persist_fixture_nas_create "$ROOT" "$fixture")"
-    RBIN="$(mktemp -d "$fixture/dxe-remote-bin.XXXXXX")"
+    ROOT="$(persist_fixture_root_create "$fixture")" || exit 1
+    TOOLS="$(persist_fixture_nas_create "$ROOT" "$fixture")" || exit 1
+    dxe_test_mktemp_dir RBIN "$fixture/dxe-remote-bin.XXXXXX"
     DLOG="$RBIN/docker.log"; RMLOG="$RBIN/volume-rm.log"; CRLOG="$RBIN/volume-create.log"
     ARGV="$RBIN/create-argv.log"; DESTLOG="$RBIN/destructive.log"
     VOLS="$RBIN/vols"; STATE="$RBIN/state"

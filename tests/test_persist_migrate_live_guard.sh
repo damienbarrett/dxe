@@ -2801,7 +2801,7 @@ if bash "$purity_probe" "$SCRIPT_DIR/lib/persist-live.sh" "$SCRIPT_DIR/lib/persi
 else test_fail "tests/lib/persist-migrate-live.sh is import-only (got: $(cat "$SCRATCH/purity.out"))"; fi
 
 # --- the live suite's gates (fail-closed fakes for every network tool) ---------------------------
-fakes="$(fake_tool_dir_create "$SCRATCH")"
+fakes="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 transcript="$SCRATCH/remote-transcript"
 # The transcript path is written into each fake (not passed in the
 # environment): the production-inventory runner starts dx-persist-inventory

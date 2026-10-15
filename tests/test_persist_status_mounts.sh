@@ -79,7 +79,8 @@ source "$BASE_DIR/bin/lib/dx-runtime.sh"
 
 test_section "WP3.4: actual /persist mounts, dx-status section, start warning"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-persist-status.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-persist-status.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/home"
 
@@ -87,7 +88,7 @@ DOCKER_FORMAT='{{range .Mounts}}{{.Type}}|{{if eq .Type "volume"}}{{.Name}}{{els
 
 # --- 1. Docker adapter -------------------------------------------------------
 
-TOOLS="$(fake_tool_dir_create "$fixture")"
+TOOLS="$(fake_tool_dir_create "$fixture")" || exit 1
 DLOG="$fixture/docker.log"; SLOG="$fixture/ssh.log"
 : > "$DLOG"; : > "$SLOG"
 fake_qnap_ssh_write "$TOOLS"
@@ -136,7 +137,7 @@ fi
 
 # --- 2. Apple adapter --------------------------------------------------------
 
-ATOOLS="$(fake_tool_dir_create "$fixture")"
+ATOOLS="$(fake_tool_dir_create "$fixture")" || exit 1
 ALOG="$fixture/container.log"; : > "$ALOG"
 APPLE_VOL_COMPACT='[{"status":"running","configuration":{"id":"dx-vol","mounts":[{"type":{"virtiofs":{}},"source":"/Users/fix/ws","destination":"/workspace","options":["ro"]},{"type":{"volume":{"name":"dx-persist","source":"/vol/dx-persist/volume.img","format":"ext4"}},"source":"/vol/dx-persist/volume.img","destination":"/persist","options":[]}]}}]'
 fake_tool_write "$ATOOLS" container "printf '%s\\n' \"\$*\" >> '$ALOG'

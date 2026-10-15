@@ -124,7 +124,7 @@ source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 
 test_section "WP4.2: NAS directory operations"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
@@ -164,8 +164,8 @@ physical() { (cd -P -- "$1" && pwd -P); }
 file_eq_out() { file_eq "$1" "$3" "$2"; }
 
 # --- NAS fake with a recording ssh in front --------------------------------
-ROOT0="$(persist_fixture_root_create "$SCRATCH")"
-TOOLS="$(persist_fixture_nas_create "$ROOT0" "$SCRATCH")"
+ROOT0="$(persist_fixture_root_create "$SCRATCH")" || exit 1
+TOOLS="$(persist_fixture_nas_create "$ROOT0" "$SCRATCH")" || exit 1
 REC="$SCRATCH/rec-bin"
 RECLOG="$SCRATCH/rec-log"
 mkdir -p "$REC" "$RECLOG"
@@ -196,10 +196,10 @@ rec_count() { find "$RECLOG" -name '*.cmd' | wc -l | tr -d ' '; }
 
 # A fresh share root with its own NAS fake (so tree assertions are exact).
 new_root() { # prints root
-    persist_fixture_root_create "$SCRATCH"
+    persist_fixture_root_create "$SCRATCH" || return 1
 }
 use_root() { # ROOT: re-point TOOLS (the fake's cwd) at ROOT
-    TOOLS="$(persist_fixture_nas_create "$1" "$SCRATCH")"
+    TOOLS="$(persist_fixture_nas_create "$1" "$SCRATCH")" || exit 1
     reclog_reset
 }
 tree_of() { (cd "$1" && find . | LC_ALL=C sort); }
@@ -296,7 +296,7 @@ done
 test_section "WP4.2: Apple answers unsupported and makes no call"
 apple_cases() {
     local calls="$SCRATCH/apple-calls" tools root="$ROOT0"
-    tools="$(fake_tool_dir_create "$SCRATCH")"
+    tools="$(fake_tool_dir_create "$SCRATCH")" || exit 1
     : >"$calls"
     local t
     for t in container ssh docker; do
@@ -325,7 +325,7 @@ apple_cases
 test_section "WP4.2: probe reports directory state, marker and canonical root"
 probe_cases() {
     local root out rc canon g="$GUEST" d
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     use_root "$root"
     canon="$(physical "$root")"
 
@@ -399,7 +399,7 @@ probe_cases
 test_section "WP4.2: probe's mounted flag fails closed on a sentinel file"
 mount_cases() {
     local root canon n=".share-mounted" S="share-mounted" rc link
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     use_root "$root"
     canon="$(physical "$root")"
     nas dx_runtime_host_dir_probe "$root" "$GUEST" >"$SCRATCH/probe.out" 2>/dev/null
@@ -468,7 +468,7 @@ sentinel_field_cases
 test_section "WP4.2: create makes the directory and a valid marker, nothing else"
 create_cases() {
     local root canon d out rc
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     use_root "$root"
     canon="$(physical "$root")"
     d="$root/dxe/$GUEST/persist"
@@ -506,7 +506,7 @@ create_cases() {
 
     # Existing symlink at the path is also refused, and not followed.
     local root2 target
-    root2="$(new_root)"
+    root2="$(new_root)" || exit 1
     use_root "$root2"
     target="$root2/elsewhere"
     mkdir -p "$target" "$root2/dxe/$GUEST"
@@ -518,7 +518,7 @@ create_cases() {
 
     # Invalid marker text: refused on the host, no ssh call, nothing created.
     local root3
-    root3="$(new_root)"
+    root3="$(new_root)" || exit 1
     use_root "$root3"
     nas dx_runtime_host_dir_create "$root3" "$GUEST" "schema=1${NL}guest=$GUEST${NL}state=bogus" >/dev/null 2>"$SCRATCH/create.err"
     rc=$?
@@ -539,7 +539,7 @@ create_cases
 test_section "WP4.2: spaces and a leading dash survive quoting"
 quoting_cases() {
     local root rel="-dash root" canon d out rc
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     mkdir -p "$root/$rel"
     use_root "$root"
     canon="$(physical "$root/$rel")"
@@ -578,7 +578,7 @@ quoting_cases
 test_section "WP4.2: marker_write replaces the marker atomically"
 marker_write_cases() {
     local root d rc before
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     use_root "$root"
     d="$root/dxe/$GUEST/persist"
     mkdir -p "$d"
@@ -648,7 +648,7 @@ marker_write_cases
 test_section "WP4.2: usage prints du -sk style output"
 usage_cases() {
     local root d out rc
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     use_root "$root"
     d="$root/dxe/$GUEST/persist"
     mkdir -p "$d"
@@ -683,7 +683,7 @@ nonzero() { # LABEL STATUS
 nonempty_file() { # LABEL FILE
     if [ -s "$2" ]; then test_pass "$1"; else test_fail "$1 (empty)"; fi
 }
-outside_new() { mktemp -d "$SCRATCH/dxe-outside.XXXXXX"; }
+outside_new() { mktemp -d "$SCRATCH/dxe-outside.XXXXXX" || return 1; }
 same_link() { # LABEL PATH TARGET: PATH is still a symlink to exactly TARGET
     if [ -L "$2" ] && [ "$(readlink "$2")" = "$3" ]; then test_pass "$1"; else test_fail "$1"; fi
 }
@@ -801,12 +801,12 @@ test_section "WP4.2: marker_write replaces only a missing or regular-file marker
 slot_refused() {
     local mode="$1" kind="$2" root d out link="" rc before_root before_out label
     label="[$mode] marker slot is $kind"
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     use_root "$root"
     d="$root/dxe/$GUEST/persist"
     mkdir -p "$d"
     printf 'payload\n' >"$d/payload"
-    out="$(outside_new)"
+    out="$(outside_new)" || exit 1
     case "$kind" in
         "a symlink to a directory") link="$out"; ln -s "$link" "$d/$MARKER_NAME" ;;
         "a symlink to a file") printf 'victim\n' >"$out/victim"; link="$out/victim"; ln -s "$link" "$d/$MARKER_NAME" ;;
@@ -841,7 +841,7 @@ slot_refused() {
 slot_replaced() {
     local mode="$1" kind="$2" root d rc label
     label="[$mode] marker slot is $kind"
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     use_root "$root"
     d="$root/dxe/$GUEST/persist"
     mkdir -p "$d"
@@ -870,7 +870,7 @@ test_section "WP4.2: create makes the leaf with mkdir, then marks it (F2)"
 create_marks() {
     local mode="$1" root d rc label
     label="[$mode] create"
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     use_root "$root"
     d="$root/dxe/$GUEST/persist"
     : >"$SCRATCH/mvrec.log"
@@ -887,7 +887,7 @@ create_marks() {
 create_mark_fails() {
     local mode="$1" root d rc label
     label="[$mode] create whose marker mv fails"
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     use_root "$root"
     d="$root/dxe/$GUEST/persist"
     : >"$SCRATCH/mvfail.log"
@@ -917,12 +917,12 @@ create_mark_fails() {
 create_race() {
     local mode="$1" race="$2" root d out rc label parent flag
     label="[$mode] create racing $race"
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     use_root "$root"
     d="$root/dxe/$GUEST/persist"
     mkdir -p "$root/dxe/$GUEST"
     parent="$(physical "$root/dxe/$GUEST")"
-    out="$(outside_new)"
+    out="$(outside_new)" || exit 1
     flag="$SCRATCH/race.$race.$mode.fired"
     rm -f "$flag"
     DXE_RACE_MODE="$race" DXE_RACE_PARENT="$parent" DXE_RACE_OUTSIDE="$out" DXE_RACE_FLAG="$flag" \
@@ -954,11 +954,11 @@ create_race() {
 create_existing() {
     local mode="$1" kind="$2" root d out rc before label
     label="[$mode] create over a leaf that is $kind"
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     use_root "$root"
     d="$root/dxe/$GUEST/persist"
     mkdir -p "$root/dxe/$GUEST"
-    out="$(outside_new)"
+    out="$(outside_new)" || exit 1
     case "$kind" in
         "a regular file") printf 'precious\n' >"$d" ;;
         "a FIFO") mkfifo "$d" ;;
@@ -982,9 +982,9 @@ create_existing() {
 create_level_link() {
     local mode="$1" level="$2" root out rc before label
     label="[$mode] create under a symlinked $level level"
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     use_root "$root"
-    out="$(outside_new)"
+    out="$(outside_new)" || exit 1
     if [ "$level" = dxe ]; then
         ln -s "$out" "$root/dxe"
     else
@@ -1026,14 +1026,14 @@ level_probe() {
 }
 level_cases() {
     local mode="$1" root out1 out2 before1 before2
-    root="$(new_root)"
+    root="$(new_root)" || exit 1
     use_root "$root"
     # The link targets hold a marked, populated persist directory for GUEST.
-    out1="$(outside_new)"
+    out1="$(outside_new)" || exit 1
     mkdir -p "$out1/$GUEST/persist"
     printf '%s\n' "$MARKER_TEXT" >"$out1/$GUEST/persist/$MARKER_NAME"
     printf 'data\n' >"$out1/$GUEST/persist/file"
-    out2="$(outside_new)"
+    out2="$(outside_new)" || exit 1
     mkdir -p "$out2/persist"
     printf '%s\n' "$MARKER_TEXT" >"$out2/persist/$MARKER_NAME"
     printf 'data\n' >"$out2/persist/file"
@@ -1066,15 +1066,15 @@ test_section "WP4.2: an empty or \"-\" ROOT/PATH is refused on the host, with no
 # These calls must never reach a shell: ssh only records (exit 99), and
 # recording no-op rm/chmod/chown/mv/find stand first on PATH; the cwd and
 # OLDPWD are empty scratch directories that must stay empty.
-NORUN_TOOLS="$(fake_tool_dir_create "$SCRATCH")"
+NORUN_TOOLS="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 NORUN_SSH_LOG="$SCRATCH/norun-ssh.log"
 NORUN_TOOL_LOG="$SCRATCH/norun-tools.log"
 fake_tool_write "$NORUN_TOOLS" ssh "$(printf 'printf "%%s\\n" "$*" >> %q\nexit 99' "$NORUN_SSH_LOG")"
 for t in rm chmod chown mv find; do
     fake_tool_write "$NORUN_TOOLS" "$t" "$(printf 'printf "%%s %%s\\n" %q "$*" >> %q\nexit 0' "$t" "$NORUN_TOOL_LOG")"
 done
-F4_CWD="$(mktemp -d "$SCRATCH/dxe-f4-cwd.XXXXXX")"
-F4_OLD="$(mktemp -d "$SCRATCH/dxe-f4-oldpwd.XXXXXX")"
+dxe_test_mktemp_dir F4_CWD "$SCRATCH/dxe-f4-cwd.XXXXXX"
+dxe_test_mktemp_dir F4_OLD "$SCRATCH/dxe-f4-oldpwd.XXXXXX"
 nas_norun() {
     (
         cd "$F4_OLD" && cd "$F4_CWD" || exit 1

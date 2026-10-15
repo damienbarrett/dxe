@@ -69,7 +69,7 @@ source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 
 test_section "WP6.5b: rollback hardening"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
@@ -92,7 +92,7 @@ export DX_RUNTIME DX_REMOTE_HOST DX_CONTAINER_NAME DX_GUEST_SYSTEM DX_PERSIST_VO
 export DX_PERSIST_HOST_ROOT DX_PERSIST_HOST_MOUNT_SENTINEL DX_IMAGE DXE_RUNTIME_DOCKER_BIN XDG_STATE_HOME
 
 # Every runtime tool refuses and records: nothing here may reach a host.
-BIN="$(fake_tool_dir_create "$SCRATCH")"
+BIN="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 CALLS="$SCRATCH/calls"
 : >"$CALLS"
 for t in ssh docker container; do
@@ -145,7 +145,7 @@ status=ok'
 # default 0) and P_CLOCK (the controller's UTC time; default the real one).
 # Sets RC OUT ERR SEQ OPSEQ LEAF CALLED.
 rb_case() {
-    R="$(share)"
+    R="$(share)" || exit 1
     LEAF="$R/dxe/$G/persist"
     mkdir -p "$LEAF"
     printf '%s\n' "$READY" >"$LEAF/$MARKER_NAME"

@@ -144,7 +144,7 @@ source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 
 test_section "WP4.3: start decision and host checks"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
@@ -259,7 +259,7 @@ row "report with its header lines out of order" refuse:root no no "" "$(printf '
 row "a probe error message instead of a report" refuse:root no no "" "dx: not a directory: /fixture/share"
 
 # The decision reads its OVERRIDE argument only, and calls nothing.
-PURE_BIN="$(fake_tool_dir_create "$SCRATCH")"
+PURE_BIN="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 PURE_LOG="$SCRATCH/pure.log"
 : >"$PURE_LOG"
 for t in ssh docker container mkdir mv rm chmod; do
@@ -318,7 +318,7 @@ else
 fi
 
 REC_CALLS="$SCRATCH/rec-calls"
-REC_BIN="$(fake_tool_dir_create "$SCRATCH")"
+REC_BIN="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 for t in ssh docker container; do
     fake_tool_write "$REC_BIN" "$t" "echo $t >> '$REC_CALLS'; exit 99"
 done
@@ -399,8 +399,8 @@ exit 0'
 N=0
 world() {
     N=$((N + 1))
-    ROOT="$(persist_fixture_root_create "$SCRATCH")"
-    TOOLS="$(persist_fixture_nas_create "$ROOT" "$SCRATCH")"
+    ROOT="$(persist_fixture_root_create "$SCRATCH")" || exit 1
+    TOOLS="$(persist_fixture_nas_create "$ROOT" "$SCRATCH")" || exit 1
     fake_tool_write "$TOOLS" docker "$DOCKER_FAKE"
     LOG="$SCRATCH/log.$N"
     : >"$LOG"

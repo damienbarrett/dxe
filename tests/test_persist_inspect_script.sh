@@ -136,7 +136,7 @@ test_section "WP2.1: QNAP persist inspection script"
 
 SUT="$BASE_DIR/tests/qnap/phase1-persist-inspect.sh"
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/dxe-inspect-test.XXXXXX")"
+dxe_test_mktemp_dir WORK "${TMPDIR:-/tmp}/dxe-inspect-test.XXXXXX"
 trap 'rm -rf "$WORK"' EXIT
 
 FAKE_DOCKER="/opt/fake/docker"

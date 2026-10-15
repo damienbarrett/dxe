@@ -66,7 +66,8 @@ source "$BASE_DIR/container/dx-nixos-26.05/scripts/lib/dx-persist-marker.sh"
 test_section "WP5.1: destroy and reset keep the host directory and persist volumes"
 
 GOLDEN_DIR="$SCRIPT_DIR/fixtures/persist-destroy-reset"
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-persist-destroy.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-persist-destroy.XXXXXX"
 trap 'persist_fixture_cleanup "$fixture"' EXIT
 mkdir -p "$fixture/home/keys" "$fixture/state"
 PROFILE=dxe-fixture-nas.invalid__dx-hp
@@ -80,9 +81,9 @@ STUB_NAMES="rm rmdir mv chmod chown find rsync unlink ln"
 # state. Sets ROOT TOOLS RBIN DLOG RMLOG DESTLOG VOLS SSHLOG.
 new_case() {
     local tool real
-    ROOT="$(persist_fixture_root_create "$fixture")"
-    TOOLS="$(persist_fixture_nas_create "$ROOT" "$fixture")"
-    RBIN="$(mktemp -d "$fixture/dxe-remote-bin.XXXXXX")"
+    ROOT="$(persist_fixture_root_create "$fixture")" || exit 1
+    TOOLS="$(persist_fixture_nas_create "$ROOT" "$fixture")" || exit 1
+    dxe_test_mktemp_dir RBIN "$fixture/dxe-remote-bin.XXXXXX"
     DLOG="$RBIN/docker.log"; RMLOG="$RBIN/volume-rm.log"; DESTLOG="$RBIN/destructive.log"
     SSHLOG="$RBIN/ssh.log"; VOLS="$RBIN/vols"
     mkdir -p "$VOLS"

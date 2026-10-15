@@ -34,7 +34,7 @@ source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 
 test_section "WP6.4c: copy and verify containers (in-process)"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
@@ -46,7 +46,7 @@ DXE_RUNTIME_DOCKER_BIN=docker
 export DX_RUNTIME DX_REMOTE_HOST DX_CONTAINER_NAME DX_GUEST_SYSTEM DXE_RUNTIME_DOCKER_BIN
 
 # Every runtime tool refuses and records: nothing here may reach a host.
-BIN="$(fake_tool_dir_create "$SCRATCH")"
+BIN="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 TOOL_CALLS="$SCRATCH/tool-calls"
 for t in ssh docker container; do
     fake_tool_write "$BIN" "$t" "echo \"$t \$*\" >> '$TOOL_CALLS'; exit 99"

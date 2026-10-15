@@ -14,7 +14,8 @@ source "$BASE_DIR/bin/lib/dx-config.sh"
 
 test_section "WP3.1: host-path cross-field rules (in-process)"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-persist-config-unit.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-persist-config-unit.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/root"
 

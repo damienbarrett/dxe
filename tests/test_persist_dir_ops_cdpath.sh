@@ -39,7 +39,7 @@ source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 
 test_section "WP4.2b: NAS directory operations ignore CDPATH"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
@@ -72,7 +72,7 @@ snap() { (cd "$1" && { find . | LC_ALL=C sort; find . -type f -exec cksum {} + |
 
 # Each case builds <fixture root>/share and a decoy directory D with the
 # matching D/share/dxe/<guest>/persist tree; the ops address "share" relatively.
-new_root() { persist_fixture_root_create "$SCRATCH"; }
+new_root() { persist_fixture_root_create "$SCRATCH" || return 1; }
 
 HAVE_DASH=0
 command -v dash >/dev/null 2>&1 && HAVE_DASH=1
@@ -130,7 +130,7 @@ real_build() {
 
 for mode in $SHELL_MODES; do
     test_section "WP4.2b: probe with CDPATH set [$mode]"
-    root="$(new_root)"; decoy="$(new_root)"
+    root="$(new_root)" || exit 1; decoy="$(new_root)" || exit 1
     real_build "$root"; decoy_build "$decoy"
     before="$(snap "$decoy")"
     canon="$(physical "$root/share")"
@@ -144,7 +144,7 @@ for mode in $SHELL_MODES; do
 
     test_section "WP4.2b: create with CDPATH set [$mode]"
     for shape in leaf noleaf; do
-        root="$(new_root)"; decoy="$(new_root)"
+        root="$(new_root)" || exit 1; decoy="$(new_root)" || exit 1
         mkdir "$root/share"; decoy_build "$decoy" "$shape"
         before="$(snap "$decoy")"
         out="$(in_shell "$mode" nas_in "$root" "$decoy" dx_runtime_host_dir_create share "$GUEST" "$MARKER_NEW" 2>"$SCRATCH/err")"
@@ -161,7 +161,7 @@ for mode in $SHELL_MODES; do
     done
 
     test_section "WP4.2b: marker_write with CDPATH set [$mode]"
-    root="$(new_root)"; decoy="$(new_root)"
+    root="$(new_root)" || exit 1; decoy="$(new_root)" || exit 1
     real_build "$root"; decoy_build "$decoy"
     before="$(snap "$decoy")"
     out="$(in_shell "$mode" nas_in "$root" "$decoy" dx_runtime_host_dir_marker_write "share/dxe/$GUEST/persist" "$MARKER_NEW" 2>"$SCRATCH/err")"
@@ -176,7 +176,7 @@ for mode in $SHELL_MODES; do
     ran_under "marker_write" "$mode"
 
     test_section "WP4.2b: usage with CDPATH set [$mode]"
-    root="$(new_root)"; decoy="$(new_root)"
+    root="$(new_root)" || exit 1; decoy="$(new_root)" || exit 1
     real_build "$root"; decoy_build "$decoy"
     before="$(snap "$decoy")"
     want="$(cd "$root" && du -sk -- "share/dxe/$GUEST/persist")"

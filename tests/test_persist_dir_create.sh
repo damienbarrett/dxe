@@ -194,7 +194,7 @@ source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 
 test_section "WP4.4: directory creation and record"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
@@ -427,8 +427,8 @@ exit 0'
 N=0
 world() {
     N=$((N + 1))
-    ROOT="$(persist_fixture_root_create "$SCRATCH")"
-    TOOLS="$(persist_fixture_nas_create "$ROOT" "$SCRATCH")"
+    ROOT="$(persist_fixture_root_create "$SCRATCH")" || exit 1
+    TOOLS="$(persist_fixture_nas_create "$ROOT" "$SCRATCH")" || exit 1
     fake_tool_write "$TOOLS" docker "$DOCKER_FAKE"
     W="$SCRATCH/w.$N"
     DDIR="$W/docker"
@@ -758,7 +758,7 @@ vs_case "permission denied" unknown 1
 
 apple_vs() {
     local tools calls="$SCRATCH/apple-vs-calls" out rc
-    tools="$(fake_tool_dir_create "$SCRATCH")"
+    tools="$(fake_tool_dir_create "$SCRATCH")" || exit 1
     : >"$calls"
     fake_tool_write "$tools" container "printf '%s\n' \"\$*\" >> '$calls'; exit 0"
     for t in ssh docker; do
@@ -783,12 +783,12 @@ apple_establish() {
         test_fail "establish (apple): dx_runtime_apple_host_dir_establish is missing"
         return 0
     fi
-    tools="$(fake_tool_dir_create "$SCRATCH")"
+    tools="$(fake_tool_dir_create "$SCRATCH")" || exit 1
     : >"$calls"
     for t in container ssh docker; do
         fake_tool_write "$tools" "$t" "echo $t >> '$calls'; exit 99"
     done
-    root="$(persist_fixture_root_create "$SCRATCH")"
+    root="$(persist_fixture_root_create "$SCRATCH")" || exit 1
     : >"$root/$SENTINEL"
     out="$(DX_RUNTIME=apple DX_PERSIST_HOST_MOUNT_SENTINEL="$SENTINEL" DX_IMAGE="$IMAGE" PATH="$tools:$PATH" \
         dx_runtime_host_dir_establish create "$root" "$GUEST" "$OWNER_PIN" "$M_TEXT" 2>"$SCRATCH/apple-est.err")"

@@ -175,7 +175,7 @@ source "$BASE_DIR/bin/lib/dx-runtime.sh"
 
 test_section "WP6.3: persist inventory (R37)"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
     *) echo "unexpected scratch dir [$SCRATCH]" >&2; exit 1 ;;
@@ -212,7 +212,7 @@ tree_sig() { # DIR: path, mode, size, mtime, nlink of every entry (lstat), sorte
 ROOT="$SCRATCH/dxe-nas-root"
 mkdir "$ROOT"
 mkdir "$SCRATCH/home"
-TOOLS="$(persist_fixture_nas_create "$ROOT" "$SCRATCH")"
+TOOLS="$(persist_fixture_nas_create "$ROOT" "$SCRATCH")" || exit 1
 # docker: records every argv word NUL-separated in calls/N; `volume inspect`
 # answers from labels/<name>; `run` answers from run-<entrypoint>.out/.err/.rc,
 # <entrypoint> being the entrypoint's last path component (sh, rsync).
@@ -275,7 +275,7 @@ NIX_LABELS="true|1|$PROFILE|nix|x86_64-linux"
 export DF_LOG="$SCRATCH/df.log" DXE_FAKE_SSH_ARGV_LOG="$SCRATCH/ssh.log" APPLE_LOG="$SCRATCH/apple.log"
 
 new_case() { # fresh recording area, owned persist and nix volumes, df ok with 600000 free
-    FAKE_DOCKER_DIR="$(mktemp -d "$SCRATCH/dxe-fake-docker.XXXXXX")"
+    dxe_test_mktemp_dir FAKE_DOCKER_DIR "$SCRATCH/dxe-fake-docker.XXXXXX"
     export FAKE_DOCKER_DIR
     mkdir "$FAKE_DOCKER_DIR/calls" "$FAKE_DOCKER_DIR/labels"
     printf '%s\n' "$OWN_LABELS" >"$FAKE_DOCKER_DIR/labels/dx-fix-persist"

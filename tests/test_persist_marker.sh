@@ -63,7 +63,7 @@ test_section "WP4.1: /persist directory marker format"
 
 LIB="$BASE_DIR/container/dx-nixos-26.05/scripts/lib/dx-persist-marker.sh"
 HOSTLIB="$BASE_DIR/bin/lib/dx-persist-dir.sh"
-TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(mktemp -d)" || exit 1
 
 # Nested probes run from real files (`bash "$PROBES/Pn.sh" ...`), never inline
 # `bash -c '...'`: kcov injects code reading BASH_SOURCE, which is unset in an

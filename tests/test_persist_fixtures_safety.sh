@@ -314,7 +314,8 @@ run_jailed() {
     local tools="$1" cdmode="$2" area="$3" cwd="$4"
     shift 4
     JRC=96 JERR="jail not set up" JLOG="" JSTUBS=""
-    if ! JSTUBS="$(stubs_create "$tools")" || ! mkdir "$JSTUBS/cd-trap" || ! : > "$JSTUBS/cd.log"; then
+    JSTUBS="$(stubs_create "$tools")" || return 1
+    if ! mkdir "$JSTUBS/cd-trap" || ! : > "$JSTUBS/cd.log"; then
         return 0
     fi
     JERR="$(jail "$JSTUBS" "$tools" "$cdmode" "$area" "$cwd" "$@" 2>&1 >/dev/null </dev/null)"
@@ -488,7 +489,7 @@ done
 "$@"
 PROBE
     fi
-    JSTUBS="$(stubs_create "$tools")" || return 0
+    JSTUBS="$(stubs_create "$tools")" || return 1
     JERR="$("${BASH:-bash}" "$probe" "$lib" "$JSTUBS" "$tools" "$area" "$cwd" "$@" 2>&1 >/dev/null </dev/null)"
     JRC=$?
     JLOG="$(cat "$JSTUBS/calls.log")"
@@ -528,7 +529,7 @@ home_isolation_cases() {
     need persist_fixture_tree_build || return 0
     local iso="$SCRATCH/iso/area" r rc
     mkdir -p "$iso/dxe-home" "$iso/build"
-    r="$(persist_fixture_root_create "$iso")"
+    r="$(persist_fixture_root_create "$iso")" || exit 1
     (
         HOME="$iso/dxe-home"
         export HOME
@@ -880,7 +881,11 @@ cleanup_hardlink_jailed_case() {
     printf 'plain\n' > "$P/sub/plain"
     ln -s "$O/odir" "$P/to-odir"
     JRC=96 JERR="" JSTUBS=""
-    if ! JSTUBS="$(stubs_create "$tools")" || ! classifying_chmod_write "$JSTUBS" || ! mkdir "$JSTUBS/cd-trap"; then
+    JSTUBS="$(stubs_create "$tools")" || {
+        test_fail "B3 jailed: stubs could not be created"
+        return 1
+    }
+    if ! classifying_chmod_write "$JSTUBS" || ! mkdir "$JSTUBS/cd-trap"; then
         test_fail "B3 jailed: stubs could not be created"
         return 0
     fi
@@ -936,7 +941,7 @@ nas_relative_root_cases() {
     mkdir -p "$c/cwd/r" "$c/cdp/r" "$c/cdp2/r" "$c/cwd/-" "$c/old" "$c/elsewhere"
 
     expected="$(physical "$c/cwd/r")"
-    tools="$(builtin cd -- "$c/cwd" && CDPATH="$c/cdp" persist_fixture_nas_create r "$c")"
+    tools="$(builtin cd -- "$c/cwd" && CDPATH="$c/cdp" persist_fixture_nas_create r "$c")" || exit 1
     rc=$?
     assert_eq "relative ROOT (CDPATH set at creation): status 0" "0" "$rc"
     out="$(builtin cd -- "$c/elsewhere" && CDPATH="$c/cdp2" PATH="$tools:$PATH" \
@@ -945,7 +950,7 @@ nas_relative_root_cases() {
         "$expected${NL}$expected" "$out"
 
     expected="$(physical "$c/cwd/-")"
-    tools="$(builtin cd -- "$c/cwd" && OLDPWD="$c/old" persist_fixture_nas_create - "$c")"
+    tools="$(builtin cd -- "$c/cwd" && OLDPWD="$c/old" persist_fixture_nas_create - "$c")" || exit 1
     rc=$?
     assert_eq "ROOT - : status 0" "0" "$rc"
     out="$(builtin cd -- "$c/elsewhere" && OLDPWD="$c/old" PATH="$tools:$PATH" \

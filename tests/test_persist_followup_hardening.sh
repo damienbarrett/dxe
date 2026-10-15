@@ -134,7 +134,7 @@ source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
 
 test_section "WP6.7: follow-up hardening"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
     *) echo "unexpected scratch dir [$SCRATCH]" >&2; exit 1 ;;
@@ -142,7 +142,7 @@ esac
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 
 # Every runtime tool refuses and records: nothing here may reach a host.
-BIN="$(fake_tool_dir_create "$SCRATCH")"
+BIN="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 TOOL_LOG="$SCRATCH/tool-calls"
 for t in ssh scp sftp docker container tailscale; do
     fake_tool_write "$BIN" "$t" "echo \"$t \$*\" >> '$TOOL_LOG'; exit 99"
@@ -152,7 +152,7 @@ export PATH
 
 # Recording stubs for every destructive command, put in front of PATH for
 # each call that hands the filesystem root to a guard.
-GUARD="$(fake_tool_dir_create "$SCRATCH")"
+GUARD="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 GUARD_LOG="$SCRATCH/guard-calls"
 for t in ssh scp sftp docker container tailscale rm chmod chown mv find; do
     fake_tool_write "$GUARD" "$t" "echo \"$t \$*\" >> '$GUARD_LOG'; exit 97"
@@ -512,7 +512,7 @@ test_section "WP6.7 F: the SSH login-shell probe never reads the caller's stdin"
 
 F_DIR="$SCRATCH/f"
 mkdir -p "$F_DIR"
-F_BIN="$(fake_tool_dir_create "$SCRATCH")"
+F_BIN="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 # A recording ssh: its argv, one word per line, and every byte of its stdin.
 fake_tool_write "$F_BIN" ssh "printf '%s\n' \"\$@\" > '$F_DIR/argv'; cat > '$F_DIR/stdin'; exit 0"
 : >"$SCRATCH/f-key"

@@ -34,7 +34,7 @@ source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 
 test_section "WP6.4: migration helpers (in-process)"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
@@ -49,7 +49,7 @@ export DX_RUNTIME DX_REMOTE_HOST DX_CONTAINER_NAME DX_GUEST_SYSTEM DX_PERSIST_VO
 export DX_PERSIST_HOST_ROOT DX_PERSIST_HOST_MOUNT_SENTINEL DX_IMAGE DXE_RUNTIME_DOCKER_BIN XDG_STATE_HOME
 
 # Every runtime tool refuses and records: nothing here may reach a host.
-BIN="$(fake_tool_dir_create "$SCRATCH")"
+BIN="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 CALLS="$SCRATCH/calls"
 refusing_tools() {
     local t

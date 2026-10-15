@@ -19,7 +19,7 @@ source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 
 test_section "WP4.2: NAS directory operation edge arms"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
@@ -29,8 +29,8 @@ unset DX_PERSIST_HOST_MOUNT_SENTINEL
 GUEST="dx-fix"
 TEXT="$(dx_persist_marker_format "$GUEST" ready "" 2026-10-11T08:00:00Z)"
 
-ROOT="$(persist_fixture_root_create "$SCRATCH")"
-TOOLS="$(persist_fixture_nas_create "$ROOT" "$SCRATCH")"
+ROOT="$(persist_fixture_root_create "$SCRATCH")" || exit 1
+TOOLS="$(persist_fixture_nas_create "$ROOT" "$SCRATCH")" || exit 1
 export DX_RUNTIME=docker-ssh DX_REMOTE_HOST="$PERSIST_FIXTURE_NAS_HOST"
 PATH="$TOOLS:$PATH"
 export PATH
@@ -65,8 +65,8 @@ out="$(dx_runtime_host_dir_probe "$ROOT" "$GUEST" </dev/null 2>/dev/null)"
 if grep -Fq "marker=absent" <<<"$out"; then test_pass "probe: a symlinked marker reads as absent"; else test_fail "probe: a symlinked marker reads as absent"; fi
 
 # A symlinked dxe or guest level is refused by create, nothing written through.
-ROOT2="$(persist_fixture_root_create "$SCRATCH")"
-TOOLS="$(persist_fixture_nas_create "$ROOT2" "$SCRATCH")"
+ROOT2="$(persist_fixture_root_create "$SCRATCH")" || exit 1
+TOOLS="$(persist_fixture_nas_create "$ROOT2" "$SCRATCH")" || exit 1
 PATH="$TOOLS:$PATH"
 mkdir "$ROOT2/elsewhere"
 ln -s elsewhere "$ROOT2/dxe"
@@ -84,8 +84,8 @@ fails "marker_write: a symlinked directory is refused" dx_runtime_host_dir_marke
 if [ -z "$(find "$ROOT2/real" -mindepth 1 | head -n1)" ]; then test_pass "marker_write: nothing written through the symlink"; else test_fail "marker_write: nothing written through the symlink"; fi
 
 # create: a failing mv leaves no half-built directory behind.
-ROOT3="$(persist_fixture_root_create "$SCRATCH")"
-TOOLS="$(persist_fixture_nas_create "$ROOT3" "$SCRATCH")"
+ROOT3="$(persist_fixture_root_create "$SCRATCH")" || exit 1
+TOOLS="$(persist_fixture_nas_create "$ROOT3" "$SCRATCH")" || exit 1
 PATH="$TOOLS:$PATH"
 STUBS="$SCRATCH/stub-bin"
 mkdir -p "$STUBS"

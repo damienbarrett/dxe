@@ -19,7 +19,8 @@ source "$BASE_DIR/bin/lib/dx-container.sh"
 
 test_section "WP3.4: /persist storage helpers (in-process)"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-persist-status-unit.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-persist-status-unit.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 
 # Fakes for the runtime-touching functions the helpers call.
@@ -61,7 +62,7 @@ P_MOUNTS_RC=1
 [ -z "$(dx_persist_warn_mismatch 2>&1)" ] && test_pass "warn: silent when mounts are unreadable" || test_fail "warn: silent when unreadable"
 
 # Apple parser edge cases: escaped slashes, other types, empty and stray arrays.
-ATOOLS="$(fake_tool_dir_create "$fixture")"
+ATOOLS="$(fake_tool_dir_create "$fixture")" || exit 1
 fake_tool_write "$ATOOLS" container "cat '$fixture/inspect.json'"
 apple() { PATH="$ATOOLS:/usr/bin:/bin" dx_runtime_apple_container_mounts x; }
 printf '%s\n' '[{"configuration":{"mounts":[{"destination":"\/persist","options":["rw","ro"],"source":"\/p\\q\"r","type":{"tmpfs":{}}},{"destination":"\/n","options":[],"source":"\/s","type":{"volume":{"name":"nm"}}},{"destination":"\/o","options":[],"source":"\/s\n"}]},"other":{"mounts":[]}}]' > "$fixture/inspect.json"

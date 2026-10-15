@@ -481,7 +481,7 @@ if [ "$example_guard" = rc=0 ]; then
 else test_fail "the live suite's guard accepts the example profile as it stands (got: $example_guard)"; fi
 
 # --- the live suite's gates (fail-closed fakes for every network tool) ------
-fakes="$(fake_tool_dir_create "$SCRATCH")"
+fakes="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 transcript="$SCRATCH/remote-transcript"
 for tool in ssh scp sftp docker container tailscale curl nix ssh-keyscan; do
     fake_tool_write "$fakes" "$tool" 'printf "%s|" "${0##*/}" >>"$DXE_LIVE_GUARD_TRANSCRIPT"

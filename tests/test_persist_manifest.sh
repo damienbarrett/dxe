@@ -199,7 +199,11 @@ fi
 # shellcheck source=lib/persist-fixtures.sh
 source "$SCRIPT_DIR/lib/persist-fixtures.sh"
 
-FIXROOT="$(persist_fixture_root_create)" || FIXROOT=""
+FIXROOT="$(persist_fixture_root_create)" || {
+    test_fail "a fixture root could be created under \${TMPDIR:-/tmp}"
+    print_summary
+    exit 1
+}
 case "$FIXROOT" in
     /*/dxe-persist-share.*) : ;;
     *)

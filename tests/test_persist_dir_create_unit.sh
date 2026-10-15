@@ -31,7 +31,7 @@ source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 
 test_section "WP4.4: directory creation helpers (in-process)"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
@@ -52,7 +52,7 @@ TEXT="$(dx_persist_marker_format dx-u ready "" 2026-10-11T08:00:00Z)"
 
 # Every runtime tool refuses and records (in CALLS for the case at hand and in
 # TOOL_LOG for the whole file): nothing here may reach a host.
-BIN="$(fake_tool_dir_create "$SCRATCH")"
+BIN="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 CALLS="$SCRATCH/calls"
 TOOL_LOG="$SCRATCH/tool-log"
 : >"$TOOL_LOG"

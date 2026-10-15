@@ -83,7 +83,7 @@ rp_profile() {
 # rp_find KIND -- essentials_first_missing_optional_tool against a new fixture.
 rp_find() {
     local r
-    r="$(mktemp -d "$WORK/find-$1.XXXXXX")"
+    dxe_test_mktemp_dir r "$WORK/find-$1.XXXXXX"
     rp_profile "$r/root" "$1"
     RP_OUT="$( (
         DX_ESSENTIALS_ROOT="$r/root"
@@ -112,7 +112,7 @@ eq "both present: status 1" 1 "$RP_RC"
 # ---------------------------------------------------------------------------
 test_section "WP6.2c: install_essentials upgrades an existing profile for rsync, best effort"
 
-FAIL_CLOSED="$(fake_tool_dir_create "$WORK")"
+FAIL_CLOSED="$(fake_tool_dir_create "$WORK")" || exit 1
 PROFILE_REMOVE="nix profile remove --profile /nix/var/nix/profiles/per-user/root/profile bootstrap-essentials"
 PROFILE_INSTALL="nix profile install --profile /nix/var/nix/profiles/per-user/root/profile"
 PROFILE_ROLLBACK="nix profile rollback --profile /nix/var/nix/profiles/per-user/root/profile"
@@ -172,7 +172,7 @@ rp_run() {
     if [ -f "$dir/continued" ]; then RP_CONTINUED=yes; fi
 }
 
-C="$(mktemp -d "$WORK/up.XXXXXX")"
+dxe_test_mktemp_dir C "$WORK/up.XXXXXX"
 rp_run "$C" nixld 0
 eq "rsync upgrade: status 0" 0 "$RP_RC"
 eq "rsync upgrade: the boot continues under errexit" yes "$RP_CONTINUED"
@@ -191,7 +191,7 @@ case "$RP_PATH" in
     *) test_fail "rsync upgrade: PATH is re-resolved from the upgraded profile (PATH=$RP_PATH)" ;;
 esac
 
-C="$(mktemp -d "$WORK/fail.XXXXXX")"
+dxe_test_mktemp_dir C "$WORK/fail.XXXXXX"
 rp_run "$C" nixld 1
 eq "failed rsync upgrade: status 0 (rsync is optional)" 0 "$RP_RC"
 eq "failed rsync upgrade: the boot continues under errexit" yes "$RP_CONTINUED"
@@ -203,7 +203,7 @@ lacks "failed rsync upgrade: no Error line" "$(grep '^Error:' <<<"$RP_OUT
 $RP_ERR")" "Error:"
 has "failed rsync upgrade: the phase still completes" "$RP_OUT" "Bootstrap phase: essentials installation completed in"
 
-C="$(mktemp -d "$WORK/none.XXXXXX")"
+dxe_test_mktemp_dir C "$WORK/none.XXXXXX"
 rp_run "$C" both 0
 eq "nothing missing: status 0" 0 "$RP_RC"
 eq "nothing missing: no nix call" "" "$RP_NIX"

@@ -28,7 +28,8 @@ source "$BASE_DIR/bin/lib/dx-runtime.sh"
 
 test_section "WP3.2: runtime_host_directories capability"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-persist-capability.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-persist-capability.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/home"
 
@@ -36,7 +37,7 @@ mkdir -p "$fixture/home"
 # the transcript and exits 99, so any call is both visible and fatal.
 transcript="$fixture/transcript"
 : > "$transcript"
-tools="$(fake_tool_dir_create "$fixture")"
+tools="$(fake_tool_dir_create "$fixture")" || exit 1
 for tool in ssh scp sftp docker tailscale container nix curl; do
     fake_tool_write "$tools" "$tool" "printf '%s %s\\n' '$tool' \"\$*\" >> '$transcript'
 echo 'fake-tools: $tool must not be called' >&2

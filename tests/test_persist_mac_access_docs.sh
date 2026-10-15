@@ -63,7 +63,7 @@ REAL_SSH="$(command -v ssh || true)"
 GUEST_DOC="$BASE_DIR/docs/guest.md"
 DEFAULT_ENV="$BASE_DIR/tests/profiles/default.env"
 HEADING="## Browsing /persist from the Mac"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/dxe-mac-docs.XXXXXX")"
+dxe_test_mktemp_dir WORK "${TMPDIR:-/tmp}/dxe-mac-docs.XXXXXX"
 trap 'rm -rf "$WORK"' EXIT
 
 # The default profile's documented values, read from the profile file.

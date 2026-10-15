@@ -44,10 +44,11 @@ source "$BASE_DIR/bin/lib/dx-config.sh"
 
 test_section "WP3.1: /persist host-access config fields"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-persist-config.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-persist-config.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/home" "$fixture/root" "$fixture/profiles"
-tools="$(fake_tool_dir_create "$fixture")"
+tools="$(fake_tool_dir_create "$fixture")" || exit 1
 
 expect_ok() { local label="$1"; shift; if "$@"; then test_pass "$label"; else test_fail "$label"; fi; }
 expect_reject() { local label="$1"; shift; if "$@" >/dev/null 2>&1; then test_fail "$label"; else test_pass "$label"; fi; }

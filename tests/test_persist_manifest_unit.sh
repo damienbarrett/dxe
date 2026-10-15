@@ -56,7 +56,11 @@ source "$TOOL"
 # shellcheck source=lib/persist-fixtures.sh
 source "$SCRIPT_DIR/lib/persist-fixtures.sh"
 
-FIXROOT="$(persist_fixture_root_create)" || FIXROOT=""
+FIXROOT="$(persist_fixture_root_create)" || {
+    test_fail "a private fixture root could be created"
+    print_summary
+    exit 1
+}
 case "$FIXROOT" in
     /*/dxe-persist-share.*) test_pass "a private fixture root exists" ;;
     *)

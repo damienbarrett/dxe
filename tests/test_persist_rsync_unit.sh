@@ -14,7 +14,7 @@ source "$BASE_DIR/bin/lib/dx-host-util.sh"
 source "$BASE_DIR/bin/lib/dx-runtime.sh"
 
 test_section "WP6.2: a newline in the rsync directory is refused"
-TOOLS="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rsync-unit.XXXXXX")"
+dxe_test_mktemp_dir TOOLS "${TMPDIR:-/tmp}/dxe-rsync-unit.XXXXXX"
 trap 'rm -f "$TOOLS/calls" "$TOOLS/ssh" "$TOOLS/docker" "$TOOLS/err"; rmdir "$TOOLS"' EXIT
 for t in ssh docker; do
     printf '#!/bin/sh\necho %s >> "%s/calls"\nexit 99\n' "$t" "$TOOLS" >"$TOOLS/$t"

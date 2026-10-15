@@ -173,7 +173,7 @@ source "$BASE_DIR/bin/lib/dx-runtime.sh"
 test_section "WP6.2: rsync and volume-source operations"
 
 REAL_NIX="$(command -v nix 2>/dev/null || true)"
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
     *) echo "unexpected scratch dir [$SCRATCH]" >&2; exit 1 ;;
@@ -196,7 +196,7 @@ have_fn() { type "$1" >/dev/null 2>&1; }
 # shell would) and one fake docker that records every call's argv, one word
 # per line, in $FAKE_DOCKER_DIR/calls/N, answers `volume inspect` from
 # $FAKE_DOCKER_DIR/labels/<name> and `run` from run.out / run.err / run.rc.
-TOOLS="$(fake_tool_dir_create "$SCRATCH")"
+TOOLS="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 fake_qnap_ssh_write "$TOOLS"
 fake_tool_write "$TOOLS" docker 'd="${FAKE_DOCKER_DIR:?}"
 mkdir -p "$d/calls"
@@ -237,7 +237,7 @@ RSYNC_EP=/nix/var/nix/profiles/per-user/root/profile/bin/rsync
 RUN_PREFIX="<run><--rm><--network><none><--user><0:0><--pull><never><-v><dx-fix-nix:/nix:ro>"
 
 new_fake() { # fresh recording area; sets and exports FAKE_DOCKER_DIR
-    FAKE_DOCKER_DIR="$(mktemp -d "$SCRATCH/dxe-fake-docker.XXXXXX")"
+    dxe_test_mktemp_dir FAKE_DOCKER_DIR "$SCRATCH/dxe-fake-docker.XXXXXX"
     export FAKE_DOCKER_DIR
     mkdir "$FAKE_DOCKER_DIR/calls" "$FAKE_DOCKER_DIR/labels"
 }
@@ -485,7 +485,7 @@ fi
 test_section "WP6.2: Apple answers unsupported and makes no call"
 apple_cases() {
     local calls="$SCRATCH/apple-calls" atools out err rc
-    atools="$(fake_tool_dir_create "$SCRATCH")"
+    atools="$(fake_tool_dir_create "$SCRATCH")" || exit 1
     : >"$calls"
     local t
     for t in container ssh docker; do

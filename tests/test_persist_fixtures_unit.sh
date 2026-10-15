@@ -100,7 +100,7 @@ cleanup_with_oldpwd() { # OLDPWD PATH...
 expect_refused() {
     local desc="$1" area="$2" cwd="$3" stubs err rc
     shift 3
-    stubs="$(stubs_create)" || { test_fail "$desc: stubs could not be created"; return 0; }
+    stubs="$(stubs_create)" || { test_fail "$desc: stubs could not be created"; return 1; }
     err="$(jailed "$stubs" "$area" "$cwd" "$@" 2>&1 >/dev/null)"
     rc=$?
     if [ "$rc" = 1 ] && grep -Fq refusing <<<"$err" && [ ! -s "$stubs/calls.log" ]; then
@@ -124,7 +124,7 @@ log_has_rm_of() {
 expect_accepted() {
     local desc="$1" area="$2" cwd="$3" target="$4" stubs rc
     shift 4
-    stubs="$(stubs_create)" || { test_fail "$desc: stubs could not be created"; return 0; }
+    stubs="$(stubs_create)" || { test_fail "$desc: stubs could not be created"; return 1; }
     jailed "$stubs" "$area" "$cwd" "$@" >/dev/null 2>&1
     rc=$?
     if [ "$rc" = 0 ] && log_has_rm_of "$stubs/calls.log" "$target"; then

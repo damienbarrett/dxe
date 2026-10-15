@@ -592,7 +592,7 @@ fi
 # ---------------------------------------------------------------------------
 test_section "WP1.4: aarch64 boot links nix-ld, the libraries and the marker"
 
-C="$(vs_case arm)"
+C="$(vs_case arm)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 RUN_MODE_BEFORE="$(file_mode "$C/guest-root/run")"
@@ -623,7 +623,7 @@ eq "second run: the guest tree is unchanged" "$AFTER_FIRST" "$(vs_snapshot "$C/g
 # ---------------------------------------------------------------------------
 test_section "WP1.4: x86_64 boot uses /lib64 from nix-ld's ldpath"
 
-C="$(vs_case x86)"
+C="$(vs_case x86)" || exit 1
 vs_store "$C" x86_64
 vs_stubs "$C" aarch64
 vs_run "$C" 077
@@ -633,7 +633,7 @@ ok "x86_64: no /lib was created (uname -m says aarch64; ldpath wins)" absent "$C
 # ---------------------------------------------------------------------------
 test_section "WP1.4: stale links from an earlier boot are replaced"
 
-C="$(vs_case stale)"
+C="$(vs_case stale)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 # The old loader link points at a DIRECTORY in the store (only ln -sfn
@@ -651,7 +651,7 @@ eq "stale: nothing was created inside the directory the old loader link pointed 
     "$(ls -A "$STALE_DIR" 2>&1)"
 eq "stale: the file the old libz link pointed at is untouched" "old zlib" "$(cat "$C/guest-root/old-libz" 2>&1)"
 
-C="$(vs_case dangling)"
+C="$(vs_case dangling)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 mkdir -p "$C/guest-root/lib"
@@ -664,7 +664,7 @@ test_section "WP1.4: nix-ld comes from this boot's essentials on PATH, never the
 
 # Apple-image mode (Mac guests): the volume's root profile is a stale
 # generation without nix-ld; this boot's essentials, on PATH, have it.
-C="$(vs_case appleimage)"
+C="$(vs_case appleimage)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 vs_stale_profile "$C"
@@ -672,7 +672,7 @@ vs_run "$C"
 vs_assert_configured "apple-image" "$C" /lib/ld-linux-aarch64.so.1
 
 # The root profile has nix-ld but this boot's essentials do not: no fallback.
-C="$(vs_case profileonly)"
+C="$(vs_case profileonly)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 mkdir -p "$C/store-root/nix/store/6600aaaa-dx-bootstrap-essentials/bin"
@@ -685,7 +685,7 @@ vs_assert_refused "nix-ld only in the root profile, not in this boot's essential
 
 # After an upgrade this boot, install_essentials puts the new essentials
 # first on PATH ahead of the old ones: the first nix-ld on PATH wins.
-C="$(vs_case twoess)"
+C="$(vs_case twoess)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 vs_stale_profile "$C"
@@ -698,13 +698,13 @@ vs_assert_configured "new essentials first on PATH" "$C" /lib/ld-linux-aarch64.s
 # ---------------------------------------------------------------------------
 test_section "WP1.4: a failed precondition warns, changes nothing, and boot goes on"
 
-C="$(vs_case noprofile)"
+C="$(vs_case noprofile)" || exit 1
 vs_stubs "$C" x86_64
 BEFORE="$(vs_snapshot "$C/guest-root")"
 vs_run "$C"
 vs_assert_refused "no essentials on PATH (and no profile)" "$C" "nix-ld" "$BEFORE"
 
-C="$(vs_case nonixld)"
+C="$(vs_case nonixld)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 rm -f "$C/store-root/nix/store/6666ffff-dx-bootstrap-essentials/libexec/nix-ld" \
@@ -713,7 +713,7 @@ BEFORE="$(vs_snapshot "$C/guest-root")"
 vs_run "$C"
 vs_assert_refused "nix-ld not in the profile" "$C" "nix-ld" "$BEFORE"
 
-C="$(vs_case noldpath)"
+C="$(vs_case noldpath)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 rm -f "$(vs_nixld_pkg "$C")/nix-support/ldpath"
@@ -722,7 +722,7 @@ vs_run "$C"
 vs_assert_refused "ldpath missing" "$C" "ldpath" "$BEFORE"
 
 for bad_ldpath in lib/ld-linux-aarch64.so.1 /etc/ld-linux-aarch64.so.1 /lib/../etc/ld-linux-aarch64.so.1; do
-    C="$(vs_case badldpath)"
+    C="$(vs_case badldpath)" || exit 1
     vs_store "$C" aarch64
     vs_stubs "$C" x86_64
     printf '%s\n' "$bad_ldpath" > "$(vs_nixld_pkg "$C")/nix-support/ldpath"
@@ -731,7 +731,7 @@ for bad_ldpath in lib/ld-linux-aarch64.so.1 /etc/ld-linux-aarch64.so.1 /lib/../e
     vs_assert_refused "ldpath $bad_ldpath" "$C" "ldpath" "$BEFORE"
 done
 
-C="$(vs_case nolibstdcxx)"
+C="$(vs_case nolibstdcxx)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 rm -f "$C/store-root/nix/store/5555eeee-dx-nix-ld-libraries/share/nix-ld/lib/libstdc++.so.6"
@@ -739,7 +739,7 @@ BEFORE="$(vs_snapshot "$C/guest-root")"
 vs_run "$C"
 vs_assert_refused "libstdc++ missing from the library set" "$C" "libstdc++.so.6" "$BEFORE"
 
-C="$(vs_case realloader)"
+C="$(vs_case realloader)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 mkdir -p "$C/guest-root/lib"
@@ -754,7 +754,7 @@ eq "a regular file at the loader path: its content is untouched" "a real glibc l
 # A symlink at the loader path that is not ours (its target is not under the
 # Nix store): a real glibc loader on an FHS-style base, absolute or relative,
 # or a dangling link to somewhere else. Never replaced.
-C="$(vs_case fhsloader)"
+C="$(vs_case fhsloader)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 mkdir -p "$C/guest-root/lib" "$C/guest-root/usr/lib/aarch64-linux-gnu"
@@ -764,7 +764,7 @@ BEFORE="$(vs_snapshot "$C/guest-root")"
 vs_run "$C"
 vs_assert_refused "a symlink to a distribution loader at the loader path" "$C" "/lib/ld-linux-aarch64.so.1" "$BEFORE"
 
-C="$(vs_case relloader)"
+C="$(vs_case relloader)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 mkdir -p "$C/guest-root/lib/aarch64-linux-gnu"
@@ -774,7 +774,7 @@ BEFORE="$(vs_snapshot "$C/guest-root")"
 vs_run "$C"
 vs_assert_refused "a relative symlink at the loader path" "$C" "/lib/ld-linux-aarch64.so.1" "$BEFORE"
 
-C="$(vs_case foreigndangling)"
+C="$(vs_case foreigndangling)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 mkdir -p "$C/guest-root/lib"
@@ -783,7 +783,7 @@ BEFORE="$(vs_snapshot "$C/guest-root")"
 vs_run "$C"
 vs_assert_refused "a dangling symlink outside the store at the loader path" "$C" "/lib/ld-linux-aarch64.so.1" "$BEFORE"
 
-C="$(vs_case loaderdir)"
+C="$(vs_case loaderdir)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 mkdir -p "$C/guest-root/lib/ld-linux-aarch64.so.1"
@@ -791,7 +791,7 @@ BEFORE="$(vs_snapshot "$C/guest-root")"
 vs_run "$C"
 vs_assert_refused "a directory at the loader path" "$C" "/lib/ld-linux-aarch64.so.1" "$BEFORE"
 
-C="$(vs_case markerlink)"
+C="$(vs_case markerlink)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 mkdir -p "$C/guest-root/etc"
@@ -805,7 +805,7 @@ eq "a symlink at the marker path: its target keeps mode 0600" 600 "$(file_mode "
 
 # A regular file with a second name (a hard link) at the marker path: chown
 # and chmod would change the other name too, so it is refused.
-C="$(vs_case markerhardlink)"
+C="$(vs_case markerhardlink)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 mkdir -p "$C/guest-root/var"
@@ -820,7 +820,7 @@ eq "a hard-linked file at the marker path: its other name keeps mode 0600" 600 "
 # ---------------------------------------------------------------------------
 test_section "WP1.4: a failure while linking is a warning, not a boot failure"
 
-C="$(vs_case runfile)"
+C="$(vs_case runfile)" || exit 1
 vs_store "$C" aarch64
 vs_stubs "$C" x86_64
 rmdir "$C/guest-root/run"
@@ -900,14 +900,14 @@ verify_guest_tools
 configure_timezone
 after-bootstrap_phases"
 
-C="$(vs_case phases-ok)"
+C="$(vs_case phases-ok)" || exit 1
 vs_phases "$C" 0
 eq "phases (step succeeds): bootstrap_phases returns 0" 0 "$VS_RC"
 eq "phases (step succeeds): configure_vscode_server_support runs once, right after configure_ssh" \
     "$PHASES_EXPECTED" "$(cat "$C/phases.log")"
 eq "phases (step succeeds): the call site adds nothing on stderr" "" "$VS_ERR"
 
-C="$(vs_case phases-fail)"
+C="$(vs_case phases-fail)" || exit 1
 vs_phases "$C" 1
 eq "phases (step fails): bootstrap_phases still returns 0" 0 "$VS_RC"
 eq "phases (step fails): every later phase still runs" "$PHASES_EXPECTED" "$(cat "$C/phases.log")"
@@ -975,29 +975,29 @@ oe_find() {
     OE_FIND_RC=$?
 }
 
-R="$(mktemp -d "$WORK/opt-bare.XXXXXX")"; oe_profile "$R/root" bare
+dxe_test_mktemp_dir R "$WORK/opt-bare.XXXXXX"; oe_profile "$R/root" bare
 oe_find "$R/root"
 eq "installed profile without libexec/nix-ld: reports nix-ld" "nix-ld" "$OE_FIND_OUT"
 eq "installed profile without libexec/nix-ld: status 0" 0 "$OE_FIND_RC"
 
-R="$(mktemp -d "$WORK/opt-nixld.XXXXXX")"; oe_profile "$R/root" nixld
+dxe_test_mktemp_dir R "$WORK/opt-nixld.XXXXXX"; oe_profile "$R/root" nixld
 oe_find "$R/root"
 eq "installed profile with libexec/nix-ld: reports nothing" "" "$OE_FIND_OUT"
 eq "installed profile with libexec/nix-ld: status 1" 1 "$OE_FIND_RC"
 
-R="$(mktemp -d "$WORK/opt-dangling.XXXXXX")"; oe_profile "$R/root" dangling
+dxe_test_mktemp_dir R "$WORK/opt-dangling.XXXXXX"; oe_profile "$R/root" dangling
 oe_find "$R/root"
 eq "a dangling libexec/nix-ld counts as missing" "nix-ld" "$OE_FIND_OUT"
 eq "a dangling libexec/nix-ld: status 0" 0 "$OE_FIND_RC"
 
-R="$(mktemp -d "$WORK/opt-none.XXXXXX")"; oe_profile "$R/root" none
+dxe_test_mktemp_dir R "$WORK/opt-none.XXXXXX"; oe_profile "$R/root" none
 oe_find "$R/root"
 eq "no installed profile: reports nothing (the normal install covers it)" "" "$OE_FIND_OUT"
 eq "no installed profile: status 1" 1 "$OE_FIND_RC"
 
 # PATH is never consulted: nix-ld on PATH (and `command -v` saying so) does
 # not hide its absence from the profile.
-R="$(mktemp -d "$WORK/opt-path.XXXXXX")"; oe_profile "$R/root" bare
+dxe_test_mktemp_dir R "$WORK/opt-path.XXXXXX"; oe_profile "$R/root" bare
 mkdir -p "$R/bin"; printf '#!/bin/sh\nexit 0\n' > "$R/bin/nix-ld"; chmod 0755 "$R/bin/nix-ld"
 OE_FIND_OUT="$( (
     PATH="$R/bin:$PATH"
@@ -1010,7 +1010,7 @@ eq "nix-ld on PATH does not count: the profile is what is checked" "nix-ld" "$OE
 
 # The list is data: a second entry (as WP6.2b will add for rsync) is honoured
 # in list order with no other change.
-R="$(mktemp -d "$WORK/opt-list.XXXXXX")"; oe_profile "$R/root" nixld
+dxe_test_mktemp_dir R "$WORK/opt-list.XXXXXX"; oe_profile "$R/root" nixld
 rm -f "$R/root/nix/store/8888hhhh-profile/bin/rsync"  # nixld now holds rsync; this case needs it absent
 OE_FIND_OUT="$( (
     DX_ESSENTIALS_ROOT="$R/root"
@@ -1019,7 +1019,7 @@ OE_FIND_OUT="$( (
     essentials_first_missing_optional_tool
 ) 2>&1)"
 eq "a listed rsync missing from a profile that has nix-ld is reported" "rsync" "$OE_FIND_OUT"
-R="$(mktemp -d "$WORK/opt-list2.XXXXXX")"; oe_profile "$R/root" bare
+dxe_test_mktemp_dir R "$WORK/opt-list2.XXXXXX"; oe_profile "$R/root" bare
 OE_FIND_OUT="$( (
     DX_ESSENTIALS_ROOT="$R/root"
     export DX_ESSENTIALS_ROOT
@@ -1031,7 +1031,7 @@ eq "with both missing, the first listed tool is reported" "nix-ld" "$OE_FIND_OUT
 # ---------------------------------------------------------------------------
 test_section "WP1.4: install_essentials upgrades an existing profile for nix-ld, best effort"
 
-OE_FAIL_CLOSED="$(fake_tool_dir_create "$WORK")"
+OE_FAIL_CLOSED="$(fake_tool_dir_create "$WORK")" || exit 1
 
 # oe_run CASE PRESENT PROFILE [INSTALL_RC] [CREATE_NIXLD] -- install_essentials
 # under bootstrap's shell options. PRESENT: the tools `command -v` finds
@@ -1107,7 +1107,7 @@ PROFILE_INSTALL="nix profile install --profile /nix/var/nix/profiles/per-user/ro
 PROFILE_ROLLBACK="nix profile rollback --profile /nix/var/nix/profiles/per-user/root/profile"
 upgrading_lines() { grep -F "Upgrading the essentials profile" <<<"$1"; }
 
-C="$(mktemp -d "$WORK/oe-upgrade.XXXXXX")"
+dxe_test_mktemp_dir C "$WORK/oe-upgrade.XXXXXX"
 oe_run "$C" useradd bare 0
 eq "optional upgrade: status 0" 0 "$OE_RC"
 eq "optional upgrade: the boot continues under errexit" yes "$OE_CONTINUED"
@@ -1126,7 +1126,7 @@ case "$OE_PATH" in
     *) test_fail "optional upgrade: PATH is re-resolved from the upgraded profile (PATH=$OE_PATH)" ;;
 esac
 
-C="$(mktemp -d "$WORK/oe-fail.XXXXXX")"
+dxe_test_mktemp_dir C "$WORK/oe-fail.XXXXXX"
 oe_run "$C" useradd bare 1
 eq "failed optional upgrade: status 0 (VS Code support is optional)" 0 "$OE_RC"
 eq "failed optional upgrade: the boot continues under errexit" yes "$OE_CONTINUED"
@@ -1142,7 +1142,7 @@ has "failed optional upgrade: the phase still completes" "$OE_OUT" "Bootstrap ph
 
 # The upgrade reports success, yet the profile still lacks nix-ld (e.g. a
 # bootstrap flake without it): say so once, do not retry, keep booting.
-C="$(mktemp -d "$WORK/oe-stillmissing.XXXXXX")"
+dxe_test_mktemp_dir C "$WORK/oe-stillmissing.XXXXXX"
 oe_run "$C" useradd bare 0 no
 eq "upgrade succeeded but nix-ld still missing: status 0" 0 "$OE_RC"
 eq "upgrade succeeded but nix-ld still missing: the boot continues under errexit" yes "$OE_CONTINUED"
@@ -1153,7 +1153,7 @@ eq "upgrade succeeded but nix-ld still missing: nothing else on stderr" 1 "$(lin
 has "upgrade succeeded but nix-ld still missing: the phase still completes" "$OE_OUT" \
     "Bootstrap phase: essentials installation completed in"
 
-C="$(mktemp -d "$WORK/oe-present.XXXXXX")"
+dxe_test_mktemp_dir C "$WORK/oe-present.XXXXXX"
 oe_run "$C" useradd nixld
 eq "nothing missing: status 0" 0 "$OE_RC"
 eq "nothing missing: no nix call at all" "" "$OE_NIX"
@@ -1165,18 +1165,18 @@ case "$OE_PATH" in
     *) test_fail "nothing missing: PATH keeps the profile resolved at the start (PATH=$OE_PATH)" ;;
 esac
 
-C="$(mktemp -d "$WORK/oe-onpath.XXXXXX")"
+dxe_test_mktemp_dir C "$WORK/oe-onpath.XXXXXX"
 oe_run "$C" "useradd nix-ld" bare 0
 has "nix-ld on PATH but not in the profile: the profile is still upgraded" "$OE_NIX" "$PROFILE_INSTALL"
 has "nix-ld on PATH but not in the profile: the optional line names it" "$(upgrading_lines "$OE_OUT")" "'nix-ld'"
 
-C="$(mktemp -d "$WORK/oe-noprofile.XXXXXX")"
+dxe_test_mktemp_dir C "$WORK/oe-noprofile.XXXXXX"
 oe_run "$C" useradd none
 eq "no installed profile, required tools present: status 0" 0 "$OE_RC"
 eq "no installed profile, required tools present: no nix call (never an optional upgrade)" "" "$OE_NIX"
 eq "no installed profile, required tools present: no upgrade line" "" "$(upgrading_lines "$OE_OUT")"
 
-C="$(mktemp -d "$WORK/oe-fresh.XXXXXX")"
+dxe_test_mktemp_dir C "$WORK/oe-fresh.XXXXXX"
 oe_run "$C" "" none 0
 eq "fresh install: status 0" 0 "$OE_RC"
 eq "fresh install: exactly one nix call" 1 "$(line_count "$C/nix.log")"
@@ -1184,7 +1184,7 @@ has "fresh install: it is the normal install" "$OE_NIX" "$PROFILE_INSTALL"
 has "fresh install: reported as before" "$OE_OUT" "Installing essential tools..."
 lacks "fresh install: no optional upgrade" "$OE_OUT" "optional"
 
-C="$(mktemp -d "$WORK/oe-required.XXXXXX")"
+dxe_test_mktemp_dir C "$WORK/oe-required.XXXXXX"
 oe_run "$C" "" bare 0 no
 eq "required upgrade: status 0" 0 "$OE_RC"
 eq "required upgrade: one upgrade only (remove + install), even though nix-ld is still missing" 2 "$(line_count "$C/nix.log")"
@@ -1192,7 +1192,7 @@ eq "required upgrade: exactly one 'Upgrading the essentials profile' line" 1 "$(
 has "required upgrade: the line names 'useradd'" "$(upgrading_lines "$OE_OUT")" "'useradd'"
 lacks "required upgrade: no optional upgrade in the same boot" "$OE_OUT" "optional"
 
-C="$(mktemp -d "$WORK/oe-required-fail.XXXXXX")"
+dxe_test_mktemp_dir C "$WORK/oe-required-fail.XXXXXX"
 oe_run "$C" "" bare 1
 if [ "$OE_RC" -ne 0 ]; then
     test_pass "failed REQUIRED upgrade: install_essentials still fails the phase"

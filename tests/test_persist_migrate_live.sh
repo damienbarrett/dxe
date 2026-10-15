@@ -263,7 +263,7 @@ fi
 
 LV_RUN_DIR="${DXE_PERSIST_LIVE_RUN_DIR:-}"
 if [ -z "$LV_RUN_DIR" ]; then
-    LV_RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dxe-persist-migrate-live.XXXXXX")" || { test_fail "could not create a run directory"; print_summary; exit_with_code; }
+    dxe_test_mktemp_dir LV_RUN_DIR "${TMPDIR:-/tmp}/dxe-persist-migrate-live.XXXXXX"
 else
     mkdir -p "$LV_RUN_DIR" || { test_fail "could not create $LV_RUN_DIR"; print_summary; exit_with_code; }
 fi

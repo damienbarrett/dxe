@@ -58,7 +58,8 @@ source "$BASE_DIR/bin/lib/dx-container.sh"
 
 test_section "WP3.3: persist-dir mount role and guest environment"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-persist-dir-mount.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-persist-dir-mount.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/home"
 VOLUME_FIXTURE="$SCRIPT_DIR/fixtures/persist-dir-volume-create-argv.txt"
@@ -75,7 +76,7 @@ ADDR="$(printf '%s.%s.%s.%s' 100 64 1 2)"
 #   $SSHLOG every ssh argv element, one per line
 new_world() {
     local n="$1"
-    TOOLS="$(fake_tool_dir_create "$fixture")"
+    TOOLS="$(fake_tool_dir_create "$fixture")" || exit 1
     CALLS="$fixture/calls.$n"; ARGV="$fixture/argv.$n"; SSHLOG="$fixture/ssh.$n"
     : > "$CALLS"; : > "$ARGV"; : > "$SSHLOG"
     fake_qnap_ssh_write "$TOOLS"

@@ -72,7 +72,7 @@ test_section "WP2.1b: inspection script hardening (probe verification, find fail
 
 SUT="$BASE_DIR/tests/qnap/phase1-persist-inspect.sh"
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/dxe-inspect-probe.XXXXXX")"
+dxe_test_mktemp_dir WORK "${TMPDIR:-/tmp}/dxe-inspect-probe.XXXXXX"
 trap 'rm -rf "$WORK"' EXIT
 
 SHARE="/opt/fixture-share/dxe-persist"

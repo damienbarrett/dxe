@@ -99,7 +99,7 @@ source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 
 test_section "WP6.4b: migration path hardening"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
@@ -124,7 +124,7 @@ export DX_RUNTIME DX_REMOTE_HOST DX_CONTAINER_NAME DX_GUEST_SYSTEM DX_PERSIST_VO
 export DX_PERSIST_HOST_ROOT DX_PERSIST_HOST_MOUNT_SENTINEL DX_IMAGE DXE_RUNTIME_DOCKER_BIN XDG_STATE_HOME
 
 # Every runtime tool refuses and records: nothing here may reach a host.
-BIN="$(fake_tool_dir_create "$SCRATCH")"
+BIN="$(fake_tool_dir_create "$SCRATCH")" || exit 1
 CALLS="$SCRATCH/calls"
 : >"$CALLS"
 for t in ssh docker container; do
@@ -263,26 +263,26 @@ est_refused() {
 }
 
 test_section "WP6.4b A: establish refuses marker bytes that are empty or not for GUEST"
-R="$(share)"
+R="$(share)" || exit 1
 est_run "$R" create copying
 same "establish create, the copying marker: status 0, nothing on stderr" "0|" "$RC|$ERR"
 same "establish create: the marker holds exactly the bytes sent" "$COPYING" "$(cat "$R/dxe/$G/persist/$MARKER_NAME" 2>/dev/null)"
 same "establish create: leaf 0755, marker 0644, no temp file" "755|644|$MARKER_NAME" \
     "$(mode_of "$R/dxe/$G/persist")|$(mode_of "$R/dxe/$G/persist/$MARKER_NAME")|$(entries_of "$R/dxe/$G/persist")"
 
-R="$(share)"
+R="$(share)" || exit 1
 est_run "$R" create empty
 est_refused "establish create, EMPTY stdin (the bytes were lost in transport)" "$R"
 check "establish create, empty stdin: no marker file at all" test ! -e "$R/dxe/$G/persist/$MARKER_NAME"
-R="$(share)"
+R="$(share)" || exit 1
 mkdir -p "$R/dxe/$G/persist"
 est_run "$R" adopt empty
 est_refused "establish adopt, empty stdin" "$R"
-R="$(share)"
+R="$(share)" || exit 1
 mkdir -p "$R/dxe/$G/persist"
 est_run "$R" fresh-start empty
 est_refused "establish fresh-start, empty stdin" "$R"
-R="$(share)"
+R="$(share)" || exit 1
 est_run "$R" create newline
 est_refused "establish create, a lone newline" "$R"
 for case_ in "ready-other:a marker for another guest" \
@@ -292,15 +292,15 @@ for case_ in "ready-other:a marker for another guest" \
     "two-guests:the guest line twice" \
     "extra-guest:a second, other guest line" \
     "guest-space:a guest line with a trailing space (not exact)"; do
-    R="$(share)"
+    R="$(share)" || exit 1
     est_run "$R" create "${case_%%:*}"
     est_refused "establish create, ${case_#*:}" "$R"
 done
-R="$(share)"
+R="$(share)" || exit 1
 mkdir -p "$R/dxe/$G/persist"
 est_run "$R" adopt ready-other
 est_refused "establish adopt, a marker for another guest" "$R"
-R="$(share)"
+R="$(share)" || exit 1
 mkdir -p "$R/dxe/$G/persist"
 est_run "$R" adopt ready
 same "establish adopt, this guest's ready marker: status 0 (any state is accepted)" "0|$READY" \
@@ -310,7 +310,7 @@ test_section "WP6.4b A: marker-set refuses bytes that are empty, not for GUEST o
 # ms_world CURRENT: a share whose leaf holds the marker CURRENT and one data
 # file. Sets R and LEAF.
 ms_world() {
-    R="$(share)"
+    R="$(share)" || exit 1
     LEAF="$R/dxe/$G/persist"
     mkdir -p "$LEAF"
     printf '%s\n' "$1" >"$LEAF/$MARKER_NAME"
@@ -372,7 +372,7 @@ for b in retired ready copying; do
 done
 
 test_section "WP6.4b A: WP4.2's create and marker-write scripts refuse empty marker bytes"
-R="$(share)"
+R="$(share)" || exit 1
 OUT="$(in_bare "$EST_TOOLS" "$EST_TOOLS/sh" -c "$DX_RUNTIME_DOCKER_HOST_DIR_CREATE_SCRIPT" sh "$R" "$G" \
     <"$BYTES/empty" 2>"$SCRATCH/err")"
 RC=$?
@@ -380,7 +380,7 @@ ERR="$(cat "$SCRATCH/err")"
 check "create, empty stdin: non-zero" nonzero "$RC"
 same "create, empty stdin: one dx: line on stderr" 1 "$(dx_lines "$ERR")"
 same "create, empty stdin: no marker and no temp file in the new leaf" "" "$(entries_of "$R/dxe/$G/persist")"
-R="$(share)"
+R="$(share)" || exit 1
 OUT="$(in_bare "$EST_TOOLS" "$EST_TOOLS/sh" -c "$DX_RUNTIME_DOCKER_HOST_DIR_CREATE_SCRIPT" sh "$R" "$G" \
     <"$BYTES/ready" 2>"$SCRATCH/err")"
 same "create, the ready marker: status 0, the marker holds it" "0|$READY" "$?|$(cat "$R/dxe/$G/persist/$MARKER_NAME" 2>/dev/null)"
@@ -460,16 +460,16 @@ same "marker_set, stdin lost: nothing on stdout" "" "$OUT"
 same "marker_set, stdin lost: the marker is still exactly copying" "$COPYING" "$(cat "$LEAF/$MARKER_NAME")"
 same "marker_set, stdin lost: no temp file is left" "$(printf '%s\n%s' "$MARKER_NAME" plain.txt)" "$(entries_of "$LEAF")"
 
-R="$(share)"
+R="$(share)" || exit 1
 via dx_runtime_host_dir_establish create "$R" "$G" "$OWNER" "$COPYING"
 same "establish, stdin delivered: status 0, the marker is copying" "0|$COPYING" \
     "$RC|$(cat "$R/dxe/$G/persist/$MARKER_NAME" 2>/dev/null)"
-R="$(share)"
+R="$(share)" || exit 1
 P_LOSE_STDIN=1 via dx_runtime_host_dir_establish create "$R" "$G" "$OWNER" "$COPYING"
 check "establish, stdin lost: non-zero" nonzero "$RC"
 same "establish, stdin lost: the leaf is left empty and unmarked" "" "$(entries_of "$R/dxe/$G/persist")"
 
-R="$(share)"
+R="$(share)" || exit 1
 # A state directory of its own, so no earlier case's record can be mistaken
 # for this one's.
 REC="$(XDG_STATE_HOME="$R-state" dx_persist_dir_record_path)"
@@ -500,7 +500,7 @@ status=ok'
 # (the D-7 record's path does not depend on the share). Sets RC OUT ERR SEQ
 # LEAF REC.
 mig_case() {
-    R="$(share)"
+    R="$(share)" || exit 1
     LEAF="$R/dxe/$G/persist"
     : >"$OPS"
     printf '%s\n' "$@" >"$STATES"

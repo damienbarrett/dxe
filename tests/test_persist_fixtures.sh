@@ -223,7 +223,7 @@ expected_list_file() { # expected_list_file OUT PATH...
 # "--" line per call) and changes nothing.
 recording_chown_dir() { # prints dir; log is $dir/chown.log
     local d
-    d="$(mktemp -d "$SCRATCH/chown.XXXXXX")"
+    dxe_test_mktemp_dir d "$SCRATCH/chown.XXXXXX"
     fake_tool_write "$d" chown "printf '%s\n' \"\$@\" >> \"$d/chown.log\"; echo -- >> \"$d/chown.log\""
     printf '%s\n' "$d"
 }
@@ -287,10 +287,10 @@ in_stub_jail() {
 expect_refusal() {
     local desc="$1" area="$2" stubs err rc
     shift 2
-    if ! stubs="$(destructive_stubs_create)"; then
+    stubs="$(destructive_stubs_create)" || {
         test_fail "$desc: recording stubs could not be created"
-        return 0
-    fi
+        return 1
+    }
     err="$(in_stub_jail "$stubs" "$area" "$SANDBOX" persist_fixture_cleanup "$@" 2>&1 >/dev/null)"
     rc=$?
     assert_eq "$desc: status 1" "1" "$rc"
@@ -361,8 +361,8 @@ root_cases() {
     need persist_fixture_cleanup || return 0
     local parent a b
     parent="$SCRATCH/parent"; mkdir -p "$parent"
-    a="$(persist_fixture_root_create "$parent")"
-    b="$(persist_fixture_root_create "$parent")"
+    a="$(persist_fixture_root_create "$parent")" || exit 1
+    b="$(persist_fixture_root_create "$parent")" || exit 1
     assert_true "root is an existing directory" test -d "$a"
     assert_eq "root is created directly under PARENT with the dxe-persist-share. prefix" "$parent" "$(dirname "$a")"
     case "$(basename "$a")" in
@@ -373,7 +373,7 @@ root_cases() {
     assert_true "two calls give distinct roots" test "$a" != "$b"
 
     local default_root
-    default_root="$(TMPDIR="$SCRATCH" persist_fixture_root_create)"
+    default_root="$(TMPDIR="$SCRATCH" persist_fixture_root_create)" || exit 1
     assert_eq "PARENT defaults to \${TMPDIR:-/tmp}" "$SCRATCH" "$(dirname "$default_root")"
 
     # Cleanup removes a nasty tree (real cleanup under the runner's own TMPDIR).
@@ -395,12 +395,12 @@ stub_intercept_cases() {
     need persist_fixture_root_create || return 0
     need persist_fixture_cleanup || return 0
     local root stubs rc line named=no
-    root="$(persist_fixture_root_create "$AREA")"
+    root="$(persist_fixture_root_create "$AREA")" || exit 1
     : > "$root/keep"
-    if ! stubs="$(destructive_stubs_create)"; then
+    stubs="$(destructive_stubs_create)" || {
         test_fail "recording stubs could not be created"
-        return 0
-    fi
+        return 1
+    }
     in_stub_jail "$stubs" "$AREA" "$SANDBOX" persist_fixture_cleanup "$root" >/dev/null 2>&1
     rc=$?
     assert_eq "stubbed: a valid cleanup still reports success" "0" "$rc"
@@ -477,33 +477,33 @@ temp_area_removal_cases() {
     local r rc
 
     # TMPDIR is itself a symlink to the area; the root is created through it.
-    r="$(TMPDIR="$AREA_LINK" persist_fixture_root_create)"
+    r="$(TMPDIR="$AREA_LINK" persist_fixture_root_create)" || exit 1
     : > "$r/f"
     real_cleanup "$AREA_LINK" "$r" 2>/dev/null; rc=$?
     assert_eq "symlinked TMPDIR: cleanup succeeds" "0" "$rc"
     assert_false "symlinked TMPDIR: root removed" exists "$r"
 
     # The area spelled canonically, the PATH spelled through the symlink.
-    r="$(persist_fixture_root_create "$AREA")"
+    r="$(persist_fixture_root_create "$AREA")" || exit 1
     real_cleanup "$AREA" "$AREA_LINK/${r##*/}" 2>/dev/null; rc=$?
     assert_eq "PATH through a symlink to the temp area: cleanup succeeds" "0" "$rc"
     assert_false "PATH through a symlink to the temp area: root removed" exists "$r"
 
     # The area spelled through the symlink, the PATH spelled canonically.
-    r="$(persist_fixture_root_create "$AREA")"
+    r="$(persist_fixture_root_create "$AREA")" || exit 1
     real_cleanup "$AREA_LINK" "$r" 2>/dev/null; rc=$?
     assert_eq "TMPDIR through a symlink, canonical PATH: cleanup succeeds" "0" "$rc"
     assert_false "TMPDIR through a symlink, canonical PATH: root removed" exists "$r"
 
     # TMPDIR with a trailing slash (macOS sets it that way).
-    r="$(TMPDIR="$AREA/" persist_fixture_root_create)"
+    r="$(TMPDIR="$AREA/" persist_fixture_root_create)" || exit 1
     real_cleanup "$AREA/" "$r" 2>/dev/null; rc=$?
     assert_eq "TMPDIR ending in /: cleanup succeeds" "0" "$rc"
     assert_false "TMPDIR ending in /: root removed" exists "$r"
 
     # A root deeper inside the area.
     mkdir -p "$AREA/deeper/still"
-    r="$(persist_fixture_root_create "$AREA/deeper/still")"
+    r="$(persist_fixture_root_create "$AREA/deeper/still")" || exit 1
     persist_fixture_tree_build "$r" >/dev/null 2>&1
     real_cleanup "$AREA" "$r" 2>/dev/null; rc=$?
     assert_eq "root nested deeper inside the temp area: cleanup succeeds" "0" "$rc"
@@ -513,8 +513,8 @@ temp_area_removal_cases() {
     # A PATH that is a symlink is removed as a link; its referent -- a fixture
     # root OUTSIDE the temp area -- keeps its contents and modes.
     local holder victim
-    holder="$(persist_fixture_root_create "$AREA")"
-    victim="$(persist_fixture_root_create "$OUTSIDE")"
+    holder="$(persist_fixture_root_create "$AREA")" || exit 1
+    victim="$(persist_fixture_root_create "$OUTSIDE")" || exit 1
     mkdir "$victim/sub"
     printf 'keep\n' > "$victim/file"
     chmod 0600 "$victim/file"
@@ -539,8 +539,8 @@ nas_cases() {
     need persist_fixture_nas_create || return 0
     need persist_fixture_root_create || return 0
     local root tools log rc out
-    root="$(persist_fixture_root_create "$SCRATCH")"
-    tools="$(persist_fixture_nas_create "$root" "$SCRATCH")"
+    root="$(persist_fixture_root_create "$SCRATCH")" || exit 1
+    tools="$(persist_fixture_nas_create "$root" "$SCRATCH")" || exit 1
     log="$SCRATCH/nas-argv.log"
     : > "$log"
     assert_true "tool dir is a directory under PARENT" test -d "$tools"
@@ -568,7 +568,7 @@ nas_cases() {
 
     # DXE_FAKE_SSH_REMOTE_PATH still restricts the remote PATH.
     local only
-    only="$(mktemp -d "$SCRATCH/remote-path.XXXXXX")"
+    dxe_test_mktemp_dir only "$SCRATCH/remote-path.XXXXXX"
     fake_tool_write "$only" nas-only-tool 'echo nas-only-tool-ran'
     out="$(PATH="$tools:$PATH" DXE_FAKE_SSH_REMOTE_PATH="$only" ssh "$PERSIST_FIXTURE_NAS_HOST" 'nas-only-tool' 2>&1)"
     assert_eq "restricted remote PATH finds only its own tools" "nas-only-tool-ran" "$out"
@@ -698,10 +698,10 @@ tree_nonroot_cases() {
     # scratch sandbox and every destructive tool is a recording stub.
     local err stubs cwd="$SCRATCH/tree-missing-cwd"
     mkdir -p "$cwd"
-    if ! stubs="$(destructive_stubs_create)"; then
+    stubs="$(destructive_stubs_create)" || {
         test_fail "missing DIR: recording stubs could not be created"
-        return 0
-    fi
+        return 1
+    }
     err="$(in_stub_jail "$stubs" "$AREA" "$cwd" persist_fixture_tree_build "$SCRATCH/nope" 2>&1)"; rc=$?
     assert_eq "missing DIR: status 1" "1" "$rc"
     assert_true "missing DIR: message says does not exist" grep -Fq "does not exist" <<<"$err"
