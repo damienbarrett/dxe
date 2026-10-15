@@ -66,6 +66,10 @@ set -uo pipefail
 #       tests/test_section20_skip_integration.sh dxe-stub-marker-runsh-refuse.XXXXXX 1
 #       tests/test_section20_skip_integration.sh dxe-stub-marker-lt.XXXXXX   1 and 5
 #       tests/test_section20_skip_integration.sh dxe-stub-marker-ev.XXXXXX   1
+#       tests/test_persist_migrate.sh          dxe-persist-share.XXXXXX      2 (world's ROOT)
+#       tests/test_persist_rollback.sh         dxe-persist-share.XXXXXX      2 (world's ROOT)
+#           (world() canonicalises with CANON="$(cd -P "$ROOT" && pwd -P)",
+#            which is the checkout when ROOT is empty)
 #     (persist_fixture_root_create is the dxe-persist-share caller: a
 #     failure there must stop test_persist_reclaim.sh too, so its callers have
 #     to check it.)
@@ -86,14 +90,44 @@ set -uo pipefail
 #     statement (after `;` or a newline), a pipe, `!`, `local`/`export`/
 #     `declare` (they hide the status), the call as a command argument or
 #     inside `$(cd "$(mktemp -d)" && pwd -P)`, a second command substitution
-#     in the same word, or `{ ... }` that does not end in exit/return. A call
-#     inside a command substitution counts only if the statement holding the
-#     substitution is itself guarded (an exit inside `$( )` leaves only the
-#     substitution; use dxe_test_mktemp_dir there). Program text in strings
-#     and here-documents (probe scripts, fakes) is scanned the same way.
+#     in the same word, `if ! X=...`, or `{ ... }` that does not end in
+#     exit/return. Command substitutions: when the call is the whole of a
+#     `$( )` (or of its one and-or list, e.g. `$(cd D && mktemp -d T)`), the
+#     substitution's value is the call's, so the statement holding it must
+#     be guarded (`X="$(mktemp -d T)" || exit 1`; `$(mktemp -d T || exit 1)`
+#     alone is not); when the call is one statement among several inside
+#     `$( )`, its own statement there must be guarded (the exit leaves the
+#     substitution before its later statements use the path). Program text
+#     in strings and here-documents (probe scripts, fakes) is scanned the
+#     same way.
 #     Allowlist (file, exact trimmed line, reason), kept as small as
-#     possible: one entry, the Nushell probe in
-#     tests/test_section15_nushell_env.sh.
+#     possible: the Nushell probe in tests/test_section15_nushell_env.sh,
+#     and test_persist_fixtures.sh's case that expects
+#     persist_fixture_nas_create to refuse a missing root.
+#
+#  2b. A call of a helper that makes and prints a new directory counts
+#     exactly like a directory-making mktemp call (same accepted forms,
+#     same rules for $( ), strings and here-documents), including the call
+#     inside a wrapper. A helper is a function whose last statement is such
+#     a call, or that ends printing "$V" (printf ... "$V" / echo "$V") where
+#     V was assigned from such a call. The library helpers are the ones in
+#     tests/lib/*.sh and tests/test_helpers.sh, known to every file; today
+#     fake_tool_dir_create, persist_fixture_root_create and
+#     persist_fixture_nas_create, and the scan must find at least these.
+#     A suite's own helpers (new_tool_dir, vs_case, new_root, share, ...)
+#     count in that suite. So `ROOT="$(persist_fixture_root_create "$S")"`
+#     needs `|| exit 1` (a later `case "$ROOT" in ...` check is not the same
+#     statement), and `new_root() { persist_fixture_root_create "$S"; }`
+#     needs `|| return 1` as well as `R="$(new_root)" || exit 1`.
+#
+#  2c. The library helpers fail loudly. Called in "$(...)" (as callers do),
+#     from a shell that sourced tests/test_helpers.sh, tests/lib/fake-tools.sh
+#     and tests/lib/persist-fixtures.sh, when their own mktemp fails:
+#       fake_tool_dir_create PARENT, persist_fixture_root_create PARENT and
+#       persist_fixture_nas_create ROOT PARENT
+#     each returns non-zero, prints nothing on stdout, prints on stderr one
+#     line holding both its own name and "cannot create a temporary", and
+#     creates or removes nothing.
 #
 #  3. tests/lib/harness.sh (pinned in tests/test_harness.sh, case (ii)):
 #     with_fake_runtime exits non-zero, naming the "fake transcript", when the
@@ -214,6 +248,28 @@ tgb_show() { # FILE [LINES]
     sed -n "1,${2:-12}p" "$1" 2>/dev/null | sed 's/^/      | /'
 }
 
+# tgb_supervise LIMIT CWD OUT -- CMD...: run CMD in its own process group
+# with cwd CWD, stdin /dev/null, stdout and stderr appended to OUT; kill the
+# whole group after LIMIT seconds (status 124). Returns CMD's status.
+tgb_supervise() {
+    local limit="$1" cwd="$2" out="$3"
+    shift 4
+    (
+        cd -P -- "$cwd" || exit 125
+        exec "$TGB_PERL" -e '
+            my $limit = shift @ARGV;
+            my $pid = fork();
+            defined $pid or exit 125;
+            if ($pid == 0) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV or exit 127; }
+            $SIG{ALRM} = sub { kill "KILL", -$pid; kill "KILL", $pid; print STDERR "dxe-tmpguard-b: killed after ${limit}s\n"; exit 124; };
+            alarm $limit;
+            waitpid($pid, 0);
+            alarm 0;
+            exit(($? & 127) ? 128 + ($? & 127) : ($? >> 8));
+        ' "$limit" "$@"
+    ) </dev/null >>"$out" 2>&1
+}
+
 # =====================================================================
 # 2. The static guard (contract item 2)
 # =====================================================================
@@ -232,6 +288,9 @@ use strict;
 use warnings;
 
 my $TOOL = 'mk' . 'temp';
+# Functions whose call makes and prints a new directory (found below).
+our %PRODUCER;
+our $EMBED_RE = qr/\Q$TOOL\E/;
 my ($allow_file, $dielib, @files) = @ARGV;
 
 my %allow;
@@ -338,7 +397,7 @@ sub read_heredoc {
         $body .= "$line\n";
     }
     unless ($h->{quoted}) { $body =~ s/\\([\$`\\])/$1/g; }
-    push @EMBED, { text => $body, line => $start } if index($body, $TOOL) >= 0;
+    push @EMBED, { text => $body, line => $start } if $body =~ $EMBED_RE;
 }
 
 sub read_word {
@@ -366,7 +425,7 @@ sub read_word {
             $lit .= $text;
             $$lref += ($text =~ tr/\n//);
             $$iref = $e + 1;
-            push @EMBED, { text => $text, line => $sl } if index($text, $TOOL) >= 0;
+            push @EMBED, { text => $text, line => $sl } if $text =~ $EMBED_RE;
             next;
         }
         if ($c eq '$' && substr($$sref, $$iref + 1, 1) eq "'") {
@@ -404,7 +463,7 @@ sub read_word {
                 $lit .= $d;
                 $$iref++;
             }
-            push @EMBED, { text => $text, line => $sl } if index($text, $TOOL) >= 0;
+            push @EMBED, { text => $text, line => $sl } if $text =~ $EMBED_RE;
             next;
         }
         if ($c eq '$' || $c eq '`') {
@@ -734,23 +793,56 @@ sub and_or_guard {
     }
 }
 
+# propagates TOKS P: P is just after a call; true when the rest of its
+# and-or list is only `&& ...` steps, so the call's failure is the list's.
+sub propagates {
+    my ($toks, $p) = @_;
+    while (1) {
+        my $t = $toks->[$p];
+        return 1 if !$t || $t->{t} eq 'NL' || ($t->{t} eq 'OP' && $TERM{ $t->{v} });
+        if ($t->{t} eq 'OP' && $t->{v} eq '&&') { $p = skip_command($toks, $p + 1); next; }
+        return 0;
+    }
+}
+
 our @RESULTS;
 # analyze TOKS CTX: finds temp-dir sites. CTX: { file, embedded_depth }
 # Returns a list of "carriers": sites whose fate depends on the enclosing
 # command substitution: [ { line, sole => 1 } ].
+# site_name TOKS WORDS K: 'tempdir' for a directory-making call, 'helper:NAME'
+# for a call of a function that makes and prints a new directory, else undef.
+sub site_name {
+    my ($toks, $words, $k) = @_;
+    return undef unless defined $k;
+    my $nm = lit($toks->[ $words->[$k] ]);
+    return undef unless defined $nm;
+    return 'tempdir' if $nm eq $TOOL && makes_dir($toks, $words, $k);
+    return "helper:$nm" if $PRODUCER{$nm};
+    return undef;
+}
+
 sub analyze {
     my ($toks, $ctx, $in_subst) = @_;
     my $cmds = commands($toks);
     my @up;
     my %covered;
-    my $sole = (scalar(@$cmds) == 1) ? 1 : 0;
-    if ($in_subst && $sole) {
-        my $c = $cmds->[0];
-        for my $x (0 .. $#$toks) {
-            next if $x >= $c->{start} && $x < $c->{end};
-            my $u = $toks->[$x];
-            next if $u->{t} eq 'NL' || ($u->{t} eq 'OP' && $u->{v} eq ';');
-            $sole = 0;
+    # single: the substitution is one and-or list, so its status (and its
+    # output) is that list's.
+    my $single = 1;
+    if ($in_subst) {
+        my @x = grep { $toks->[$_]{t} ne 'NL' } 0 .. $#$toks;
+        pop @x while @x && $toks->[ $x[-1] ]{t} eq 'OP' && $toks->[ $x[-1] ]{v} eq ';';
+        for my $i (@x) {
+            my $u = $toks->[$i];
+            $single = 0 if $u->{t} eq 'OP' && ($u->{v} eq ';' || $u->{v} eq '&');
+        }
+        if (@x) {
+            for my $i ($x[0] .. $x[-1]) {
+                next unless $toks->[$i]{t} eq 'NL';
+                my $p = $i - 1;
+                $p-- while $p >= 0 && $toks->[$p]{t} eq 'NL';
+                $single = 0 unless $p >= 0 && $toks->[$p]{t} eq 'OP' && $toks->[$p]{v} =~ /^(&&|\|\||\|)$/;
+            }
         }
     }
     for my $c (@$cmds) {
@@ -758,10 +850,9 @@ sub analyze {
         next unless @$words;
         $covered{$_} = 1 for @$words;
         my $k = name_index($toks, $words);
-        my @found;    # sites whose status this command carries: { line, kind }
-        if (defined $k && defined lit($toks->[ $words->[$k] ]) && lit($toks->[ $words->[$k] ]) eq $TOOL && makes_dir($toks, $words, $k)) {
-            push @found, { line => $toks->[ $words->[$k] ]{line}, kind => 'bare' };
-        }
+        my @found;    # sites whose status this command carries: { line, kind, what }
+        my $what = site_name($toks, $words, $k);
+        push @found, { line => $toks->[ $words->[$k] ]{line}, kind => 'bare', what => $what } if defined $what;
         my $first = lit($toks->[ $words->[0] ]);
         for my $w (map { $toks->[$_] } @$words) {
             for my $s (@{ $w->{subs} }) {
@@ -770,28 +861,35 @@ sub analyze {
                     # statement is a single assignment word holding this one
                     # command substitution.
                     if (scalar(@$words) == 1 && is_assign($w) && $w->{nsubs} == 1) {
-                        push @found, { line => $cr->{line}, kind => 'assign' };
+                        push @found, { line => $cr->{line}, kind => 'assign', what => $cr->{what} };
                         next;
                     }
                     my $why = (defined $first && $first =~ /^(local|export|declare|readonly|typeset)$/) ? "$first hides its status"
                         : (is_assign($w) && $w->{nsubs} > 1) ? 'another command substitution in the same word decides the status'
                         : is_assign($w) ? 'not the only word of its statement, so its status is not the statement\'s'
                         : 'its output is a command argument, so its status is never checked';
-                    push @RESULTS, [ 'unguarded', $ctx->{file}, $cr->{line}, $why ];
+                    push @RESULTS, [ 'unguarded', $ctx->{file}, $cr->{line}, $why, $cr->{what} ];
                 }
             }
         }
         for my $f (@found) {
-            if ($c->{neg}) { push @RESULTS, [ 'unguarded', $ctx->{file}, $f->{line}, '! inverts its status' ]; next; }
+            if ($c->{neg}) { push @RESULTS, [ 'unguarded', $ctx->{file}, $f->{line}, 'negated (! / if !): not an accepted form; use || exit or || return', $f->{what} ]; next; }
             my ($ok, $how) = and_or_guard($toks, $c->{end});
-            if ($in_subst) {
-                # Inside $( ): an exit there leaves only the substitution, so
-                # the enclosing statement must be guarded as well.
-                if (($sole && $f->{kind} eq 'bare') || $ok) { push @up, { line => $f->{line} }; next; }
-                push @RESULTS, [ 'unguarded', $ctx->{file}, $f->{line}, 'inside a command substitution with other commands: its status is lost' ];
+            if ($in_subst && $single) {
+                # The substitution is this call's and-or list: its value is
+                # the call's, so the statement holding it decides.
+                if ($ok || propagates($toks, $c->{end})) { push @up, { line => $f->{line}, what => $f->{what} }; next; }
+                push @RESULTS, [ 'unguarded', $ctx->{file}, $f->{line}, 'inside a command substitution where another command decides the status', $f->{what} ];
                 next;
             }
-            push @RESULTS, [ $ok ? 'guarded' : 'unguarded', $ctx->{file}, $f->{line}, $how ];
+            if ($in_subst) {
+                # One statement of several inside $( ): its own statement
+                # must fail closed (the exit leaves the substitution before
+                # the later statements can use the path).
+                push @RESULTS, [ $ok ? 'guarded' : 'unguarded', $ctx->{file}, $f->{line}, $ok ? "$how (inside a command substitution)" : $how, $f->{what} ];
+                next;
+            }
+            push @RESULTS, [ $ok ? 'guarded' : 'unguarded', $ctx->{file}, $f->{line}, $how, $f->{what} ];
         }
     }
     # Words outside any simple command (for lists, case words, redirection
@@ -801,16 +899,18 @@ sub analyze {
         next if $covered{$x} || $w->{t} ne 'W';
         for my $s (@{ $w->{subs} }) {
             for my $cr (analyze($s->{toks}, $ctx, 1)) {
-                push @RESULTS, [ 'unguarded', $ctx->{file}, $cr->{line}, 'substituted where its status is never checked' ];
+                push @RESULTS, [ 'unguarded', $ctx->{file}, $cr->{line}, 'substituted where its status is never checked', $cr->{what} ];
             }
         }
     }
     return @up;
 }
 
-sub die_functions {
+# function_bodies TOKS: [ name, [ statements: [token indexes] ] ] for every
+# `NAME() { ... }` definition.
+sub function_bodies {
     my ($toks) = @_;
-    my %fn;
+    my @out;
     my $n = scalar @$toks;
     for my $i (0 .. $n - 1) {
         my $t = $toks->[$i];
@@ -829,12 +929,82 @@ sub die_functions {
             if ($dep == 1 && ($toks->[$r]{t} eq 'NL' || ($toks->[$r]{t} eq 'OP' && $toks->[$r]{v} eq ';'))) { push @stmts, [@cur] if @cur; @cur = (); next; }
             push @cur, $r;
         }
-        next unless @stmts;
-        my $last = $stmts[-1];
-        my @lv = map { $toks->[$_]{v} } @$last;
-        $fn{ $t->{v} } = 1 if @lv == 2 && $lv[0] eq 'exit' && $lv[1] =~ /^[1-9][0-9]*$/;
+        push @out, [ $t->{v}, \@stmts ];
+    }
+    return \@out;
+}
+
+sub die_functions {
+    my ($toks) = @_;
+    my %fn;
+    for my $f (@{ function_bodies($toks) }) {
+        my ($name, $stmts) = @$f;
+        next unless @$stmts;
+        my @lv = map { $toks->[$_]{v} } @{ $stmts->[-1] };
+        $fn{$name} = 1 if @lv == 2 && $lv[0] eq 'exit' && $lv[1] =~ /^[1-9][0-9]*$/;
     }
     return \%fn;
+}
+
+# has_site TOKS: true when any command in TOKS (or its substitutions) is a
+# directory-making call or a helper call.
+sub has_site {
+    my ($toks) = @_;
+    for my $c (@{ commands($toks) }) {
+        my $words = $c->{words};
+        next unless @$words;
+        return 1 if defined site_name($toks, $words, name_index($toks, $words));
+        for my $w (map { $toks->[$_] } @$words) {
+            for my $s (@{ $w->{subs} }) { return 1 if has_site($s->{toks}); }
+        }
+    }
+    return 0;
+}
+
+# producers TOKS: functions that make and print a new directory: the last
+# statement is such a call itself, or prints "$V" (printf ... / echo) where V
+# was assigned from one.
+sub producers {
+    my ($toks) = @_;
+    my %fn;
+    for my $f (@{ function_bodies($toks) }) {
+        my ($name, $stmts) = @$f;
+        next unless @$stmts;
+        my @last = @{ $stmts->[-1] };
+        my @w = grep { $toks->[$_]{t} eq 'W' } @last;
+        next unless @w;
+        my $k = name_index($toks, \@w);
+        if (defined site_name($toks, \@w, $k)) { $fn{$name} = 1; next; }
+        my $cmd = lit($toks->[ $w[0] ]);
+        next unless defined $cmd && ($cmd eq 'printf' || $cmd eq 'echo');
+        my $v = $toks->[ $w[-1] ]{v};
+        next unless $v =~ /^"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"?$/;
+        my $var = $1;
+        for my $st (@$stmts) {
+            for my $x (@$st) {
+                my $t = $toks->[$x];
+                next unless $t->{t} eq 'W' && $t->{v} =~ /^\Q$var\E=/;
+                for my $s (@{ $t->{subs} }) { if (has_site($s->{toks})) { $fn{$name} = 1; } }
+            }
+        }
+    }
+    return \%fn;
+}
+
+# grow_producers TOKS...: adds every producer found in TOKS to %PRODUCER,
+# until nothing new appears. Returns the names added.
+sub grow_producers {
+    my @lists = @_;
+    my %added;
+    while (1) {
+        my $new = 0;
+        for my $toks (@lists) {
+            my $p = producers($toks);
+            for my $nm (keys %$p) { next if $PRODUCER{$nm}; $PRODUCER{$nm} = 1; $added{$nm} = 1; $new++; }
+        }
+        last unless $new;
+    }
+    return sort keys %added;
 }
 
 sub lex_text {
@@ -846,17 +1016,38 @@ sub lex_text {
 my $dietoks = lex_text(slurp($dielib) // '', 1);
 my $libdie = die_functions($dietoks);
 
+# The shared libraries' helpers, known to every file.
+my @libfiles = grep { m{(^|/)tests/lib/[^/]+\.sh$} || m{(^|/)tests/test_helpers\.sh$} } @files;
+my %libsrc;
+for my $lf (@libfiles) {
+    my $s = slurp($lf);
+    next unless defined $s;
+    @EMBED = ();
+    $libsrc{$lf} = lex_text($s, 1);
+}
+for my $nm (grow_producers(map { $libsrc{$_} } sort keys %libsrc)) {
+    my ($where) = grep { $PRODUCER{$nm} && producers($libsrc{$_})->{$nm} } sort keys %libsrc;
+    print join("\t", 'producer', $nm, $where // ''), "\n";
+}
+my %GLOBAL_PRODUCER = %PRODUCER;
+{
+    my $names = join('|', map { quotemeta } ($TOOL, sort keys %GLOBAL_PRODUCER));
+    $EMBED_RE = qr/(?:$names)/;
+}
+
 for my $file (@files) {
     my $src = slurp($file);
     next unless defined $src;
     my @lines = split /\n/, $src, -1;
     @RESULTS = ();
     @EMBED = ();
+    %PRODUCER = %GLOBAL_PRODUCER;
     my $toks = lex_text($src, 1);
+    grow_producers($toks);
     %DIE = (%$libdie, %{ die_functions($toks) });
     my $ctx = { file => $file };
-    my @top = analyze($toks, $ctx, 0);
-    # string literals that mention the tool are scanned again as programs
+    analyze($toks, $ctx, 0);
+    # string literals that mention the tool or a helper are scanned again as programs
     my %seen;
     my $rounds = 0;
     while (@EMBED && $rounds < 4) {
@@ -867,23 +1058,27 @@ for my $file (@files) {
             next if $seen{"$e->{line}\t$e->{text}"}++;
             my $etoks = lex_text($e->{text}, $e->{line});
             my %save = %DIE;
+            my %psave = %PRODUCER;
             %DIE = (%DIE, %{ die_functions($etoks) });
+            grow_producers($etoks);
             analyze($etoks, $ctx, 0);
             %DIE = %save;
+            %PRODUCER = %psave;
         }
     }
     my %done;
     for my $r (@RESULTS) {
-        my ($verdict, $f, $line, $detail) = @$r;
-        next if $done{"$line\t$verdict\t$detail"}++;
+        my ($verdict, $f, $line, $detail, $what) = @$r;
+        $what //= 'tempdir';
+        next if $done{"$line\t$verdict\t$detail\t$what"}++;
         my $text = defined $lines[ $line - 1 ] ? $lines[ $line - 1 ] : '';
         (my $trim = $text) =~ s/^\s+|\s+$//g;
         if ($verdict eq 'unguarded' && $allow{"$f\t$trim"}) {
             $allow{"$f\t$trim"}{used}++;
-            print join("\t", 'allowed', "$f:$line", $allow{"$f\t$trim"}{reason}, $trim), "\n";
+            print join("\t", 'allowed', "$f:$line", $allow{"$f\t$trim"}{reason}, $trim, $what), "\n";
             next;
         }
-        print join("\t", $verdict, "$f:$line", $detail, $trim), "\n";
+        print join("\t", $verdict, "$f:$line", $detail, $trim, $what), "\n";
     }
 }
 for my $k (sort keys %allow) {
@@ -904,13 +1099,16 @@ tgb_scan() {
 }
 
 # --- 2a. the scanner itself: what counts as failing closed ------------------
-# Each sample is a tiny shell file; @MK@ stands for the tool's name so this
-# file's own text holds none of these shapes.
+# Each sample is a tiny shell file; @MK@, @FTD@ and @PFR@ stand for mktemp and
+# two library helpers so this file's own text holds none of these shapes.
+TGB_FTD=fake_tool_dir_create
+TGB_PFR=persist_fixture_root_create
+TGB_PFN=persist_fixture_nas_create
 TGB_SAMPLES="$TGB_ROOT_P/samples"
 mkdir "$TGB_SAMPLES" || tgb_abort "cannot create $TGB_SAMPLES"
 TGB_SAMPLE_LIST=""
 tgb_sample() { # NAME EXPECTED BODY -- EXPECTED: the site verdicts, in line order, comma-separated ("none": no site)
-    printf '%s\n' "$3" | sed "s/@MK@/$TGB_TOOL/g" > "$TGB_SAMPLES/$1.sh"
+    printf '%s\n' "$3" | sed -e "s/@MK@/$TGB_TOOL/g" -e "s/@FTD@/$TGB_FTD/g" -e "s/@PFR@/$TGB_PFR/g" > "$TGB_SAMPLES/$1.sh"
     TGB_SAMPLE_LIST="$TGB_SAMPLE_LIST $1:$2"
 }
 tgb_sample plain unguarded 'X="$(@MK@ -d "$T/a.XXXXXX")"
@@ -975,9 +1173,40 @@ tgb_sample helper none 'dxe_test_mktemp_dir X "$T/a.XXXXXX"'
 tgb_sample commented-out none '# X="$(@MK@ -d "$T/a.XXXXXX")"'
 tgb_sample tool-list none 'for t in rm @MK@ mkdir; do ln -s "$(command -v "$t")" "$d/$t"; done'
 tgb_sample nested-guarded guarded 'Y="$(X="$(@MK@ -d "$T/a.XXXXXX")" || exit 1; printf "%s\n" "$X")" || exit 1'
-tgb_sample nested-unguarded unguarded 'Y="$(X="$(@MK@ -d "$T/a.XXXXXX")" || exit 1; printf "%s\n" "$X")"'
+tgb_sample nested-multi guarded 'out="$(X="$(@MK@ -d "$T/a.XXXXXX")" || exit 1; run "$X")"'
+tgb_sample sole-list unguarded 'X="$(@MK@ -d "$T/a.XXXXXX" || exit 1)"'
+tgb_sample and-list guarded 'X="$(cd "$T" && @MK@ -d a.XXXXXX)" || exit 1'
+tgb_sample or-list unguarded 'X="$(@MK@ -d "$T/a.XXXXXX" || echo /tmp)" || exit 1'
+tgb_sample multi-unguarded unguarded 'out="$(X="$(@MK@ -d "$T/a.XXXXXX")"; run "$X")"'
 tgb_sample two-sites guarded,unguarded 'A="$(@MK@ -d "$T/a.XXXXXX")" || exit 1
 B="$(@MK@ -d "$T/b.XXXXXX")"'
+# Calls of a function that makes and prints a new directory count the same
+# way (contract item 2b), whether it comes from tests/lib or the file itself.
+tgb_sample helper-plain unguarded 'X="$(@FTD@ "$d")"'
+tgb_sample helper-exit guarded 'X="$(@FTD@ "$d")" || exit 1'
+tgb_sample helper-case-check unguarded 'S="$(@PFR@)"
+case "$S" in /*/dxe-persist-share.*) : ;; *) exit 1 ;; esac'
+tgb_sample helper-argument unguarded 'fake_tool_write "$(@FTD@ "$d")" ssh "exit 0" || exit 1'
+tgb_sample helper-path unguarded 'PATH="$(@FTD@ "$d"):$PATH"'
+tgb_sample helper-local unguarded 'f() {
+    local t="$(@FTD@ "$d")" || return 1
+}'
+tgb_sample helper-in-string unguarded 'bash -c '"'"'X="$(@PFR@ "$S")"; cd "$X"'"'"
+tgb_sample wrapper unguarded,guarded 'new_root() { @PFR@ "$S"; }
+R="$(new_root)" || exit 1'
+tgb_sample wrapper-guarded guarded,unguarded 'new_root() { @PFR@ "$S" || return 1; }
+R="$(new_root)"'
+tgb_sample printer guarded,unguarded 'mk() {
+    local d
+    d="$(@MK@ -d "$1/x.XXXXXX")" || return 1
+    printf "%s\n" "$d"
+}
+Y="$(mk "$T")"'
+tgb_sample not-a-printer none 'show() {
+    local d="$1"
+    printf "%s\n" "$d"
+}
+Y="$(show "$T")"'
 TGB_SAMPLE_ALLOW="$TGB_ROOT_P/samples-allow.tsv"
 tgb_sample allowed allowed 'P='"'"'let repo = (@MK@ -d)'"'"
 printf '%s\t%s\t%s\n' "$TGB_SAMPLES/allowed.sh" "P='let repo = ($TGB_TOOL -d)'" "a reviewed exception" \
@@ -985,7 +1214,8 @@ printf '%s\t%s\t%s\n' "$TGB_SAMPLES/allowed.sh" "P='let repo = ($TGB_TOOL -d)'" 
 
 TGB_SAMPLE_OUT="$TGB_ROOT_P/samples.out"
 # shellcheck disable=SC2046  # one argument per sample file
-tgb_scan "$TGB_SAMPLE_ALLOW" $(for s in $TGB_SAMPLE_LIST; do printf '%s\n' "$TGB_SAMPLES/${s%%:*}.sh"; done) > "$TGB_SAMPLE_OUT" 2>&1
+tgb_scan "$TGB_SAMPLE_ALLOW" tests/lib/fake-tools.sh tests/lib/persist-fixtures.sh \
+    $(for s in $TGB_SAMPLE_LIST; do printf '%s\n' "$TGB_SAMPLES/${s%%:*}.sh"; done) > "$TGB_SAMPLE_OUT" 2>&1
 tgb_scan_rc=$?
 if [ "$tgb_scan_rc" -eq 0 ]; then
     test_pass "static guard: the scanner runs over the samples"
@@ -1024,11 +1254,25 @@ TGB_ALLOW="$TGB_ROOT_P/allowlist.tsv"
 printf '%s\t%s\t%s\n' \
     tests/test_section15_nushell_env.sh "let repo = ($TGB_TOOL -d)" \
     "Nushell program text (LAZYGIT_PROBE) run by nu in the guest: a failing call raises a Nushell error that ends the program before 'cd \$repo'; there is no shell || exit form" \
+    tests/test_persist_fixtures.sh "err=\"\$($TGB_PFN \"\$missing\" \"\$SCRATCH\" 2>&1)\"; rc=\$?" \
+    "the case asserts that the helper refuses a missing share root: it expects the failure, and the value it captures is the error text, never a path" \
     > "$TGB_ALLOW"
 TGB_TREE_OUT="$TGB_ROOT_P/tree.out"
 (cd -P -- "$BASE_DIR" && set -- tests/test_*.sh tests/lib/*.sh && tgb_scan "$TGB_ALLOW" "$@") > "$TGB_TREE_OUT" 2>&1
 tgb_scan_rc=$?
-tgb_unguarded="$(grep -c '^unguarded' "$TGB_TREE_OUT")"
+# Column 5 names what was called: tempdir (mktemp -d), or helper:NAME. The library
+# helpers are the "producer" lines (helpers found in tests/lib/*.sh and
+# tests/test_helpers.sh).
+tgb_unguarded="$(awk -F'\t' '$1 == "unguarded" && $5 == "tempdir"' "$TGB_TREE_OUT" | grep -c .)"
+TGB_LIB_HELPERS="$(awk -F'\t' '$1 == "producer" { print $2 }' "$TGB_TREE_OUT" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+tgb_lib_calls="$TGB_ROOT_P/tree-lib-calls.out"
+tgb_local_calls="$TGB_ROOT_P/tree-local-calls.out"
+awk -F'\t' -v libs=" $TGB_LIB_HELPERS " '
+    $1 == "unguarded" && $5 ~ /^helper:/ {
+        name = substr($5, 8)
+        if (index(libs, " " name " ")) { print > lib } else { print > loc }
+    }' lib="$tgb_lib_calls" loc="$tgb_local_calls" "$TGB_TREE_OUT"
+touch "$tgb_lib_calls" "$tgb_local_calls"
 tgb_guarded="$(grep -c '^guarded' "$TGB_TREE_OUT")"
 if [ "$tgb_scan_rc" -eq 0 ] && grep -q "$(printf '^guarded\ttests/lib/harness.sh:')" "$TGB_TREE_OUT"; then
     test_pass "static guard: the scan runs over the tree and finds the harness's own fail-closed call ($tgb_guarded guarded site(s))"
@@ -1040,7 +1284,31 @@ if [ "$tgb_unguarded" -eq 0 ]; then
     test_pass "static guard: every directory-making $TGB_TOOL call in tests/test_*.sh and tests/lib/*.sh uses dxe_test_mktemp_dir or fails closed on the same statement"
 else
     test_fail "static guard: every directory-making $TGB_TOOL call in tests/test_*.sh and tests/lib/*.sh uses dxe_test_mktemp_dir or fails closed on the same statement ($tgb_unguarded unguarded)"
-    grep '^unguarded' "$TGB_TREE_OUT" | awk -F'\t' '{ printf "      | %s  (%s)\n", $2, $3 }'
+    awk -F'\t' '$1 == "unguarded" && $5 == "tempdir" { printf "      | %s  (%s)\n", $2, $3 }' "$TGB_TREE_OUT"
+fi
+tgb_missing=""
+for tgb_h in fake_tool_dir_create persist_fixture_nas_create persist_fixture_root_create; do
+    case " $TGB_LIB_HELPERS " in
+        *" $tgb_h "*) : ;;
+        *) tgb_missing="$tgb_missing $tgb_h" ;;
+    esac
+done
+if [ -z "$tgb_missing" ]; then
+    test_pass "static guard: the scan finds the library helpers that make and print a new directory ($TGB_LIB_HELPERS)"
+else
+    test_fail "static guard: the scan finds the library helpers that make and print a new directory (missing:$tgb_missing; found: $TGB_LIB_HELPERS)"
+fi
+if [ ! -s "$tgb_lib_calls" ]; then
+    test_pass "static guard: every call of a library helper that makes a directory ($TGB_LIB_HELPERS) fails closed on the same statement"
+else
+    test_fail "static guard: every call of a library helper that makes a directory ($TGB_LIB_HELPERS) fails closed on the same statement ($(grep -c . "$tgb_lib_calls") unguarded)"
+    awk -F'\t' '{ printf "      | %s  %s  (%s)\n", $2, $5, $3 }' "$tgb_lib_calls"
+fi
+if [ ! -s "$tgb_local_calls" ]; then
+    test_pass "static guard: every call of a suite's own function that makes and prints a directory fails closed on the same statement"
+else
+    test_fail "static guard: every call of a suite's own function that makes and prints a directory fails closed on the same statement ($(grep -c . "$tgb_local_calls") unguarded)"
+    awk -F'\t' '{ printf "      | %s  %s  (%s)\n", $2, $5, $3 }' "$tgb_local_calls"
 fi
 if ! grep -q '^stale' "$TGB_TREE_OUT"; then
     test_pass "static guard: every allowlist entry still names a site"
@@ -1048,6 +1316,91 @@ else
     test_fail "static guard: every allowlist entry still names a site"
     grep '^stale' "$TGB_TREE_OUT" | sed 's/^/      | /'
 fi
+
+# --- 2c. the library helpers fail loudly (contract item 2c) -----------------
+# Each helper is called the way its callers call it, in "$(...)", from a
+# probe that sources the libraries a suite sources; mktemp is a stub that
+# records its arguments and fails, the destructive commands are recording
+# stubs that change nothing, and cwd, HOME and TMPDIR are the probe's own.
+TGB_HELPERS_DIR="$TGB_ROOT_P/helpers"
+mkdir "$TGB_HELPERS_DIR" || tgb_abort "cannot create $TGB_HELPERS_DIR"
+cat > "$TGB_HELPERS_DIR/probe.sh" <<'PROBE'
+#!/bin/bash
+# probe.sh CHECKOUT RESULT FUNCTION ARG...: records FUNCTION's status (as
+# "status=N" in RESULT) and its stdout (RESULT.stdout) when called in $(...).
+set -uo pipefail
+probe_checkout="$1"
+probe_result="$2"
+shift 2
+# shellcheck source=/dev/null
+source "$probe_checkout/tests/test_helpers.sh" >/dev/null
+# shellcheck source=/dev/null
+source "$probe_checkout/tests/lib/fake-tools.sh"
+# shellcheck source=/dev/null
+source "$probe_checkout/tests/lib/persist-fixtures.sh"
+probe_out="$("$@")"
+printf 'status=%s\n' "$?" > "$probe_result"
+printf '%s' "$probe_out" > "$probe_result.stdout"
+exit 0
+PROBE
+
+# tgb_helper_fails ID FUNCTION ARG...: the four checks of contract item 2c.
+# ARG may name @PARENT@ and @ROOT@, two empty directories of the probe's own.
+tgb_helper_fails() {
+    local id="$1" fn="$2" h label tool a tgb_helper_args
+    h="$TGB_HELPERS_DIR/$id"
+    mkdir -p "$h/cwd" "$h/tmp" "$h/parent" "$h/root" "$h/stub" "$h/rec" || tgb_abort "cannot create $h"
+    tgb_refuse_dangerous "helper probe $id" "$h/cwd"
+    fake_tool_write "$h/stub" "$TGB_TOOL" "printf '%s\n' \"\$*\" >> $(printf '%q' "$h/mktemp.log")
+exit 1"
+    for tool in rm rmdir unlink mv chmod chown chgrp find; do
+        fake_tool_write "$h/rec" "$tool" "printf '%s %s\n' \"\${0##*/}\" \"\$*\" >> $(printf '%q' "$h/destructive.log")
+exit 0"
+    done
+    : > "$h/stderr"
+    tgb_helper_args=()
+    for a in "${TGB_HELPER_ARGS[@]}"; do
+        case "$a" in
+            @PARENT@) tgb_helper_args+=("$h/parent") ;;
+            @ROOT@) tgb_helper_args+=("$h/root") ;;
+            *) tgb_helper_args+=("$a") ;;
+        esac
+    done
+    tgb_supervise 60 "$h/cwd" "$h/stderr" -- "$TGB_ENV" -i HOME="$h/cwd" LANG="${LANG:-C}" \
+        PATH="$h/stub:$h/rec:$TGB_SYS_PATH" TMPDIR="$h/tmp" \
+        "$TGB_BASH" "$TGB_HELPERS_DIR/probe.sh" "$TGB_CHECKOUT_P" "$h/result" "$fn" "${tgb_helper_args[@]+"${tgb_helper_args[@]}"}"
+    label="library helper $fn, called in \$(...) when its mktemp fails"
+    if [ -s "$h/result" ] && ! grep -qx 'status=0' "$h/result"; then
+        test_pass "$label: returns non-zero ($(cat "$h/result"))"
+    else
+        test_fail "$label: returns non-zero ($(cat "$h/result" 2>/dev/null))"
+        tgb_show "$h/stderr" 4
+    fi
+    if [ -f "$h/result.stdout" ] && [ ! -s "$h/result.stdout" ]; then
+        test_pass "$label: prints nothing on stdout"
+    else
+        test_fail "$label: prints nothing on stdout (got [$(cat "$h/result.stdout" 2>/dev/null)])"
+    fi
+    if grep -F 'cannot create a temporary' "$h/stderr" | grep -Fq -- "$fn"; then
+        test_pass "$label: says on stderr that $fn cannot create a temporary directory"
+    else
+        test_fail "$label: says on stderr that $fn cannot create a temporary directory"
+        tgb_show "$h/stderr" 4
+    fi
+    if [ -s "$h/mktemp.log" ] && [ ! -s "$h/destructive.log" ] && [ -z "$(find "$h/parent" "$h/root" "$h/cwd" -mindepth 1 -print)" ]; then
+        test_pass "$label: its mktemp ran, and nothing was created or removed"
+    else
+        test_fail "$label: its mktemp ran, and nothing was created or removed"
+        tgb_show "$h/mktemp.log" 2
+        tgb_show "$h/destructive.log" 3
+    fi
+}
+TGB_HELPER_ARGS=(@PARENT@)
+tgb_helper_fails ftd fake_tool_dir_create
+TGB_HELPER_ARGS=(@PARENT@)
+tgb_helper_fails pfr persist_fixture_root_create
+TGB_HELPER_ARGS=(@ROOT@ @PARENT@)
+tgb_helper_fails pfn persist_fixture_nas_create
 
 # =====================================================================
 # 1. Fixture sites, from decoys with one mktemp failing (contract item 1)
@@ -1069,28 +1422,6 @@ TGB_GUEST_REAL=no
 if [ "$TGB_SANDBOX" = no ] && { [ -e /persist ] || [ -e /home/dx ]; }; then
     TGB_GUEST_REAL=yes
 fi
-
-# tgb_supervise LIMIT CWD OUT -- CMD...: run CMD in its own process group
-# with cwd CWD, stdin /dev/null, stdout and stderr appended to OUT; kill the
-# whole group after LIMIT seconds (status 124). Returns CMD's status.
-tgb_supervise() {
-    local limit="$1" cwd="$2" out="$3"
-    shift 4
-    (
-        cd -P -- "$cwd" || exit 125
-        exec "$TGB_PERL" -e '
-            my $limit = shift @ARGV;
-            my $pid = fork();
-            defined $pid or exit 125;
-            if ($pid == 0) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV or exit 127; }
-            $SIG{ALRM} = sub { kill "KILL", -$pid; kill "KILL", $pid; print STDERR "dxe-tmpguard-b: killed after ${limit}s\n"; exit 124; };
-            alarm $limit;
-            waitpid($pid, 0);
-            alarm 0;
-            exit(($? & 127) ? 128 + ($? & 127) : ($? >> 8));
-        ' "$limit" "$@"
-    ) </dev/null >>"$out" 2>&1
-}
 
 TGB_PRISTINE="$TGB_ROOT_P/pristine"
 mkdir "$TGB_PRISTINE" || tgb_abort "cannot create $TGB_PRISTINE"
@@ -1405,6 +1736,10 @@ tgb_guest_site pbs-statfail tests/test_persist_backup_select.sh dxe-pbs-statfail
 # The share roots tests/test_persist_reclaim.sh canonicalises with cd -P.
 tgb_site reclaim-root tests/test_persist_reclaim.sh dxe-persist-share.XXXXXX 2 "the share root ROOT"
 tgb_site reclaim-empty tests/test_persist_reclaim.sh dxe-persist-share.XXXXXX 3 "the share root EMPTY_ROOT"
+# world() in the migrate and rollback suites: CANON="$(cd -P "$ROOT" && pwd -P)"
+# is the checkout when ROOT is empty.
+tgb_site migrate-world tests/test_persist_migrate.sh dxe-persist-share.XXXXXX 2 "the first world() share root"
+tgb_site rollback-world tests/test_persist_rollback.sh dxe-persist-share.XXXXXX 2 "the first world() share root"
 # Section 20: its stub directory, and the marker files whose emptiness is
 # the "invokes no container/ssh/scp/dx-ai command" proof.
 tgb_site s20-stub-bin tests/test_section20_skip_integration.sh dxe-stub-bin.XXXXXX 1 "the stub directory"
