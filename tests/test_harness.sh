@@ -783,6 +783,69 @@ check reject contains "$hh_out" "@@continued@@"
 check test -z "$(find "$hh_dir" -name 'dxe-hh-name.*')"
 rm -rf "$hh_dir"
 
+# --- (ii) WP-TMPGUARD-b: the harness gaps (hh) left. Each probe is its own
+# bash, cwd and TMPDIR inside a scratch directory (never the checkout), and
+# must stop non-zero before it records or prints a pass or a skip, and before
+# "@@continued@@". This file's own exported fake-runtime state is cleared in
+# each probe so the probe makes its own.
+ii_dir="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir ii_dir "${TMPDIR:-/tmp}/dxe-harness-ii.XXXXXX"
+mkdir "$ii_dir/fakes" "$ii_dir/failbin" "$ii_dir/tmp"
+# A chmod that records its call and fails, changing nothing.
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s\nexit 1\n' "'$ii_dir/chmod.log'" > "$ii_dir/failbin/chmod"
+/bin/chmod 0755 "$ii_dir/failbin/chmod"
+ii_probe() { # LIBRARY TMPDIR BODY
+    (cd "$ii_dir" && TMPDIR="$2" DXE_II_LIB="$SCRIPT_DIR/$1" bash -c '
+        unset DXE_FAKE_RUNTIME_DIR FAKE_TRANSCRIPT
+        source "$DXE_II_LIB" >/dev/null
+        '"$3"'
+        echo "@@continued@@"' 2>&1)
+}
+# The fake-runtime directory exists, but the shared transcript file cannot be
+# made: with an empty path every fake's `>> ""` fails and expect_transcript
+# could never see a call.
+ii_out="$(ii_probe test_helpers.sh "$ii_dir/missing" 'DXE_TEST_RESULTS="$PWD/results-t"; DXE_TEST_RESULTS_OWNER=$$
+DXE_FAKE_RUNTIME_DIR="$PWD/fakes"; export DXE_FAKE_RUNTIME_DIR
+with_fake_runtime docker
+test_pass "ii-after-transcript"')" && ii_status=0 || ii_status=$?
+check test "$ii_status" -ne 0
+check contains "$ii_out" "fake transcript"
+check reject contains "$ii_out" "ii-after-transcript"
+check reject contains "$ii_out" "@@continued@@"
+check reject test -s "$ii_dir/results-t"
+# The fake is written but cannot be made executable: PATH lookup skips a
+# non-executable file, so the REAL ssh behind it would answer every call.
+ii_out="$(ii_probe test_helpers.sh "$ii_dir/tmp" 'DXE_TEST_RESULTS="$PWD/results-c"; DXE_TEST_RESULTS_OWNER=$$
+PATH="$PWD/failbin:$PATH"
+with_fake_runtime ssh
+test_pass "ii-after-chmod"')" && ii_status=0 || ii_status=$?
+check test -s "$ii_dir/chmod.log"
+check test "$ii_status" -ne 0
+check contains "$ii_out" "fake ssh"
+check reject contains "$ii_out" "ii-after-chmod"
+check reject contains "$ii_out" "@@continued@@"
+check reject test -s "$ii_dir/results-c"
+# A skip that cannot be recorded stops the suite at the skip: neither the
+# skip line nor a summary is printed, and the exit is non-zero (test_skip,
+# then the harness's own skip).
+ii_out="$(ii_probe test_helpers.sh "$ii_dir/missing" 'DXE_TEST_RESULTS="$PWD/no-such-dir/results"; DXE_TEST_RESULTS_OWNER=$$
+test_skip "ii-skip-case"
+print_summary
+exit_with_code')" && ii_status=0 || ii_status=$?
+check test "$ii_status" -ne 0
+check contains "$ii_out" "results file"
+check reject contains "$ii_out" "ii-skip-case"
+check reject contains "$ii_out" "Results:"
+check reject contains "$ii_out" "@@continued@@"
+ii_out="$(ii_probe lib/harness.sh "$ii_dir/missing" 'DXE_TEST_RESULTS="$PWD/no-such-dir/results"; DXE_TEST_RESULTS_OWNER=$$
+skip --class live "ii-native-skip"
+finish')" && ii_status=0 || ii_status=$?
+check test "$ii_status" -ne 0
+check contains "$ii_out" "results file"
+check reject contains "$ii_out" "Results:"
+check reject contains "$ii_out" "@@continued@@"
+rm -rf "$ii_dir"
+
 rm -f "$RESULTS"
 
 [ "$failures" -eq 0 ]
