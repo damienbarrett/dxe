@@ -22,9 +22,10 @@ source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
 source "$BASE_DIR/bin/lib/dx-bootstrap-sync.sh"
 test_section "Transactional Bootstrap Publication"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bootstrap-publication.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-bootstrap-publication.XXXXXX"
 trap 'chmod -R u+w "$fixture" 2>/dev/null || true; rm -rf "$fixture"' EXIT
-fake_dir="$(fake_tool_dir_create "$fixture")"
+fake_dir="$(fake_tool_dir_create "$fixture")" || exit 1
 root="$fixture/guest-bootstrap"; good="$fixture/good"; good_two="$fixture/good-two"; broken="$fixture/broken"
 mkdir -p "$root" "$good" "$good_two" "$broken"
 : > "$root/.dx-bootstrap-waiting"
@@ -152,7 +153,7 @@ fi
 # running must fail fast, with the preflight's existing message, after at
 # most DX_BOOTSTRAP_WAIT_TIMEOUT sleeps.
 wait_fixture="$fixture/wait-preflight"; mkdir -p "$wait_fixture"
-fake_dir_wait="$(fake_tool_dir_create "$wait_fixture")"
+fake_dir_wait="$(fake_tool_dir_create "$wait_fixture")" || exit 1
 fake_tool_write "$fake_dir_wait" container '
 case "${1:-}" in
   list)
@@ -579,7 +580,7 @@ assert_file_not_contains "$BASE_DIR/bin/dx-start-container" 'OLD_BASE' "dx-start
 # Container absent.
 absent_root="$fixture/absent-root"; mkdir -p "$absent_root"
 mkdir -p "$fixture/absent-fake"
-fake_dir_absent="$(fake_tool_dir_create "$fixture/absent-fake")"
+fake_dir_absent="$(fake_tool_dir_create "$fixture/absent-fake")" || exit 1
 fake_tool_write "$fake_dir_absent" container '
 case "${1:-}" in
   system) exit 0 ;;
@@ -623,7 +624,7 @@ fi
 # injectable DX_SLEEP seam as the container-running preflight above.
 never_ready_root="$fixture/never-ready-root"; mkdir -p "$never_ready_root"
 mkdir -p "$fixture/never-ready-fake"
-fake_dir_never_ready="$(fake_tool_dir_create "$fixture/never-ready-fake")"
+fake_dir_never_ready="$(fake_tool_dir_create "$fixture/never-ready-fake")" || exit 1
 fake_tool_write "$fake_dir_never_ready" container '
 case "${1:-}" in
   system) exit 0 ;;
@@ -670,7 +671,7 @@ fi
 # fast and deterministic, since that loop calls `sleep` directly rather than
 # through the host's DX_SLEEP seam.
 lock_timeout_fixture="$fixture/lock-timeout"; mkdir -p "$lock_timeout_fixture"
-lock_timeout_fake="$(fake_tool_dir_create "$lock_timeout_fixture")"
+lock_timeout_fake="$(fake_tool_dir_create "$lock_timeout_fixture")" || exit 1
 fake_tool_write "$lock_timeout_fake" container '
 case "${1:-}" in
   system) exit 0 ;;
@@ -761,7 +762,7 @@ FAKESYNC
 chmod 0755 "$reword_bin/dx-sync-bootstrap"
 
 mkdir -p "$fixture/reword-fake"
-reword_fake="$(fake_tool_dir_create "$fixture/reword-fake")"
+reword_fake="$(fake_tool_dir_create "$fixture/reword-fake")" || exit 1
 fake_tool_write "$reword_fake" container '
 case "${1:-}" in
   system) exit 0 ;;
@@ -806,7 +807,7 @@ fi
 # technique, a fresh fake sync per case.
 result_file_home="$fixture/result-file-home"; mkdir -p "$result_file_home"
 mkdir -p "$fixture/result-file-fake"
-result_file_fake="$(fake_tool_dir_create "$fixture/result-file-fake")"
+result_file_fake="$(fake_tool_dir_create "$fixture/result-file-fake")" || exit 1
 fake_tool_write "$result_file_fake" container '
 case "${1:-}" in
   system) exit 0 ;;
@@ -882,7 +883,7 @@ fi
 # succeeds (readiness, not mere generation ownership).
 health_fixture="$fixture/health"
 mkdir -p "$health_fixture"
-health_fake="$(fake_tool_dir_create "$health_fixture")"
+health_fake="$(fake_tool_dir_create "$health_fixture")" || exit 1
 fake_tool_write "$health_fake" cat '
 case "$1" in
   /proc/sys/kernel/random/boot_id) printf "%s\n" deadbeef-cafe-babe-dead-beefcafebabe ;;

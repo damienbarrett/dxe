@@ -60,7 +60,7 @@ if [ "$(uname -s)" != "Linux" ]; then
         exit_with_code
     fi
 
-    SNAPSHOT_PARENT="$(mktemp -d -t dxe-section12-snapshot.XXXXXX)"
+    SNAPSHOT_PARENT="$(mktemp -d -t dxe-section12-snapshot.XXXXXX)" || exit 1
     SNAPSHOT_DIR="$SNAPSHOT_PARENT/repo"
     mkdir -p "$SNAPSHOT_DIR"
     if git -C "$BASE_DIR" rev-parse --git-dir >/dev/null 2>&1; then

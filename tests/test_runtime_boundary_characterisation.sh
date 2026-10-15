@@ -71,7 +71,8 @@ fresh_home() {
 # fallback when the bounded stop cannot bring the container down.
 # =============================================================================
 
-dc_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rtb-destroy-container.XXXXXX")"
+dc_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir dc_fixture "${TMPDIR:-/tmp}/dxe-rtb-destroy-container.XXXXXX"
 
 fake_tool_write "$dc_fixture/bin" container '
 case "$1" in
@@ -160,7 +161,8 @@ rm -rf "$dc_fixture"
 # present, output discarded.
 # =============================================================================
 
-di_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rtb-destroy-image.XXXXXX")"
+di_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir di_fixture "${TMPDIR:-/tmp}/dxe-rtb-destroy-image.XXXXXX"
 
 fake_tool_write "$di_fixture/bin" container '
 case "$1" in
@@ -218,7 +220,8 @@ rm -rf "$di_fixture"
 # is static (grep) or live-only; this drives the actual branch decision.
 # =============================================================================
 
-cv_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rtb-create-volumes.XXXXXX")"
+cv_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir cv_fixture "${TMPDIR:-/tmp}/dxe-rtb-create-volumes.XXXXXX"
 
 fake_tool_write "$cv_fixture/bin" container '
 case "$1" in
@@ -287,7 +290,8 @@ rm -rf "$cv_fixture"
 # --force.
 # =============================================================================
 
-dv_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rtb-destroy-volumes.XXXXXX")"
+dv_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir dv_fixture "${TMPDIR:-/tmp}/dxe-rtb-destroy-volumes.XXXXXX"
 
 fake_tool_write "$dv_fixture/bin" container '
 case "$1" in
@@ -369,7 +373,8 @@ rm -rf "$dv_fixture"
 # output, which is not guaranteed identical across bash versions.
 # =============================================================================
 
-en_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rtb-enter.XXXXXX")"
+en_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir en_fixture "${TMPDIR:-/tmp}/dxe-rtb-enter.XXXXXX"
 
 fake_tool_write "$en_fixture/bin" container '
 case "$1" in
@@ -414,7 +419,8 @@ rm -rf "$en_fixture"
 # export NAME` streams straight to the redirected file, byte for byte.
 # =============================================================================
 
-ex_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rtb-export.XXXXXX")"
+ex_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir ex_fixture "${TMPDIR:-/tmp}/dxe-rtb-export.XXXXXX"
 
 fake_tool_write "$ex_fixture/bin" container '
 case "$1" in
@@ -540,7 +546,8 @@ rm -rf "$ex_fixture"
 # (non-captured) maintenance calls, output streamed straight through.
 # =============================================================================
 
-gc_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rtb-gc.XXXXXX")"
+gc_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir gc_fixture "${TMPDIR:-/tmp}/dxe-rtb-gc.XXXXXX"
 
 fake_tool_write "$gc_fixture/bin" container '
 case "$1" in
@@ -596,7 +603,8 @@ rm -rf "$gc_fixture"
 # has no opinion on whether guest paths are absolute or relative.
 # =============================================================================
 
-get_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rtb-get.XXXXXX")"
+get_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir get_fixture "${TMPDIR:-/tmp}/dxe-rtb-get.XXXXXX"
 guest_root="$get_fixture/guest-root"
 mkdir -p "$guest_root/adir/sub"
 printf 'file content' > "$guest_root/adir/sub/leaf.txt"
@@ -666,7 +674,8 @@ rm -rf "$get_fixture"
 # dx-get above.
 # =============================================================================
 
-put_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rtb-put.XXXXXX")"
+put_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir put_fixture "${TMPDIR:-/tmp}/dxe-rtb-put.XXXXXX"
 guest_root="$put_fixture/guest-root"
 mkdir -p "$guest_root"
 source_dir="$put_fixture/source-dir"
@@ -754,7 +763,8 @@ rm -rf "$put_fixture"
 # reads the first two, and Apple's guest is always aarch64-linux.
 # =============================================================================
 
-cc_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-rtb-create-container.XXXXXX")"
+cc_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir cc_fixture "${TMPDIR:-/tmp}/dxe-rtb-create-container.XXXXXX"
 fake_tool_write "$cc_fixture/bin" container '
 case "$1" in
     list) exit 1 ;;

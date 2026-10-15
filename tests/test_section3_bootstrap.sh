@@ -114,7 +114,8 @@ else
     test_pass "dx_guest_resolve_system refuses an unsupported guest architecture even with DX_GUEST_SYSTEM unset"
 fi
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bootstrap-test.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-bootstrap-test.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 
 # Declared once so ShellCheck (SC2154) sees every later dx_parse_nix_volume_
@@ -311,7 +312,8 @@ fi
 # and an apostrophe -- the two characters careful quoting of a shell
 # string would have had to get right -- and assert the recorded argv holds
 # each path as one intact element.
-argv_capture_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-argv-capture.XXXXXX")"
+argv_capture_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir argv_capture_fixture "${TMPDIR:-/tmp}/dxe-argv-capture.XXXXXX"
 argv_capture_log="$argv_capture_fixture/setpriv-argv.log"
 gh_argv_persist="$argv_capture_fixture/gh persist/home/dx"
 gh_argv_home="$argv_capture_fixture/gh's home"
@@ -740,7 +742,8 @@ else
     test_fail "ensure_essentials_valid reports elapsed time on completion (output: $p_eev_output)"
 fi
 
-p_eno_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-phase-ownership.XXXXXX")"
+p_eno_root="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir p_eno_root "${TMPDIR:-/tmp}/dxe-phase-ownership.XXXXXX"
 p_eno_output="$({
     owner_uid="$(command id -u)"
     owner_gid="$(command id -g)"
@@ -1268,7 +1271,8 @@ fi
 # invocation), not a no-op, so a case that should never call mkfs/mount/
 # umount/truncate/blkid actually proves it, the same discipline P7's findmnt
 # stub uses.
-p8_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p8-direct-volume.XXXXXX")"
+p8_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir p8_fixture "${TMPDIR:-/tmp}/dxe-p8-direct-volume.XXXXXX"
 
 # An explicit DX_NIX_STORAGE_MODE=apple-image behaves exactly like the
 # absent-variable default (the P7 true-positive scenario, replayed with the
@@ -1394,7 +1398,8 @@ rm -rf "$p8_fixture"
 # add. owner_uid/owner_gid fall back to the production code's own "0"
 # default (no real "dx" user exists on this host, exactly like every other
 # isolated fixture in this file).
-p9_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p9-in-place-populate.XXXXXX")"
+p9_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir p9_fixture "${TMPDIR:-/tmp}/dxe-p9-in-place-populate.XXXXXX"
 
 # 1. Store missing: refuse, naming the Docker copy-on-first-mount
 # dependency, before nix_image_store_import_required is ever consulted.
@@ -2027,7 +2032,8 @@ fi
 # command failure -- is not suppressed by an `if`/`&&`/`||` context around
 # the call itself. Only nesting the whole capture in its own subshell
 # contains that abrupt exit to the subshell instead of this test file.
-p12_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p12-unchecked-privileged.XXXXXX")"
+p12_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir p12_fixture "${TMPDIR:-/tmp}/dxe-p12-unchecked-privileged.XXXXXX"
 
 # (a) A failing mount (the task's own reproduction): an older kernel
 # rejecting a mount option, or any other mount(8) failure. Every other stub
@@ -2190,7 +2196,8 @@ rm -rf "$p12_fixture"
 # nested execution, not merely the one command being tested. (e) no longer
 # needs any of this special-casing itself -- Fable B11's fstab parameter
 # seam means it never touches a real file that could fail for real.
-p13_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p13-storage.XXXXXX")"
+p13_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir p13_fixture "${TMPDIR:-/tmp}/dxe-p13-storage.XXXXXX"
 
 # (a) A fully successful sparse-image prepare, through the real
 # prepare_nix_volume phase wrapper: btrfs supported, /nix not already
@@ -2588,7 +2595,8 @@ rm -rf "$p13_fixture"
 # never calls dx_write_pending_image_identity at all -- must never create
 # .dx-image-store-identity even after publish_nix_image_store_identity (the
 # later, mode-agnostic phase) runs unconditionally against it.
-p14_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p14-clean-skip.XXXXXX")"
+p14_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir p14_fixture "${TMPDIR:-/tmp}/dxe-p14-clean-skip.XXXXXX"
 
 # (a) apple-image mode: an already-registered, content-verified volume.
 p14_apple_root="$p14_fixture/apple-volume"
@@ -2659,7 +2667,8 @@ rm -rf "$p14_fixture"
 # the two are bridged across the prepare/create_user phase boundary via
 # dx_persist_durable_identity_record/dx_read_durable_identity_record rather
 # than the removed environment variables.
-p15_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p15-durable-identity.XXXXXX")"
+p15_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir p15_fixture "${TMPDIR:-/tmp}/dxe-p15-durable-identity.XXXXXX"
 export DX_BOOTSTRAP_SCRATCH_DIR="$p15_fixture/scratch"
 
 # (a) A safe, already-owned Nix store: record_durable_nix_identity returns
@@ -2757,7 +2766,8 @@ rm -rf "$p15_fixture"
 # direct-volume (QNAP) boot; mode=in-place is the third mode this record
 # must accept -- root=/nix, no device/fs/opts -- which is the Red case this
 # gate calls for.
-p16_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p16-volume-record.XXXXXX")"
+p16_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir p16_fixture "${TMPDIR:-/tmp}/dxe-p16-volume-record.XXXXXX"
 export DX_BOOTSTRAP_SCRATCH_DIR="$p16_fixture/scratch"
 
 # (a) mode=in-place: accepted with just a root, rejected the moment any of
@@ -2816,7 +2826,7 @@ rm -rf "$p16_fixture"
 # nix_image_bootstrap_store_paths -> nix_restore_image_default_profile,
 # simulating the /nix remount by capturing against one root and restoring
 # against another that shares only the scratch directory).
-p17_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p17-default-profile.XXXXXX")"
+dxe_test_mktemp_dir p17_fixture "${TMPDIR:-/tmp}/dxe-p17-default-profile.XXXXXX"
 # nix_image_default_profile_store_path requires the resolved profile link to
 # stay under source_root/store/*; on macOS /tmp is itself a symlink to
 # /private/tmp, so readlink -f's fully-resolved path would otherwise never
@@ -2879,7 +2889,8 @@ rm -rf "$p17_fixture"
 # regular or absent one, on each of the three scratch-directory record
 # readers, and dx_write_nix_volume_record's own scratch-directory creation
 # failure.
-p18_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-section3-p18.XXXXXX")"
+p18_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir p18_fixture "${TMPDIR:-/tmp}/dxe-section3-p18.XXXXXX"
 export DX_BOOTSTRAP_SCRATCH_DIR="$p18_fixture/scratch"
 mkdir -p "$DX_BOOTSTRAP_SCRATCH_DIR"
 
@@ -2928,7 +2939,8 @@ rm -rf "$p18_fixture"
 # dx-opencode-persistence.sh; and base-and-storage.sh's
 # publish_nix_image_store_identity rejecting a malformed pending identity --
 # all flagged as uncovered by the coverage report. --------------------
-p19_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-section3-p19.XXXXXX")"
+p19_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir p19_fixture "${TMPDIR:-/tmp}/dxe-section3-p19.XXXXXX"
 
 if dx_write_nix_volume_record already-mounted "" >/dev/null 2>&1; then
     test_fail "P19: dx_write_nix_volume_record refuses an empty root"
@@ -3083,7 +3095,8 @@ rm -rf "$p19_fixture"
 # agent-stats-watchdog. Fake sshd/s6 binaries record their argv; nothing here
 # starts a real service.
 # =============================================================================
-us_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-usage-service.XXXXXX")"
+us_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir us_fixture "${TMPDIR:-/tmp}/dxe-usage-service.XXXXXX"
 us_bin="$us_fixture/bin"; mkdir -p "$us_bin"
 us_write_fake() {
     # $1 = tool name; records "name: argv" (one arg per field) to $US_LOG.

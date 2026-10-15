@@ -80,7 +80,7 @@ libraries+=(
 # "after" block ever runs, leaving those fields absent from the result
 # file -- read back as empty strings, which correctly fail every affected
 # before/after comparison rather than silently reusing a stale value.
-purity_probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-purity-probe.XXXXXX")"
+purity_probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-purity-probe.XXXXXX")" || exit 1
 purity_probe_script="$purity_probe_dir/probe.sh"
 cat > "$purity_probe_script" <<'PROBE'
 #!/bin/bash
@@ -158,7 +158,7 @@ purity_clean() {
 # Self-proof before the real scan is trusted (the same discipline the leak
 # and bare-sleep scans below apply to themselves): a real violation must be
 # caught, and a genuinely pure library must not be flagged.
-purity_fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-purity-fixture.XXXXXX")"
+purity_fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-purity-fixture.XXXXXX")" || exit 1
 cat > "$purity_fixture_dir/impure.sh" <<'EOF'
 #!/bin/bash
 set -u
@@ -202,7 +202,7 @@ rm -rf "$purity_probe_dir"
 check reject grep -q 'bin/lib' "$ROOT/tests/test_helpers.sh"
 
 source "$ROOT/bin/lib/dx-config.sh"
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-config-test.XXXXXX")"
+fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-config-test.XXXXXX")" || exit 1
 trap 'rm -rf "$fixture"' EXIT
 printf '%s\n' 'DX_CONTAINER_NAME=contract' 'DX_SSH_KEY=${DX_PROJECT_ROOT}/key' > "$fixture/good.env"
 # DX_PROJECT_ROOT is read by dx_parse_config_file to expand the ${DX_PROJECT_ROOT}
@@ -305,7 +305,7 @@ done
 # still exits non-zero, so the plain exit-status check below used to pass
 # vacuously under kcov. Asserting the stripped summary line names exactly
 # "1 failed" closes that gap: only a real, single test_fail can produce it.
-f6_probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-f6-probe.XXXXXX")"
+f6_probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-f6-probe.XXXXXX")" || exit 1
 f6_probe_script="$f6_probe_dir/probe.sh"
 cat > "$f6_probe_script" <<'PROBE'
 #!/bin/bash
@@ -391,7 +391,7 @@ entrypoint_main_name() {
 entrypoint_conforms() {
     local entry_name="$1" func probe_root out err funcfile probe_script fake_tool status ok probe_pid watchdog_pid
     func="$(entrypoint_main_name "$entry_name")"
-    probe_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-wp41-probe.XXXXXX")"
+    probe_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-wp41-probe.XXXXXX")" || exit 1
     cp -R "$ROOT/bin" "$probe_root/bin"
     # WP4.1: bin/lib/dx-persist-dir.sh (in the bin/dx-lib.sh facade) sources
     # the guest-shared marker library by path relative to the checkout root,
@@ -497,7 +497,7 @@ leak_detected() { [ -n "$(scan_leaking_overrides "$1")" ]; }
 # own red/green discipline): a real leak must be caught, a column-0
 # override properly wrapped in a `( … )` subshell must not, and a column-0
 # override followed later in the same file by its own `unset -f` must not.
-leak_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-leak-contract.XXXXXX")"
+leak_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-leak-contract.XXXXXX")" || exit 1
 mkdir -p "$leak_fixture/red" "$leak_fixture/green-subshell" "$leak_fixture/green-unset"
 cat > "$leak_fixture/red/test_leak_example.sh" <<'EOF'
 #!/bin/bash
@@ -561,7 +561,7 @@ bare_sleep_detected() { [ -n "$(scan_bare_sleep "$1")" ]; }
 # a real bare sleep must be caught, and the same wait disguised behind
 # another command on the line -- a real, backgroundable wait, not a no-op --
 # must not.
-sleep_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-sleep-contract.XXXXXX")"
+sleep_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-sleep-contract.XXXXXX")" || exit 1
 mkdir -p "$sleep_fixture/red" "$sleep_fixture/green"
 cat > "$sleep_fixture/red/test_sleep_example.sh" <<'EOF'
 #!/bin/bash
@@ -669,7 +669,7 @@ suite_header_ok() {
 # fixtures: no header at all (red), a header repeated twice (red), a header
 # present once but with an unrecognised value (red), and exactly one valid
 # `# tier:` plus one valid `# bash32:` (green).
-header_fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-header-contract.XXXXXX")"
+header_fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-header-contract.XXXXXX")" || exit 1
 cat > "$header_fixture_dir/test_none.sh" <<'EOF'
 #!/bin/bash
 set -euo pipefail
@@ -764,7 +764,7 @@ expected_tier_for_dispatch() {
 # run_all_tests.sh: a dispatch line right after the conditional's `if`
 # expects live, one outside it expects unit, and a file whose OWN header
 # disagrees with that expectation must be reported.
-manifest_fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-manifest-tier-contract.XXXXXX")"
+manifest_fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-manifest-tier-contract.XXXXXX")" || exit 1
 mkdir -p "$manifest_fixture_dir/tests"
 cat > "$manifest_fixture_dir/runner.sh" <<'EOF'
 run_test "$SCRIPT_DIR/test_a.sh" "1"
@@ -824,7 +824,7 @@ dxe_extract_publication_protocol_block() {
 }
 dxe_normalise_whitespace() { tr -s '[:space:]' ' ' | sed -e 's/^ *//' -e 's/ *$//'; }
 
-wp52_probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-wp52-protocol.XXXXXX")"
+wp52_probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-wp52-protocol.XXXXXX")" || exit 1
 cat > "$wp52_probe_dir/render_launcher.sh" <<'PROBE'
 #!/bin/bash
 set -euo pipefail

@@ -18,7 +18,8 @@ source "$SCRIPT_DIR/lib/coverage-metric.sh"
 
 test_section "Coverage metric (WP1.5): scope floor / unscoped-production ceiling"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-coverage-metric.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-coverage-metric.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 
 mkdir -p "$fixture/bin/lib" "$fixture/tests" \

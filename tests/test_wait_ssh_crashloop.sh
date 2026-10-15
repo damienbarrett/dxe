@@ -9,7 +9,8 @@ source "$SCRIPT_DIR/test_helpers.sh"
 source "$SCRIPT_DIR/lib/fake-tools.sh"
 test_section "dx-wait-ssh fails fast on a crash-looping guest (restart count and runtime queries)"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-wait-crashloop.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-wait-crashloop.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 export HOME="$fixture/home" DX_PROFILES_DIR="$fixture/profiles"
 mkdir -p "$HOME" "$DX_PROFILES_DIR"
@@ -26,14 +27,14 @@ source "$BASE_DIR/bin/lib/dx-backup.sh"
 # --- the runtime query, on both adapters -----------------------------------------
 new_tool_dir() {
     local dir
-    dir="$(fake_tool_dir_create "$fixture")"
+    dir="$(fake_tool_dir_create "$fixture")" || exit 1
     fake_tool_write "$dir" uname 'case "$1" in -m) echo x86_64 ;; esac'
     fake_qnap_ssh_write "$dir"
     [ -x "$dir/ssh" ] || { echo "test setup: fake ssh missing in $dir" >&2; exit 1; }
     printf '%s' "$dir"
 }
 export RC_LOG="$fixture/docker.log"
-dir="$(new_tool_dir)"
+dir="$(new_tool_dir)" || exit 1
 fake_tool_write "$dir" docker 'old=$IFS; IFS="|"; printf "%s\n" "$*" >> "$RC_LOG"; IFS=$old
 printf "3\r\n"'
 : > "$RC_LOG"
@@ -43,13 +44,13 @@ if [ "$rc_out" = 3 ] && [ "$(cat "$RC_LOG")" = "container|inspect|--format|{{.Re
 else
     test_fail "docker-ssh: dx_runtime_container_restart_count (out: '$rc_out'; argv: $(cat "$RC_LOG"))"
 fi
-dir="$(new_tool_dir)"; fake_tool_write "$dir" docker 'exit 1'
+dir="$(new_tool_dir)" || exit 1; fake_tool_write "$dir" docker 'exit 1'
 if ( PATH="$dir:/usr/bin:/bin"; DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid; export DXE_RUNTIME_DOCKER_BIN=docker DX_GUEST_SYSTEM=x86_64-linux; dx_runtime_container_restart_count dx-wait ) >/dev/null 2>&1; then
     test_fail "docker-ssh: an unknown container makes the restart-count query fail"
 else
     test_pass "docker-ssh: an unknown container makes the restart-count query fail"
 fi
-dir="$(new_tool_dir)"; fake_tool_write "$dir" container 'echo "container called" >> "$RC_LOG"; exit 99'
+dir="$(new_tool_dir)" || exit 1; fake_tool_write "$dir" container 'echo "container called" >> "$RC_LOG"; exit 99'
 : > "$RC_LOG"
 ap_out="$( ( PATH="$dir:/usr/bin:/bin"; DX_RUNTIME=apple; dx_runtime_container_restart_count dx-wait ) 2>&1 )" || true
 if [ "$ap_out" = 0 ] && [ ! -s "$RC_LOG" ]; then

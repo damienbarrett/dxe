@@ -49,10 +49,10 @@ done
 assert_file_not_contains "$QNAP_SPIKE" 'DOCKER_HOST=tcp' "spike never exposes the daemon over TCP"
 assert_file_not_contains "$QNAP_SPIKE" '0.0.0.0:2222:2222' "spike never publishes guest port 2222 to all interfaces"
 
-STUB_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dxe-qnap-stub.XXXXXX")"
+dxe_test_mktemp_dir STUB_DIR "${TMPDIR:-/tmp}/dxe-qnap-stub.XXXXXX"
 MARKER="$(mktemp "${TMPDIR:-/tmp}/dxe-qnap-marker.XXXXXX")"
 export MARKER
-FAKE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/dxe-qnap-home.XXXXXX")"
+dxe_test_mktemp_dir FAKE_HOME "${TMPDIR:-/tmp}/dxe-qnap-home.XXXXXX"
 rm -f "$MARKER"
 cleanup_stub() { rm -rf "$STUB_DIR" "$FAKE_HOME"; rm -f "$MARKER"; }
 trap cleanup_stub EXIT
@@ -648,7 +648,7 @@ run_with_stubs() {
     # remaining args: the command to run.
     local names="$1"; shift
     local run_dir
-    run_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-qnap-run.XXXXXX")"
+    dxe_test_mktemp_dir run_dir "${TMPDIR:-/tmp}/dxe-qnap-run.XXXXXX"
     local n
     for n in $names; do ln -sf "$STUB_DIR/$n" "$run_dir/${n%%_*}"; done
     PATH="$run_dir:$PATH" "$@"
@@ -1183,7 +1183,7 @@ fi
 # --- under test). Fixed-fd redirection only ("exec 9<>", not "exec {fd}<>"--
 # --- ): this file runs directly under real Bash 3.2 (run-bash32-tests.sh).-
 reset_marker
-OPEN_STDIN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dxe-qnap-openstdin.XXXXXX")"
+dxe_test_mktemp_dir OPEN_STDIN_DIR "${TMPDIR:-/tmp}/dxe-qnap-openstdin.XXXXXX"
 OPEN_STDIN_FIFO="$OPEN_STDIN_DIR/fifo"
 mkfifo "$OPEN_STDIN_FIFO"
 # Opened read-write (not read-only) so THIS shell also holds the write end

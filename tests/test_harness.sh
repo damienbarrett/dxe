@@ -323,7 +323,8 @@ check contains "$p_out" "exit=0"
 # --- (q) tests/lib/fake-tools.sh's fake_tool_write also writes
 # `#!/usr/bin/env bash`, not `#!/bin/bash` (Fable E3 applies to every fake
 # writer, not just this file's own).
-q_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-q-tools.XXXXXX")"
+q_dir="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir q_dir "${TMPDIR:-/tmp}/dxe-harness-q-tools.XXXXXX"
 fake_tool_write "$q_dir" probe 'echo ok'
 q_shebang="$(head -n1 "$q_dir/probe")"
 check test "$q_shebang" = "#!/usr/bin/env bash"
@@ -333,7 +334,8 @@ rm -rf "$q_dir"
 # across calls (fake-tools.sh:73 was `>`, which only ever left the last
 # call's argv visible, so "assert there was no second call" could never be
 # proven). Two single-argument calls must leave two lines, not one.
-r_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-r-tools.XXXXXX")"
+r_dir="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir r_dir "${TMPDIR:-/tmp}/dxe-harness-r-tools.XXXXXX"
 r_log="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-r-log.XXXXXX")"
 rm -f "$r_log"
 fake_qnap_ssh_write "$r_dir"
@@ -507,7 +509,8 @@ check reject contains "$v2_out" "Skipped classes:"
 # captured by with_fixture's first call, before it redirects HOME to the
 # fixture; the rogue write below lands in the ORIGINAL (pre-fixture) tree,
 # simulating something that failed to isolate.
-w_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-w-realhome.XXXXXX")"
+w_home="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir w_home "${TMPDIR:-/tmp}/dxe-harness-w-realhome.XXXXXX"
 if SCRIPT_DIR="$SCRIPT_DIR" W_HOME="$w_home" bash -c '
     HOME="$W_HOME"
     unset XDG_STATE_HOME
@@ -530,7 +533,8 @@ rm -rf "$w_home"
 
 # --- (x) sanity: finish does NOT report a breach when with_fixture was
 # used and the real tree was genuinely never touched.
-x_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-x-realhome.XXXXXX")"
+x_home="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir x_home "${TMPDIR:-/tmp}/dxe-harness-x-realhome.XXXXXX"
 if SCRIPT_DIR="$SCRIPT_DIR" X_HOME="$x_home" bash -c '
     HOME="$X_HOME"
     unset XDG_STATE_HOME
@@ -554,7 +558,7 @@ rm -rf "$x_home"
 # polling that never asserts elapsed wall-clock time.
 # =========================================================================
 
-y_fake_dir="$(fake_tool_dir_create "$SCRIPT_DIR")"
+y_fake_dir="$(fake_tool_dir_create "$SCRIPT_DIR")" || exit 1
 fake_tool_write "$y_fake_dir" fake-sleep '
 [ -z "${DXE_FAKE_SLEEP_LOG:-}" ] || printf "%s\n" "$1" >> "$DXE_FAKE_SLEEP_LOG"
 exit 0
@@ -667,7 +671,8 @@ wait "$cc_pid" 2>/dev/null || true
 # INTO the same file, which is exactly what the owner check prevents), and
 # the nested run's own summary must report only its own two cases, never
 # three.
-ee_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-ee.XXXXXX")"
+ee_dir="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir ee_dir "${TMPDIR:-/tmp}/dxe-harness-ee.XXXXXX"
 ee_nested_file="$ee_dir/test_ee_nested.sh"
 cat > "$ee_nested_file" <<EOF
 #!/bin/bash
@@ -694,7 +699,7 @@ rm -rf "$ee_dir"
 # fake_tool_dir_create seeds a refusing default for every network-reaching
 # tool, so a fixture that forgot to write one of its fakes fails loudly
 # instead of falling through to a real ssh/docker/... on PATH.
-ff_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+ff_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
 for ff_tool in ssh scp sftp docker tailscale container nix curl; do
     check test -x "$ff_dir/$ff_tool"
     ff_err="$("$ff_dir/$ff_tool" some args 2>&1 >/dev/null)" && ff_status=0 || ff_status=$?
@@ -720,7 +725,8 @@ rm -rf "$ff_dir"
 gg_alias="$(printf '%s%s' "qnap" "-dxe")"
 gg_name_a="no test file outside tests/qnap and the example profiles names the real NAS alias"
 gg_name_b="every DX_REMOTE_HOST= assignment under tests/ ends in .invalid"
-gg_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-harness-gg.XXXXXX")"
+gg_dir="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir gg_dir "${TMPDIR:-/tmp}/dxe-harness-gg.XXXXXX"
 if git -C "$SCRIPT_DIR/.." clone -q --local "$SCRIPT_DIR/.." "$gg_dir/clone" 2>/dev/null; then
     if [ -n "${DXE_GG_GUARD:-}" ]; then cp "$DXE_GG_GUARD" "$gg_dir/clone/tests/test_section1_secrets.sh"; fi
     gg_section1() { (cd "$gg_dir/clone" && SKIP_INTEGRATION=true bash tests/test_section1_secrets.sh 2>&1) || true; }

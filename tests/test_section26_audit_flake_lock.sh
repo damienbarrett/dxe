@@ -75,7 +75,8 @@ fixture_sha256() {
     fi
 }
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-audit-flake-lock.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-audit-flake-lock.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 
 fixture_ok=1

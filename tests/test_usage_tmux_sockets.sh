@@ -89,7 +89,8 @@ uid="$(id -u)"
 other_uid=$((uid + 1))
 
 # Short root: a unix socket path is limited to ~104 bytes.
-fx="$(mktemp -d /tmp/dxe-tm.XXXXXX)"
+fx="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fx /tmp/dxe-tm.XXXXXX
 reap_live() {
     local p
     for p in $(ps -eo pid=,command= | awk -v pat="$fx/" '{ if (index($0, "live.pl") && index($0, pat)) print $1 }'); do kill "$p" 2>/dev/null || true; done

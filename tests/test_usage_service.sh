@@ -19,7 +19,8 @@ else
     test_pass "the usage-service library is side-effect-free when sourced"
 fi
 
-fx="$(mktemp -d "${TMPDIR:-/tmp}/dxe-usage-svc.XXXXXX")"
+fx="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fx "${TMPDIR:-/tmp}/dxe-usage-svc.XXXXXX"
 trap 'rm -rf "$fx"' EXIT
 export HOME="$fx/home"; mkdir -p "$HOME"
 bin="$fx/bin"; mkdir -p "$bin"

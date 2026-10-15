@@ -25,7 +25,8 @@ test_section "Section 4: Harden SSH While Keeping Sudo Convenient"
 if ! command -v sshd >/dev/null 2>&1; then
     test_skip "sshd_config directive check skipped: no local sshd binary to validate against"
 elif sshd_effective="$(
-    sshd_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-sshd-config-test.XXXXXX")"
+    sshd_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+    dxe_test_mktemp_dir sshd_fixture "${TMPDIR:-/tmp}/dxe-sshd-config-test.XXXXXX"
     trap 'rm -rf "$sshd_fixture"' EXIT
     ssh-keygen -q -t ed25519 -N '' -f "$sshd_fixture/hostkey" </dev/null
     {

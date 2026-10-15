@@ -22,7 +22,7 @@ forward_created=false
 guest_port=""
 
 create_private_state() {
-    tmp_dir="$(mktemp -d "$CALLER_TMPDIR/XXXXXX")"
+    dxe_test_mktemp_dir tmp_dir "$CALLER_TMPDIR/XXXXXX"
     reverse_state_dir="$tmp_dir"
 }
 
@@ -85,8 +85,10 @@ test_section "Section 19: Reverse Forward Runtime"
 # dialling ssh again (docs/reviews/2026-09-29-fable.md #A1).
 dxe_s19_tunnel_result="$(mktemp "$CALLER_TMPDIR/dxe-s19-tunnel-identity-result.XXXXXX")"
 (
-    dxe_s19_home="$(mktemp -d "$CALLER_TMPDIR/dxe-s19-tunnel-home.XXXXXX")"
-    dxe_s19_fake="$(mktemp -d "$CALLER_TMPDIR/dxe-s19-tunnel-fake.XXXXXX")"
+    dxe_s19_home="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+    dxe_test_mktemp_dir dxe_s19_home "$CALLER_TMPDIR/dxe-s19-tunnel-home.XXXXXX"
+    dxe_s19_fake="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+    dxe_test_mktemp_dir dxe_s19_fake "$CALLER_TMPDIR/dxe-s19-tunnel-fake.XXXXXX"
     dxe_s19_flag="$dxe_s19_fake/up"
     dxe_s19_argv_log="$dxe_s19_fake/ssh-argv.log"
     : > "$dxe_s19_flag"
@@ -187,7 +189,8 @@ rm -f "$dxe_s19_tunnel_result"
 # paths are isolated too: a checkout that still holds its key pair at the
 # root (the legacy location, see dx_config_legacy_key_fallback) prints one
 # note line on every command, which these exact-output cases must not see.
-dxe_s19_cli_state="$(mktemp -d "$CALLER_TMPDIR/dxe-s19-cli-state.XXXXXX")"
+dxe_s19_cli_state="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir dxe_s19_cli_state "$CALLER_TMPDIR/dxe-s19-cli-state.XXXXXX"
 
 dxe_s19_check() {
     local desc="$1" expected_out="$2" expected_rc="$3" out rc

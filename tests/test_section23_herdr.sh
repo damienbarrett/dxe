@@ -48,7 +48,7 @@ if bash -n "$DX_HERDR"; then test_pass "dx-herdr passes bash syntax"; else test_
 # its exit status (via the `if`/command-substitution-assignment) is what the
 # parent branches on to call the real test_pass/test_fail.
 if (
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     fake_tool_write "$fake_dir" container 'echo "other-container"'
     export PATH="$fake_dir:$PATH"
 
@@ -67,7 +67,7 @@ fi
 # A non-fatal bootstrap activation failure must not become an ephemeral Herdr
 # session: readiness is checked before any package probe or interactive attach.
 if diag="$(
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     attach_marker="$fake_dir/attached"
     fake_tool_write "$fake_dir" container "echo \"$DX_CONTAINER_NAME\""
     fake_ssh_write "$fake_dir" '
@@ -102,7 +102,7 @@ fi
 # directory and non-symlink checks; otherwise it simulates a falsely ready
 # guest and exposes the erroneous attach.
 if diag="$(
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     attach_marker="$fake_dir/attached"
     fake_tool_write "$fake_dir" container "echo \"$DX_CONTAINER_NAME\""
     fake_ssh_write "$fake_dir" '
@@ -138,7 +138,7 @@ else
 fi
 
 if diag="$(
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     fake_tool_write "$fake_dir" container "echo \"$DX_CONTAINER_NAME\""  # not hard-coded: the live tier runs under the dx-test profile
     fake_ssh_write "$fake_dir" '
         if [[ "$DX_FAKE_GUEST_CMD" == *".dxe-persistence-ready"* ]]; then printf "%s" DX_HERDR_PRESENT; exit 0; fi
@@ -165,7 +165,7 @@ else
 fi
 
 if diag="$(
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     fake_tool_write "$fake_dir" container "echo \"$DX_CONTAINER_NAME\""  # not hard-coded: the live tier runs under the dx-test profile
     probe_marker="$fake_dir/herdr-installed"
     fake_ssh_write "$fake_dir" '
@@ -222,7 +222,7 @@ fi
 # distinctive exit code and stderr marker so a regression is unambiguous. Only
 # once a command has crossed that boundary does it answer the probe.
 if diag="$(
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     fake_tool_write "$fake_dir" container "echo \"$DX_CONTAINER_NAME\""  # not hard-coded: the live tier runs under the dx-test profile
     probe_marker="$fake_dir/herdr-installed"
     fake_ssh_write "$fake_dir" '
@@ -273,7 +273,7 @@ fi
 
 # --- F2: SSH transport failure must not be misreported as a missing capability ---
 if diag="$(
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     fake_tool_write "$fake_dir" container "echo \"$DX_CONTAINER_NAME\""  # not hard-coded: the live tier runs under the dx-test profile
     fake_ssh_write "$fake_dir" 'exit 255'
     export PATH="$fake_dir:$PATH"
@@ -293,7 +293,7 @@ fi
 
 # --- F2: $DX_SSH_KEY must be checked before probing, not after ---
 if diag="$(
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     fake_tool_write "$fake_dir" container "echo \"$DX_CONTAINER_NAME\""  # not hard-coded: the live tier runs under the dx-test profile
     ssh_marker="$fake_dir/ssh-invoked"
     fake_ssh_write "$fake_dir" 'touch "'"$ssh_marker"'"; exit 0'
@@ -338,7 +338,7 @@ fi
 # SSH pty, before Herdr takes over the screen. Assert against the decoded guest
 # command body so this tests the real boundary rather than the transport.
 if diag="$(
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     body_capture="$fake_dir/body"
     fake_tool_write "$fake_dir" container "echo \"$DX_CONTAINER_NAME\""
     fake_ssh_write "$fake_dir" '
@@ -445,7 +445,8 @@ herdr_persist_run_as_dx_argv() {
     "${args[@]}"
 }
 
-fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-herdr-persist.XXXXXX")"
+fixture_root="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture_root "${TMPDIR:-/tmp}/dxe-herdr-persist.XXXXXX"
 trap 'rm -rf "$fixture_root"' EXIT
 
 # Symlinked persistent target rejected before any mutation.
@@ -1050,7 +1051,7 @@ if run_guest "command -v herdr" >/dev/null 2>&1; then
     cat > "$herdr_b7_snapshot_template_file" <<'REMOTE_EOF'
 set -u
 MODE="__MODE__"
-BACKUP_DIR="$(mktemp -d)"
+BACKUP_DIR="$(mktemp -d)" || exit 1
 herdr server stop >/dev/null 2>&1
 sleep 1
 [ -f "$HOME/.config/herdr/session.json" ] && mv "$HOME/.config/herdr/session.json" "$BACKUP_DIR/session.json.bak"
@@ -1181,7 +1182,7 @@ if run_guest "command -v herdr" >/dev/null 2>&1; then
     cat > "$herdr_b7_cleanup_template_file" <<'REMOTE_EOF'
 set -u
 MARKER="__MARKER__"
-BACKUP_DIR="$(mktemp -d)"
+BACKUP_DIR="$(mktemp -d)" || exit 1
 herdr server stop >/dev/null 2>&1
 sleep 1
 [ -f "$HOME/.config/herdr/session.json" ] && mv "$HOME/.config/herdr/session.json" "$BACKUP_DIR/session.json.bak"

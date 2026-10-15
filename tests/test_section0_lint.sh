@@ -117,7 +117,8 @@ rm -f "$strict_probe_out"
 # version other than the CI pin. version_probe_dir is prepended to PATH
 # only for the nested invocations below, never for this outer run's own
 # ShellCheck cases further down.
-version_probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-section0-version.XXXXXX")"
+version_probe_dir="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir version_probe_dir "${TMPDIR:-/tmp}/dxe-section0-version.XXXXXX"
 cat > "$version_probe_dir/shellcheck" <<'FAKE_SHELLCHECK'
 #!/usr/bin/env bash
 case "${1:-}" in

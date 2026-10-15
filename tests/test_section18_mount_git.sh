@@ -21,8 +21,10 @@ done
 if "$MOUNT" --print-env --destroy >/dev/null 2>&1; then test_fail "mount modes are mutually exclusive"; else test_pass "mount modes are mutually exclusive"; fi
 if "$MOUNT" --container ../unsafe --print-env >/dev/null 2>&1; then test_fail "unsafe container names are rejected before path construction"; else test_pass "unsafe container names are rejected before path construction"; fi
 
-repo="$(mktemp -d "${TMPDIR:-/tmp}/dxe-mount-repo.XXXXXX")"
-state="$(mktemp -d "${TMPDIR:-/tmp}/dxe-mount-state.XXXXXX")"
+repo="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir repo "${TMPDIR:-/tmp}/dxe-mount-repo.XXXXXX"
+state="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir state "${TMPDIR:-/tmp}/dxe-mount-state.XXXXXX"
 trap 'rm -rf "$repo" "$state"' EXIT
 git -C "$repo" init -q; mkdir -p "$repo/sub dir"
 env_out="$(env -u DX_CONTAINER_NAME -u DX_NIX_VOLUME -u DX_PERSIST_VOLUME -u DX_BOOTSTRAP_VOLUME -u DX_SSH_KEY -u DX_SSH_KEY_PUB -u DX_SSH_PORT \

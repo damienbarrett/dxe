@@ -234,7 +234,7 @@ source "$DX_AI_SCRIPT"
 # always finishes dx_ai_update_flake before it ever calls
 # dx_ai_install_profile, so "first" here is also "before install").
 AGY_UPDATE_FLAKE_LOG="$(mktemp "${TMPDIR:-/tmp}/dxe-s6-update-flake.XXXXXX")"
-AGY_UPDATE_FLAKE_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-s6-update-flake-stage.XXXXXX")"
+dxe_test_mktemp_dir AGY_UPDATE_FLAKE_STAGE "${TMPDIR:-/tmp}/dxe-s6-update-flake-stage.XXXXXX"
 (
     dx_ai_refresh_pin() { printf 'refresh-pin\n' >> "$AGY_UPDATE_FLAKE_LOG"; }
     nix() { printf '%s\n' "$*" >> "$AGY_UPDATE_FLAKE_LOG"; }
@@ -272,7 +272,7 @@ fi
 # manifest-field extraction and the pin merge both run for real, not a
 # hardcoded stand-in, the same way test_section17_dx_ai_runtime.sh's own
 # generic-splice dx_ai_refresh_pin case does.
-AGY_REFRESH_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-s6-agy-refresh.XXXXXX")"
+dxe_test_mktemp_dir AGY_REFRESH_ROOT "${TMPDIR:-/tmp}/dxe-s6-agy-refresh.XXXXXX"
 mkdir -p "$AGY_REFRESH_ROOT/pins"
 printf '%s\n' '{"aarch64-linux":{"version":"1.0.5","url":"https://example.invalid/old-arm","hash":"sha512-old"}}' \
     > "$AGY_REFRESH_ROOT/pins/agy.json"
@@ -308,7 +308,7 @@ rm -f "$AGY_REFRESH_NIX_LOG"
 # bash 3.2's ln lacks GNU's -T, so it is shimmed here exactly the way
 # test_section17_dx_ai_runtime.sh's own creds_ln_shim does for the same
 # reason (BSD ln rejects -sfnT outright).
-CREDS_JSON_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-s6-creds-json.XXXXXX")"
+dxe_test_mktemp_dir CREDS_JSON_FIXTURE "${TMPDIR:-/tmp}/dxe-s6-creds-json.XXXXXX"
 CREDS_JSON_FIXTURE="$(cd "$CREDS_JSON_FIXTURE" && pwd -P)"
 CREDS_JSON_PERSIST="$CREDS_JSON_FIXTURE/persist/home/dx"
 CREDS_JSON_HOME="$CREDS_JSON_FIXTURE/home/dx"
@@ -353,7 +353,7 @@ fi
 # same real-function-and-fixture approach as the Claude JSON config case
 # above, checking the actual directory dx-ai creates rather than its
 # `mkdir -p` source line.
-CREDS_AGY_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-s6-creds-agy.XXXXXX")"
+dxe_test_mktemp_dir CREDS_AGY_FIXTURE "${TMPDIR:-/tmp}/dxe-s6-creds-agy.XXXXXX"
 CREDS_AGY_FIXTURE="$(cd "$CREDS_AGY_FIXTURE" && pwd -P)"
 CREDS_AGY_PERSIST="$CREDS_AGY_FIXTURE/persist/home/dx"
 CREDS_AGY_HOME="$CREDS_AGY_FIXTURE/home/dx"
@@ -523,7 +523,8 @@ fi
 # present as fake executables. Proves the real present/missing report and
 # exit code, not the specific inventory list (which may grow independently
 # of this test).
-inv_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-inventory-test.XXXXXX")"
+inv_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir inv_fixture "${TMPDIR:-/tmp}/dxe-inventory-test.XXXXXX"
 trap 'rm -rf "$inv_fixture"' EXIT
 inv_bin="$inv_fixture/bin"
 mkdir -p "$inv_bin"
@@ -625,7 +626,7 @@ assert_file_not_contains "$SHELL_NIX" "gemini = " "shell.nix no longer configure
 # --- container. The coordinating session proves stability across three   -
 # --- live dx-test runs afterward (this test cannot: there is no guest    -
 # --- here to be flaky against). ---
-RESURRECT_PROBE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dxe-resurrect-probe.XXXXXX")"
+dxe_test_mktemp_dir RESURRECT_PROBE_DIR "${TMPDIR:-/tmp}/dxe-resurrect-probe.XXXXXX"
 RESURRECT_COUNTER="$RESURRECT_PROBE_DIR/counter"
 RESURRECT_SETTLE_AFTER=4
 cat > "$RESURRECT_PROBE_DIR/tmux" <<'FAKETMUX'

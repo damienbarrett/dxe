@@ -8,7 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 test_section "Shared DX and QNAP connection entrypoint"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-qx.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-qx.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 unset DX_PROFILES_DIR
 export XDG_CONFIG_HOME="$fixture/config"

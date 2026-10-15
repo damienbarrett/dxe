@@ -253,7 +253,7 @@ dxe_enter_hermetic
 # container, so unlike run_migration_helper_tests above it runs even under
 # --skip-integration.
 
-race_fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+race_fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
 race_counter="$race_fake_dir/run-count"
 
 # A minimal `container` that answers just enough of dx-migrate-persist's

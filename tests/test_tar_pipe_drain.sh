@@ -71,11 +71,11 @@ source "$BASE_DIR/bin/lib/dx-backup.sh"
 source "$BASE_DIR/bin/lib/dx-runtime.sh"
 test_section "WP-TAR: tar extractors drain their pipes"
 
-FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-tar-drain-test.XXXXXX")"
+dxe_test_mktemp_dir FIXTURE "${TMPDIR:-/tmp}/dxe-tar-drain-test.XXXXXX"
 trap 'rm -rf "$FIXTURE"' EXIT
 
 REAL_TAR="$(command -v tar)"
-FAKE_DIR="$(fake_tool_dir_create "$FIXTURE")"
+FAKE_DIR="$(fake_tool_dir_create "$FIXTURE")" || exit 1
 GUEST_ROOT="$FIXTURE/guest"
 mkdir -p "$GUEST_ROOT/persist" "$FIXTURE/home"
 PAD=2097152

@@ -20,7 +20,8 @@ LIB="$CONTAINER_DIR/scripts/lib/dx-usage-service.sh"
 # shellcheck source=../container/dx-nixos-26.05/scripts/lib/dx-usage-service.sh
 source "$LIB"
 
-fx="$(mktemp -d /tmp/dxe-tu.XXXXXX)"
+fx="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fx /tmp/dxe-tu.XXXXXX
 cleanup() { case "$fx" in /tmp/dxe-tu.??????) rm -rf "$fx" ;; esac; }
 trap cleanup EXIT
 

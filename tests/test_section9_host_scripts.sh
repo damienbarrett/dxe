@@ -30,7 +30,8 @@ for library in "$BASE_DIR"/bin/lib/*.sh; do
 done
 
 source "$BASE_DIR/bin/lib/dx-config.sh"
-config_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-host-config.XXXXXX")"
+config_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir config_fixture "${TMPDIR:-/tmp}/dxe-host-config.XXXXXX"
 trap 'rm -rf "$config_fixture"' EXIT
 printf '%s\n' 'DX_CONTAINER_NAME=from-data' 'DX_SSH_KEY=${DX_PROJECT_ROOT}/fixture-key' > "$config_fixture/good.env"
 DX_PROJECT_ROOT=$config_fixture
@@ -87,7 +88,8 @@ unset -f ps
 # and "volume create" proves the create path still runs exactly once, with
 # no ownership check in front of it.
 (
-    dxe_p9_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-p9-apple-volume.XXXXXX")"
+    dxe_p9_dir="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+    dxe_test_mktemp_dir dxe_p9_dir "${TMPDIR:-/tmp}/dxe-p9-apple-volume.XXXXXX"
     trap 'rm -rf "$dxe_p9_dir"' EXIT
     cat > "$dxe_p9_dir/container" <<'FAKE_EOF'
 #!/bin/bash
@@ -290,7 +292,7 @@ FAKE_EOF
 (
     ep_home="$config_fixture/apple-entrypoint-lock-home"
     ep_state="$ep_home/state"
-    ep_tools="$(fake_tool_dir_create "$config_fixture")"
+    ep_tools="$(fake_tool_dir_create "$config_fixture")" || exit 1
     ep_log="$config_fixture/apple-entrypoint-lock-calls.log"
     : > "$ep_log"
     fake_tool_write "$ep_tools" container 'printf "CALLED: %s\n" "$*" >> "$DXE_WP65_EP_LOG"; exit 1'
@@ -346,7 +348,8 @@ if (
     # markers, DX_PROJECT_ROOT, and each field/origin pair.
     unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION DX_PROJECT_ROOT
     for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
-    reclaim_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-reclaim.XXXXXX")"
+    reclaim_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+    dxe_test_mktemp_dir reclaim_fixture "${TMPDIR:-/tmp}/dxe-reclaim.XXXXXX"
     fake_bin="$reclaim_fixture/bin"
     guest_bin="$reclaim_fixture/guest-bin"
     mkdir -p "$fake_bin" "$guest_bin" "$reclaim_fixture/home"
@@ -418,7 +421,7 @@ assert_file_contains_literal "$BASE_DIR/bin/dx-wait-ssh" 'approximately' "bootst
 # Observed live 2026-09-07: host load average 55 on 10 cores, a real login took
 # 92s, and the 2s probe failed 100% of the time.
 if diag="$(
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     fake_tool_write "$fake_dir" container 'exit 0'
     fake_tool_write "$fake_dir" ssh 'for a in "$@"; do printf "%s\n" "$a"; done >> "$DX_FAKE_SSH_ARGV"; exit 0'
     export PATH="$fake_dir:$PATH"
@@ -446,7 +449,7 @@ fi
 # must name the banner-exchange failure and print the load average that tells
 # them apart.
 if diag="$(
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     fake_tool_write "$fake_dir" container 'case "${1:-}" in list) printf "%s\n" dx-host ;; esac; exit 0'
     fake_tool_write "$fake_dir" ssh 'echo "ssh: connect to host 127.0.0.1 port 2222: Connection timed out during banner exchange" >&2; exit 255'
     export PATH="$fake_dir:$PATH"
@@ -491,7 +494,7 @@ fi
 # the pass condition is the `-n 5` pull actually having happened, never
 # elapsed seconds.
 if diag="$(
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     fake_tool_write "$fake_dir" container '
 case "$1" in
     list) printf "%s\n" dx-host ;;
@@ -546,7 +549,7 @@ assert_file_contains_literal "$BASE_DIR/bin/dx-create-container" '--entrypoint-a
 # `container` on PATH and read back the actual `container create` invocation,
 # rather than grepping the script text for the variable's name.
 if diag="$(
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     fake_tool_write "$fake_dir" container 'case "$1" in
     list) exit 0 ;;
     image)
@@ -626,7 +629,7 @@ fi
 # come from dx-ssh-common.sh's own cleanup running after the "remote" session
 # ends -- proving exec was removed and the trap actually fires.
 if diag="$(
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     fake_ssh_write "$fake_dir" 'echo "REMOTE_SESSION_RAN"; exit 0'
     export PATH="$fake_dir:$PATH"
     osc=$'\033]110\033\\\033]111\033\\\033]104\033\\'
@@ -672,7 +675,7 @@ fi
 dx_ssh_no_arg_run() {
     # $1 = terminal answer (0 = a terminal, 1 = none); prints "log|rc|stderr"
     (
-        fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+        fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
         ssh_log="$fake_dir/ssh.log"
         fake_ssh_write "$fake_dir" "printf 'ARGV:%s\\n' \"\$*\" >> '$ssh_log'; exit 0"
         export PATH="$fake_dir:$PATH"
@@ -729,7 +732,7 @@ assert_file_not_contains "$BASE_DIR/bin/lib/dx-ssh-common.sh" 'quiet' "the inter
 if (
     source "$BASE_DIR/bin/lib/dx-host-util.sh"
     source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     fake_ssh_write "$fake_dir" 'exit 0'
     export PATH="$fake_dir:$PATH"
     counter="$fake_dir/tz-calls"
@@ -833,7 +836,7 @@ fi
 # regardless.
 endpoint_proof_real_state_before="$(dx_real_ssh_known_hosts_snapshot)"
 (
-    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")"
+    fake_dir="$(fake_tool_dir_create "${TMPDIR:-/tmp}")" || exit 1
     fake_tool_write "$fake_dir" tailscale 'case "$*" in "ip -4") printf "%s.%s.%s.%s\n" 100 64 4 4 ;; *) exit 99 ;; esac'
     fake_tool_write "$fake_dir" ssh "
 for a in \"\$@\"; do printf '%s\n' \"\$a\" >> '$fake_dir/argv'; done
@@ -853,7 +856,8 @@ esac
         source "$BASE_DIR/bin/lib/dx-runtime.sh"
         source "$BASE_DIR/bin/lib/dx-ssh-common.sh"
         export PATH="$fake_dir:$PATH"
-        endpoint_proof_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-endpoint-proof-home.XXXXXX")"
+        endpoint_proof_home="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+        dxe_test_mktemp_dir endpoint_proof_home "${TMPDIR:-/tmp}/dxe-endpoint-proof-home.XXXXXX"
         export HOME="$endpoint_proof_home"
         unset XDG_STATE_HOME
         DX_RUNTIME=docker-ssh DX_REMOTE_HOST=dxe-fixture-nas.invalid DX_CONTAINER_NAME=dxe-fixture-endpoint-proof
@@ -892,7 +896,8 @@ fi
 # subshell so a regression here aborts only the subshell (reported as a
 # normal test_fail), never this whole file the same way again.
 (
-    absent_state_home="$(mktemp -d "${TMPDIR:-/tmp}/dxe-known-hosts-absent-guard.XXXXXX")/does-not-exist"
+    absent_state_root="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+    dxe_test_mktemp_dir absent_state_root "${TMPDIR:-/tmp}/dxe-known-hosts-absent-guard.XXXXXX"; absent_state_home="$absent_state_root/does-not-exist"
     XDG_STATE_HOME="$absent_state_home"
     export XDG_STATE_HOME
     out="$(dx_real_ssh_known_hosts_snapshot)"
@@ -1148,7 +1153,8 @@ done
 # captured stdout -- that coupling broke the instant the prose was reworded,
 # independent of what the sync actually did (docs/refactor/decisions/
 # D7-start-generation.md; the fixture-driven Red case lives in section 22).
-bootstrap_result_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-bootstrap-result.XXXXXX")"
+bootstrap_result_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir bootstrap_result_fixture "${TMPDIR:-/tmp}/dxe-bootstrap-result.XXXXXX"
 
 result_roundtrip_file="$bootstrap_result_fixture/published"
 outcome="" generation=""
@@ -1313,7 +1319,8 @@ fi
 # the two new bootstrap-generation ones (exec readlink, exec sh -c ... --
 # leases), so a scenario can drive only the DX_FAKE_* variables it cares about
 # without dx-status's earlier sections aborting the run under `set -e`.
-status_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-status-bootstrap.XXXXXX")"
+status_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir status_fixture "${TMPDIR:-/tmp}/dxe-status-bootstrap.XXXXXX"
 fake_tool_write "$status_fixture/bin" container '
 case "$1" in
     list)
@@ -1539,7 +1546,8 @@ fi
 # same fixture shape tests/test_docker_runtime_adapter.sh (Section 33) uses
 # for the adapter functions directly; this proves the fix at the actual
 # host-script level, not only inside the adapter function's own unit test.
-docker_status_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-status-docker-ssh.XXXXXX")"
+docker_status_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir docker_status_fixture "${TMPDIR:-/tmp}/dxe-status-docker-ssh.XXXXXX"
 fake_qnap_ssh_write "$docker_status_fixture"
 # dx-status's docker-ssh path runs the full dx_runtime_docker_available
 # preflight (host reachability, uname -m/DX_GUEST_SYSTEM arch check, engine
@@ -1697,7 +1705,8 @@ rm -rf "$docker_status_fixture"
 # appendix). Both through the existing SSH section; no new dx_runtime_*
 # contract op -- a plain ssh call, the same shared option builder
 # dx-wait-ssh's own poll loop uses.
-thirdstate_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-status-thirdstate.XXXXXX")"
+thirdstate_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir thirdstate_fixture "${TMPDIR:-/tmp}/dxe-status-thirdstate.XXXXXX"
 fake_tool_write "$thirdstate_fixture" uname 'case "$1" in -m) echo aarch64 ;; esac'
 fake_tool_write "$thirdstate_fixture" docker '
 case "$1" in
@@ -1837,7 +1846,8 @@ rm -rf "$thirdstate_fixture"
 # pattern dx-status above uses. The fake answers exactly the calls
 # container_exists/dx_runtime_volume_exists/dx_runtime_volume_delete render
 # on the Apple adapter (list -a --quiet, volume inspect, volume rm).
-reset_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-reset-nix-volume.XXXXXX")"
+reset_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir reset_fixture "${TMPDIR:-/tmp}/dxe-reset-nix-volume.XXXXXX"
 trap 'rm -rf "$reset_fixture"' EXIT
 fake_tool_write "$reset_fixture/bin" container '
 case "$1" in
@@ -1962,7 +1972,7 @@ set +e
 factory_reset_apple_out="$(
     unset DXE_CONFIG_RESOLVED DXE_CONFIG_SNAPSHOT_VERSION DX_PROJECT_ROOT
     for field in $DXE_CONFIG_FIELDS; do unset "$field" "DXE_CONFIG_ORIGIN_$field"; done
-    HOME="$(mktemp -d "${TMPDIR:-/tmp}/dxe-factory-reset-apple.XXXXXX")"
+    dxe_test_mktemp_dir HOME "${TMPDIR:-/tmp}/dxe-factory-reset-apple.XXXXXX"
     export HOME
     "$BASE_DIR/bin/dx-factory-reset" < /dev/null 2>&1
 )"

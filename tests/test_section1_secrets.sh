@@ -119,7 +119,7 @@ check_no_leak "$PRIVATE_KEY_PATTERN" "a PEM private key header"
 # documented above: written as one contiguous literal, any one of them would
 # itself become a tracked-file leak the moment this test file was committed,
 # defeating the very check it exists to prove.
-FIXTURE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dxe-secrets-fixture.XXXXXX")"
+dxe_test_mktemp_dir FIXTURE_DIR "${TMPDIR:-/tmp}/dxe-secrets-fixture.XXXXXX"
 trap 'rm -rf "$FIXTURE_DIR"' EXIT
 
 planted_ip="$(printf '%s.%s.%s.%s' 100 64 12 34)"

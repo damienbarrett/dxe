@@ -22,7 +22,8 @@ source "$BASE_DIR/bin/lib/dx-tunnel.sh"
 source "$BASE_DIR/bin/lib/dx-persist-dir.sh"
 test_section "Refactor State-Machine Contracts"
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-refactor-state.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-refactor-state.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 
 expect_ok() { local label="$1"; shift; if "$@"; then test_pass "$label"; else test_fail "$label"; fi; }
@@ -874,7 +875,7 @@ expect_reject "incomplete legacy manifest refuses migration" mount_clean "$migra
 [ "$incomplete_hash" = "$(shasum -a 256 "$migrate_state/incomplete-side.env")" ] && test_pass "refused migration preserves incomplete authoritative file" || test_fail "refused migration preserves incomplete authoritative file"
 
 # Phase 2 partial-failure behavior through one fake SSH implementation.
-fake_dir="$(fake_tool_dir_create "$fixture")"; ssh_log="$fixture/ssh.log"
+fake_dir="$(fake_tool_dir_create "$fixture")" || exit 1; ssh_log="$fixture/ssh.log"
 fake_ssh_write "$fake_dir" '
 socket=""
 previous=""

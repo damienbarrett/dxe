@@ -24,7 +24,8 @@ source "$CONTAINER_DIR/bootstrap/common.sh"
 source "$CONTAINER_DIR/bootstrap/base-and-storage.sh"
 source "$CONTAINER_DIR/bootstrap/system.sh"
 
-fixture="$(mktemp -d /tmp/dxe-nix-import.XXXXXX)"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture /tmp/dxe-nix-import.XXXXXX
 # Contract 2/3/5 (refactor-v2-final.md): record_durable_nix_identity,
 # capture_nix_image_default_profile, and prepare_nix_volume all bridge
 # their values across a bootstrap phase boundary through this scratch

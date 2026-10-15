@@ -122,7 +122,7 @@ assert_file_contains "$SCRIPT_DX_THEME" "tinty install || tinty sync" "dx-theme 
 # just prints usage, harmlessly redirected away) inside its own subshell,
 # keeping this script's `set -eo pipefail` from leaking into the rest of
 # this test file.
-HAVE_SCHEME_TMPDIR="$(mktemp -d)"
+HAVE_SCHEME_TMPDIR="$(mktemp -d)" || exit 1
 HAVE_SCHEME_STUB="$HAVE_SCHEME_TMPDIR/bin"
 mkdir -p "$HAVE_SCHEME_STUB"
 HAVE_SCHEME_TARGET="base16-biglist-target-$$"
@@ -183,7 +183,7 @@ assert_file_contains "$SCRIPT_DX_THEME_RESTORE" 'emit_osc 10 "$base05"' "login r
 assert_file_contains "$SCRIPT_DX_THEME_RESTORE" 'emit_osc 11 "$base00"' "login restore emits background OSC"
 assert_file_contains "$HOME_SHELL_NIX" 'try { ^/home/dx/.local/bin/dx-theme-restore }' "Nushell runs Tinty login restore"
 
-TOOL_THEME_TEST_HOME="$(mktemp -d)"
+TOOL_THEME_TEST_HOME="$(mktemp -d)" || exit 1
 # ORIGINAL_THEME_SCHEME is populated by the live Tinted/project.nvim runtime
 # block below (if it runs). Restoring it on every exit path -- including an
 # early failure -- keeps this test from leaving the guest's active theme
@@ -597,7 +597,7 @@ shades-of-purple=base16-shades-of-purple'
     # actually reaches the running server (not just file generation).
     if container_exec_dx_bash '
         set -e
-        export TMUX_TMPDIR="$(mktemp -d)"
+        TMUX_TMPDIR="$(mktemp -d)" || exit 1; export TMUX_TMPDIR
         trap "tmux -L dx-pill-test kill-server >/dev/null 2>&1 || true; rm -rf \"$TMUX_TMPDIR\"" EXIT
         tmux -f /dev/null -L dx-pill-test new-session -d -s pill-probe
         export TMUX="$(tmux -L dx-pill-test display-message -p "#{socket_path},#{pid},#{pane_id}")"
@@ -623,7 +623,7 @@ shades-of-purple=base16-shades-of-purple'
     # switch could lag one theme behind.
     if container_exec_dx_bash '
         set -e
-        export TMUX_TMPDIR="$(mktemp -d)"
+        TMUX_TMPDIR="$(mktemp -d)" || exit 1; export TMUX_TMPDIR
         trap "tmux -L dx-toctou-test kill-server >/dev/null 2>&1 || true; rm -rf \"$TMUX_TMPDIR\"" EXIT
         tmux -f /dev/null -L dx-toctou-test new-session -d -s pill-toctou
         export TMUX="$(tmux -L dx-toctou-test display-message -p "#{socket_path},#{pid},#{pane_id}")"
@@ -810,8 +810,8 @@ LUA_EOF
 #!/bin/bash
 set -u
 probe="$1"
-workdir=$(mktemp -d /tmp/dxe-project-empty-XXXXXX)
-xdgdata=$(mktemp -d /tmp/dxe-project-empty-data-XXXXXX)
+dxe_test_mktemp_dir workdir /tmp/dxe-project-empty-XXXXXX
+dxe_test_mktemp_dir xdgdata /tmp/dxe-project-empty-data-XXXXXX
 cd "$workdir" || exit 1
 XDG_DATA_HOME="$xdgdata" nvim --headless -c "luafile $probe" -c "qa" 2>&1
 rc=$?
@@ -866,8 +866,8 @@ LUA_EOF
 #!/bin/bash
 set -u
 probe="$1"
-workdir=$(mktemp -d /tmp/dxe-project-real-XXXXXX)
-xdgdata=$(mktemp -d /tmp/dxe-project-real-data-XXXXXX)
+dxe_test_mktemp_dir workdir /tmp/dxe-project-real-XXXXXX
+dxe_test_mktemp_dir xdgdata /tmp/dxe-project-real-data-XXXXXX
 mkdir -p "$workdir/.git"
 printf 'probe\n' > "$workdir/README.md"
 cd "$workdir" || exit 1
@@ -919,7 +919,7 @@ assert_file_contains "$SCRIPT_DX_THEME_OSC_HOOK" "HERDR_PANE_ID" "the OSC hook d
 # Home Manager has not installed the writer yet -- a real state during
 # bootstrap -- the Herdr branch has nothing to exec, and an unguarded `exec`
 # under `set -e` would take the whole hook down with it.
-herdr_handoff_home="$(mktemp -d)"
+herdr_handoff_home="$(mktemp -d)" || exit 1
 for hook_script in "$SCRIPT_DX_THEME_OSC_HOOK" "$SCRIPT_DX_THEME_RESTORE"; do
     hook_name="$(basename "$hook_script" .sh)"
     if HOME="$herdr_handoff_home" HERDR_PANE_ID=pane-1 \
@@ -935,7 +935,8 @@ rm -rf "$herdr_handoff_home"
 # validator, and the Herdr paths this exercises avoid the guest-only
 # constructs elsewhere in the script, so these assertions hold on the macOS
 # host too. Only the /proc-walking host-terminal repaint needs a real guest.
-herdr_theme_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-herdr-theme.XXXXXX")"
+herdr_theme_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir herdr_theme_fixture "${TMPDIR:-/tmp}/dxe-herdr-theme.XXXXXX"
 herdr_cfg="$herdr_theme_fixture/config.toml"
 herdr_stub_dir="$herdr_theme_fixture/bin"
 mkdir -p "$herdr_stub_dir"
