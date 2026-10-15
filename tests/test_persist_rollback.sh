@@ -230,7 +230,7 @@ source "$CONTAINER_DIR/scripts/lib/dx-persist-marker.sh"
 
 test_section "WP6.5: rollback into a new volume (dx-persist-rollback)"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
@@ -881,9 +881,9 @@ world() {
     N=$((N + 1))
     W="$SCRATCH/w.$N"
     mkdir -p "$W/tmp"
-    ROOT="$(persist_fixture_root_create "$W")"
+    ROOT="$(persist_fixture_root_create "$W")" || exit 1
     CANON="$(cd -P "$ROOT" && pwd -P)"
-    TOOLS="$(persist_fixture_nas_create "$ROOT" "$W")"
+    TOOLS="$(persist_fixture_nas_create "$ROOT" "$W")" || exit 1
     fake_tool_write "$TOOLS" docker "$DOCKER_FAKE"
     DDIR="$W/docker"
     STATE="$W/state"

@@ -19,10 +19,10 @@ source "$BASE_DIR/bin/lib/dx-host-util.sh"
 GUEST="$BASE_DIR/container/dx-nixos-26.05"
 test_section "Persist backup: dx-restore (fake-container boundary)"
 
-FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dx-restore-test.XXXXXX")"
+dxe_test_mktemp_dir FIXTURE "${TMPDIR:-/tmp}/dxe-dx-restore-test.XXXXXX"
 trap 'chmod -R u+w "$FIXTURE" 2>/dev/null || true; rm -rf "$FIXTURE"' EXIT
 
-FAKE_DIR="$(fake_tool_dir_create "$FIXTURE")"
+FAKE_DIR="$(fake_tool_dir_create "$FIXTURE")" || exit 1
 mkdir -p "$FIXTURE/persist" "$FIXTURE/bootstrap"
 ln -sfn "$GUEST" "$FIXTURE/bootstrap/current"
 
@@ -335,7 +335,7 @@ source "$BASE_DIR/bin/lib/dx-runtime.sh"
 # --- classification is still correct AND that the missing target's path
 # --- never reaches dx_pbs_hash_entry. ---
 RECORD_LOG="$(mktemp "${TMPDIR:-/tmp}/dxe-restore-record.XXXXXX")"
-RECORD_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-record-dir.XXXXXX")"
+dxe_test_mktemp_dir RECORD_FIXTURE "${TMPDIR:-/tmp}/dxe-restore-record-dir.XXXXXX"
 RECORD_TARGETS="$RECORD_FIXTURE/targets.txt"
 printf 'present/identical.txt\npresent/conflict.txt\nabsent/missing.txt\n' > "$RECORD_TARGETS"
 dx_runtime_exec() {
@@ -380,7 +380,7 @@ else
     PERF_IDENTICAL=40000
     PERF_CONFLICT=10000
     PERF_CREATE=$((PERF_N - PERF_IDENTICAL - PERF_CONFLICT))
-    PERF_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-perf.XXXXXX")"
+    dxe_test_mktemp_dir PERF_FIXTURE "${TMPDIR:-/tmp}/dxe-restore-perf.XXXXXX"
     PERF_HASHES="$PERF_FIXTURE/guest-hashes.tsv"
     PERF_TARGETS="$PERF_FIXTURE/targets.txt"
     # One redirect for the whole loop (not one `>>` open per line): building
@@ -493,7 +493,7 @@ if [ "${DXE_SKIP_SLOW_TESTS:-0}" = 1 ]; then
     test_skip "a 60,000-target dry run where the guest holds NONE of them completes in well under a minute (DXE_SKIP_SLOW_TESTS=1)"
 else
     ABSENT_N=60000
-    ABSENT_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-absent.XXXXXX")"
+    dxe_test_mktemp_dir ABSENT_FIXTURE "${TMPDIR:-/tmp}/dxe-restore-absent.XXXXXX"
     ABSENT_HASHES="$ABSENT_FIXTURE/guest-hashes.tsv"
     ABSENT_TARGETS="$ABSENT_FIXTURE/targets.txt"
     {
@@ -558,7 +558,7 @@ fi
 # throughout this file); only the SOURCE mirror directory varies -- exactly
 # what the flag is designed to do: change where bytes are read FROM, never
 # the guest actually written to.
-SRC_BASE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dx-restore-source-container.XXXXXX")"
+dxe_test_mktemp_dir SRC_BASE "${TMPDIR:-/tmp}/dxe-dx-restore-source-container.XXXXXX"
 export DX_BACKUP_DIR="$SRC_BASE/backups"
 
 # Reset the `container` fake to the plain passthrough from the top of this
@@ -709,7 +709,7 @@ rm -rf "$SRC_BASE"
 # production code above, not a copy) over a small fixture of its own --
 # irrelevant to the fake-container boundary at the top of this file, since
 # this function only ever reads the LOCAL mirror on disk. ---
-TARGETS_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-targets-test.XXXXXX")"
+dxe_test_mktemp_dir TARGETS_FIXTURE "${TMPDIR:-/tmp}/dxe-restore-targets-test.XXXXXX"
 mkdir -p "$TARGETS_FIXTURE/current/a&b" "$TARGETS_FIXTURE/current/c#d" "$TARGETS_FIXTURE/current/e\f" "$TARGETS_FIXTURE/current/g h" "$TARGETS_FIXTURE/current/-lead"
 printf 'x\n' > "$TARGETS_FIXTURE/current/a&b/item"
 printf 'x\n' > "$TARGETS_FIXTURE/current/c#d/item"
@@ -791,7 +791,7 @@ rm -rf "$TARGETS_FIXTURE"
 # bounded cost (a handful: at most 3 execs per batched operation, plus one
 # tar) impossible to confuse with each other.
 # ---------------------------------------------------------------------------
-WP69_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-wp69.XXXXXX")"
+dxe_test_mktemp_dir WP69_ROOT "${TMPDIR:-/tmp}/dxe-restore-wp69.XXXXXX"
 WP69_PERSIST="$WP69_ROOT/persist"
 WP69_BACKUP_DIR="$WP69_ROOT/backups"
 WP69_EXEC_LOG="$WP69_ROOT/exec.log"
@@ -931,7 +931,7 @@ rm -rf "$WP69_ROOT"
 # turn errexit back ON after their own `set +e`, and it is never turned
 # back off again) is otherwise live here, and every one of these three
 # calls is expected to return non-zero at least once by design. ---
-SHIP_LIST_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-ship-list-test.XXXXXX")"
+dxe_test_mktemp_dir SHIP_LIST_FIXTURE "${TMPDIR:-/tmp}/dxe-ship-list-test.XXXXXX"
 SHIP_LIST_HOST="$SHIP_LIST_FIXTURE/list.txt"
 printf 'one\ntwo\nthree\n' > "$SHIP_LIST_HOST"
 SHIP_LIST_SAVED_THRESHOLD="$DX_BACKUP_HASH_PATHS_ARG_THRESHOLD"
@@ -987,7 +987,7 @@ source "$BASE_DIR/bin/lib/dx-backup.sh"
 # shellcheck source=../bin/lib/dx-runtime.sh
 source "$BASE_DIR/bin/lib/dx-runtime.sh"
 
-DIRPUSH_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-dirpush-test.XXXXXX")"
+dxe_test_mktemp_dir DIRPUSH_FIXTURE "${TMPDIR:-/tmp}/dxe-restore-dirpush-test.XXXXXX"
 DIRPUSH_PERSIST="$DIRPUSH_FIXTURE/persist"
 DIRPUSH_BACKUP="$DIRPUSH_FIXTURE/backups/dirpush-container"
 mkdir -p "$DIRPUSH_PERSIST" "$DIRPUSH_BACKUP/current/a/b" "$DIRPUSH_BACKUP/current/c/d"
@@ -1054,7 +1054,7 @@ rm -rf "$DIRPUSH_FIXTURE"
 # dx_backup_ship_list_to_guest's own `cat > "$1"` call takes) while still
 # letting `tar` through, so a pass reaching the tar step at all would prove
 # this case wrong.
-DIRSHIP_FAIL_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-dirship-fail-test.XXXXXX")"
+dxe_test_mktemp_dir DIRSHIP_FAIL_FIXTURE "${TMPDIR:-/tmp}/dxe-restore-dirship-fail-test.XXXXXX"
 DIRSHIP_FAIL_PERSIST="$DIRSHIP_FAIL_FIXTURE/persist"
 DIRSHIP_FAIL_BACKUP="$DIRSHIP_FAIL_FIXTURE/backups/dirshipfail-container"
 mkdir -p "$DIRSHIP_FAIL_PERSIST" "$DIRSHIP_FAIL_BACKUP/current/a/b" "$DIRSHIP_FAIL_BACKUP/current/c/d"
@@ -1103,7 +1103,7 @@ rm -rf "$DIRSHIP_FAIL_FIXTURE"
 # `container` lets `tar` through for real (so the file really lands) but
 # refuses every `sh -c` invocation, which is only ever the ownership pass's
 # own ship-list call here.
-FILESHIP_FAIL_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-fileship-fail-test.XXXXXX")"
+dxe_test_mktemp_dir FILESHIP_FAIL_FIXTURE "${TMPDIR:-/tmp}/dxe-restore-fileship-fail-test.XXXXXX"
 FILESHIP_FAIL_PERSIST="$FILESHIP_FAIL_FIXTURE/persist"
 FILESHIP_FAIL_BACKUP="$FILESHIP_FAIL_FIXTURE/backups/fileshipfail-container"
 mkdir -p "$FILESHIP_FAIL_PERSIST" "$FILESHIP_FAIL_BACKUP/current"
@@ -1163,7 +1163,7 @@ rm -rf "$FILESHIP_FAIL_FIXTURE"
 # mirror, exactly as before: only bin/dx-backup ever calls
 # dx_backup_generation_migrate_legacy, never bin/dx-restore.
 # ---------------------------------------------------------------------------
-LEGACY_RESTORE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-restore-test.XXXXXX")"
+dxe_test_mktemp_dir LEGACY_RESTORE_ROOT "${TMPDIR:-/tmp}/dxe-legacy-restore-test.XXXXXX"
 LEGACY_RESTORE_BACKUP_DIR="$LEGACY_RESTORE_ROOT/backups"
 LEGACY_RESTORE_MIRROR="$LEGACY_RESTORE_BACKUP_DIR/test-container"
 mkdir -p "$LEGACY_RESTORE_MIRROR/current/home/dx"
@@ -1224,7 +1224,7 @@ rm -rf "$LEGACY_RESTORE_ROOT"
 # dx_lock_acquire's own bounded wait fast and deterministic (this codebase's
 # established seam, see tests/test_bootstrap_publication.sh).
 # ---------------------------------------------------------------------------
-RESTORE_LOCK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-restore-lock-test.XXXXXX")"
+dxe_test_mktemp_dir RESTORE_LOCK_ROOT "${TMPDIR:-/tmp}/dxe-restore-lock-test.XXXXXX"
 RESTORE_LOCK_BACKUP_DIR="$RESTORE_LOCK_ROOT/backups"
 mkdir -p "$RESTORE_LOCK_BACKUP_DIR/test-container"
 fake_tool_write "$FAKE_DIR" fake-sleep 'exit 0'
@@ -1255,7 +1255,7 @@ rm -rf "$RESTORE_LOCK_ROOT"
 # excluded from the listing, refused when named. A nested file that merely
 # shares the name is ordinary content and stays listed.
 # ---------------------------------------------------------------------------
-GEN_MANIFEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-gen-manifest-test.XXXXXX")"
+dxe_test_mktemp_dir GEN_MANIFEST_ROOT "${TMPDIR:-/tmp}/dxe-gen-manifest-test.XXXXXX"
 GEN_MANIFEST_MIRROR="$GEN_MANIFEST_ROOT/test-container"
 mkdir -p "$GEN_MANIFEST_MIRROR/generations/g1/home/dx/notes"
 printf 'content\n' > "$GEN_MANIFEST_MIRROR/generations/g1/home/dx/f.txt"
@@ -1484,7 +1484,7 @@ fi
 # Shipped-list variants (above DX_BACKUP_HASH_PATHS_ARG_THRESHOLD) of the
 # directory-mode query and apply, and their failure paths.
 # ---------------------------------------------------------------------------
-SHIP_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dirmodes-ship.XXXXXX")"
+dxe_test_mktemp_dir SHIP_FIXTURE "${TMPDIR:-/tmp}/dxe-dirmodes-ship.XXXXXX"
 SHIP_PERSIST="$SHIP_FIXTURE/persist"
 SHIP_LOG="$SHIP_FIXTURE/exec.log"
 SHIP_FAIL="$SHIP_FIXTURE/fail-mode"

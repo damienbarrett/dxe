@@ -16,7 +16,7 @@ SELECTOR="$GUEST/scripts/lib/dx-persist-backup-select.sh"
 source "$SELECTOR"
 test_section "Persist backup: selection rules (fixture trees, no container)"
 
-FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-test.XXXXXX")"
+dxe_test_mktemp_dir FIXTURE "${TMPDIR:-/tmp}/dxe-pbs-test.XXXXXX"
 trap 'chmod -R u+w "$FIXTURE" 2>/dev/null || true; rm -rf "$FIXTURE"' EXIT
 
 git_repo() {
@@ -414,7 +414,8 @@ DX_PBS_EXTRA_DENY=""
 # The selector itself never `cd`s (its CWD is whatever `container
 # exec`/`docker exec` supplies), so this is a real, live-reachable
 # condition, not a test artefact. ---
-cwd_glob_dir="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-cwdglob.XXXXXX")"
+cwd_glob_dir="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir cwd_glob_dir "${TMPDIR:-/tmp}/dxe-pbs-cwdglob.XXXXXX"
 : > "$cwd_glob_dir/result-bin"
 (
     cd "$cwd_glob_dir" || exit 1
@@ -439,7 +440,8 @@ fi
 # arguments by bin/dx-backup). Uses a small, isolated fixture (not the
 # shared $FIXTURE tree above) so the two extra patterns' effects are easy to
 # read in isolation. ---
-extra_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-extradeny.XXXXXX")"
+extra_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir extra_fixture "${TMPDIR:-/tmp}/dxe-pbs-extradeny.XXXXXX"
 mkdir -p "$extra_fixture/my dir" "$extra_fixture/my" "$extra_fixture/second"
 printf 'denied by the space-containing pattern\n' > "$extra_fixture/my dir/keepme.txt"
 printf 'a bare "my" is a DIFFERENT path than "my dir" -- must survive\n' > "$extra_fixture/my/keepme.txt"
@@ -734,7 +736,8 @@ fi
 # downstream, per candidate, by dx_pbs_path_denied itself -- see
 # dx_pbs_list_outside_repos and dx_pbs_emit_found_list), so they are
 # outside what these four `find` sites are responsible for pruning. ---
-eq_fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-equiv.XXXXXX")"
+eq_fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir eq_fixture "${TMPDIR:-/tmp}/dxe-pbs-equiv.XXXXXX"
 mkdir -p "$eq_fixture/allowed"
 printf 'kept\n' > "$eq_fixture/allowed/leaf.txt"
 for eq_name in node_modules target .direnv result result-anything __pycache__ \
@@ -845,7 +848,8 @@ if printf '%s\n' "$standalone_hash_file" | stdin_matches -F 'home/dx/.bash_histo
 # "stderr looked quiet"). Scoped to a small, isolated fixture with no git
 # repos, so only dx_pbs_list_outside_repos's own find call matters here.
 # `find` is shadowed as a shell FUNCTION, undone with a plain `unset -f`. ---
-find_fail_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-findfail.XXXXXX")"
+find_fail_root="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir find_fail_root "${TMPDIR:-/tmp}/dxe-pbs-findfail.XXXXXX"
 mkdir -p "$find_fail_root/home/dx"
 printf 'irrelevant\n' > "$find_fail_root/home/dx/file.txt"
 find() { printf 'partial/output\0'; return 1; }
@@ -870,7 +874,8 @@ rm -rf "$find_fail_root"
 # the one target path (both the -c and -f probes dx_pbs_stat_size/
 # dx_pbs_stat_mtime try), leaving every other path's real stat call
 # untouched -- proving the failure is scoped to that ONE entry. ---
-stat_fail_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-statfail.XXXXXX")"
+stat_fail_root="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir stat_fail_root "${TMPDIR:-/tmp}/dxe-pbs-statfail.XXXXXX"
 mkdir -p "$stat_fail_root/home/dx"
 printf 'vanishing\n' > "$stat_fail_root/home/dx/vanishes.txt"
 printf 'stays\n' > "$stat_fail_root/home/dx/stays.txt"
@@ -902,7 +907,8 @@ rm -rf "$stat_fail_root"
 # path appearing anywhere in the invocation's arguments -- every call in
 # this file passes `-C "$repo"`), leaving every other repository's real
 # git calls untouched. ---
-git_fail_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-gitfail.XXXXXX")"
+git_fail_root="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir git_fail_root "${TMPDIR:-/tmp}/dxe-pbs-gitfail.XXXXXX"
 mkdir -p "$git_fail_root/git"
 # shellcheck disable=SC2218
 git init -q -b main "$git_fail_root/git/broken-repo"
@@ -947,7 +953,8 @@ rm -rf "$git_fail_root"
 # repo's tracked, already-pushed file is present in the listing precisely
 # BECAUSE whole-repo mode ran, not the safe/clean-set-diff path, which
 # would have excluded it). ---
-git_unreach_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-gitunreach.XXXXXX")"
+git_unreach_root="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir git_unreach_root "${TMPDIR:-/tmp}/dxe-pbs-gitunreach.XXXXXX"
 mkdir -p "$git_unreach_root/git"
 # shellcheck disable=SC2218
 git init -q --bare "$git_unreach_root/remote.git"
@@ -1016,7 +1023,8 @@ dxe_pbs_clean_tmp_count() {
     find "${TMPDIR:-/tmp}" -maxdepth 1 \( -name 'dxe-pbs-all.*' -o -name 'dxe-pbs-diff.*' -o -name 'dxe-pbs-cleanerr.*' \) 2>/dev/null | wc -l | tr -d '[:space:]'
 }
 
-clean_lstree_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-cleanlstree.XXXXXX")"
+clean_lstree_root="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir clean_lstree_root "${TMPDIR:-/tmp}/dxe-pbs-cleanlstree.XXXXXX"
 mkdir -p "$clean_lstree_root/git"
 # shellcheck disable=SC2218
 git init -q -b main "$clean_lstree_root/git/repo"
@@ -1062,7 +1070,8 @@ else
 fi
 rm -rf "$clean_lstree_root"
 
-clean_diff_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-cleandiff.XXXXXX")"
+clean_diff_root="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir clean_diff_root "${TMPDIR:-/tmp}/dxe-pbs-cleandiff.XXXXXX"
 mkdir -p "$clean_diff_root/git"
 # shellcheck disable=SC2218
 git init -q -b main "$clean_diff_root/git/repo"
@@ -1116,7 +1125,8 @@ rm -rf "$clean_diff_root"
 # by calling the walker directly on a small, standalone repo directory (not
 # via the full listing driver), so only THIS call site's `find` is under
 # test. Reuses the same unconditional-failure `find` shadow used above. ---
-walk_fail_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-walkfail.XXXXXX")"
+walk_fail_root="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir walk_fail_root "${TMPDIR:-/tmp}/dxe-pbs-walkfail.XXXXXX"
 mkdir -p "$walk_fail_root/repo"
 printf 'content\n' > "$walk_fail_root/repo/file.txt"
 walk_fail_target="$walk_fail_root/repo"
@@ -1150,7 +1160,8 @@ rm -rf "$walk_fail_root"
 dxe_pbs_emitsafe_tmp_count() {
     find "${TMPDIR:-/tmp}" -maxdepth 1 \( -name 'dxe-pbs-clean.*' -o -name 'dxe-pbs-found.*' -o -name 'dxe-pbs-delta.*' -o -name 'dxe-pbs-ignored.*' -o -name 'dxe-pbs-ignoredrr.*' \) 2>/dev/null | wc -l | tr -d '[:space:]'
 }
-emitsafe_root="$(mktemp -d "${TMPDIR:-/tmp}/dxe-pbs-emitsafe.XXXXXX")"
+emitsafe_root="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir emitsafe_root "${TMPDIR:-/tmp}/dxe-pbs-emitsafe.XXXXXX"
 mkdir -p "$emitsafe_root/git"
 # shellcheck disable=SC2218
 git init -q -b main "$emitsafe_root/git/repo"

@@ -37,10 +37,10 @@ GUEST="$BASE_DIR/container/dx-nixos-26.05"
 REAL_LN="$(command -v ln)"
 test_section "Persist backup: dx-backup capture (fake-container boundary)"
 
-FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-dx-backup-test.XXXXXX")"
+dxe_test_mktemp_dir FIXTURE "${TMPDIR:-/tmp}/dxe-dx-backup-test.XXXXXX"
 trap 'chmod -R u+w "$FIXTURE" 2>/dev/null || true; rm -rf "$FIXTURE"' EXIT
 
-FAKE_DIR="$(fake_tool_dir_create "$FIXTURE")"
+FAKE_DIR="$(fake_tool_dir_create "$FIXTURE")" || exit 1
 mkdir -p "$FIXTURE/persist" "$FIXTURE/bootstrap"
 ln -sfn "$GUEST" "$FIXTURE/bootstrap/current"
 
@@ -764,7 +764,7 @@ export DX_BACKUP_DIR="$FIXTURE/backups"
 # second -- exactly as if the guest process died right after finishing one
 # file. The previously published generation (and its manifest, and its
 # content) must remain byte-for-byte exactly as they were. ---
-F5_1_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-f5-truncate-test.XXXXXX")"
+dxe_test_mktemp_dir F5_1_ROOT "${TMPDIR:-/tmp}/dxe-f5-truncate-test.XXXXXX"
 F5_1_PERSIST="$F5_1_ROOT/persist"
 F5_1_BACKUP_DIR="$F5_1_ROOT/backups"
 mkdir -p "$F5_1_PERSIST/home/dx"
@@ -852,7 +852,7 @@ rm -rf "$F5_1_ROOT"
 # touches the filesystem at all when it does, so there is nothing for it to
 # leave half-done); the previously published generation must remain
 # published and restorable. ---
-F5_2_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-f5-publish-test.XXXXXX")"
+dxe_test_mktemp_dir F5_2_ROOT "${TMPDIR:-/tmp}/dxe-f5-publish-test.XXXXXX"
 F5_2_PERSIST="$F5_2_ROOT/persist"
 F5_2_BACKUP_DIR="$F5_2_ROOT/backups"
 mkdir -p "$F5_2_PERSIST/home/dx"
@@ -931,7 +931,7 @@ rm -rf "$F5_2_ROOT"
 # DX_SLEEP=fake-sleep keeps dx_lock_acquire's own bounded wait fast and
 # deterministic (this codebase's established seam, see
 # tests/test_bootstrap_publication.sh). ---
-F5_3_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-f5-lock-test.XXXXXX")"
+dxe_test_mktemp_dir F5_3_ROOT "${TMPDIR:-/tmp}/dxe-f5-lock-test.XXXXXX"
 F5_3_PERSIST="$F5_3_ROOT/persist"
 F5_3_BACKUP_DIR="$F5_3_ROOT/backups"
 mkdir -p "$F5_3_PERSIST/home/dx" "$F5_3_BACKUP_DIR/test-container"
@@ -986,7 +986,7 @@ rm -rf "$F5_3_ROOT"
 # the mirror's ONLY entry also means the previous generation's carry list is
 # empty (nothing survives to carry forward -- dx_backup_generation_carry_forward's
 # own "skip list covers the whole previous generation" case). ---
-F5_4_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-f5-hash-test.XXXXXX")"
+dxe_test_mktemp_dir F5_4_ROOT "${TMPDIR:-/tmp}/dxe-f5-hash-test.XXXXXX"
 F5_4_PERSIST="$F5_4_ROOT/persist"
 F5_4_BACKUP_DIR="$F5_4_ROOT/backups"
 mkdir -p "$F5_4_PERSIST/home/dx"
@@ -1124,7 +1124,7 @@ fi
 # dx_backup_generation_current: a `current` symlink whose target does NOT
 # start with "generations/" (corrupt or foreign state) is treated as "no
 # current generation", never silently trusted.
-BADTARGET_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-badtarget-test.XXXXXX")"
+dxe_test_mktemp_dir BADTARGET_FIXTURE "${TMPDIR:-/tmp}/dxe-badtarget-test.XXXXXX"
 ln -s /somewhere/else "$BADTARGET_FIXTURE/current"
 if dx_backup_generation_current "$BADTARGET_FIXTURE" >/dev/null 2>&1; then
     test_fail "dx_backup_generation_current: a current symlink whose target is not under generations/ is refused"
@@ -1135,7 +1135,7 @@ rm -rf "$BADTARGET_FIXTURE"
 
 # dx_backup_generation_publish: refuses a generation id that does not exist
 # on disk, leaving no pointer behind at all.
-PUBLISH_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-publish-test.XXXXXX")"
+dxe_test_mktemp_dir PUBLISH_FIXTURE "${TMPDIR:-/tmp}/dxe-publish-test.XXXXXX"
 set +e
 dx_backup_generation_publish "$PUBLISH_FIXTURE" no-such-generation 2>/dev/null
 publish_missing_rc=$?
@@ -1175,7 +1175,7 @@ rm -rf "$PUBLISH_FIXTURE"
 # dx_backup_generation_prune: a backup dir with no generations/ at all, or
 # an empty existing generations/, is a harmless no-op; otherwise it deletes
 # every generation not named to keep.
-PRUNE_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-prune-test.XXXXXX")"
+dxe_test_mktemp_dir PRUNE_FIXTURE "${TMPDIR:-/tmp}/dxe-prune-test.XXXXXX"
 if dx_backup_generation_prune "$PRUNE_FIXTURE" keep-me; then
     test_pass "dx_backup_generation_prune: a backup dir with no generations/ at all is a harmless no-op"
 else
@@ -1200,7 +1200,7 @@ rm -rf "$PRUNE_FIXTURE"
 # does not exist at all (defensive: a `current` symlink whose STRING target
 # looks valid but whose generation directory is itself somehow missing) is a
 # harmless no-op.
-CARRY_FIXTURE1="$(mktemp -d "${TMPDIR:-/tmp}/dxe-carry1-test.XXXXXX")"
+dxe_test_mktemp_dir CARRY_FIXTURE1 "${TMPDIR:-/tmp}/dxe-carry1-test.XXXXXX"
 : > "$CARRY_FIXTURE1/empty-skip.txt"
 if dx_backup_generation_carry_forward "$CARRY_FIXTURE1/no-such-prev" "$CARRY_FIXTURE1/new1" "$CARRY_FIXTURE1/empty-skip.txt" 2>/dev/null; then
     test_pass "dx_backup_generation_carry_forward: a nonexistent previous generation directory is a harmless no-op"
@@ -1216,7 +1216,7 @@ rm -rf "$CARRY_FIXTURE1"
 # in the coverage container) ignores mode bits entirely, so a mode-based
 # fixture never fails for root -- ENOTDIR from mkdir-under-a-file is a real
 # filesystem constraint no uid can bypass.
-CARRY_FIXTURE2="$(mktemp -d "${TMPDIR:-/tmp}/dxe-carry2-test.XXXXXX")"
+dxe_test_mktemp_dir CARRY_FIXTURE2 "${TMPDIR:-/tmp}/dxe-carry2-test.XXXXXX"
 mkdir -p "$CARRY_FIXTURE2/prev/sub"
 printf 'x\n' > "$CARRY_FIXTURE2/prev/sub/f.txt"
 : > "$CARRY_FIXTURE2/new2"
@@ -1234,7 +1234,7 @@ rm -rf "$CARRY_FIXTURE2"
 
 # dx_backup_generation_carry_forward: a hard-link failure (something already
 # occupies the destination path) is reported, not silently ignored.
-CARRY_FIXTURE3="$(mktemp -d "${TMPDIR:-/tmp}/dxe-carry3-test.XXXXXX")"
+dxe_test_mktemp_dir CARRY_FIXTURE3 "${TMPDIR:-/tmp}/dxe-carry3-test.XXXXXX"
 mkdir -p "$CARRY_FIXTURE3/prev" "$CARRY_FIXTURE3/new3"
 printf 'x\n' > "$CARRY_FIXTURE3/prev/f.txt"
 printf 'already here\n' > "$CARRY_FIXTURE3/new3/f.txt"
@@ -1255,7 +1255,7 @@ rm -rf "$CARRY_FIXTURE3"
 # to force one deterministically -- this codebase's established pattern for
 # a direct unit test of an otherwise environment-driven id, see
 # test_dx_restore.sh's own dx_runtime_exec/dx_pbs_hash_entry stubs).
-COMMIT_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-commit-collide-test.XXXXXX")"
+dxe_test_mktemp_dir COMMIT_FIXTURE "${TMPDIR:-/tmp}/dxe-commit-collide-test.XXXXXX"
 mkdir -p "$COMMIT_FIXTURE/generations/collide-id"
 dx_backup_generation_new_id() { printf '%s\n' collide-id; }
 : > "$COMMIT_FIXTURE/empty-listing.tsv"
@@ -1282,7 +1282,7 @@ rm -rf "$COMMIT_FIXTURE"
 # ---------------------------------------------------------------------------
 
 # dx_backup_generation_migrate_legacy: direct unit coverage.
-LEGACY_UNIT_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-unit-test.XXXXXX")"
+dxe_test_mktemp_dir LEGACY_UNIT_FIXTURE "${TMPDIR:-/tmp}/dxe-legacy-unit-test.XXXXXX"
 mkdir -p "$LEGACY_UNIT_FIXTURE/current/home/dx"
 printf 'legacy-content\n' > "$LEGACY_UNIT_FIXTURE/current/home/dx/f.txt"
 printf 'home/dx/f.txt\t14\t0\tdeadbeef\n' > "$LEGACY_UNIT_FIXTURE/manifest.tsv"
@@ -1346,7 +1346,7 @@ fi
 rm -rf "$LEGACY_UNIT_FIXTURE"
 
 # A mirror with no current/ at all (the very first backup ever) is a no-op.
-NOCURRENT_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-nocurrent-test.XXXXXX")"
+dxe_test_mktemp_dir NOCURRENT_FIXTURE "${TMPDIR:-/tmp}/dxe-legacy-nocurrent-test.XXXXXX"
 if dx_backup_generation_migrate_legacy "$NOCURRENT_FIXTURE"; then
     test_pass "dx_backup_generation_migrate_legacy: a mirror with no current/ at all is a no-op"
 else
@@ -1357,7 +1357,7 @@ rm -rf "$NOCURRENT_FIXTURE"
 # A `current` that is neither a symlink nor a directory (some other,
 # unrecognised shape) is refused loudly, exactly like
 # dx_backup_generation_publish's own guard -- never silently mishandled.
-WEIRDCURRENT_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-weird-test.XXXXXX")"
+dxe_test_mktemp_dir WEIRDCURRENT_FIXTURE "${TMPDIR:-/tmp}/dxe-legacy-weird-test.XXXXXX"
 printf 'not a directory\n' > "$WEIRDCURRENT_FIXTURE/current"
 set +e
 dx_backup_generation_migrate_legacy "$WEIRDCURRENT_FIXTURE" 2>/dev/null
@@ -1372,7 +1372,7 @@ rm -rf "$WEIRDCURRENT_FIXTURE"
 
 # A legacy mirror with NO manifest.tsv at all (created but never completed a
 # successful run) still migrates, falling back to legacy-<current time>.
-NOMANIFEST_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-nomanifest-test.XXXXXX")"
+dxe_test_mktemp_dir NOMANIFEST_FIXTURE "${TMPDIR:-/tmp}/dxe-legacy-nomanifest-test.XXXXXX"
 mkdir -p "$NOMANIFEST_FIXTURE/current/home/dx"
 printf 'x\n' > "$NOMANIFEST_FIXTURE/current/home/dx/f.txt"
 if dx_backup_generation_migrate_legacy "$NOMANIFEST_FIXTURE"; then
@@ -1389,7 +1389,7 @@ rm -rf "$NOMANIFEST_FIXTURE"
 
 # Generation-id collision: a generation already exists at the exact id this
 # legacy manifest's own timestamp would produce.
-COLLIDE_LEGACY_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-collide-test.XXXXXX")"
+dxe_test_mktemp_dir COLLIDE_LEGACY_FIXTURE "${TMPDIR:-/tmp}/dxe-legacy-collide-test.XXXXXX"
 mkdir -p "$COLLIDE_LEGACY_FIXTURE/current"
 printf 'x\n' > "$COLLIDE_LEGACY_FIXTURE/current/f.txt"
 : > "$COLLIDE_LEGACY_FIXTURE/manifest.tsv"
@@ -1412,7 +1412,7 @@ rm -rf "$COLLIDE_LEGACY_FIXTURE"
 # contended by another process (lock pre-held, exactly like the earlier
 # RED 3 lock-contention case) is left in its legacy shape entirely
 # untouched -- migration never gets a chance to run without the lock. ---
-LEGACY_LOCK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-legacy-lock-test.XXXXXX")"
+dxe_test_mktemp_dir LEGACY_LOCK_ROOT "${TMPDIR:-/tmp}/dxe-legacy-lock-test.XXXXXX"
 LEGACY_LOCK_BACKUP_DIR="$LEGACY_LOCK_ROOT/backups"
 LEGACY_LOCK_MIRROR="$LEGACY_LOCK_BACKUP_DIR/test-container"
 mkdir -p "$LEGACY_LOCK_MIRROR/current/home/dx"
@@ -1449,7 +1449,7 @@ rm -rf "$LEGACY_LOCK_ROOT"
 # guaranteed byte-identical to what a fresh listing produces for it --
 # otherwise it would misclassify as "changed" and never exercise carrying a
 # file forward from the newly-adopted legacy generation. ---
-E2E_LEGACY_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dxe-f5-legacy-e2e-test.XXXXXX")"
+dxe_test_mktemp_dir E2E_LEGACY_ROOT "${TMPDIR:-/tmp}/dxe-f5-legacy-e2e-test.XXXXXX"
 E2E_LEGACY_PERSIST="$E2E_LEGACY_ROOT/persist"
 E2E_LEGACY_BACKUP_DIR="$E2E_LEGACY_ROOT/backups"
 E2E_LEGACY_MIRROR="$E2E_LEGACY_BACKUP_DIR/test-container"

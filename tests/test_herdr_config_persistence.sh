@@ -48,7 +48,8 @@ if [ "$(uname -s)" != Linux ]; then
     exit_with_code
 fi
 
-fixture="$(mktemp -d "${TMPDIR:-/tmp}/dxe-herdr-config-test.XXXXXX")"
+fixture="" # assigned by dxe_test_mktemp_dir; declared for ShellCheck (SC2154)
+dxe_test_mktemp_dir fixture "${TMPDIR:-/tmp}/dxe-herdr-config-test.XXXXXX"
 trap 'rm -rf "$fixture"' EXIT
 
 # The merger is a sourceable bootstrap module, like scripts/lib/dx-keyring.sh,
@@ -453,11 +454,11 @@ assert_file_not_contains "$MERGER" '>> "\$config_file"' "the merger never append
 # not be added retroactively -- which is why the merger is pure Bash and why
 # this fixture removes awk while keeping the tools bootstrap really does have.
 if awk_out="$(
-    shim="$(mktemp -d)"
+    shim="$(mktemp -d)" || exit 1
     for t in dirname mktemp chmod mv cp mkdir cat rm grep sed sha256sum; do
         p="$(command -v "$t" 2>/dev/null)" && ln -s "$p" "$shim/$t"
     done
-    cfg="$(mktemp -d)/config.toml"; printf '[experimental]\nfoo = 1\n' > "$cfg"
+    cfg_dir="$(mktemp -d)" || exit 1; cfg="$cfg_dir/config.toml"; printf '[experimental]\nfoo = 1\n' > "$cfg"
     PATH="$shim" seed_config "$TEMPLATE" "$cfg" >/dev/null 2>&1
     cat "$cfg"
 )"; then

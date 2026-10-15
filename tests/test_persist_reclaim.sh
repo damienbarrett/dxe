@@ -42,7 +42,7 @@ source "$SCRIPT_DIR/lib/persist-fixtures.sh"
 
 test_section "WP5.2: dx-reclaim reporting"
 
-SCRATCH="$(persist_fixture_root_create)"
+SCRATCH="$(persist_fixture_root_create)" || exit 1
 trap 'persist_fixture_cleanup "$SCRATCH"' EXIT
 case "$SCRATCH" in
     /*/dxe-persist-share.*) : ;;
@@ -55,12 +55,12 @@ PERSISTV="dxe-rc-persist"
 FIXDIR="$SCRIPT_DIR/fixtures"
 
 # A share root with a persist directory holding 300000 bytes.
-ROOT="$(persist_fixture_root_create "$SCRATCH")"
+ROOT="$(persist_fixture_root_create "$SCRATCH")" || exit 1
 ROOT="$(cd -P -- "$ROOT" && pwd -P)"
 PDIR="$ROOT/dxe/$GUEST/persist"
 mkdir -p "$PDIR"
 perl -e 'print "x" x 300000' >"$PDIR/blob"
-TOOLS="$(persist_fixture_nas_create "$ROOT" "$SCRATCH")"
+TOOLS="$(persist_fixture_nas_create "$ROOT" "$SCRATCH")" || exit 1
 fake_tool_write "$TOOLS" uname 'case "$1" in -m) echo x86_64 ;; esac'
 fake_tool_write "$TOOLS" docker '
 if [ -n "${DXE_RC_DOCKER_LOG:-}" ]; then printf "%s\n" "$*" >> "$DXE_RC_DOCKER_LOG"; fi
@@ -177,7 +177,7 @@ else
 fi
 
 # A missing directory: reported as unknown, and the run still completes.
-EMPTY_ROOT="$(persist_fixture_root_create "$SCRATCH")"
+EMPTY_ROOT="$(persist_fixture_root_create "$SCRATCH")" || exit 1
 EMPTY_ROOT="$(cd -P -- "$EMPTY_ROOT" && pwd -P)"
 reclaim host-path "$EMPTY_ROOT"
 MLINE="  $EMPTY_ROOT/dxe/$GUEST/persist unknown"
