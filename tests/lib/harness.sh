@@ -484,7 +484,7 @@ if [ -s "\$dxe_fake_responses" ]; then
 fi
 exit 0
 FAKE_EOF
-    chmod 0755 "$DXE_FAKE_RUNTIME_DIR/$tool"
+    chmod 0755 "$DXE_FAKE_RUNTIME_DIR/$tool" || _dxe_harness_die "fake $tool (chmod failed)"
     PATH="$DXE_FAKE_RUNTIME_DIR:$(dirname "$(command -v bash)"):/usr/bin:/bin"
 }
 

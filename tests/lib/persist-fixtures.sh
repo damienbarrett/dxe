@@ -16,7 +16,12 @@ PERSIST_FIXTURE_NAS_HOST="dxe-fixture-nas.invalid"
 
 # persist_fixture_root_create [PARENT]: new empty share root; prints its path.
 persist_fixture_root_create() {
-    mktemp -d "${1:-${TMPDIR:-/tmp}}/dxe-persist-share.XXXXXX"
+    local parent="${1:-${TMPDIR:-/tmp}}" root
+    root="$(mktemp -d "$parent/dxe-persist-share.XXXXXX" 2>/dev/null)" && [ -n "$root" ] || {
+        echo "persist_fixture_root_create: cannot create a temporary directory under $parent" >&2
+        return 1
+    }
+    printf '%s\n' "$root"
 }
 
 # persist_fixture_cleanup PATH...: remove fixture trees. Every PATH is
@@ -130,7 +135,10 @@ persist_fixture_nas_create() {
             [ "$root" = / ] || root="${root%/}"
             ;;
     esac
-    tools="$(fake_tool_dir_create "$parent")" || return 1
+    tools="$(fake_tool_dir_create "$parent" 2>/dev/null)" && [ -n "$tools" ] || {
+        echo "persist_fixture_nas_create: cannot create a temporary directory under $parent" >&2
+        return 1
+    }
     fake_qnap_ssh_write "$tools"
     mv "$tools/ssh" "$tools/.ssh-inner"
     fake_tool_write "$tools" ssh "$(printf 'cd %q || exit 1\nDXE_FIXTURE_NAS_ROOT=%q\nexport DXE_FIXTURE_NAS_ROOT\nexec %q "$@"' \
