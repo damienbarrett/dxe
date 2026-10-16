@@ -16,8 +16,9 @@
 # `printf`, well under the platform's atomic pipe/write buffer, so
 # concurrent short appends do not interleave into a corrupt line.
 #
-# Import-pure: sourcing this file only defines functions and one default
-# variable (DXE_HARNESS_LABEL=""), with no I/O, no `exit`, and no change to
+# Import-pure: sourcing this file only defines functions and a few default
+# variables (DXE_HARNESS_LABEL="" and the two unexported results-name
+# variables DXE_HARNESS_RES_TOKEN/_PID), with no I/O, no `exit`, and no change to
 # the sourcing shell's control state ($-, IFS, PWD, umask, traps) -- the
 # same eight-way contract tests/test_refactor_contracts.sh runs over
 # bin/lib/*.sh (its lines 10-33), proven for this file by
@@ -72,6 +73,14 @@ NC='\033[0m'
 # than a one-shot label. An `expect_*` call with no preceding `it` in the
 # calling shell falls back to a label built from its own arguments.
 DXE_HARNESS_LABEL=""
+
+# Process-private name token for the results file (see
+# _dxe_harness_results_file). Set once per process and never exported, so a
+# `bash FILE` child picks its own; forks inherit it. Pure assignment, no I/O.
+if [ "${DXE_HARNESS_RES_TOKEN_PID:-}" != "$$" ]; then
+    DXE_HARNESS_RES_TOKEN="$$.$RANDOM$RANDOM$RANDOM"
+    DXE_HARNESS_RES_TOKEN_PID="$$"
+fi
 
 it() {
     DXE_HARNESS_LABEL="$1"
@@ -187,8 +196,21 @@ _dxe_harness_mktemp_refuse() {
 # were never recorded.
 _dxe_harness_results_file() {
     if [ -z "${DXE_TEST_RESULTS:-}" ] || [ "${DXE_TEST_RESULTS_OWNER:-}" != "$$" ]; then
-        local file
-        file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-results.XXXXXX")" && [ -f "$file" ] || _dxe_harness_die "results file"
+        # The name is agreed BEFORE any fork (DXE_HARNESS_RES_TOKEN, chosen at
+        # source time and never exported), so a fork that records first and
+        # its parent resolve the same path. The file is made by mktemp on
+        # PATH, then linked to the agreed name: ln fails if a sibling got
+        # there first and the loser adopts the winner's file. Only the
+        # mktemp file this call made is ever removed here.
+        local file agreed
+        agreed="${TMPDIR:-/tmp}/dxe-harness-results.$DXE_HARNESS_RES_TOKEN"
+        if [ ! -f "$agreed" ]; then
+            file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-results.XXXXXX")" && [ -f "$file" ] || _dxe_harness_die "results file"
+            ln "$file" "$agreed" 2>/dev/null
+            rm -f "$file"
+        fi
+        [ -f "$agreed" ] || _dxe_harness_die "results file"
+        file="$agreed"
         DXE_TEST_RESULTS="$file"
         DXE_TEST_RESULTS_OWNER="$$"
         export DXE_TEST_RESULTS DXE_TEST_RESULTS_OWNER
