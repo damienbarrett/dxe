@@ -509,6 +509,6 @@ exit_with_code() {
     if [ "$failed" -gt 0 ]; then
         GLOBAL_FAILED=1
     fi
-    rm -f "${DXE_TEST_RESULTS:-}"
+    _dxe_harness_results_remove
     exit $GLOBAL_FAILED
 }

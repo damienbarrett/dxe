@@ -80,10 +80,50 @@ DXE_HARNESS_LABEL=""
 if [ "${DXE_HARNESS_RES_TOKEN_PID:-}" != "$$" ]; then
     DXE_HARNESS_RES_TOKEN="$$.$RANDOM$RANDOM$RANDOM"
     DXE_HARNESS_RES_TOKEN_PID="$$"
+    # Housekeeping state, fixed in the same once-per-process step (a re-source
+    # in a fork or in the parent keeps it; forks inherit it):
+    #  - the directory holding the results file, TMPDIR as it is NOW, so a
+    #    later TMPDIR change (with_fixture's, or a fork's) cannot split it;
+    #  - the subshell level this was sourced at, so a fork that ends the suite
+    #    cannot delete the suite's results file (_dxe_harness_results_remove);
+    #  - the absolute paths of rm, ln and find, resolved before a suite
+    #    can put stubs of those names on PATH or define functions of them.
+    #    The harness's own housekeeping calls only these; none found means
+    #    that housekeeping fails closed (_dxe_harness_tool). mktemp stays on
+    #    PATH on purpose: it is the seam suites use to fail the harness.
+    DXE_HARNESS_RES_DIR="${TMPDIR:-/tmp}"
+    DXE_HARNESS_RES_LEVEL="$BASH_SUBSHELL"
+    DXE_HARNESS_BIN_RM="$(type -P rm)" || DXE_HARNESS_BIN_RM=""
+    DXE_HARNESS_BIN_LN="$(type -P ln)" || DXE_HARNESS_BIN_LN=""
+    DXE_HARNESS_BIN_FIND="$(type -P find)" || DXE_HARNESS_BIN_FIND=""
 fi
 
 it() {
     DXE_HARNESS_LABEL="$1"
+}
+
+# _dxe_harness_tool NAME ARGS... -- runs the absolute-path tool captured at
+# source time (rm|ln|find), or stops the suite when there is none.
+_dxe_harness_tool() {
+    local bin
+    case "$1" in
+        rm) bin="$DXE_HARNESS_BIN_RM" ;;
+        ln) bin="$DXE_HARNESS_BIN_LN" ;;
+        find) bin="$DXE_HARNESS_BIN_FIND" ;;
+        *) bin="" ;;
+    esac
+    [ -n "$bin" ] || _dxe_harness_die "$1 tool"
+    shift
+    "$bin" "$@"
+}
+
+# _dxe_harness_results_remove -- deletes the suite's results file, but only
+# from the shell level the harness was sourced at: a fork (subshell, command
+# substitution, background job) that ends itself with finish/exit_with_code
+# must not take the suite's file with it.
+_dxe_harness_results_remove() {
+    [ "$BASH_SUBSHELL" = "$DXE_HARNESS_RES_LEVEL" ] || return 0
+    _dxe_harness_tool rm -f "${DXE_TEST_RESULTS:-}"
 }
 
 # _dxe_harness_die WHAT -- the harness could not create or write something it
@@ -93,7 +133,7 @@ it() {
 # recorded), and an empty fake-runtime directory put an empty entry -- the
 # current directory -- at the front of PATH.
 _dxe_harness_die() {
-    printf 'tests/lib/harness.sh: cannot create or write the %s (TMPDIR=%s); stopping\n' "$1" "${TMPDIR:-/tmp}" >&2
+    printf 'tests/lib/harness.sh: cannot create or write the %s (TMPDIR=%s)%s; stopping\n' "$1" "${TMPDIR:-/tmp}" "${2:+: $2}" >&2
     exit 1
 }
 
@@ -196,20 +236,25 @@ _dxe_harness_mktemp_refuse() {
 # were never recorded.
 _dxe_harness_results_file() {
     if [ -z "${DXE_TEST_RESULTS:-}" ] || [ "${DXE_TEST_RESULTS_OWNER:-}" != "$$" ]; then
-        # The name is agreed BEFORE any fork (DXE_HARNESS_RES_TOKEN, chosen at
-        # source time and never exported), so a fork that records first and
-        # its parent resolve the same path. The file is made by mktemp on
-        # PATH, then linked to the agreed name: ln fails if a sibling got
-        # there first and the loser adopts the winner's file. Only the
-        # mktemp file this call made is ever removed here.
-        local file agreed
-        agreed="${TMPDIR:-/tmp}/dxe-harness-results.$DXE_HARNESS_RES_TOKEN"
+        # The name is agreed BEFORE any fork (DXE_HARNESS_RES_TOKEN and
+        # DXE_HARNESS_RES_DIR, chosen at source time and never exported), so
+        # a fork that records first and its parent resolve the same path. The
+        # file is made by mktemp on PATH, then linked to the agreed name by
+        # the ln found at source time: ln fails if a sibling got there first
+        # and the loser adopts the winner's file. Only the mktemp file this
+        # call made is ever removed here. A symlink at the agreed path is
+        # refused, never written through; ln's own stderr is kept when the
+        # link could not be made and nothing regular sits at the name.
+        local file agreed lnerr=""
+        agreed="$DXE_HARNESS_RES_DIR/dxe-harness-results.$DXE_HARNESS_RES_TOKEN"
+        [ ! -L "$agreed" ] || _dxe_harness_die "results file" "$agreed is a symlink, refusing to write through it"
         if [ ! -f "$agreed" ]; then
-            file="$(mktemp "${TMPDIR:-/tmp}/dxe-harness-results.XXXXXX")" && [ -f "$file" ] || _dxe_harness_die "results file"
-            ln "$file" "$agreed" 2>/dev/null
-            rm -f "$file"
+            file="$(mktemp "$DXE_HARNESS_RES_DIR/dxe-harness-results.XXXXXX")" && [ -f "$file" ] || _dxe_harness_die "results file"
+            lnerr="$(_dxe_harness_tool ln "$file" "$agreed" 2>&1)" || :
+            _dxe_harness_tool rm -f "$file"
         fi
-        [ -f "$agreed" ] || _dxe_harness_die "results file"
+        [ ! -L "$agreed" ] || _dxe_harness_die "results file" "$agreed is a symlink, refusing to write through it"
+        [ -f "$agreed" ] || _dxe_harness_die "results file" "$lnerr"
         file="$agreed"
         DXE_TEST_RESULTS="$file"
         DXE_TEST_RESULTS_OWNER="$$"
@@ -282,7 +327,7 @@ expect_exit() {
         echo "  stderr:"
         sed 's/^/    /' "$err_file"
     fi
-    rm -f "$out_file" "$err_file"
+    _dxe_harness_tool rm -f "$out_file" "$err_file"
     return 0
 }
 
@@ -309,7 +354,7 @@ expect_stdout() {
         echo "  captured stdout:"
         sed 's/^/    /' "$out_file"
     fi
-    rm -f "$out_file" "$err_file"
+    _dxe_harness_tool rm -f "$out_file" "$err_file"
     return 0
 }
 
@@ -330,7 +375,7 @@ expect_stderr() {
         echo "  captured stderr:"
         sed 's/^/    /' "$err_file"
     fi
-    rm -f "$out_file" "$err_file"
+    _dxe_harness_tool rm -f "$out_file" "$err_file"
     return 0
 }
 
@@ -465,7 +510,7 @@ with_fake_runtime() {
     local tool="$1"
     _dxe_harness_fake_runtime_dir
     _dxe_harness_fake_transcript_file
-    rm -f "$DXE_FAKE_RUNTIME_DIR/.count-$tool" "$DXE_FAKE_RUNTIME_DIR/.failplan-$tool" "$DXE_FAKE_RUNTIME_DIR/.responses-$tool"
+    _dxe_harness_tool rm -f "$DXE_FAKE_RUNTIME_DIR/.count-$tool" "$DXE_FAKE_RUNTIME_DIR/.failplan-$tool" "$DXE_FAKE_RUNTIME_DIR/.responses-$tool"
     : > "$DXE_FAKE_RUNTIME_DIR/.failplan-$tool"
     : > "$DXE_FAKE_RUNTIME_DIR/.responses-$tool"
     cat > "$DXE_FAKE_RUNTIME_DIR/$tool" <<FAKE_EOF || _dxe_harness_die "fake $tool"
@@ -623,7 +668,7 @@ _dxe_harness_known_hosts_snapshot() {
     local dir
     dir="${DXE_HARNESS_FIXTURE_REAL_XDG_STATE_HOME:-$DXE_HARNESS_FIXTURE_REAL_HOME/.local/state}/dxe"
     [ -d "$dir" ] || return 0
-    find "$dir" -mindepth 1 2>/dev/null | sort
+    _dxe_harness_tool find "$dir" -mindepth 1 2>/dev/null | sort
 }
 
 # True if $1 (a suite file path, `finish` passes its own $0) carries a
@@ -731,6 +776,6 @@ finish() {
     elif [ "$total" -eq 0 ]; then
         status=3
     fi
-    rm -f "$DXE_TEST_RESULTS"
+    _dxe_harness_results_remove
     exit "$status"
 }
