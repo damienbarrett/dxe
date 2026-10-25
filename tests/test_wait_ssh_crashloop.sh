@@ -130,6 +130,9 @@ else
 fi
 
 # --- the library functions directly (baseline fallbacks and unusable counts) ----
+# `|| rc=$?`: a failing check is reported as this case's failure instead of
+# ending the suite under `set -e` (every check below exits explicitly).
+rc=0
 (
     export DX_CONTAINER_NAME=dx-wait
     container_exists() { return 0; }
@@ -150,13 +153,22 @@ fi
     dx_runtime_container_restart_count() { echo 9; }
     abort_out="$(dx_container_wait_should_abort 7 2>&1)" || exit 8
     printf '%s\n' "$abort_out" | grep -qF "crash-looping" && printf '%s\n' "$abort_out" | grep -qF "log line" || exit 9
+    # WP-WAITSSH D-2: a stopped container stops the wait on the THIRD
+    # consecutive stopped reading, not the first. The calls run in this shell
+    # (not in $(...)) so the count carries from one to the next; the restart
+    # count is flat so the crash-loop check, which still runs on the first two
+    # stopped readings, stays quiet.
     container_is_running() { return 1; }
-    abort_out="$(dx_container_wait_should_abort 7 2>&1)" || exit 10
-    printf '%s\n' "$abort_out" | grep -qF "stopped before SSH became responsive" || exit 11
+    dx_runtime_container_restart_count() { echo 7; }
+    dx_container_wait_begin || exit 12
+    dx_container_wait_should_abort 7 2> "$fixture/stop-abort.err" && exit 10
+    dx_container_wait_should_abort 7 2>> "$fixture/stop-abort.err" && exit 10
+    [ ! -s "$fixture/stop-abort.err" ] || exit 11
+    dx_container_wait_should_abort 7 2>> "$fixture/stop-abort.err" || exit 10
+    grep -qF "stopped before SSH became responsive" "$fixture/stop-abort.err" || exit 11
     exit 0
-)
-rc=$?
-if [ "$rc" -eq 0 ]; then test_pass "an unreadable or non-numeric restart count falls back to 0 and never aborts; a flat count does not abort; missing logs are noted"
+) || rc=$?
+if [ "$rc" -eq 0 ]; then test_pass "an unreadable or non-numeric restart count falls back to 0 and never aborts; a flat count does not abort; missing logs are noted; a stopped container stops the wait on the third consecutive reading"
 else test_fail "restart-count fallbacks (exit $rc)"; fi
 
 print_summary
