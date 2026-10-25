@@ -2226,3 +2226,14 @@ unscoped_prod_exec_lines=2639`.
   bin/lib/dx-runtime.sh). The two branches touch disjoint product files, so
   nothing was lost.
 - `unscoped_prod_exec_lines_ceiling` unchanged at 2639 (measured 2639).
+
+## 2026-10-25: dx-wait-ssh stops only on three consecutive stopped readings (fix/wait-ssh-false-stop, WP-WAITSSH)
+
+- `scope_exec_lines_floor` 5989 -> 5992 (+3, measured, 100% covered): in bin/lib/dx-container.sh,
+  dx_container_wait_begin and the stopped-reading counter in dx_container_wait_should_abort.
+- `unscoped_prod_exec_lines_ceiling` 2639 -> 2640 (+1): the one `dx_container_wait_begin` call in
+  wait_ssh_main of bin/dx-wait-ssh (after RESTART_BASELINE, before the first probe).
+- To keep ratchet.env at 10 lines, its oldest dated comment moved here verbatim (its full entry is
+  the 2026-10-13 int-4 section above):
+
+      # 2026-10-13 int-4 (main 557d645 merged into feat): floor 5854 -> 5947, ceiling 2639 (measured, 100% covered; scope = feat 5854 + main's GC fixes +93: bin/lib/dx-nix-gc.sh 24, bootstrap/common.sh run_root_nix and hand_back_root_nix_paths 31, scripts/lib/dx-ai-generation.sh 38; exempt = feat 2633 + main's 6 irreducible lines: bin/dx-gc and bin/dx-reclaim each a `source` of lib/dx-nix-gc.sh and a dx_nix_gc_prepare call, the dx_ai_reconcile_roots call in scripts/dx-ai.sh, bootstrap.sh's hand_back_root_nix_paths call). History: docs/evidence/20260930/coverage-ratchet-history.md.
