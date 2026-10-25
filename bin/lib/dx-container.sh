@@ -82,18 +82,30 @@ dx_container_restart_baseline() {
     printf '%s\n' "$count"
 }
 
+# Consecutive "stopped" readings (the container exists but is not running) in
+# the current wait. A plain shell variable, never exported; unset reads as 0.
+# dx_container_wait_begin starts every wait at 0, so nothing earlier shortens it.
+dx_container_wait_begin() { DXE_WAIT_STOPPED_READINGS=0; }
+
 # bin/dx-wait-ssh calls this on every failed SSH probe: returns 0 after printing
-# why the wait must stop, 1 to keep waiting. Stops when the container is no
-# longer running, or when the runtime has restarted it twice or more since the
-# wait began (a crash loop under a restart policy keeps "running" between
-# restarts, so polling on would only hide it).
+# why the wait must stop, 1 to keep waiting. Takes one reading per call. Stops on
+# the third consecutive stopped reading (a single bad reading under load, such as
+# a container listing that comes back empty once, must not kill a healthy boot;
+# any other reading resets the count), or when the runtime has restarted the
+# container twice or more since the wait began (a crash loop under a restart
+# policy keeps "running" between restarts, so polling on would only hide it).
 dx_container_wait_should_abort() {
     local baseline="$1" count
     if container_exists "$DX_CONTAINER_NAME" && ! container_is_running "$DX_CONTAINER_NAME"; then
-        echo "Error: Container $DX_CONTAINER_NAME stopped before SSH became responsive." >&2
-        echo "Last 80 container log lines:" >&2
-        dx_container_print_logs 80 >&2
-        return 0
+        DXE_WAIT_STOPPED_READINGS=$((${DXE_WAIT_STOPPED_READINGS:-0} + 1))
+        if [ "$DXE_WAIT_STOPPED_READINGS" -ge 3 ]; then
+            echo "Error: Container $DX_CONTAINER_NAME stopped before SSH became responsive." >&2
+            echo "Last 80 container log lines:" >&2
+            dx_container_print_logs 80 >&2
+            return 0
+        fi
+    else
+        DXE_WAIT_STOPPED_READINGS=0
     fi
     count="$(dx_runtime_container_restart_count "$DX_CONTAINER_NAME" 2>/dev/null)" || return 1
     case "$count" in ""|*[!0-9]*) return 1 ;; esac

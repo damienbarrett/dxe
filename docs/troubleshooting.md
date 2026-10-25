@@ -194,8 +194,10 @@ moved. The pin is compared after resolving symlinks.
 `./bin/dx` can exit non-zero on a guest that is actually fine. Two causes, both
 harmless:
 
-- `dx-wait-ssh` samples SSH once, so under load it can give up while the guest
-  is still coming up.
+- `dx-wait-ssh` reports a stopped container only after three consecutive
+  readings (about 10 s at the default poll interval), so a single glitch no
+  longer stops a healthy boot; a loaded host can still make it time out while
+  the guest is coming up.
 - Run non-interactively, the final tmux attach fails with
   `open terminal failed: not a terminal`.
 

@@ -63,6 +63,7 @@ trap 'rm -f "$PROBE_STDERR"' EXIT
 # ssh probe -- rather than only the time we ourselves spent sleeping.
 SECONDS=0
 RESTART_BASELINE="$(dx_container_restart_baseline)"
+dx_container_wait_begin
 # DX_SSH_PROGRESS_INTERVAL_FIRST overrides only the first tick's own
 # threshold, never the recurring PROGRESS_INTERVAL the loop keeps enforcing
 # after it (below). Defaults to PROGRESS_INTERVAL itself, so this is a no-op
