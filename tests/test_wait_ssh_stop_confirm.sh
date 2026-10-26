@@ -316,6 +316,10 @@ ws_token() {
     done
     printf '%s\n' "$last"
 }
+# A wait whose stop never fires must fail the case in seconds, not run to the
+# 3600 s budget: unless a case names WS_SUCCEED_AT, SSH answers on probe 20
+# (the latest expected abort is probe 12), so a missing stop shows up as "Guest
+# is ready." / rc 0 instead of an endless wait.
 # The probe counter drives the scenario: failed probe N is call N. WS_JUMP_AT
 # moves SECONDS (this runs in the waiting shell) so the timeout check falls
 # on that probe.
@@ -325,7 +329,7 @@ dx_ssh_probe_login_shell() {
     echo "$n" > "$WS_STATE/probes"
     ws_log "probe $n"
     if [ "$n" = "${WS_JUMP_AT:-0}" ]; then SECONDS=$WS_JUMP_TO; fi
-    [ "$n" -ge "${WS_SUCCEED_AT:-99999}" ]
+    [ "$n" -ge "${WS_SUCCEED_AT:-20}" ]
 }
 ws_sleep() { ws_log "sleep $*"; }
 LIB
@@ -520,7 +524,7 @@ printf 'first wait returned\n' > "$out/marker"
 WS_STATE="$out/wait2"
 mkdir -p "$WS_STATE"
 WS_READINGS=stop
-WS_SUCCEED_AT=99999
+WS_SUCCEED_AT=20
 wait_ssh_main > "$out/wait2.out" 2> "$out/wait2.err"
 printf 'second wait returned\n' >> "$out/marker"
 PROBE
