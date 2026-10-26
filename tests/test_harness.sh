@@ -731,7 +731,10 @@ if git -C "$SCRIPT_DIR/.." clone -q --local "$SCRIPT_DIR/.." "$gg_dir/clone" 2>/
     if [ -n "${DXE_GG_GUARD:-}" ]; then cp "$DXE_GG_GUARD" "$gg_dir/clone/tests/test_section1_secrets.sh"; fi
     gg_section1() { (cd "$gg_dir/clone" && SKIP_INTEGRATION=true bash tests/test_section1_secrets.sh 2>&1) || true; }
     printf 'export DX_REMOTE_HOST=%s\n' "$gg_alias" > "$gg_dir/clone/tests/profiles/zz-private.env"
-    gg_failed() { printf '%s\n' "$gg_out" | grep -a "FAIL" | grep -qF -- "$1"; }
+    # Read-all, not `| grep -q`: under this file's pipefail an early-closing
+    # reader can fail the pipeline over a real match (tests/test_helpers.sh,
+    # stdin_matches).
+    gg_failed() { grep -a "FAIL" <<<"$gg_out" | grep -F -- "$1" >/dev/null; }
     gg_out="$(gg_section1)"
     check contains "$gg_out" "$gg_name_a"
     check contains "$gg_out" "$gg_name_b"
