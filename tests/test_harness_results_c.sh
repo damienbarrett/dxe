@@ -522,7 +522,9 @@ hr_check "wrote through nothing (the directory stays empty)" c6_untouched
 hr_case C7-a-native-rm-function
 hr_stubs c7a
 hr_body body <<'EOP'
-rm() { echo "rm-function $*" >> "$STUB_LOG"; }
+for f in rm; do
+    eval "$f() { echo \"$f-function \$*\" >> \"\$STUB_LOG\"; }"
+done
 with_fake_runtime docker
 docker first-call
 with_fake_runtime docker
