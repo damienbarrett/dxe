@@ -97,7 +97,8 @@ reap_live() {
 }
 cleanup() {
     reap_live
-    case "$fx" in /tmp/dxe-tm.??????) rm -rf "$fx" ;; esac
+    # dxe_test_mktemp_dir returns the PHYSICAL path: /private/tmp/... on macOS.
+    case "$fx" in /tmp/dxe-tm.?????? | /private/tmp/dxe-tm.??????) rm -rf "$fx" ;; esac
 }
 trap cleanup EXIT
 mkdir -p "$fx/home" "$fx/cwd" "$fx/bin" "$fx/outside"
@@ -435,7 +436,9 @@ if [ "$wd_rc" -eq 0 ] && [ "$(wd_shape)" = "$want" ]; then
 else
     test_fail "the watchdog prunes at the start of every 3rd iteration (rc $wd_rc, got: $(wd_shape))"
 fi
-if grep -F "setpriv: --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx" "$WD_LOG" | grep -qF "dx-usage-service.sh prune"; then
+# stdin_matches, not `| grep -q`: under this file's pipefail an early-closing
+# reader can fail the pipeline over a real match (tests/test_helpers.sh).
+if grep -F "setpriv: --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx" "$WD_LOG" | stdin_matches -F "dx-usage-service.sh prune"; then
     test_pass "the prune command is setpriv --reuid=dx --regid=dx --init-groups env HOME=/home/dx USER=dx bash <scripts>/dx-usage-service.sh prune"
 else
     test_fail "the prune command line is as pinned (log: $(cat "$WD_LOG"))"
