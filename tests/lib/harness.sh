@@ -16,13 +16,21 @@
 # `printf`, well under the platform's atomic pipe/write buffer, so
 # concurrent short appends do not interleave into a corrupt line.
 #
-# Import-pure: sourcing this file only defines functions and a few default
-# variables (DXE_HARNESS_LABEL="" and the two unexported results-name
-# variables DXE_HARNESS_RES_TOKEN/_PID), with no I/O, no `exit`, and no change to
-# the sourcing shell's control state ($-, IFS, PWD, umask, traps) -- the
-# same eight-way contract tests/test_refactor_contracts.sh runs over
-# bin/lib/*.sh (its lines 10-33), proven for this file by
-# tests/test_harness.sh's own purity_ok case.
+# Source-time purity rules. Sourcing this file, once or again, in a suite's
+# shell or in a fork of it:
+#  - defines functions and assigns shell variables, and nothing else: no
+#    output, no file made, read or removed, no external command (its only
+#    command substitutions run `type -P`, a builtin), no `exit`, no export,
+#    and no change to the sourcing shell's control state ($-, IFS, PWD,
+#    umask, traps) -- the same eight-way contract
+#    tests/test_refactor_contracts.sh runs over bin/lib/*.sh (its lines
+#    10-33), proven for this file by tests/test_harness.sh's purity_ok case;
+#  - sets DXE_HARNESS_LABEL="" and the colours every time, but the
+#    per-process housekeeping state (the DXE_HARNESS_RES_* and
+#    DXE_HARNESS_BIN_* variables: results-name token, results directory,
+#    level and real pid of the sourcing shell, absolute rm/ln/find) only the
+#    FIRST time in a process: a re-source keeps it, a fork inherits it, and
+#    only a new `bash` process, which inherits none of it, makes its own.
 #
 # $DXE_TEST_RESULTS is deliberately NOT created here at source time, only
 # lazily, in _dxe_harness_results_file, the first time some function
@@ -84,15 +92,27 @@ if [ "${DXE_HARNESS_RES_TOKEN_PID:-}" != "$$" ]; then
     # in a fork or in the parent keeps it; forks inherit it):
     #  - the directory holding the results file, TMPDIR as it is NOW, so a
     #    later TMPDIR change (with_fixture's, or a fork's) cannot split it;
-    #  - the subshell level this was sourced at, so a fork that ends the suite
-    #    cannot delete the suite's results file (_dxe_harness_results_remove);
+    #  - the subshell level and, where Bash can tell it without running
+    #    anything, the real pid of the shell this was sourced in, so a fork
+    #    that ends the suite cannot delete the suite's results file
+    #    (_dxe_harness_results_remove). The pid is BASHPID on Bash 4+; Bash
+    #    3.2 has none, and there $$ is the real pid only at level 0, so a
+    #    3.2 source below level 0 records no pid (the level alone decides);
     #  - the absolute paths of rm, ln and find, resolved before a suite
     #    can put stubs of those names on PATH or define functions of them.
-    #    The harness's own housekeeping calls only these; none found means
-    #    that housekeeping fails closed (_dxe_harness_tool). mktemp stays on
-    #    PATH on purpose: it is the seam suites use to fail the harness.
+    #    The harness's own housekeeping calls only these; none found, or a
+    #    path that is not absolute (a relative PATH entry), means that
+    #    housekeeping fails closed (_dxe_harness_tool_path). mktemp and chmod
+    #    stay on PATH on purpose: they are the seams suites use to fail it.
     DXE_HARNESS_RES_DIR="${TMPDIR:-/tmp}"
     DXE_HARNESS_RES_LEVEL="$BASH_SUBSHELL"
+    if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
+        DXE_HARNESS_RES_REALPID="$BASHPID"
+    elif [ "$BASH_SUBSHELL" = 0 ]; then
+        DXE_HARNESS_RES_REALPID="$$"
+    else
+        DXE_HARNESS_RES_REALPID=""
+    fi
     DXE_HARNESS_BIN_RM="$(type -P rm)" || DXE_HARNESS_BIN_RM=""
     DXE_HARNESS_BIN_LN="$(type -P ln)" || DXE_HARNESS_BIN_LN=""
     DXE_HARNESS_BIN_FIND="$(type -P find)" || DXE_HARNESS_BIN_FIND=""
@@ -102,27 +122,54 @@ it() {
     DXE_HARNESS_LABEL="$1"
 }
 
-# _dxe_harness_tool NAME ARGS... -- runs the absolute-path tool captured at
-# source time (rm|ln|find), or stops the suite when there is none.
-_dxe_harness_tool() {
-    local bin
+# _dxe_harness_tool_path NAME -- sets the CALLER's _dxe_harness_tool_bin (its
+# own local, reached by dynamic scope) to the path of rm|ln|find captured at
+# source time, or stops the calling shell: a tool that was not found then, or
+# was found only through a relative PATH entry (whose meaning changes with the
+# working directory), is never looked up again, on PATH or anywhere else.
+_dxe_harness_tool_path() {
     case "$1" in
-        rm) bin="$DXE_HARNESS_BIN_RM" ;;
-        ln) bin="$DXE_HARNESS_BIN_LN" ;;
-        find) bin="$DXE_HARNESS_BIN_FIND" ;;
-        *) bin="" ;;
+        rm) _dxe_harness_tool_bin="$DXE_HARNESS_BIN_RM" ;;
+        ln) _dxe_harness_tool_bin="$DXE_HARNESS_BIN_LN" ;;
+        find) _dxe_harness_tool_bin="$DXE_HARNESS_BIN_FIND" ;;
+        *) _dxe_harness_tool_bin="" ;;
     esac
-    [ -n "$bin" ] || _dxe_harness_die "$1 tool"
+    case "$_dxe_harness_tool_bin" in
+        /*) : ;;
+        "") _dxe_harness_die "$1 tool" "none was found on PATH when the harness was sourced" ;;
+        *) _dxe_harness_die "$1 tool" "[$_dxe_harness_tool_bin] is not an absolute path" ;;
+    esac
+}
+
+# _dxe_harness_tool NAME ARGS... -- runs that captured tool (rm|ln|find), or
+# stops the calling shell when it is unusable.
+_dxe_harness_tool() {
+    local _dxe_harness_tool_bin
+    _dxe_harness_tool_path "$1"
     shift
-    "$bin" "$@"
+    "$_dxe_harness_tool_bin" "$@"
 }
 
 # _dxe_harness_results_remove -- deletes the suite's results file, but only
-# from the shell level the harness was sourced at: a fork (subshell, command
-# substitution, background job) that ends itself with finish/exit_with_code
-# must not take the suite's file with it.
+# from the shell the harness was sourced in: a fork (subshell, command or
+# process substitution, background job) that ends itself with
+# finish/exit_with_code must not take the suite's file with it. The level
+# catches most forks; the real pid also catches the one Bash 3.2 leaves at the
+# same level, a process substitution. 3.2 has no BASHPID, so there the pid is
+# asked of a child /bin/sh (its parent is this shell); no answer means no
+# removal (a leftover temporary file, never a lost one).
 _dxe_harness_results_remove() {
     [ "$BASH_SUBSHELL" = "$DXE_HARNESS_RES_LEVEL" ] || return 0
+    if [ -n "$DXE_HARNESS_RES_REALPID" ]; then
+        local pid
+        if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
+            pid="$BASHPID"
+        else
+            # shellcheck disable=SC2016 # $PPID is the child sh's, on purpose
+            pid="$(exec /bin/sh -c 'echo "$PPID"' 2>/dev/null)" || pid=""
+        fi
+        [ "$pid" = "$DXE_HARNESS_RES_REALPID" ] || return 0
+    fi
     _dxe_harness_tool rm -f "${DXE_TEST_RESULTS:-}"
 }
 
@@ -245,12 +292,18 @@ _dxe_harness_results_file() {
         # call made is ever removed here. A symlink at the agreed path is
         # refused, never written through; ln's own stderr is kept when the
         # link could not be made and nothing regular sits at the name.
-        local file agreed lnerr=""
+        # Both tools are checked first, in this shell, so an unusable one stops
+        # the suite before anything is made. `ln -n`: a symlink to a directory
+        # that appears at the agreed name (after the first look, say from the
+        # mktemp seam) is an existing name, never a directory to link INTO.
+        local file agreed lnerr="" _dxe_harness_tool_bin
         agreed="$DXE_HARNESS_RES_DIR/dxe-harness-results.$DXE_HARNESS_RES_TOKEN"
         [ ! -L "$agreed" ] || _dxe_harness_die "results file" "$agreed is a symlink, refusing to write through it"
         if [ ! -f "$agreed" ]; then
+            _dxe_harness_tool_path ln
+            _dxe_harness_tool_path rm
             file="$(mktemp "$DXE_HARNESS_RES_DIR/dxe-harness-results.XXXXXX")" && [ -f "$file" ] || _dxe_harness_die "results file"
-            lnerr="$(_dxe_harness_tool ln "$file" "$agreed" 2>&1)" || :
+            lnerr="$(_dxe_harness_tool ln -n "$file" "$agreed" 2>&1)" || :
             _dxe_harness_tool rm -f "$file"
         fi
         [ ! -L "$agreed" ] || _dxe_harness_die "results file" "$agreed is a symlink, refusing to write through it"
@@ -552,6 +605,9 @@ fi
 exit 0
 FAKE_EOF
     chmod 0755 "$DXE_FAKE_RUNTIME_DIR/$tool" || _dxe_harness_die "fake $tool (chmod failed)"
+    # chmod is a PATH seam: one that exits 0 without making the fake executable
+    # would let PATH lookup skip the fake and reach the real tool behind it.
+    [ -x "$DXE_FAKE_RUNTIME_DIR/$tool" ] || _dxe_harness_die "fake $tool" "it is not executable after chmod"
     PATH="$DXE_FAKE_RUNTIME_DIR:$(dirname "$(command -v bash)"):/usr/bin:/bin"
 }
 
@@ -640,7 +696,7 @@ with_fixture() {
     if [ -z "${DXE_HARNESS_FIXTURE_REAL_HOME:-}" ]; then
         DXE_HARNESS_FIXTURE_REAL_HOME="$HOME"
         DXE_HARNESS_FIXTURE_REAL_XDG_STATE_HOME="${XDG_STATE_HOME:-}"
-        DXE_HARNESS_FIXTURE_KNOWN_HOSTS_BEFORE="$(_dxe_harness_known_hosts_snapshot)"
+        _dxe_harness_known_hosts_snapshot DXE_HARNESS_FIXTURE_KNOWN_HOSTS_BEFORE
     fi
     # Fails closed (WP-TMPGUARD): HOME/XDG_STATE_HOME/TMPDIR are only
     # redirected once every directory exists -- never under an empty $dir.
@@ -664,11 +720,18 @@ with_fixture() {
 # either. Same formula as dx_real_ssh_known_hosts_snapshot
 # (tests/test_helpers.sh): ${XDG_STATE_HOME:-$HOME/.local/state}/dxe, and
 # an absent directory is a legitimate, empty snapshot, not an error.
+# _dxe_harness_known_hosts_snapshot VAR -- sets VAR in the calling shell
+# (printf -v; never call this in `$(...)`): the find it needs is checked HERE,
+# in that shell, so an unusable one stops the suite instead of reading as an
+# empty tree.
 _dxe_harness_known_hosts_snapshot() {
-    local dir
+    local dir listing="" _dxe_harness_tool_bin
     dir="${DXE_HARNESS_FIXTURE_REAL_XDG_STATE_HOME:-$DXE_HARNESS_FIXTURE_REAL_HOME/.local/state}/dxe"
-    [ -d "$dir" ] || return 0
-    _dxe_harness_tool find "$dir" -mindepth 1 2>/dev/null | sort
+    if [ -d "$dir" ]; then
+        _dxe_harness_tool_path find
+        listing="$("$_dxe_harness_tool_bin" "$dir" -mindepth 1 2>/dev/null | sort)"
+    fi
+    printf -v "$1" '%s' "$listing"
 }
 
 # True if $1 (a suite file path, `finish` passes its own $0) carries a
@@ -738,7 +801,7 @@ finish() {
     # it after setup.
     if [ -n "${DXE_HARNESS_FIXTURE_REAL_HOME:-}" ]; then
         local known_hosts_after
-        known_hosts_after="$(_dxe_harness_known_hosts_snapshot)"
+        _dxe_harness_known_hosts_snapshot known_hosts_after
         if [ "$known_hosts_after" != "$DXE_HARNESS_FIXTURE_KNOWN_HOSTS_BEFORE" ]; then
             _dxe_harness_record fail "with_fixture isolation: the real ~/.local/state/dxe known-hosts tree changed during this suite"
             echo "FAIL: with_fixture isolation breach"
