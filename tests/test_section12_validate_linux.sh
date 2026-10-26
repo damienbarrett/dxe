@@ -20,6 +20,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
+# shellcheck source=lib/section12-snapshot.sh
+source "$SCRIPT_DIR/lib/section12-snapshot.sh"
 
 test_section "Section 12: Validate Host-Agnostic Guest Bootstrap"
 
@@ -63,14 +65,8 @@ if [ "$(uname -s)" != "Linux" ]; then
     SNAPSHOT_PARENT="$(mktemp -d -t dxe-section12-snapshot.XXXXXX)" || exit 1
     SNAPSHOT_DIR="$SNAPSHOT_PARENT/repo"
     mkdir -p "$SNAPSHOT_DIR"
-    if git -C "$BASE_DIR" rev-parse --git-dir >/dev/null 2>&1; then
-        git -C "$BASE_DIR" archive HEAD | tar -x -C "$SNAPSHOT_DIR"
-    else
-        # Not a git checkout (shouldn't happen for this repository, but keep
-        # the relay working over a plain export too): copy the working tree,
-        # excluding VCS metadata and macOS AppleDouble sidecar files.
-        (cd "$BASE_DIR" && COPYFILE_DISABLE=1 tar --exclude '._*' --exclude '.git' -cf - .) | tar -x -C "$SNAPSHOT_DIR"
-    fi
+    # The archive goes through a file, not a pipe (tests/lib/section12-snapshot.sh).
+    section12_snapshot_build "$BASE_DIR" "$SNAPSHOT_DIR" "$SNAPSHOT_PARENT"
 
     REMOTE_PARENT="/tmp/dxe-section12-$$"
     REMOTE_DIR="$REMOTE_PARENT/repo"
